@@ -1,0 +1,9 @@
+.DS_Store
+*~
+*.swp
+
+# generic coverage directory
+coverage
+
+# https://github.com/istanbuljs/nyc
+.nyc_output
