@@ -1,3 +1,3 @@
 # use Sublime as system editor
-ln -s /Applications/Sublime\ Text.app/Contents/SharedSupport/bin/subl /usr/local/bin/subl
+alias subl="/Applications/Sublime\ Text.app/Contents/SharedSupport/bin/subl"
 export EDITOR=subl
