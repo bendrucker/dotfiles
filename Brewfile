@@ -27,6 +27,7 @@ brew 'youtube-dl'
 brew 'zsh'
 
 cask 'alfred'
+cask 'chefdk'
 cask 'evernote'
 cask 'flux'
 cask 'google-chrome'
