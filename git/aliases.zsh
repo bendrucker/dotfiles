@@ -7,6 +7,8 @@ then
   alias git=$hub_path
 fi
 
+alias g='git'
+
 alias gb='git branch'
 alias gc='git commit'
 alias gco='git checkout'
