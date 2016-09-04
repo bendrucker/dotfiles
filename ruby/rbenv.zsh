@@ -1,6 +1,6 @@
 if (( $+commands[rbenv] ))
 then
-  export PATH="${PATH}:~/.rbenv/shims"
+  export PATH="$HOME/.rbenv/shims:$PATH"
   export RBENV_SHELL=zsh
   source '/usr/local/Cellar/rbenv/1.0.0/libexec/../completions/rbenv.zsh'
   command rbenv rehash 2>/dev/null
