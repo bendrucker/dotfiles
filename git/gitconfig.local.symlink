@@ -16,7 +16,7 @@
 
 [core]
   excludesfile = ~/.gitignore
-  editor = subl
+  editor = "subl -n -w"
 
 [apply]
   whitespace = nowarn
