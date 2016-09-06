@@ -1,2 +1,2 @@
 # use Sublime as system editor
-export EDITOR=subl
+export EDITOR="subl -n -w"
