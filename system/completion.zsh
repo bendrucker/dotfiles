@@ -1,1 +1,0 @@
-compdef _files -W $PROJECTS -/ c
