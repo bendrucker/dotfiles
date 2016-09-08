@@ -4,7 +4,7 @@ publish () {
     return 1
   fi
   npm version $1
-  git push origin --follow-tags
+  git push origin master --follow-tags
   npm publish
 }
 
