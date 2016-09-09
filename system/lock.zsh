@@ -1,3 +1,3 @@
 # sleep display
-alias sleep="pmset displaysleepnow"
+alias dark="pmset displaysleepnow"
 
