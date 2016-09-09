@@ -6,12 +6,7 @@ tap 'homebrew/bundle'
 # https://caskroom.github.io/
 tap 'caskroom/cask'
 
-# Unofficial bash CircleCI CLI
-# https://github.com/rockymadden/circleci-cli
-tap 'rockymadden/rockymadden'
-
 brew 'awscli'
-brew 'circleci-cli'
 brew 'coreutils'
 brew 'git'
 brew 'grc'
