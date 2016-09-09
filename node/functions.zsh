@@ -14,6 +14,6 @@ module () {
   cd $1
   git init
   hub create
-  travis enable --no-interactive &
+  travis enable --no-interactive > /dev/null &
   yo bd
 }
