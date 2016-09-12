@@ -12,6 +12,9 @@ csr () {
 
   _create_private_key $1
   _create_csr $1 "${@:2}"
+
+  cat $1 | pbcopy
+  echo "Copied CSR for $1 to clipboard"
 }
 
 _create_private_key () {
