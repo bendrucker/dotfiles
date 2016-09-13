@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# Replaces newlines in input with escaped "\n"
+# http://stackoverflow.com/questions/1251999/how-can-i-replace-a-newline-n-using-sed
+
+sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g'
