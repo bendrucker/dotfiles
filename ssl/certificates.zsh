@@ -4,8 +4,6 @@ csr () {
     exit 1
   fi
 
-  local
-
   cd ~/Desktop
   mkdir "certificate-$1"
   cd $_
@@ -15,6 +13,10 @@ csr () {
 
   cat "$1" | pbcopy
   echo "Copied CSR for $1 to clipboard"
+}
+
+ssc () {
+  openssl req -x509 -days 90 -in $1.csr -signkey $1.key -out $1.crt
 }
 
 _create_private_key () {
