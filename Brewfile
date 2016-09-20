@@ -8,6 +8,7 @@ tap 'caskroom/cask'
 
 brew 'awscli'
 brew 'coreutils'
+brew 'dos2unix'
 brew 'git'
 brew 'grc'
 brew 'httpie'
