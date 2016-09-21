@@ -7,7 +7,7 @@
 ```sh
 git clone https://github.com/bendrucker/dotfiles.git ~/.dotfiles
 cd ~/.dotfiles
-script/bootstrap
+scripts/bootstrap
 ```
 
 ## Usage
