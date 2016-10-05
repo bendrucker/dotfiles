@@ -23,6 +23,7 @@ brew 's3cmd'
 brew 'sshuttle'
 brew 'the_silver_searcher'
 brew 'wget'
+brew 'wrk'
 brew 'youtube-dl'
 brew 'zsh'
 
