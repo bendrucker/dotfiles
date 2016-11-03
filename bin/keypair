@@ -1,0 +1,12 @@
+#!/bin/bash
+
+if [[ $# -eq 0 ]]; then
+  echo 'keypair <name>' >&2
+  exit 1
+fi
+
+private_filename="$1.private.pem"
+public_filename="$1.public.pem"
+
+openssl genrsa -out $private_filename 2048
+openssl rsa -in $private_filename -pubout -out $public_filename
