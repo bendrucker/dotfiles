@@ -1,1 +1,1 @@
-export EAZE_CHEF_REPO_PATH="$PROJECTS/infrastructure/chef-repo"
+export EAZE_CHEF_REPO_PATH="$PROJECTS/chef"
