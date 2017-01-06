@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# chef
+# converge my env
+# => environment:my-env
+
+SEPARATOR="-"
+
+if [ $# -eq 0 ]; then
+  echo "usage: converge <parts...>"
+  exit 1
+fi
+
+
+join () {
+  IFS="$1"
+  shift
+  echo "$*"
+}
+
+environment=$(join $SEPARATOR $@)
+
+echo "Converging $environment"
+
+knife ssh chef_environment:$environment 'sudo chef-client'
