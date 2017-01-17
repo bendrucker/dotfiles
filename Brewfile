@@ -30,6 +30,7 @@ brew 'youtube-dl'
 brew 'zsh'
 
 cask 'alfred'
+cask 'angry-ip-scanner'
 cask 'chefdk'
 cask 'evernote'
 cask 'flux'
