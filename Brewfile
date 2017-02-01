@@ -7,6 +7,7 @@ tap 'homebrew/bundle'
 tap 'caskroom/cask'
 
 brew 'awscli'
+brew 'chrome-cli'
 brew 'coreutils'
 brew 'dos2unix'
 brew 'git'
