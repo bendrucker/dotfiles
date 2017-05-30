@@ -6,4 +6,3 @@ npm install -g vmd
 
 # debug via electron/chrome dev tools
 npm install -g devtool
-s
