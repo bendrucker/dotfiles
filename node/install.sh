@@ -1,8 +1,3 @@
-# fancy repl
-npm install -g mancy
+#!/usr/bin/env zsh
 
-# markdown preview
-npm install -g vmd
-
-# debug via electron/chrome dev tools
-npm install -g devtool
+npm install --global $(cat "${0:a:h}/globals.txt" | tr '\n' ' ')
