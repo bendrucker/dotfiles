@@ -17,3 +17,7 @@ module () {
   travis enable --no-interactive > /dev/null &
   yo bd
 }
+
+npm-token () {
+  cat ~/.npmrc | sed -n -e 's/^.*_authToken=//p'
+}
