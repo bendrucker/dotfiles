@@ -48,3 +48,4 @@ cask 'sublime-text'
 cask 'vlc'
 
 
+mas 'Things', id: 904280696
