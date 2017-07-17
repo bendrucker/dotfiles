@@ -43,5 +43,8 @@ cask 'flux'
 cask 'google-chrome'
 cask 'iterm2'
 cask 'rescuetime'
+cask 'slack'
 cask 'sublime-text'
 cask 'vlc'
+
+
