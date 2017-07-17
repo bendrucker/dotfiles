@@ -37,15 +37,28 @@ brew 'zsh'
 
 cask 'alfred'
 cask 'angry-ip-scanner'
+cask 'backblaze'
+cask 'charles'
 cask 'chefdk'
+cask 'disk-drill'
+cask 'dash'
+cask 'docker'
 cask 'evernote'
 cask 'flux'
 cask 'google-chrome'
 cask 'iterm2'
+cask 'plug'
 cask 'rescuetime'
 cask 'slack'
 cask 'sublime-text'
+cask 'virtualbox'
 cask 'vlc'
 
 
+mas 'Airmail', id: 918858936
+mas 'Fantastical', id: 975937182
+mas 'iFlicks', id: 731062389
+mas 'Pixelmator', id: 407963104
 mas 'Things', id: 904280696
+mas 'Tweetbot', id: 557168941
+mas 'UTC Bar', id: 525372278
