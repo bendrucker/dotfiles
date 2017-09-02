@@ -5,6 +5,7 @@ tap 'homebrew/bundle'
 # OS X Apps via Homebrew
 # https://caskroom.github.io/
 tap 'caskroom/cask'
+tap 'caskroom/fonts'
 
 brew 'awscli'
 brew 'chrome-cli'
@@ -52,18 +53,22 @@ cask 'evernote'
 cask 'flux'
 cask 'google-chrome'
 cask 'minikube'
+cask 'moom'
 cask 'iterm2'
 cask 'plug'
 cask 'rescuetime'
+cask 'rowmote-helper'
 cask 'slack'
 cask 'sublime-text'
 cask 'virtualbox'
 cask 'vlc'
 
+cask 'font-source-code-pro'
 
 mas 'Airmail', id: 918858936
 mas 'Fantastical', id: 975937182
 mas 'iFlicks', id: 731062389
+mas 'Moom', id: 419330170
 mas 'Pixelmator', id: 407963104
 mas 'Things', id: 904280696
 mas 'Tweetbot', id: 557168941
