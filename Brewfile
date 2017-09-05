@@ -60,6 +60,7 @@ cask 'rescuetime'
 cask 'rowmote-helper'
 cask 'slack'
 cask 'sublime-text'
+cask 'vagrant'
 cask 'virtualbox'
 cask 'vlc'
 
