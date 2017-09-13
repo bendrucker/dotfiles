@@ -68,6 +68,7 @@ cask 'vlc'
 cask 'font-source-code-pro'
 
 mas 'Airmail', id: 918858936
+mas 'Amphetamine', id: 937984704
 mas 'Fantastical', id: 975937182
 mas 'iFlicks', id: 731062389
 mas 'Moom', id: 419330170
