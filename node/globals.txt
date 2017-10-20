@@ -1,3 +1,4 @@
 devtool
+manage-wifi-cli
 npx
 vmd
