@@ -1,3 +1,5 @@
+alfred-npms
+browserify-size
 devtool
 manage-wifi-cli
 npx
