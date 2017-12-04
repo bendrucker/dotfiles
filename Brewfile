@@ -42,6 +42,7 @@ brew 'wrk'
 brew 'youtube-dl'
 brew 'zsh'
 
+cask '1password'
 cask 'alfred'
 cask 'angry-ip-scanner'
 cask 'backblaze'
