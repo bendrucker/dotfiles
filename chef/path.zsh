@@ -1,1 +1,0 @@
-export PATH="$PATH:/opt/chefdk/bin:~/.chefdk/gem/ruby/2.1.0/bin:/opt/chefdk/embedded/bin"
