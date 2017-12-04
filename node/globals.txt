@@ -1,6 +1,7 @@
 alfred-npms
 browserify-size
 devtool
+eslint
 manage-wifi-cli
 n
 npx
