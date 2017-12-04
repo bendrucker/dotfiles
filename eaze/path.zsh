@@ -1,1 +1,0 @@
-export EAZE_CHEF_REPO_PATH="$PROJECTS/chef"
