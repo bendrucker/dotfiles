@@ -5,4 +5,5 @@ eslint
 manage-wifi-cli
 n
 npx
+standard
 vmd
