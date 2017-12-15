@@ -1,5 +1,6 @@
 alfred-npms
 browserify-size
+depcheck
 devtool
 eslint
 manage-wifi-cli
