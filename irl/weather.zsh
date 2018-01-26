@@ -1,3 +1,0 @@
-gg () {
-  golden-gate | imgcat
-}
