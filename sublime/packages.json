@@ -1,0 +1,27 @@
+{
+  "installed_packages": [
+    "Babel",
+    "BracketHighlighter",
+    "Dockerfile Syntax Highlighting",
+    "EditorConfig",
+    "Gist",
+    "GitGutter",
+    "Jinja2",
+    "Markdown Preview",
+    "MarkdownEditing",
+    "NodeRequirer",
+    "Package Control",
+    "Pretty JSON",
+    "RAML Syntax Highlighter",
+    "SideBarEnhancements",
+    "Side​Bar​Enhancements",
+    "Solarized Color Scheme",
+    "sublime-github",
+    "SublimeGit",
+    "SublimeLinter",
+    "SublimeLinter-contrib-standard",
+    "SublimeLinter-eslint",
+    "Terraform",
+    "Theme - Soda SolarizedDark"
+  ]
+}
