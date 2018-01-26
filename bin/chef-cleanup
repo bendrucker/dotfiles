@@ -1,7 +1,0 @@
-#!/bin/bash
-
-# chef
-# deletes nodes/clients that have not connected in 24+ hours
-# probably os x only
-
-knife search node "ohai_time:[0 TO $(date -v -24H +%s)]" --id-only | xargs -I % sh -c 'knife client delete % --yes; knife node delete % --yes'
