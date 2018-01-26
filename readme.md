@@ -1,4 +1,4 @@
-# dotfiles
+# dotfiles [![Build Status](https://travis-ci.org/bendrucker/dotfiles.svg?branch=master)](https://travis-ci.org/bendrucker/dotfiles)
 
 > My dotfiles for configuring OS X
 
