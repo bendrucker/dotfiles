@@ -12,5 +12,5 @@ SETTINGS="$DATA/Packages/User"
 mkdir -p "$DATA"
 mkdir -p "$PACKAGES"
 
-[ -f "$PACKAGE_CONTROL_PATH" ] || curl --silent "$PACKAGE_CONTROL" > "$PACKAGE_CONTROL_PATH"
+[ -f "$PACKAGE_CONTROL_PATH" ] || curl --silent "$PACKAGE_CONTROL_URL" > "$PACKAGE_CONTROL_PATH"
 cp -f "$ZSH/sublime/packages.json" "$SETTINGS/Package Control.sublime-settings"
