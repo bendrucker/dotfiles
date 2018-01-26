@@ -11,16 +11,11 @@ publish () {
 }
 
 module () {
-  cd "$PROJECTS"
+  cd "$PROJECTS" || exit 1
   mkdir "$1"
-  cd "$1"
+  cd "$1" || exit 1
   git init
   hub create
   travis enable --no-interactive > /dev/null &
   yo bd
-}
-
-npm-token () {
-  npmrc="$HOME/.npmrc"
-  [ -f "$npmrc" ] && sed -n -e 's/^.*_authToken=//p' < "$npmrc"
 }

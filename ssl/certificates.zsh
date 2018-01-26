@@ -6,9 +6,9 @@ csr () {
     exit 1
   fi
 
-  cd "$HOME/Desktop"
+  cd "$HOME/Desktop" || exit 1
   mkdir "certificate-$1"
-  cd "$_"
+  cd "$_" || exit 1
 
   _create_private_key "$1"
   _create_csr "$1" "${@:2}"
