@@ -1,3 +1,5 @@
+#!/usr/bin/env sh
+
 # Spotlight > Show Spotlight search : ^Space
 defaults write com.apple.symbolichotkeys.plist AppleSymbolicHotKeys -dict-add 64 "
   <dict>

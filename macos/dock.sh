@@ -1,3 +1,5 @@
+#!/usr/bin/env sh
+
 # enable autohide
 defaults write com.apple.dock autohide -bool true
 

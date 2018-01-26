@@ -1,3 +1,5 @@
+#!/usr/bin/env zsh
+
 # aliases are substituted before completion
 setopt no_complete_aliases
 

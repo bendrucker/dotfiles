@@ -1,0 +1,4 @@
+sudo: required
+services:
+  - docker
+script: docker-compose run shellcheck **/*.*sh

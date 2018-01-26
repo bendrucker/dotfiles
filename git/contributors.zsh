@@ -1,3 +1,5 @@
+#!/usr/bin/env sh
+
 # print project contributors by name
 
 contributors () {

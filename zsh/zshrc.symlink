@@ -1,3 +1,5 @@
+#!/usr/bin/env zsh
+
 # shortcut to this dotfiles path is $ZSH
 export ZSH=$HOME/.dotfiles
 
@@ -39,3 +41,6 @@ do
 done
 
 unset config_files
+
+# added by travis gem
+[ -f /Users/ben/.travis/travis.sh ] && source /Users/ben/.travis/travis.sh

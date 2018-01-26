@@ -1,3 +1,5 @@
+#!/usr/bin/env sh
+
 # 24 hour time
 defaults write -g AppleICUForce24HourTime -bool true
 
