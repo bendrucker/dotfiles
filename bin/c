@@ -1,0 +1,5 @@
+#!/bin/zsh
+
+# changes to projects in $PROJECTS folder
+
+cd "$PROJECTS/$1"
