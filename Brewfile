@@ -67,6 +67,7 @@ cask 'sublime-text'
 cask 'vagrant'
 cask 'virtualbox'
 cask 'vlc'
+cask 'webtorrent'
 
 cask 'font-source-code-pro'
 
