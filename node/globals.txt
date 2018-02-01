@@ -6,5 +6,6 @@ eslint
 manage-wifi-cli
 n
 npx
+speed-test
 standard
 vmd
