@@ -19,4 +19,3 @@ alias gr='git rebase'
 alias gs='git status'
 
 alias pr='git pull-request'
-alias clone="cd $PROJECTS && git clone"
