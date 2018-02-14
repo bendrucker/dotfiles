@@ -1,0 +1,1 @@
+export SCOOP_ORGANIZATION_NAME='takescoop'
