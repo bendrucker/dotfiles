@@ -9,6 +9,7 @@ tap 'caskroom/fonts'
 
 brew 'awscli'
 brew 'chrome-cli'
+brew 'convox'
 brew 'coreutils'
 brew 'csvkit'
 brew 'dos2unix'
