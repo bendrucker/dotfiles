@@ -1,0 +1,4 @@
+#compdef c
+_files -W $TMPDIR -/
+
+# See further documentation in `functions/tmp`.

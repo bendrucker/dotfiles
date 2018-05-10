@@ -1,0 +1,7 @@
+#!/bin/zsh
+
+# changes to dir in $TMPDIR, creating if needed
+# depth of $1 is >= 0
+
+mkdir -p "$TMPDIR/$1"
+cd "$_"
