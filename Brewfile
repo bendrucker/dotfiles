@@ -8,6 +8,7 @@ tap 'caskroom/cask'
 tap 'caskroom/fonts'
 
 brew 'awscli'
+brew 'bat'
 brew 'chrome-cli'
 brew 'convox'
 brew 'coreutils'
