@@ -1,6 +1,7 @@
 cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
+tap 'remind101/formulae'
 
 # OS X Apps via Homebrew
 # https://caskroom.github.io/
@@ -32,9 +33,9 @@ brew 'postgresql'
 brew 'pup'
 brew 'pv'
 brew 'python'
+brew 'assume-role'
 brew 'rbenv'
 brew 'shellcheck'
-brew 'stout'
 brew 's3cmd'
 brew 'sshuttle'
 brew 'stern'
