@@ -4,6 +4,7 @@
 
 [alias]
   co = checkout
+  pull-request = "pull-request --push --copy"
 
 [color]
   diff = auto
