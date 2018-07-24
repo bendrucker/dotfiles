@@ -2,5 +2,5 @@
 
 set -e
 
-[ -f "$HOME/.npmrc" ] || echo 'npm login:' && npm login
+[ -f "$HOME/.npmrc" ] || (echo 'npm login:' && npm login)
 npm install --global $(cat "${0:a:h}/globals.txt" | tr '\n' ' ')
