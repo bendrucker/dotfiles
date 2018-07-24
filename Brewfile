@@ -82,5 +82,5 @@ mas 'iFlicks', id: 731062389
 mas 'Moom', id: 419330170
 mas 'Pixelmator', id: 407963104
 mas 'Things', id: 904280696
-mas 'Tweetbot', id: 557168941
+mas 'Tweetbot', id: 1384080005
 mas 'UTC Bar', id: 525372278
