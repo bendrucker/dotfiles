@@ -71,6 +71,7 @@ cask 'sublime-text'
 cask 'thingsmacsandboxhelper'
 cask 'vagrant'
 cask 'virtualbox'
+cask 'visual-studio-code'
 cask 'vlc'
 cask 'webtorrent'
 
