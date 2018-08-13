@@ -7,3 +7,6 @@ coverage
 
 # https://github.com/istanbuljs/nyc
 .nyc_output
+
+# VS Code
+.vscode
