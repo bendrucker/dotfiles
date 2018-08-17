@@ -2,6 +2,7 @@ cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
 tap 'remind101/formulae'
+tap 'wata727/tflint'
 
 # OS X Apps via Homebrew
 # https://caskroom.github.io/
@@ -39,6 +40,7 @@ brew 'sshuttle'
 brew 'stern'
 brew 'sqlparse'
 brew 'terraform'
+brew 'tflint'
 brew 'the_silver_searcher'
 brew 'tree'
 brew 'watch'
