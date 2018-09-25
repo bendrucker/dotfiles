@@ -2,4 +2,4 @@
 
 set -eu
 
-docker-compose run shellcheck **/*.*sh
+docker-compose run shellcheck ./**/*.*sh
