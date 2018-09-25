@@ -1,5 +1,9 @@
 {
 	"bootstrapped": true,
+	"in_process_packages":
+	[
+		"Markdown Preview"
+	],
 	"installed_packages":
 	[
 		"Babel",
@@ -9,7 +13,6 @@
 		"Gist",
 		"GitGutter",
 		"Jinja2",
-		"Markdown Preview",
 		"MarkdownEditing",
 		"NodeRequirer",
 		"Package Control",
@@ -24,6 +27,7 @@
 		"SublimeLinter-contrib-standard",
 		"SublimeLinter-eslint",
 		"Terraform",
-		"Theme - Soda SolarizedDark"
+		"Theme - Soda SolarizedDark",
+		"MarkdownPreview"
 	]
 }

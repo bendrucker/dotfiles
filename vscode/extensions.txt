@@ -4,4 +4,3 @@ PeterJausovec.vscode-docker
 timonwong.shellcheck
 ms-kubernetes-tools.vscode-kubernetes-tools
 jetmartin.bats
-kenhowardpdx.vscode-gist
