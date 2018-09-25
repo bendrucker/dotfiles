@@ -1,6 +1,13 @@
 # dotfiles [![Build Status](https://travis-ci.org/bendrucker/dotfiles.svg?branch=master)](https://travis-ci.org/bendrucker/dotfiles)
 
-> My dotfiles for configuring OS X
+> My dotfiles for configuring macOS
+
+Linux friendly, outside of [`macos/`](macos/) and a [`Brewfile`](Brewfile) for dependency management. I use this repo for both home and work.
+
+Highlights include:
+
+* zsh with the minimal [pure](https://github.com/sindresorhus/pure) prompt
+* Sane defaults for programming languages I use
 
 ## Installing
 
