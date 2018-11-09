@@ -29,3 +29,7 @@
 
 [push]
   default = current
+
+[protocol]
+  version = 2
+ 
