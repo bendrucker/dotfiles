@@ -2,6 +2,7 @@ cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
 tap 'remind101/formulae'
+tap 'wagoodman/dive'
 tap 'wata727/tflint'
 
 # OS X Apps via Homebrew
@@ -18,6 +19,7 @@ brew 'coreutils'
 brew 'csvkit'
 brew 'ctop'
 brew 'dos2unix'
+brew 'dive'
 brew 'git'
 brew 'go'
 brew 'grc'
