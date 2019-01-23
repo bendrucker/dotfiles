@@ -11,3 +11,4 @@ npx
 speed-test
 standard
 vmd
+fx
