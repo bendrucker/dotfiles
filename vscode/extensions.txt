@@ -5,3 +5,6 @@ timonwong.shellcheck
 ms-kubernetes-tools.vscode-kubernetes-tools
 jetmartin.bats
 deerawan.vscode-dash
+eamodio.gitlens
+dbaeumer.vscode-eslint
+redhat.vscode-yaml
