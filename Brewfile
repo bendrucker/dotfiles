@@ -38,7 +38,6 @@ brew 'postgresql'
 brew 'pup'
 brew 'pv'
 brew 'python'
-brew 'assume-role'
 brew 'rbenv'
 brew 'shellcheck'
 brew 'sshuttle'
@@ -58,7 +57,6 @@ cask '1password'
 cask 'alfred'
 cask 'angry-ip-scanner'
 cask 'backblaze'
-cask 'ccmenu'
 cask 'charles'
 cask 'disk-drill'
 cask 'dash'
@@ -71,7 +69,6 @@ cask 'minikube'
 cask 'iterm2'
 cask 'plug'
 cask 'rescuetime'
-cask 'rowmote-helper'
 cask 'slack'
 cask 'sublime-text'
 cask 'vagrant'
@@ -84,10 +81,15 @@ cask 'font-source-code-pro'
 
 mas 'Airmail', id: 918858936
 mas 'Amphetamine', id: 937984704
+mas 'Deliveries', id: 924726344
 mas 'Fantastical', id: 975937182
+mas 'Ghostery Lite', id: 1436953057
+mas 'HazeOver', id: 430798174
 mas 'iFlicks', id: 731062389
 mas 'Magnet', id: 441258766
+mas 'Paprika', id: 1303222628
 mas 'Pixelmator', id: 407963104
+mas 'Speedtest', id: 1153157709
 mas 'Things', id: 904280696
 mas 'Tweetbot', id: 1384080005
 mas 'UTC Bar', id: 525372278
