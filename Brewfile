@@ -68,7 +68,6 @@ cask 'evernote'
 cask 'flux'
 cask 'google-chrome'
 cask 'minikube'
-cask 'moom'
 cask 'iterm2'
 cask 'plug'
 cask 'rescuetime'
@@ -87,7 +86,7 @@ mas 'Airmail', id: 918858936
 mas 'Amphetamine', id: 937984704
 mas 'Fantastical', id: 975937182
 mas 'iFlicks', id: 731062389
-mas 'Moom', id: 419330170
+mas 'Magnet', id: 441258766
 mas 'Pixelmator', id: 407963104
 mas 'Things', id: 904280696
 mas 'Tweetbot', id: 1384080005
