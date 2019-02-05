@@ -7,8 +7,8 @@ tap 'wata727/tflint'
 
 # OS X Apps via Homebrew
 # https://caskroom.github.io/
-tap 'caskroom/cask'
-tap 'caskroom/fonts'
+tap 'homebrew/cask'
+tap 'homebrew/cask-fonts'
 
 brew 'awscli'
 brew 'bat'
