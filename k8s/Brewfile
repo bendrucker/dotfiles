@@ -1,0 +1,6 @@
+brew 'kubectx'
+brew 'kubernetes-cli'
+brew 'kubernetes-helm'
+brew 'stern'
+
+cask 'minikube'
