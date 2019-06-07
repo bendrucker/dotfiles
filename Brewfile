@@ -1,11 +1,9 @@
 cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
-tap 'minamijoyo/tfschema'
 tap 'moncho/dry'
 tap 'remind101/formulae'
 tap 'wagoodman/dive'
-tap 'wata727/tflint'
 
 # OS X Apps via Homebrew
 # https://caskroom.github.io/
@@ -48,9 +46,6 @@ brew 'shellcheck'
 brew 'sshuttle'
 brew 'stern'
 brew 'sqlparse'
-brew 'tfenv'
-brew 'tflint'
-brew 'tfschema'
 brew 'the_silver_searcher'
 brew 'tree'
 brew 'watch'

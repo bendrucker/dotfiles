@@ -1,0 +1,6 @@
+tap 'wata727/tflint'
+tap 'minamijoyo/tfschema'
+
+brew 'tfenv'
+brew 'tflint'
+brew 'tfschema'
