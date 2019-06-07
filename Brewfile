@@ -1,9 +1,7 @@
 cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
-tap 'moncho/dry'
 tap 'remind101/formulae'
-tap 'wagoodman/dive'
 
 # OS X Apps via Homebrew
 # https://caskroom.github.io/
@@ -18,9 +16,6 @@ brew 'cloc'
 brew 'convox'
 brew 'coreutils'
 brew 'csvkit'
-brew 'ctop'
-brew 'dive'
-brew 'dry'
 brew 'fd'
 brew 'git'
 brew 'go'
@@ -66,7 +61,6 @@ cask 'backblaze'
 cask 'charles'
 cask 'disk-drill'
 cask 'dash'
-cask 'docker'
 cask 'droplr'
 cask 'evernote'
 cask 'flux'
