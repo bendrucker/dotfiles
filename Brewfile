@@ -1,7 +1,6 @@
 cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
-tap 'remind101/formulae'
 
 # OS X Apps via Homebrew
 # https://caskroom.github.io/
