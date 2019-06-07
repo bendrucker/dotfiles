@@ -22,7 +22,7 @@ scripts/bootstrap
 The project is organized into logical "topic" folders. Scripts are organized into topic folders according to functionality (e.g. HTTP utilities in `http/`) and may be organized by type (aliases, functions, etc.) within a topic folder.
 
 - **bin/**: Anything in `bin/` will get added to `$PATH`.
-- **Brewfile**: Defines packages to install via Homebrew, including Homebrew Cask for GUIs.
+- **./\**/Brewfile**: Defines packages to install via Homebrew, including Homebrew Cask for GUIs.
 - **\*/\*.zsh**: Any files ending in `.zsh` are loaded.
 - **\*/path.zsh**: Any file named `path.zsh` is loaded first and is
   expected to setup `$PATH` or similar.
