@@ -1,0 +1,4 @@
+brew 'chrome-cli'
+brew 'httpie'
+brew 'wget'
+brew 'wrk'
