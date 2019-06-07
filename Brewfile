@@ -57,6 +57,7 @@ brew 'watch'
 brew 'wget'
 brew 'wrk'
 brew 'youtube-dl'
+brew 'yq'
 brew 'zsh'
 
 cask '1password'
