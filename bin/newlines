@@ -1,0 +1,1 @@
+git ls-files -z | xargs -0 -L1 sh -c 'ed -s "$0" <<< w'
