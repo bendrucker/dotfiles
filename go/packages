@@ -1,0 +1,5 @@
+github.com/golangci/golangci-lint/cmd/golangci-lint
+github.com/apg/patter
+github.com/golang/mock/gomock
+github.com/golang/mock/mockgen
+github.com/spf13/cobra/cobra
