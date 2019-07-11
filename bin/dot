@@ -6,9 +6,6 @@
 # to make sure you're on the latest and greatest.
 export ZSH=$HOME/.dotfiles
 
-# set macOS defaults
-$ZSH/macos/defaults.sh
-
 # Install homebrew
 $ZSH/scripts/homebrew.sh 2>&1
 
