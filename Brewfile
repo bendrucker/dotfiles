@@ -14,6 +14,7 @@ brew 'convox'
 brew 'coreutils'
 brew 'csvkit'
 brew 'fd'
+brew 'gifski'
 brew 'highlight'
 brew 'jid'
 brew 'jq'
@@ -66,6 +67,7 @@ mas 'Bear Notes', id: 1091189122
 mas 'Deliveries', id: 924726344
 mas 'Fantastical', id: 975937182
 mas 'Ghostery Lite', id: 1436953057
+mas 'Gifski', id: 1351639930
 mas 'HazeOver', id: 430798174
 mas 'iFlicks', id: 731062389
 mas 'Magnet', id: 441258766
