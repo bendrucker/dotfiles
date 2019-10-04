@@ -74,6 +74,7 @@ mas 'iFlicks', id: 731062389
 mas 'Magnet', id: 441258766
 mas 'Paprika', id: 1303222628
 mas 'Pixelmator', id: 407963104
+mas 'Spark', id: 1176895641
 mas 'Speedtest', id: 1153157709
 mas 'Things', id: 904280696
 mas 'Tweetbot', id: 1384080005
