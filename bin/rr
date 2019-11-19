@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+set -euf
+
+# rr -> repo root
+
+cd "$(git rev-parse --show-toplevel)"
