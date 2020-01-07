@@ -10,7 +10,6 @@ tap 'homebrew/cask-fonts'
 
 brew 'bat'
 brew 'cloc'
-brew 'convox'
 brew 'coreutils'
 brew 'csvkit'
 brew 'fd'
