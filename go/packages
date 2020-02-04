@@ -3,3 +3,5 @@ github.com/apg/patter
 github.com/golang/mock/gomock
 github.com/golang/mock/mockgen
 github.com/spf13/cobra/cobra
+github.com/motemen/gore/cmd/gore
+github.com/mdempsky/gocode
