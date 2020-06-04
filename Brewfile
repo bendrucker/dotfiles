@@ -58,6 +58,7 @@ cask 'vanilla'
 cask 'visual-studio-code'
 cask 'vlc'
 cask 'webtorrent'
+cask 'yubico-yubikey-manager'
 
 cask 'font-source-code-pro'
 
