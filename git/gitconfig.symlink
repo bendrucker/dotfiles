@@ -15,6 +15,9 @@
 [core]
   excludesfile = ~/.gitignore
 
+[pull]
+  ff = only
+
 [apply]
   whitespace = nowarn
 
