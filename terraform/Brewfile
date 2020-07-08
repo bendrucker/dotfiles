@@ -1,6 +1,7 @@
 tap 'wata727/tflint'
 tap 'minamijoyo/tfschema'
 
+brew 'terraformer'
 brew 'terraform-docs'
 brew 'tfenv'
 brew 'tflint'
