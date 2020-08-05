@@ -68,6 +68,7 @@ cask 'vlc'
 cask 'webtorrent'
 cask 'yubico-yubikey-manager'
 
+cask 'font-hack-nerd-font'
 cask 'font-source-code-pro'
 
 mas 'Airmail', id: 918858936
