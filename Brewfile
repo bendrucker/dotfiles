@@ -71,7 +71,6 @@ cask 'yubico-yubikey-manager'
 cask 'font-hack-nerd-font'
 cask 'font-source-code-pro'
 
-mas 'Airmail', id: 918858936
 mas 'Amphetamine', id: 937984704
 mas 'Bear Notes', id: 1091189122
 mas 'Deliveries', id: 924726344
