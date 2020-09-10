@@ -66,7 +66,6 @@ cask 'transmission'
 cask 'vanilla'
 cask 'visual-studio-code'
 cask 'vlc'
-cask 'webtorrent'
 cask 'yubico-yubikey-manager'
 
 cask 'font-hack-nerd-font'
