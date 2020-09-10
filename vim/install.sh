@@ -7,7 +7,7 @@ curl --silent --fail --location \
 pip3 install --user pynvim
 
 config="$HOME/.config/nvim/init.vim"
-dir="$(dirname "$(readlink -f "$0")")"
+dir="$(dirname "$(readlink "$0")")"
 
 if [ ! -f "$config" ]; then
   mkdir -p "$(dirname "$config")"
