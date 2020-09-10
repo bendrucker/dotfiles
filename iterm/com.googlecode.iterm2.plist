@@ -12,6 +12,8 @@
 	<false/>
 	<key>AppleAntiAliasingThreshold</key>
 	<integer>1</integer>
+	<key>ApplePressAndHoldEnabled</key>
+	<false/>
 	<key>AppleScrollAnimationEnabled</key>
 	<integer>0</integer>
 	<key>AppleSmoothFixedFontsSizeThreshold</key>
@@ -418,6 +420,12 @@
 	<true/>
 	<key>MaxVertically</key>
 	<false/>
+	<key>NSNavLastRootDirectory</key>
+	<string>/Applications</string>
+	<key>NSNavPanelExpandedSizeForOpenMode</key>
+	<string>{799, 448}</string>
+	<key>NSOverlayScrollersFallBackForAccessoryViews</key>
+	<false/>
 	<key>NSQuotedKeystrokeBinding</key>
 	<string></string>
 	<key>NSRepeatCountBinding</key>
@@ -459,6 +467,8 @@
 		<key>TB Is Shown</key>
 		<integer>1</integer>
 	</dict>
+	<key>NSWindow Frame NSNavPanelAutosaveName</key>
+	<string>880 726 799 448 0 0 2560 1417 </string>
 	<key>NSWindow Frame SUAutomaticUpdateAlert</key>
 	<string>972 932 616 174 0 0 2560 1417 </string>
 	<key>NSWindow Frame SUUpdateAlert</key>
@@ -466,22 +476,36 @@
 	<key>NSWindow Frame SharedPreferences</key>
 	<string>269 122 796 486 0 0 2560 1417 </string>
 	<key>NSWindow Frame iTerm Window 0</key>
-	<string>1833 856 585 452 0 0 2560 1417 </string>
+	<string>307 632 585 377 0 0 2560 1417 </string>
 	<key>NSWindow Frame iTerm Window 1</key>
-	<string>299 312 585 452 0 0 2560 1417 </string>
+	<string>1428 406 1124 965 0 0 2560 1417 </string>
+	<key>NSWindow Frame iTerm Window 10</key>
+	<string>1164 513 1166 741 0 0 2560 1417 </string>
+	<key>NSWindow Frame iTerm Window 11</key>
+	<string>553 927 585 452 0 0 2560 1417 </string>
 	<key>NSWindow Frame iTerm Window 2</key>
-	<string>526 81 1999 1336 0 0 2560 1417 </string>
+	<string>1035 1023 585 377 0 0 2560 1417 </string>
 	<key>NSWindow Frame iTerm Window 3</key>
-	<string>716 323 1796 1064 0 0 2560 1417 </string>
+	<string>109 760 585 377 0 0 2560 1417 </string>
 	<key>NSWindow Frame iTerm Window 4</key>
-	<string>316 161 2041 1047 0 0 2560 1417 </string>
+	<string>235 927 585 377 0 0 2560 1417 </string>
 	<key>NSWindow Frame iTerm Window 5</key>
-	<string>448 66 585 452 0 0 2560 1417 </string>
+	<string>256 636 942 531 0 0 2560 1417 </string>
+	<key>NSWindow Frame iTerm Window 6</key>
+	<string>532 961 585 452 0 0 2560 1417 </string>
+	<key>NSWindow Frame iTerm Window 7</key>
+	<string>553 938 585 452 0 0 2560 1417 </string>
+	<key>NSWindow Frame iTerm Window 8</key>
+	<string>574 915 585 452 0 0 2560 1417 </string>
+	<key>NSWindow Frame iTerm Window 9</key>
+	<string>595 331 1411 1013 0 0 2560 1417 </string>
 	<key>New Bookmarks</key>
 	<array>
 		<dict>
 			<key>ASCII Anti Aliased</key>
 			<true/>
+			<key>ASCII Ligatures</key>
+			<false/>
 			<key>Allow Title Reporting</key>
 			<false/>
 			<key>Ambiguous Double Width</key>
@@ -826,11 +850,11 @@
 			<key>Name</key>
 			<string>Default</string>
 			<key>Non Ascii Font</key>
-			<string>Monaco 12</string>
+			<string>HackNerdFontCompleteM-Regular 12</string>
 			<key>Non-ASCII Anti Aliased</key>
 			<true/>
 			<key>Normal Font</key>
-			<string>Monaco 12</string>
+			<string>HackNerdFontCompleteM-Regular 12</string>
 			<key>Option Key Sends</key>
 			<integer>0</integer>
 			<key>Prompt Before Closing 2</key>
@@ -1051,13 +1075,30 @@
 	<key>NoSyncAllAppVersions</key>
 	<array>
 		<string>3.3.3beta1</string>
-		<string>3.3.7beta4</string>
-		<string>3.3.7beta3</string>
-		<string>3.3.4beta1</string>
-		<string>3.3.0beta13</string>
-		<string>3.3.5beta3</string>
+		<string>3.3.8beta3</string>
 		<string>3.3.0beta10</string>
 		<string>3.3.7beta1</string>
+		<string>3.3.8beta1</string>
+		<string>3.4.0beta3</string>
+		<string>3.3.7beta3</string>
+		<string>3.3.0beta13</string>
+		<string>3.3.12</string>
+		<string>3.4.0beta2</string>
+		<string>3.3.11</string>
+		<string>3.3.8beta4</string>
+		<string>3.3.5beta3</string>
+		<string>3.3.10</string>
+		<string>3.3.10beta1</string>
+		<string>3.3.4beta1</string>
+		<string>3.3.10beta2</string>
+		<string>3.3.7beta4</string>
+		<string>3.3.10beta3</string>
+	</array>
+	<key>NoSyncBFPRecents</key>
+	<array>
+		<string>Monaco</string>
+		<string>Hack Nerd Font</string>
+		<string>Hack Nerd Font Mono</string>
 	</array>
 	<key>NoSyncCommandHistoryHasEverBeenUsed</key>
 	<true/>
@@ -1068,14 +1109,20 @@
 		<key>topLeft</key>
 		<string>{1545, 700}</string>
 	</dict>
+	<key>NoSyncHaveUsedCopyMode</key>
+	<true/>
 	<key>NoSyncHaveWarnedAboutPasteConfirmationChange</key>
+	<true/>
+	<key>NoSyncIgnoreSystemWindowRestoration</key>
 	<true/>
 	<key>NoSyncInstallationId</key>
 	<string>EE21BEC7-CB91-4862-8B71-C154545260FC</string>
+	<key>NoSyncLastOSVersion</key>
+	<string>Version 10.15.6 (Build 19G73)</string>
 	<key>NoSyncLastTipTime</key>
 	<real>558328318.28682697</real>
 	<key>NoSyncLaunchExperienceControllerRunCount</key>
-	<integer>27</integer>
+	<integer>66</integer>
 	<key>NoSyncNextAnnoyanceTime</key>
 	<real>575689682.075086</real>
 	<key>NoSyncOnboardingWindowHasBeenShown</key>
@@ -1205,6 +1252,14 @@
 				<key>isTerminal</key>
 				<true/>
 				<key>name</key>
+				<string>selectionLength</string>
+				<key>nonterminalContext</key>
+				<integer>0</integer>
+			</dict>
+			<dict>
+				<key>isTerminal</key>
+				<true/>
+				<key>name</key>
 				<string>path</string>
 				<key>nonterminalContext</key>
 				<integer>0</integer>
@@ -1224,6 +1279,14 @@
 				<string>triggerName</string>
 				<key>nonterminalContext</key>
 				<integer>0</integer>
+			</dict>
+			<dict>
+				<key>isTerminal</key>
+				<false/>
+				<key>name</key>
+				<string>parentSession</string>
+				<key>nonterminalContext</key>
+				<integer>1</integer>
 			</dict>
 			<dict>
 				<key>isTerminal</key>
@@ -1349,6 +1412,14 @@
 				<key>isTerminal</key>
 				<true/>
 				<key>name</key>
+				<string>selection</string>
+				<key>nonterminalContext</key>
+				<integer>0</integer>
+			</dict>
+			<dict>
+				<key>isTerminal</key>
+				<true/>
+				<key>name</key>
 				<string>autoNameFormat</string>
 				<key>nonterminalContext</key>
 				<integer>0</integer>
@@ -1382,6 +1453,14 @@
 				<true/>
 				<key>name</key>
 				<string>commandLine</string>
+				<key>nonterminalContext</key>
+				<integer>0</integer>
+			</dict>
+			<dict>
+				<key>isTerminal</key>
+				<true/>
+				<key>name</key>
+				<string>parentSession.lastCommand</string>
 				<key>nonterminalContext</key>
 				<integer>0</integer>
 			</dict>
@@ -1425,6 +1504,14 @@
 				<true/>
 				<key>name</key>
 				<string>style</string>
+				<key>nonterminalContext</key>
+				<integer>0</integer>
+			</dict>
+			<dict>
+				<key>isTerminal</key>
+				<true/>
+				<key>name</key>
+				<string>currentTab.currentSession.jobPid</string>
 				<key>nonterminalContext</key>
 				<integer>0</integer>
 			</dict>
@@ -1483,6 +1570,14 @@
 				<string>currentTab</string>
 				<key>nonterminalContext</key>
 				<integer>2</integer>
+			</dict>
+			<dict>
+				<key>isTerminal</key>
+				<true/>
+				<key>name</key>
+				<string>currentTab.currentSession.parentSession.lastCommand</string>
+				<key>nonterminalContext</key>
+				<integer>0</integer>
 			</dict>
 			<dict>
 				<key>isTerminal</key>
@@ -1828,17 +1923,8 @@
 			</dict>
 		</array>
 	</dict>
-	<key>NoSyncSearchHistory</key>
-	<array>
-		<string>pidfi</string>
-		<string>zoommtg</string>
-	</array>
-	<key>NoSyncSearchHistory2</key>
-	<array>
-		<string>istio</string>
-		<string>snapshot_id</string>
-		<string>stag</string>
-	</array>
+	<key>NoSyncRestoreWindowsCount</key>
+	<integer>0</integer>
 	<key>NoSyncTimeOfFirstLaunchOfVersionWithTip</key>
 	<real>538634044.95241201</real>
 	<key>NoSyncTipsDisabled</key>
@@ -1979,15 +2065,15 @@
 	<key>SUFeedAlternateAppNameKey</key>
 	<string>iTerm</string>
 	<key>SUFeedURL</key>
-	<string>https://iterm2.com/appcasts/testing_new.xml?shard=86</string>
+	<string>https://iterm2.com/appcasts/testing_modern.xml?shard=86</string>
 	<key>SUHasLaunchedBefore</key>
 	<true/>
 	<key>SULastCheckTime</key>
-	<date>2019-12-07T10:37:24Z</date>
+	<date>2020-08-17T01:25:55Z</date>
 	<key>SUSendProfileInfo</key>
 	<false/>
 	<key>SUUpdateRelaunchingMarker</key>
-	<true/>
+	<false/>
 	<key>SavePasteHistory</key>
 	<false/>
 	<key>ShowBookmarkName</key>
@@ -2050,6 +2136,6 @@
 	<key>findRegex_iTerm</key>
 	<false/>
 	<key>iTerm Version</key>
-	<string>3.3.7beta4</string>
+	<string>3.4.0beta3</string>
 </dict>
 </plist>
