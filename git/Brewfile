@@ -1,5 +1,3 @@
-tap 'github/gh'
-
 brew 'git'
-brew 'github/gh/gh'
+brew 'gh'
 brew 'hub'
