@@ -26,6 +26,7 @@ brew 'pup'
 brew 'pv'
 brew 'shellcheck'
 brew 'sshuttle'
+brew 'starship'
 brew 'the_silver_searcher'
 brew 'tree'
 brew 'watch'
@@ -83,7 +84,7 @@ mas 'iFlicks', id: 731062389
 mas 'Instapaper', id: 1481302432
 mas 'Magnet', id: 441258766
 mas 'Paprika', id: 1303222628
-mas 'Pixelmator', id: 407963104
+mas 'Pixelmator Pro', id: 1289583905
 mas 'Spark', id: 1176895641
 mas 'Speedtest', id: 1153157709
 mas 'Things', id: 904280696
