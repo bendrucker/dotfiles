@@ -62,7 +62,6 @@ cask 'slack'
 cask 'the-unarchiver'
 cask 'transmission'
 cask 'vanilla'
-cask 'visual-studio-code'
 cask 'vlc'
 cask 'yubico-yubikey-manager'
 
