@@ -5,5 +5,7 @@ jobs:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v1
+    - name: Link to home
+      run: ln -s "$PWD" "$HOME/.dotfiles"
     - name: Bootstrap
       run: ./scripts/bootstrap
