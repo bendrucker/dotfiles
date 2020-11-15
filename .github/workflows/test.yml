@@ -1,0 +1,9 @@
+name: tests
+on: [push]
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Bootstrap
+      run: ./scripts/bootstrap
