@@ -1,3 +1,11 @@
 #!/usr/bin/env bash
 
-cat ./{,**}/Brewfile | brew bundle "$@" --file=-
+strip_mas() {
+  if [ -n "$CI" ]; then
+    grep -v 'mas '
+  else
+    cat
+  fi
+}
+
+cat ./{,**}/Brewfile | strip_mas | brew bundle "$@" --file=-
