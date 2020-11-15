@@ -5,5 +5,5 @@ jobs:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v1
-    - name: Install
-      run: ./bin/dot
+    - name: Bootstrap
+      run: ./scripts/bootstrap
