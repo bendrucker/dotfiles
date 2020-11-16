@@ -2,7 +2,7 @@
 
 strip_mas() {
   if [ -n "$CI" ]; then
-    grep -v "mas: "
+    grep -v 'mas '
   else
     cat
   fi
