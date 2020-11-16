@@ -10,5 +10,6 @@ jobs:
     - name: Remove conflicts
       run: |-
         rm "$(which aws)"
+        rm "$(which aws_completer)"
     - name: Bootstrap
       run: ./scripts/bootstrap
