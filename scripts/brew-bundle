@@ -8,4 +8,4 @@ strip_mas() {
   fi
 }
 
-cat ./{,**}/Brewfile | brew bundle "$@" --file=-
+cat ./{,**}/Brewfile | strip_mas | brew bundle "$@" --file=-
