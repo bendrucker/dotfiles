@@ -6,7 +6,6 @@ eslint
 manage-wifi-cli
 ndb
 nodemon
-npx
 speed-test
 standard
 vmd
