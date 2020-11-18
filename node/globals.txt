@@ -4,7 +4,6 @@ depcheck
 devtool
 eslint
 manage-wifi-cli
-n
 ndb
 nodemon
 npx
