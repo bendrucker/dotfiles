@@ -1,4 +1,4 @@
-mauve.terraform
+HashiCorp.terraform
 golang.Go
 ms-azuretools.vscode-docker
 timonwong.shellcheck
