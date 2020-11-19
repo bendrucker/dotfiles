@@ -13,3 +13,10 @@ jobs:
         rm "$(which aws_completer)"
     - name: Bootstrap
       run: ./scripts/bootstrap
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - uses: ludeeus/action-shellcheck@1.0.0
+        env:
+          SHELLCHECK_OPTS: -e SC1071

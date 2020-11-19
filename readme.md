@@ -1,4 +1,4 @@
-# dotfiles [![Build Status](https://travis-ci.org/bendrucker/dotfiles.svg?branch=master)](https://travis-ci.org/bendrucker/dotfiles)
+# dotfiles [![tests](https://github.com/bendrucker/dotfiles/workflows/tests/badge.svg)](https://github.com/bendrucker/dotfiles/actions?query=workflow%3Atests)
 
 > My dotfiles for configuring macOS
 
