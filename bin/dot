@@ -4,10 +4,10 @@
 #
 # `dot` handles installation, updates, things like that. Run it periodically
 # to make sure you're on the latest and greatest.
-export ZSH=$HOME/.dotfiles
+export ZSH="$HOME/.dotfiles"
 
 # Install homebrew
-$ZSH/scripts/homebrew.sh 2>&1
+"$ZSH/scripts/homebrew.sh" 2>&1
 
 # Upgrade homebrew
 echo "› brew update"
@@ -15,4 +15,4 @@ brew update
 
 # Install software
 echo "› $ZSH/scripts/install"
-$ZSH/scripts/install
+"$ZSH/scripts/install"

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-#
+# shellcheck disable=SC2059
+# 
 # bootstrap installs things.
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 DOTFILES_ROOT=$(pwd -P)
 
 echo ''
@@ -37,9 +38,9 @@ setup_gitconfig () {
     fi
 
     user ' - What is your github author name?'
-    read -e git_authorname
+    read -r -e git_authorname
     user ' - What is your github author email?'
-    read -e git_authoremail
+    read -r -e git_authoremail
 
     sed -e "s/AUTHORNAME/$git_authorname/g" -e "s/AUTHOREMAIL/$git_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$git_credential/g" git/gitconfig.local.symlink.example > git/gitconfig.local.symlink
 
@@ -51,16 +52,17 @@ setup_gitconfig () {
 link_file () {
   local src=$1 dst=$2
 
-  local overwrite= backup= skip=
-  local action=
+  local overwrite=false backup=false skip=false
+  local action=""
 
-  if [ -f "$dst" -o -d "$dst" -o -L "$dst" ]
+  if [ -f "$dst" ] || [ -d "$dst" ] || [ -L "$dst" ]
   then
 
     if [ "$overwrite_all" == "false" ] && [ "$backup_all" == "false" ] && [ "$skip_all" == "false" ]
     then
 
-      local currentSrc="$(readlink $dst)"
+      local currentSrc
+      currentSrc="$(readlink "$dst")"
 
       if [ "$currentSrc" == "$src" ]
       then
@@ -71,7 +73,7 @@ link_file () {
 
         user "File already exists: $dst ($(basename "$src")), what do you want to do?\n\
         [s]kip, [S]kip all, [o]verwrite, [O]verwrite all, [b]ackup, [B]ackup all?"
-        read -n 1 action
+        read -r -n 1 action
 
         case "$action" in
           o )
@@ -128,6 +130,7 @@ install_dotfiles () {
 
   local overwrite_all=false backup_all=false skip_all=false
 
+  # shellcheck disable=SC2044
   for src in $(find -H "$DOTFILES_ROOT" -maxdepth 2 -name '*.symlink' -not -path '*.git*')
   do
     dst="$HOME/.$(basename "${src%.*}")"
@@ -142,7 +145,8 @@ install_dotfiles
 if [ "$(uname -s)" == "Darwin" ]
 then
   info "installing dependencies"
-  if source bin/dot
+  # shellcheck disable=SC1091
+  if source ./bin/dot
   then
     success "dependencies installed"
   else
