@@ -1,5 +1,0 @@
-#compdef imgcat
-
-_arguments \
-  '(-p --print)'{-p,--print}'[Print the filename below the image]' \
-  '*:files:_files'
