@@ -11,5 +11,5 @@ dir="$(dirname "$(readlink "$0")")"
 
 if [ ! -f "$config" ]; then
   mkdir -p "$(dirname "$config")"
-  ln --symbolic "$dir/init.vim" "$config"
+  ln -s "$dir/init.vim" "$config"
 fi

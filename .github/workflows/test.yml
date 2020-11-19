@@ -1,0 +1,15 @@
+name: tests
+on: [push]
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Link to home
+      run: ln -s "$PWD" "$HOME/.dotfiles"
+    - name: Remove conflicts
+      run: |-
+        rm "$(which aws)"
+        rm "$(which aws_completer)"
+    - name: Bootstrap
+      run: ./scripts/bootstrap
