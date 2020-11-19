@@ -1,6 +1,6 @@
 mauve.terraform
 golang.Go
-PeterJausovec.vscode-docker
+ms-azuretools.vscode-docker
 timonwong.shellcheck
 ms-kubernetes-tools.vscode-kubernetes-tools
 jetmartin.bats
