@@ -1,7 +1,7 @@
 name: tests
 on: [push]
 jobs:
-  build:
+  bootstrap:
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v1
