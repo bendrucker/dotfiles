@@ -57,7 +57,6 @@ cask 'screens-connect'
 cask 'slack'
 cask 'the-unarchiver'
 cask 'transmission'
-cask 'vanilla'
 cask 'vlc'
 cask 'yubico-yubikey-manager'
 
