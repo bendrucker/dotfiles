@@ -11,6 +11,7 @@ tap 'homebrew/cask-fonts'
 
 brew 'asciinema'
 brew 'bat'
+brew 'circleci'
 brew 'cloc'
 brew 'coreutils'
 brew 'csvkit'
