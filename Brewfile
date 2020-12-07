@@ -81,6 +81,7 @@ mas 'Paprika', id: 1303222628
 mas 'Pixelmator Pro', id: 1289583905
 mas 'Spark', id: 1176895641
 mas 'Speedtest', id: 1153157709
+mas 'Streaks', id: 1493327990
 mas 'Things', id: 904280696
 mas 'Tweetbot', id: 1384080005
 mas 'UTC Bar', id: 525372278
