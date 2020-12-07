@@ -63,12 +63,12 @@ cask 'yubico-yubikey-manager'
 cask 'font-hack-nerd-font'
 cask 'font-source-code-pro'
 
+mas '1Blocker', id: 1107421413
 mas 'Amphetamine', id: 937984704
 mas 'Bear Notes', id: 1091189122
 mas 'Deliveries', id: 924726344
 mas 'Evernote', id: 406056744
 mas 'Fantastical', id: 975937182
-mas 'Ghostery Lite', id: 1436953057
 mas 'Gifski', id: 1351639930
 mas 'HazeOver', id: 430798174
 mas 'iA Writer', id: 775737590
