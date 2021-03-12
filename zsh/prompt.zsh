@@ -1,3 +1,4 @@
 #!/usr/bin/env zsh
 
-eval "$(starship init zsh)"
+antibody bundle mafredri/zsh-async
+antibody bundle sindresorhus/pure
