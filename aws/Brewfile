@@ -1,1 +1,4 @@
 brew 'awscli'
+
+tap 'versent/taps'
+brew 'saml2aws'
