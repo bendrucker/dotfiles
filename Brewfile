@@ -35,6 +35,7 @@ brew 'youtube-dl'
 brew 'yq'
 
 cask '1password'
+cask '1password-cli'
 cask 'adobe-creative-cloud'
 cask 'air-video-server-hd'
 cask 'alfred'
