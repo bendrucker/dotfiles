@@ -11,6 +11,7 @@ jobs:
       run: |-
         rm "$(which aws)"
         rm "$(which aws_completer)"
+        rm "$(which go)"
     - name: Bootstrap
       run: ./scripts/bootstrap
   shellcheck:
