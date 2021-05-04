@@ -1,0 +1,2 @@
+brew 'gpg'
+cask 'gpg-suite'
