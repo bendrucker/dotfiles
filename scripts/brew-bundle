@@ -1,19 +1,4 @@
 #!/usr/bin/env bash
 
-exclude_mac_app_store() {
-  grep -v 'mas '
-}
-
-force_link() {
-  sed '/^brew/s/$/, link: :force/'
-}
-
-brewfile_ci() {
-  if [ -n "$CI" ]; then
-    exclude_mac_app_store | force_link
-  else
-    cat
-  fi
-}
-
-cat ./{,**}/Brewfile | brewfile_ci | brew bundle "$@" --file=-
+export HOMEBREW_BUNDLE_MAS_SKIP="$CI"
+cat ./{,**}/Brewfile | brew bundle "$@" --file=-
