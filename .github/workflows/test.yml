@@ -9,7 +9,7 @@ jobs:
       run: ln -s "$PWD" "$HOME/.dotfiles"
     - name: Move existing /usr/local/bin
       run: |-
-        mv /usr/local/bin /usr/local/gh-bin
+        sudo mv /usr/local/bin /usr/local/gh-bin
         export PATH="$PATH:/usr/local/gh-bin"
     - name: Bootstrap
       run: ./scripts/bootstrap
