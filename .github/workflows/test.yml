@@ -9,8 +9,9 @@ jobs:
       run: ln -s "$PWD" "$HOME/.dotfiles"
     - name: Move existing /usr/local/bin
       run: |-
-        sudo mv /usr/local/bin /usr/local/gh-bin
-        export PATH="$PATH:/usr/local/gh-bin"
+        dest="/usr/local/gh-bin"
+        sudo mv /usr/local/bin "$dest"
+        echo "$dest" >> $GITHUB_PATH
     - name: Bootstrap
       run: ./scripts/bootstrap
   shellcheck:
