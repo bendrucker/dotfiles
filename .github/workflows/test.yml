@@ -10,7 +10,8 @@ jobs:
     - name: Move existing /usr/local/bin
       run: |-
         dest="/usr/local/gh-bin"
-        sudo mv /usr/local/bin "$dest"
+        mkdir "$dest"
+        sudo mv /usr/local/bin/* "$dest"
         echo "$dest" >> $GITHUB_PATH
     - name: Bootstrap
       run: ./scripts/bootstrap
