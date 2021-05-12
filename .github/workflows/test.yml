@@ -7,14 +7,13 @@ jobs:
     - uses: actions/checkout@v1
     - name: Link to home
       run: ln -s "$PWD" "$HOME/.dotfiles"
-    - name: Move existing /usr/local/bin
-      run: |-
-        dest="/usr/local/gh-bin"
-        mkdir "$dest"
-        sudo mv /usr/local/bin/* "$dest"
-        echo "$dest" >> $GITHUB_PATH
     - name: Bootstrap
       run: ./scripts/bootstrap
+      env:
+        # skip deps installed without homebrew in https://github.com/actions/virtual-environments/blob/main/images/macos/macos-10.15-Readme.md
+        HOMEBREW_BUNDLE_BREW_SKIP: >
+          awscli
+          go
   shellcheck:
     runs-on: ubuntu-latest
     steps:
