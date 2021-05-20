@@ -9,3 +9,4 @@ eamodio.gitlens
 dbaeumer.vscode-eslint
 redhat.vscode-yaml
 stkb.rewrap
+editorconfig.editorconfig
