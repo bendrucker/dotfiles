@@ -1,0 +1,13 @@
+#!/usr/bin/env zsh
+
+export ZSH="$HOME/.dotfiles"
+
+# all of our zsh files
+typeset -U config_files
+config_files=($ZSH/**/*.zsh)
+
+# load the path files
+for file in ${(M)config_files:#*/path.zsh}
+do
+  source $file
+done
