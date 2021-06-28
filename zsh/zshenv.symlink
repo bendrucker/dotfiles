@@ -1,6 +1,7 @@
 #!/usr/bin/env zsh
 
 export ZSH="$HOME/.dotfiles"
+export PROJECTS="$HOME/src"
 
 # all of our zsh files
 typeset -U config_files
