@@ -1,6 +1,11 @@
 # Local/private config goes in the include
-[include]
-  path = ~/.gitconfig.local
+[user]
+  name = Ben Drucker
+  email = bvdrucker@gmail.com
+  signingkey = 720D491425B2016D
+
+[credential]
+  helper = osxkeychain
 
 [alias]
   co = checkout
