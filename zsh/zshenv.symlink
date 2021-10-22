@@ -1,5 +1,7 @@
 #!/usr/bin/env zsh
 
+export PATH="/usr/local/bin:/usr/local/sbin:$ZSH/bin:$PATH"
+
 export ZSH="$HOME/.dotfiles"
 export PROJECTS="$HOME/src"
 
