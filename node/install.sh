@@ -9,5 +9,3 @@ sudo chown -R "$(whoami)" /usr/local/bin /usr/local/lib /usr/local/include /usr/
 n latest
 
 [ -f "$HOME/.npmrc" ] || [ -n "$CI" ] || (echo 'npm login:' && npm login)
-
-npm config set package-lock false
