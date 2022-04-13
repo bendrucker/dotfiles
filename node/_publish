@@ -1,3 +1,0 @@
-#compdef publish
-
-_arguments "1:newversion:(major minor patch premajor preminor prepatch prerelease)"
