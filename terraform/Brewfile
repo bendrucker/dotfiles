@@ -1,10 +1,8 @@
-tap 'bendrucker/terraform-cloud-cli', 'https://github.com/bendrucker/terraform-cloud-cli.git'
 tap 'wata727/tflint'
 tap 'minamijoyo/hcledit'
 tap 'minamijoyo/tfschema'
 
 brew 'hcledit'
-brew 'terraform-cloud-cli'
 brew 'terraformer'
 brew 'terraform-docs'
 brew 'tfenv'
