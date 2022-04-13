@@ -1,5 +1,3 @@
-tap 'getantibody/tap'
-
 brew 'highlight'
 brew 'zsh'
 brew 'antibody'
