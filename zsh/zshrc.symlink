@@ -1,5 +1,9 @@
 #!/usr/bin/env zsh
 
+if [[ -n "$ZPROF" ]]; then
+  zmodload zsh/zprof
+fi
+
 export PATH="/usr/local/bin:/usr/local/sbin:$ZSH/bin:$PATH"
 
 export ZSH="$HOME/.dotfiles"
@@ -37,3 +41,7 @@ do
 done
 
 unset config_files
+
+if [[ -n "$ZPROF" ]]; then
+  zprof
+fi
