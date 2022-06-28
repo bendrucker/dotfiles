@@ -68,7 +68,7 @@ cask 'font-source-code-pro'
 
 mas 'Amphetamine', id: 937984704
 mas 'Bear Notes', id: 1091189122
-mas 'Deliveries', id: 924726344
+mas 'Parcel', id: 639968404
 mas 'Evernote', id: 406056744
 mas 'Fantastical', id: 975937182
 mas 'Gifski', id: 1351639930
