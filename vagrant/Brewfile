@@ -1,3 +1,6 @@
 cask 'vagrant'
-cask 'virtualbox'
-cask 'virtualbox-extension-pack'
+
+if Hardware::CPU.intel?
+  cask 'virtualbox'
+  cask 'virtualbox-extension-pack'
+end
