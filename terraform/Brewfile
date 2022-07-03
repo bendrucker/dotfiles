@@ -1,10 +1,12 @@
-tap 'wata727/tflint'
-tap 'minamijoyo/hcledit'
-tap 'minamijoyo/tfschema'
-
-brew 'hcledit'
 brew 'terraformer'
 brew 'terraform-docs'
 brew 'tfenv'
 brew 'tflint'
-brew 'tfschema'
+
+tap 'minamijoyo/hcledit'
+brew 'hcledit'
+
+if Hardware::CPU.intel?
+  tap 'minamijoyo/tfschema'
+  brew 'tfschema' 
+end
