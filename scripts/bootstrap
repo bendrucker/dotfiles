@@ -48,7 +48,6 @@ setup_gitconfig () {
   fi
 }
 
-
 link_file () {
   local src=$1 dst=$2
 
@@ -136,6 +135,8 @@ install_dotfiles () {
     dst="$HOME/.$(basename "${src%.*}")"
     link_file "$src" "$dst"
   done
+
+  link_file "$DOTFILES_ROOT/ssh/config" "$HOME/.ssh/config"
 }
 
 setup_gitconfig
