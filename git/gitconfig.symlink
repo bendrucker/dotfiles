@@ -41,8 +41,3 @@
 [protocol]
   version = 2
 
-[url "ssh://git@github.com/"]
-  insteadOf = https://github.com/
-
-[hub]
-  protocol = "ssh"
