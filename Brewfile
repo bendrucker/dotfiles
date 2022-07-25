@@ -65,6 +65,7 @@ tap 'homebrew/cask-fonts'
 cask 'font-hack-nerd-font'
 cask 'font-source-code-pro'
 
+mas '1Password for Safari', id: 1569813296
 mas 'Amphetamine', id: 937984704
 mas 'Bear Notes', id: 1091189122
 mas 'Parcel', id: 639968404
