@@ -1,5 +1,4 @@
 brew 'act'
 brew 'git'
 brew 'gh'
-brew 'hub'
 brew 'pre-commit'
