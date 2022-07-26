@@ -1,10 +1,9 @@
 #!/usr/bin/env zsh
 
-set -e
+set -euf
 
-sudo mkdir -p /usr/local/n
-sudo chown -R "$(whoami)" /usr/local/n
+if [[ ! -d ~/.nvm ]]; then
+    mkdir ~/.nvm
+fi
 
-n latest
-
-[ -f "$HOME/.npmrc" ] || [ -n "$CI" ] || (echo 'npm login:' && npm login)
+nvm install node --latest-npm
