@@ -2,3 +2,4 @@ github.com/golang/mock/mockgen
 github.com/spf13/cobra-cli
 github.com/x-motemen/gore/cmd/gore
 github.com/traefik/yaegi/cmd/yaegi
+github.com/go-delve/delve/cmd/dlv
