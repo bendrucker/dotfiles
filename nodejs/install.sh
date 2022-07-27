@@ -7,3 +7,4 @@ if [[ ! -d ~/.nvm ]]; then
 fi
 
 nvm install node --latest-npm
+corepack enable
