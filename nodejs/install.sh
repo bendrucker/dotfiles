@@ -1,10 +1,3 @@
 #!/usr/bin/env zsh
 
-set -euf
-
-if [[ ! -d ~/.nvm ]]; then
-    mkdir ~/.nvm
-fi
-
-nvm install node --latest-npm
-corepack enable
+asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
