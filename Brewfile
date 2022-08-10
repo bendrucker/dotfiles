@@ -58,6 +58,7 @@ cask 'the-unarchiver'
 cask 'transmission'
 cask 'vlc'
 cask 'yubico-yubikey-manager'
+cask 'zoom'
 
 tap 'melonamin/formulae'
 cask 'swiftbar'
@@ -82,5 +83,5 @@ mas 'Pixelmator Pro', id: 1289583905
 mas 'Speedtest', id: 1153157709
 mas 'Streaks', id: 963034692
 mas 'Things', id: 904280696
-mas 'Tweetbot', id: 1384080005
 mas 'UTC Bar', id: 525372278
+mas 'Tweetbot', id: 1384080005
