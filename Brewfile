@@ -74,7 +74,7 @@ mas 'Fantastical', id: 975937182
 mas 'Gifski', id: 1351639930
 mas 'HazeOver', id: 430798174
 mas 'iA Writer', id: 775737590
-mas 'iFlicks', id: 731062389
+mas 'iFlicks', id: 408937559
 mas 'Instapaper', id: 1481302432
 mas 'Magnet', id: 441258766
 mas 'Paprika', id: 1303222628
