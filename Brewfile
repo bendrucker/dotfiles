@@ -80,7 +80,6 @@ mas 'Instapaper', id: 1481302432
 mas 'Magnet', id: 441258766
 mas 'Paprika', id: 1303222628
 mas 'Pixelmator Pro', id: 1289583905
-mas 'Spark', id: 1176895641
 mas 'Speedtest', id: 1153157709
 mas 'Streaks', id: 963034692
 mas 'Things', id: 904280696
