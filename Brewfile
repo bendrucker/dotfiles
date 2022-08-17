@@ -85,3 +85,4 @@ mas 'Streaks', id: 963034692
 mas 'Things', id: 904280696
 mas 'UTC Bar', id: 525372278
 mas 'Tweetbot', id: 1384080005
+mas 'Xcode', id: 497799835
