@@ -1,2 +1,0 @@
-#compdef s
-_files -W $PROJECTS/$SCOOP_ORGANIZATION_NAME -/

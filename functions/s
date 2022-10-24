@@ -1,5 +1,0 @@
-#!/bin/zsh
-
-# s=scoop
-
-c "$SCOOP_ORGANIZATION_NAME/$1"
