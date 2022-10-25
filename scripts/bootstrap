@@ -147,7 +147,7 @@ if [ "$(uname -s)" == "Darwin" ]
 then
   info "installing dependencies"
   # shellcheck disable=SC1091
-  if source ./bin/dot
+  if source ./bin/dotf
   then
     success "dependencies installed"
   else
