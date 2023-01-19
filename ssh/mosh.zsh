@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 
 firewall_allow_mosh_server() {
   local fw mosh_sym mosh_abs
