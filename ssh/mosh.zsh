@@ -1,3 +1,5 @@
+#!/usr/bin/env sh
+
 firewall_allow_mosh_server() {
   local fw mosh_sym mosh_abs
   fw='/usr/libexec/ApplicationFirewall/socketfilterfw'
