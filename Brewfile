@@ -10,7 +10,6 @@ tap 'homebrew/cask-versions'
 
 brew 'asciinema'
 brew 'bat'
-brew 'circleci'
 brew 'cloc'
 brew 'coreutils'
 brew 'csvkit'
