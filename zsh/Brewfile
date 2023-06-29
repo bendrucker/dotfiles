@@ -1,3 +1,3 @@
 brew 'highlight'
+brew 'pure'
 brew 'zsh'
-brew 'antibody'

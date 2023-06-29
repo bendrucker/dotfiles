@@ -1,4 +1,4 @@
 #!/usr/bin/env zsh
 
-antibody bundle mafredri/zsh-async
-antibody bundle sindresorhus/pure
+autoload -U promptinit; promptinit
+prompt pure
