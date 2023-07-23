@@ -8,6 +8,8 @@ tap 'homebrew/cask'
 tap 'homebrew/cask-drivers'
 tap 'homebrew/cask-versions'
 
+tap 'teamookla/speedtest'
+
 brew 'asciinema'
 brew 'bat'
 brew 'cloc'
@@ -60,7 +62,6 @@ cask 'vlc'
 cask 'yubico-yubikey-manager'
 cask 'zoom'
 
-
 tap 'homebrew/cask-fonts'
 cask 'font-hack-nerd-font'
 cask 'font-source-code-pro'
@@ -84,3 +85,9 @@ mas 'Things', id: 904280696
 mas 'UTC Bar', id: 525372278
 mas 'Tweetbot', id: 1384080005
 mas 'Xcode', id: 497799835
+
+# Recursively load Brewfiles relative to this file
+# https://github.com/Homebrew/homebrew-bundle/issues/521#issuecomment-513551124
+Dir.glob(File.join(File.dirname(__FILE__), '*', '**', 'Brewfile')) do |brewfile|
+  eval(IO.read(brewfile), binding)
+end
