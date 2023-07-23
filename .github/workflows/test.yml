@@ -15,6 +15,8 @@ jobs:
           awscli
           go
           golangci-lint
+          kubernetes-cli
+          minikube
   shellcheck:
     runs-on: ubuntu-latest
     steps:
