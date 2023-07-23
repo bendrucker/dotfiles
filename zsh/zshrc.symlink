@@ -18,6 +18,11 @@ fi
 typeset -U config_files
 config_files=($ZSH/**/*.zsh)
 
+if type brew &>/dev/null
+then
+  FPATH="$(brew --prefix)/share/zsh/site-functions:${FPATH}"
+fi
+
 # load the path files
 for file in ${(M)config_files:#*/path.zsh}
 do
@@ -30,20 +35,11 @@ do
   source $file
 done
 
-# https://docs.brew.sh/Shell-Completion#configuring-completions-in-zsh
-if type brew &>/dev/null
-then
-  FPATH="$(brew --prefix)/share/zsh/site-functions:${FPATH}"
-
-  autoload -Uz compinit
-  compinit
-fi
-
-# initialize autocomplete here, otherwise functions won't be loaded
-autoload -U compinit
+# initialize autocomplete
+autoload -Uz compinit
 compinit
 
-# load every completion after autocomplete loads
+# load every completion
 for file in ${(M)config_files:#*/completion.zsh}
 do
   source $file
