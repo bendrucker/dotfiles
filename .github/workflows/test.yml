@@ -17,6 +17,7 @@ jobs:
           go
           golangci-lint
           kubernetes-cli
+          kubectx
           minikube
   shellcheck:
     runs-on: ubuntu-latest
