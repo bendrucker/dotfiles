@@ -5,7 +5,6 @@ tap 'homebrew/bundle'
 # OS X Apps via Homebrew
 # https://caskroom.github.io/
 tap 'homebrew/cask'
-tap 'homebrew/cask-drivers'
 tap 'homebrew/cask-versions'
 
 tap 'teamookla/speedtest'
