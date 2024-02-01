@@ -9,5 +9,8 @@ cd "$(dirname "$0")"/..
 echo "› brew bundle"
 brew bundle
 
+# Allow installers to use executables provided via asdf
+source ./asdf/path.zsh
+
 # find the installers and run them iteratively
 find . -name install.sh | while read -r installer ; do sh -c "${installer}" ; done
