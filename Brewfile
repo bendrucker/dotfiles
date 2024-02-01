@@ -12,12 +12,6 @@ end
 cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
-
-# OS X Apps via Homebrew
-# https://caskroom.github.io/
-tap 'homebrew/cask'
-tap 'homebrew/cask-versions'
-
 tap 'teamookla/speedtest'
 
 brew 'asciinema'
