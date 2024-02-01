@@ -1,3 +1,14 @@
+# In CI, avoid installing Casks and Mac App Store apps which are slow and depended upon by dotfiles
+if ENV['CI']
+  def cask(*args)
+    # no-op
+  end
+
+  def mas(*args)
+    # noop
+  end
+end
+
 cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
