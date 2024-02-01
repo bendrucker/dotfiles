@@ -19,6 +19,7 @@ jobs:
           kubernetes-cli
           kubectx
           minikube
+          python
           python@3.11
           python@3.12
   shellcheck:
