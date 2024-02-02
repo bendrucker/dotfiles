@@ -16,7 +16,7 @@ jobs:
         key: asdf-${{ runner.os }}-${{ hashFiles('**/.tool-versions') }}
         restore-keys: |
           asdf-${{ runner.os }}-
-        path:
+        path: |
           ~/.asdf/plugins
           ~/.asdf/installs
     - name: Bootstrap
