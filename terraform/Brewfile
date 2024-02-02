@@ -4,7 +4,5 @@ brew 'tflint'
 tap 'minamijoyo/hcledit'
 brew 'hcledit'
 
-if Hardware::CPU.intel?
-  tap 'minamijoyo/tfschema'
-  brew 'tfschema' 
-end
+tap 'minamijoyo/tfschema'
+brew 'tfschema' 
