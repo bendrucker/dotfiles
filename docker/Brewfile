@@ -1,8 +1,4 @@
-tap 'moncho/dry'
 tap 'wagoodman/dive'
-
-brew 'ctop'
 brew 'dive'
-brew 'dry'
 
 cask 'docker'
