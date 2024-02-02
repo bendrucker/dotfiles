@@ -10,7 +10,15 @@ jobs:
       run: ln -s "$PWD" "$HOME/.dotfiles"
     - name: Print Homebrew configuration
       run: brew config
-    - run: brew install asdf
+    - name: Cache asdf installs
+      uses: actions/cache@v4
+      with:
+        key: asdf-${{ runner.os }}-${{ hashFiles('**/.tool-versions') }}
+        restore-keys: |
+          asdf-${{ runner.os }}-
+        path:
+          ~/.asdf/plugins
+          ~/.asdf/installs
     - name: Bootstrap
       run: ./scripts/bootstrap
       env:
