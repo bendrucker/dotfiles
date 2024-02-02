@@ -2,12 +2,22 @@ name: tests
 on: [push]
 jobs:
   bootstrap:
-    runs-on: macos-14
+    strategy:
+      matrix:
+        os:
+          - ubuntu-22.04
+          - macos-14
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v4
     - name: Link to home
       run: ln -s "$PWD" "$HOME/.dotfiles"
+    - name: Add brew bin/ to Linux $PATH
+      if: ${{ runner.os == 'Linux' }}
+      run: |
+        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+        echo "${HOMEBREW_PREFIX}/bin" >> "$GITHUB_PATH"
     - name: Print Homebrew configuration
       run: brew config
     - name: Cache asdf installs

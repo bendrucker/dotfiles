@@ -119,6 +119,7 @@ link_file () {
 
   if [ "$skip" != "true" ]  # "false" or empty
   then
+    mkdir -p "$(dirname "$2")"
     ln -s "$1" "$2"
     success "linked $1 to $2"
   fi
@@ -142,17 +143,12 @@ install_dotfiles () {
 setup_gitconfig
 install_dotfiles
 
-# If we're on a Mac, let's install and setup homebrew.
-if [ "$(uname -s)" == "Darwin" ]
+# shellcheck disable=SC1091
+if source ./bin/dotf
 then
-  info "installing dependencies"
-  # shellcheck disable=SC1091
-  if source ./bin/dotf
-  then
-    success "dependencies installed"
-  else
-    fail "error installing dependencies"
-  fi
+  success "dependencies installed"
+else
+  fail "error installing dependencies"
 fi
 
 echo ''
