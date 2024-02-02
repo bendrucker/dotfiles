@@ -17,4 +17,4 @@ source ./asdf/path.zsh
 ./asdf/install.sh
 
 # find the installers and run them iteratively
-find . -name install.sh ! -path "./asdf/*" | while read -r installer ; do sh -c "${installer}" ; done
+find . -name install.sh ! -path "./asdf/*" | while read -r installer ; do "${installer}"; done
