@@ -1,4 +1,4 @@
-# dotfiles [![tests](https://github.com/bendrucker/dotfiles/workflows/tests/badge.svg)](https://github.com/bendrucker/dotfiles/actions?query=workflow%3Atests)
+# dotfiles [![tests](https://github.com/bendrucker/dotfiles/actions/workflows/test.yml/badge.svg)](https://github.com/bendrucker/dotfiles/actions/workflows/test.yml)
 
 > My dotfiles for configuring macOS
 
