@@ -1,5 +1,4 @@
 brew 'terraform-docs'
-brew 'tfenv'
 brew 'tflint'
 
 tap 'minamijoyo/hcledit'
