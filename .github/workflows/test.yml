@@ -8,13 +8,13 @@ jobs:
     - uses: actions/checkout@v4
     - name: Link to home
       run: ln -s "$PWD" "$HOME/.dotfiles"
-    - run: brew config
+    - name: Print Homebrew configuration
+      run: brew config
     - name: Bootstrap
       run: ./scripts/bootstrap
       env:
         # skip updates/upgrades to speed up install
         HOMEBREW_NO_INSTALL_UPGRADE: '1'
-        HOMEBREW_NO_AUTO_UPDATE: '1'
         # skip deps installed without homebrew in https://github.com/actions/virtual-environments/blob/main/images/macos/macos-10.15-Readme.md
         HOMEBREW_BUNDLE_BREW_SKIP: >
           awscli
