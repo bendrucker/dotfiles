@@ -13,10 +13,11 @@ brew bundle
 # shellcheck disable=SC1091
 source ./asdf/path.zsh
 
-echo "PATH: $PATH"
-
 # Install asdf plugins and the binaries they manage
 ./asdf/install.sh
+
+# TEMP: run go first since it has an asdf-dependent installer
+./go/install.sh
 
 # find the installers and run them iteratively
 find . -name install.sh ! -path "./asdf/*" | while read -r installer ; do "${installer}"; done
