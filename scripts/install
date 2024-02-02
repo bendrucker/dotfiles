@@ -10,7 +10,7 @@ echo "› brew bundle"
 brew bundle
 
 # Expose brew configuration to installers
-eval "$(/opt/homebrew/bin/brew shellenv)"
+eval "$(brew shellenv)"
 
 # Allow installers to use executables provided via asdf
 # shellcheck disable=SC1091
