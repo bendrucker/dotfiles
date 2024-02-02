@@ -13,5 +13,8 @@ brew bundle
 # shellcheck disable=SC1091
 source ./asdf/path.zsh
 
+# Install asdf plugins and the binaries they manage
+./asdf/install.sh
+
 # find the installers and run them iteratively
-find . -name install.sh | while read -r installer ; do sh -c "${installer}" ; done
+find . -name install.sh ! -path "./asdf/*" | while read -r installer ; do sh -c "${installer}" ; done
