@@ -10,6 +10,7 @@ jobs:
       run: ln -s "$PWD" "$HOME/.dotfiles"
     - name: Print Homebrew configuration
       run: brew config
+    - run: brew install asdf
     - name: Bootstrap
       run: ./scripts/bootstrap
       env:
