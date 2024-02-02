@@ -9,5 +9,18 @@ cd "$(dirname "$0")"/..
 echo "› brew bundle"
 brew bundle
 
+# Expose brew configuration to installers
+eval "$(brew shellenv)"
+
+# Allow installers to use executables provided via asdf
+# shellcheck disable=SC1091
+source ./asdf/path.zsh
+
+# Install asdf plugins and the binaries they manage
+./asdf/install.sh
+
+# TEMP: run go first since it has an asdf-dependent installer
+./go/install.sh
+
 # find the installers and run them iteratively
-find . -name install.sh | while read -r installer ; do sh -c "${installer}" ; done
+find . -name install.sh ! -path "./asdf/*" | while read -r installer ; do "${installer}"; done

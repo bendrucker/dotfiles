@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-sudo softwareupdate -i -a
+if [ -z "$CI" ]; then
+  sudo softwareupdate -i -a
+fi
 
 shopt -s extglob
 

@@ -1,38 +1,31 @@
+# In CI, avoid installing Casks and Mac App Store apps which are slow and depended upon by dotfiles
+if ENV['CI']
+  def cask(*args)
+    # no-op
+  end
+
+  def mas(*args)
+    # noop
+  end
+end
+
 cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
-
-# OS X Apps via Homebrew
-# https://caskroom.github.io/
-tap 'homebrew/cask'
-tap 'homebrew/cask-versions'
-
 tap 'teamookla/speedtest'
 
-brew 'asciinema'
 brew 'bat'
 brew 'cloc'
 brew 'coreutils'
 brew 'csvkit'
-brew 'fd'
-brew 'gifski'
-brew 'highlight'
-brew 'jid'
 brew 'jq'
 brew 'mas'
-brew 'oauth2l'
 brew 'openssl'
-brew 'packer'
-brew 'pup'
-brew 'pv'
 brew 'shellcheck'
-brew 'sshuttle'
-brew 'svn'
 brew 'teamookla/speedtest/speedtest'
 brew 'the_silver_searcher'
 brew 'tree'
 brew 'watch'
-brew 'youtube-dl'
 brew 'yq'
 
 cask '1password'
