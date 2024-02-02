@@ -45,3 +45,6 @@ asdf plugin update --all
 
 # Install
 asdf install
+
+# Reshim in case any installs were restored from cache
+asdf reshim
