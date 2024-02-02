@@ -1,4 +1,3 @@
-brew 'terraformer'
 brew 'terraform-docs'
 brew 'tfenv'
 brew 'tflint'
