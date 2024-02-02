@@ -16,9 +16,8 @@ jobs:
     - name: Add brew bin/ to Linux $PATH
       if: startsWith(matrix.os, 'ubuntu-')
       run: |
-        /home/linuxbrew/.linuxbrew/bin/brew shellenv
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-        echo "$BREW_PREFIX/bin" >> "$GITHUB_PATH"
+        echo "${HOMEBREW_PREFIX}/bin" >> "$GITHUB_PATH"
     - name: Print Homebrew configuration
       run: brew config
     - name: Cache asdf installs
