@@ -1,4 +1,7 @@
+tap 'withgraphite/tap'
+
 brew 'act'
 brew 'git'
 brew 'gh'
 brew 'pre-commit'
+brew 'withgraphite/tap/graphite'
