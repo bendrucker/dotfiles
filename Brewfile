@@ -72,6 +72,10 @@ mas 'Streaks', id: 963034692
 mas 'UTC Bar', id: 525372278
 mas 'Xcode', id: 497799835
 
+# Weather
+mas 'Paku', id: 1534130193
+mas 'CARROT Weather: Alerts & Radar', id: 961390574
+
 # Recursively load Brewfiles relative to this file
 # https://github.com/Homebrew/homebrew-bundle/issues/521#issuecomment-513551124
 Dir.glob(File.join(File.dirname(__FILE__), '*', '**', 'Brewfile')) do |brewfile|
