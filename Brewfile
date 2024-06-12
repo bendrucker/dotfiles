@@ -54,10 +54,6 @@ cask 'transmission'
 cask 'vlc'
 cask 'zoom'
 
-tap 'homebrew/cask-fonts'
-cask 'font-hack-nerd-font'
-cask 'font-source-code-pro'
-
 mas '1Password for Safari', id: 1569813296
 mas 'Actions', id: 1586435171
 mas 'Amphetamine', id: 937984704
