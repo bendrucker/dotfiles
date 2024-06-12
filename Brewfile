@@ -9,6 +9,8 @@ if ENV['CI']
   end
 end
 
+corporate = File.exist?(File.join(__dir__, '.corporate'))
+
 cask_args appdir: '/Applications'
 
 tap 'homebrew/bundle'
@@ -30,9 +32,9 @@ brew 'yq'
 
 cask '1password'
 cask '1password-cli'
-cask 'adobe-creative-cloud'
-cask 'android-file-transfer'
-cask 'backblaze'
+cask 'adobe-creative-cloud' unless corporate
+cask 'android-file-transfer' unless corporate
+cask 'backblaze' unless corporate
 cask 'charles'
 cask 'disk-drill'
 cask 'dash'
@@ -60,9 +62,9 @@ mas 'Fantastical', id: 975937182
 mas 'Gifski', id: 1351639930
 mas 'HazeOver', id: 430798174
 mas 'iA Writer', id: 775737590
-mas 'iFlicks', id: 408937559
+mas 'iFlicks', id: 408937559 unless corporate
 mas 'Magnet', id: 441258766
-mas 'Paprika', id: 1303222628
+mas 'Paprika', id: 1303222628 unless corporate
 mas 'Pixelmator Pro', id: 1289583905
 mas 'Speedtest', id: 1153157709
 mas 'Streaks', id: 963034692

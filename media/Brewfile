@@ -1,5 +1,5 @@
 brew 'ffmpeg'
 
 cask 'plex'
-cask 'transmission'
+cask 'transmission' unless corporate
 cask 'vlc'
