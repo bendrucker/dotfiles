@@ -1,7 +1,19 @@
 name: tests
 on: [push]
 jobs:
+  lint-brewfiles:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: 3
+    - name: Install Rubocop
+      run: gem install rubocop
+    - name: Lint Brewfiles
+      run: rubocop **/Brewfile
   bootstrap:
+    needs: lint-brewfiles
     strategy:
       matrix:
         os:
