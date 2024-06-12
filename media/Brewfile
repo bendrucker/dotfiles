@@ -1,0 +1,5 @@
+brew 'ffmpeg'
+
+cask 'plex'
+cask 'transmission'
+cask 'vlc'
