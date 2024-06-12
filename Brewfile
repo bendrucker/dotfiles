@@ -74,7 +74,7 @@ mas 'Xcode', id: 497799835
 
 # Weather
 mas 'Paku', id: 1534130193
-mas 'CARROT Weather: Alerts & Radar', id: 961390574
+# mas 'CARROT Weather: Alerts & Radar', id: 961390574 # https://github.com/mas-cli/mas/issues/321
 
 # Recursively load Brewfiles relative to this file
 # https://github.com/Homebrew/homebrew-bundle/issues/521#issuecomment-513551124
