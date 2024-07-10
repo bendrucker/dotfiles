@@ -11,6 +11,6 @@ defaults write com.apple.dock persistent-apps -array
 defaults write com.apple.dock persistent-others -array
 
 # lock contents
-defaults write com.apple.dock contents-immutable -bool true
+defaults write com.apple.dock contents-immutable -bool false
 
 killall Dock
