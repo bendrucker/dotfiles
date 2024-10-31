@@ -3,3 +3,5 @@ brew 'gnu-sed'
 brew 'gnu-tar'
 brew 'mosh'
 brew 'nmap'
+
+cask 'tailscale'
