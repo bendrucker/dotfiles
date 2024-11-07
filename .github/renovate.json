@@ -8,6 +8,10 @@
     {
       "matchUpdateTypes": ["major"],
       "automerge": false
+    },
+    {
+      "matchManagers": ["asdf"],
+      "minimumReleaseAge": "2 weeks"
     }
   ]
 }
