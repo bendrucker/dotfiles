@@ -40,6 +40,10 @@ else
   done
 fi
 
+# https://github.com/asdf-vm/asdf-ruby?tab=readme-ov-file#use
+# Ensure latest Ruby versions are available
+export ASDF_RUBY_BUILD_VERSION=master
+
 # Update all plugins
 asdf plugin update --all
 
