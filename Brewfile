@@ -39,11 +39,13 @@ cask 'charles'
 cask 'disk-drill'
 cask 'dash'
 cask 'geekbench'
+cask 'ghostty'
 cask 'google-chrome'
 cask 'hazel'
 cask 'hyperkey'
 cask 'istat-menus'
-cask 'logi-options-plus'
+cask 'logi-options+'
+cask 'monitorcontrol'
 cask 'monodraw'
 cask 'nordvpn'
 cask 'pdfpen'
@@ -56,7 +58,6 @@ cask 'zoom'
 mas '1Password for Safari', id: 1569813296
 mas 'Actions', id: 1586435171
 mas 'Amphetamine', id: 937984704
-mas 'Bear Notes', id: 1091189122
 mas 'Parcel', id: 639968404
 mas 'Fantastical', id: 975937182
 mas 'Gifski', id: 1351639930
