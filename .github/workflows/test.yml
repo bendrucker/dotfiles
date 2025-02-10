@@ -20,15 +20,14 @@ jobs:
         echo "${HOMEBREW_PREFIX}/bin" >> "$GITHUB_PATH"
     - name: Print Homebrew configuration
       run: brew config
-    - name: Cache asdf installs
+    - name: Cache mise installs
       uses: actions/cache@v4
       with:
-        key: asdf-${{ runner.os }}-${{ hashFiles('**/.tool-versions') }}
+        key: mise-${{ runner.os }}-${{ hashFiles('**/mise/config.toml') }}
         restore-keys: |
-          asdf-${{ runner.os }}-
+          mise-${{ runner.os }}-
         path: |
-          ~/.asdf/plugins
-          ~/.asdf/installs
+          ~/.local/share/mise
     - name: Bootstrap
       run: ./scripts/bootstrap
       env:

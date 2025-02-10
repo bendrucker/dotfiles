@@ -1,0 +1,4 @@
+[tools]
+go = "1.22.2"
+node = "20.11.1"
+terraform = "1.8.4"

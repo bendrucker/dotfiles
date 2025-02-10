@@ -12,15 +12,15 @@ brew bundle
 # Expose brew configuration to installers
 eval "$(brew shellenv)"
 
-# Allow installers to use executables provided via asdf
+# Allow installers to use executables provided via mise
 # shellcheck disable=SC1091
-source ./asdf/path.zsh
+source ./mise/path.zsh
 
-# Install asdf plugins and the binaries they manage
-./asdf/install.sh
+# Install mise plugins and the binaries they manage
+./mise/install.sh
 
-# TEMP: run go first since it has an asdf-dependent installer
+# TEMP: run go first since it has an mise-dependent installer
 ./go/install.sh
 
 # find the installers and run them iteratively
-find . -name install.sh ! -path "./asdf/*" | while read -r installer ; do "${installer}"; done
+find . -name install.sh ! -path "./mise/*" | while read -r installer ; do "${installer}"; done
