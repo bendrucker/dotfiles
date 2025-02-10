@@ -18,6 +18,9 @@ jobs:
       run: |
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         echo "${HOMEBREW_PREFIX}/bin" >> "$GITHUB_PATH"
+    - name: Install zsh on Linux
+      if: ${{ runner.os == 'Linux' }}
+      run: sudo apt-get install -y zsh
     - name: Print Homebrew configuration
       run: brew config
     - name: Cache mise installs
