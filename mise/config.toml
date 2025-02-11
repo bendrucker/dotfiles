@@ -1,4 +1,4 @@
 [tools]
-go = "1.22.2"
-node = "20.11.1"
-terraform = "1.8.4"
+go = "1.23"
+node = "lts"
+terraform = "1.10.5"
