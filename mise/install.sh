@@ -6,3 +6,5 @@ DESTINATION="$HOME/.config/mise"
 
 mkdir -p "$DESTINATION"
 ln -sf "$SOURCE/$FILENAME" "$DESTINATION/$FILENAME"
+
+mise install
