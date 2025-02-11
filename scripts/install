@@ -12,12 +12,8 @@ brew bundle
 # Expose brew configuration to installers
 eval "$(brew shellenv)"
 
-# Allow installers to use executables provided via mise
-# shellcheck disable=SC1091
-source ./mise/path.zsh
-
-# Install mise plugins and the binaries they manage
-./mise/install.sh
+# Activate mise shims so that installers can use any shell
+eval "$(mise activate --shims)"
 
 # TEMP: run go first since it has an mise-dependent installer
 ./go/install.sh
