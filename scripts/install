@@ -12,11 +12,11 @@ brew bundle
 # Expose brew configuration to installers
 eval "$(brew shellenv)"
 
+# Install mise tools
+mise install
+
 # Activate mise shims so that installers can use any shell
 eval "$(mise activate --shims)"
 
-# TEMP: run go first since it has an mise-dependent installer
-./go/install.sh
-
-# find the installers and run them iteratively
+# find the installers other than mise and run them iteratively
 find . -name install.sh ! -path "./mise/*" | while read -r installer ; do "${installer}"; done
