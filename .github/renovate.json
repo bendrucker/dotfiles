@@ -10,7 +10,7 @@
       "automerge": false
     },
     {
-      "matchManagers": ["asdf"],
+      "matchManagers": ["mise"],
       "minimumReleaseAge": "2 weeks"
     }
   ]
