@@ -13,7 +13,6 @@ corporate = File.exist?(File.join(__dir__, '.corporate'))
 
 cask_args appdir: '/Applications'
 
-tap 'homebrew/bundle'
 tap 'teamookla/speedtest'
 
 brew 'bat'
