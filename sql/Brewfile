@@ -1,1 +1,1 @@
-brew 'postgresql'
+brew 'postgresql@17'
