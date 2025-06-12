@@ -20,7 +20,7 @@ brew 'cloc'
 brew 'coreutils'
 brew 'csvkit'
 brew 'jq'
-brew 'mas'
+brew 'mas' if OS.mac?
 brew 'openssl'
 brew 'shellcheck'
 brew 'teamookla/speedtest/speedtest'
