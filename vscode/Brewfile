@@ -1,1 +1,2 @@
 cask 'visual-studio-code'
+cask 'visual-studio-code@insiders'
