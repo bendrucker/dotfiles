@@ -1,81 +1,44 @@
-# In CI, avoid installing Casks and Mac App Store apps which are slow and depended upon by dotfiles
-if ENV['CI']
-  def cask(*args)
-    # no-op
-  end
-
-  def mas(*args)
-    # noop
-  end
-end
-
-corporate = File.exist?(File.join(__dir__, '.corporate'))
-
-cask_args appdir: '/Applications'
-
-tap 'teamookla/speedtest'
-
-brew 'bat'
-brew 'cloc'
-brew 'coreutils'
-brew 'csvkit'
-brew 'jq'
-brew 'mas'
-brew 'openssl'
-brew 'shellcheck'
-brew 'teamookla/speedtest/speedtest'
-brew 'the_silver_searcher'
-brew 'tree'
-brew 'watch'
-brew 'yq'
-
-cask '1password'
-cask '1password-cli'
-cask 'adobe-creative-cloud' unless corporate
-cask 'android-file-transfer' unless corporate
-cask 'backblaze' unless corporate
-cask 'charles'
-cask 'disk-drill'
-cask 'dash'
-cask 'geekbench'
-cask 'ghostty'
-cask 'google-chrome'
-cask 'hazel'
-cask 'istat-menus'
-cask 'logi-options+'
-cask 'monitorcontrol'
-cask 'monodraw'
-cask 'nordvpn'
-cask 'pdfpen'
-cask 'raycast'
-cask 'screens-connect'
-cask 'slack'
-cask 'the-unarchiver'
-cask 'zoom'
-
-mas '1Password for Safari', id: 1569813296
-mas 'Actions', id: 1586435171
-mas 'Amphetamine', id: 937984704
-mas 'Parcel', id: 639968404
-mas 'Fantastical', id: 975937182
-mas 'Gifski', id: 1351639930
-mas 'HazeOver', id: 430798174
-mas 'iA Writer', id: 775737590
-mas 'iFlicks', id: 408937559 unless corporate
-mas 'Magnet', id: 441258766
-mas 'Paprika', id: 1303222628 unless corporate
-mas 'Pixelmator Pro', id: 1289583905
-mas 'Speedtest', id: 1153157709
-mas 'Streaks', id: 963034692
-mas 'UTC Bar', id: 525372278
-mas 'Xcode', id: 497799835
-
-# Weather
-mas 'Paku', id: 1534130193
-# mas 'CARROT Weather: Alerts & Radar', id: 961390574 # https://github.com/mas-cli/mas/issues/321
-
-# Recursively load Brewfiles relative to this file
-# https://github.com/Homebrew/homebrew-bundle/issues/521#issuecomment-513551124
-Dir.glob(File.join(File.dirname(__FILE__), '*', '**', 'Brewfile')) do |brewfile|
-  eval(IO.read(brewfile), binding)
-end
+IyBJbiBDSSwgYXZvaWQgaW5zdGFsbGluZyBDYXNrcyBhbmQgTWFjIEFwcCBT
+dG9yZSBhcHBzIHdoaWNoIGFyZSBzbG93IGFuZCBkZXBlbmRlZCB1cG9uIGJ5
+IGRvdGZpbGVzCmlmIEVOVlsnQ0knXQogIGRlZiBjYXNrKCphcmdzKQogICAg
+IyBuby1vcAogIGVuZAoKICBkZWYgbWFzKCphcmdzKQogICAgIyBub29wCiAg
+ZW5kCmVuZAoKY29ycG9yYXRlID0gRmlsZS5leGlzdD8oRmlsZS5qb2luKF9f
+ZGlyX18sICcuY29ycG9yYXRlJykpCgpjYXNrX2FyZ3MgYXBwZGlyOiAnL0Fw
+cGxpY2F0aW9ucycKCnRhcCAndGVhbW9va2xhL3NwZWVkdGVzdCcKCmJyZXcg
+J2JhdCcKYnJldyAnY2xvYycKYnJldyAnY29yZXV0aWxzJwpicmV3ICdjc3Zr
+aXQnCmJyZXcgJ2pxJwpicmV3ICdtYXMnCmJyZXcgJ29wZW5zc2wnCmJyZXcg
+J3NoZWxsY2hlY2snCmJyZXcgJ3RlYW1vb2tsYS9zcGVlZHRlc3Qvc3BlZWR0
+ZXN0JwpicmV3ICd0aGVfc2lsdmVyX3NlYXJjaGVyJwpicmV3ICd0cmVlJwpi
+cmV3ICd3YXRjaCcKYnJldyAneXEnCgpjYXNrICcxcGFzc3dvcmQnCmNhc2sg
+JzFwYXNzd29yZC1jbGknCmNhc2sgJ2Fkb2JlLWNyZWF0aXZlLWNsb3VkJyB1
+bmxlc3MgY29ycG9yYXRlCmNhc2sgJ2FuZHJvaWQtZmlsZS10cmFuc2Zlcicg
+dW5sZXNzIGNvcnBvcmF0ZQpjYXNrICdiYWNrYmxhemUnIHVubGVzcyBjb3Jw
+b3JhdGUKY2FzayAnY2hhcmxlcycKY2FzayAnZGlzay1kcmlsbCcKY2FzayAn
+ZGFzaCcKY2FzayAnZ2Vla2JlbmNoJwpjYXNrICdnaG9zdHR5JwpjYXNrICdn
+b29nbGUtY2hyb21lJwpjYXNrICdoYXplbCcKY2FzayAnaXN0YXQtbWVudXMn
+CmNhc2sgJ2xvZ2ktb3B0aW9ucysnCmNhc2sgJ21vbml0b3Jjb250cm9sJwpj
+YXNrICdtb25vZHJhdycKY2FzayAnbm9yZHZwbicKY2FzayAncGRmcGVuJwpj
+YXNrICdyYXljYXN0JwpjYXNrICdzY3JlZW5zLWNvbm5lY3QnCmNhc2sgJ3Ns
+YWNrJwpjYXNrICd0aGUtdW5hcmNoaXZlcicKY2FzayAnem9vbScKCmJyZXcg
+J3Zpc3VhbC1zdHVkaW8tY29kZScKYmV3ICd2aXN1YWwtc3R1ZGlvLWNvZGVA
+aW5zaWRlcnMnCgpsjYXMgJzFQYXNzd29yZCBmb3IgU2FmYXJpJywgaWQ6IDE1
+Njk4MTMyOTYKbWFzICdBY3Rpb25zJywgaWQ6IDE1ODY0MzUxNzEKbWFzICdB
+bXBoZXRhbWluZScsIGlkOiA5Mzc5ODQ3MDQKbWFzICdQYXJjZWwnLCBpZDog
+NjM5OTY4NDA0Cm1hcyAnRmFudGFzdGljYWwnLCBpZDogOTc1OTM3MTgyCm1h
+cyAnR2lmc2tpJywgaWQ6IDEzNTE2Mzk5MzAKbWFzICdIYXplT3ZlcicsIGlk
+OiA0MzA3OTgxNzQKbWFzICdpQSBXcml0ZXInLCBpZDogNzc1NzM3NTkwCm1h
+cyAnaUZsaWNrcycsIGlkOiA0MDg5Mzc1NTkgdW5sZXNzIGNvcnBvcmF0ZQpt
+YXMgJ01hZ25ldCcsIGlkOiA0NDEyNTg3NjYKbWFzICdQYXByaWthJywgaWQ6
+IDEzMDMyMjI2MjggdW5sZXNzIGNvcnBvcmF0ZQptYXMgJ1BpeGVsbWF0b3Ig
+UHJvJywgaWQ6IDEyODk1ODM5MDUKbWFzICdTcGVlZHRlc3QnLCBpZDogMTE1
+MzE1NzcwOQptYXMgJ1N0cmVha3MnLCBpZDogOTYzMDM0NjkyCm1hcyAnVVRD
+IEJhcicsIGlkOiA1MjUzNzIyNzgKbWFzICdYY29kZScsIGlkOiA0OTc3OTk4
+MzUKCiMgV2VhdGhlcgp1bWFzICdQYWt1JyMgaWQ6IDE1MzQxMzAxOTMKIyBt
+YXMgJ0NBUlJPVCBXZWF0aGVyOiBBbGVydHMgJiBSYWRhcicsIGlkOiA5NjEz
+OTA1NzQgIyBodHRwczovL2dpdGh1Yi5jb20vbWFzLWNsaS9tYXMvaXNzdWVz
+LzMyMQoKIyBSZWN1cnNpdmVseSBsb2FkIEJyZXdmaWxlcyByZWxhdGl2ZSB0
+byB0aGlzIGZpbGUKIyBodHRwczovL2dpdGh1Yi5jb20vSG9tZWJldy9ob21l
+YnJldy1idW5kbGUvaXNzdWVzLzUyMSNpc3N1ZWNvbW1lbnQtNTEzNTUxMTI0
+CkRpci5nbG9iKEZpbGUuam9pbihGaWxlLmRpcm5hbWUoX19GSUxFX18pLCAn
+KicsICcqKionLCAnQnJld2ZpbGUnKSkgZG8gfGJyZXdmaWxlcAogIGV2YWwo
+SU8ucmVhZChicmV3ZmlsZSksIGJpbmRpbmcpCmVuZAo=
