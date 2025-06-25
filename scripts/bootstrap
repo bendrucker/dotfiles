@@ -143,6 +143,9 @@ install_dotfiles () {
 setup_gitconfig
 install_dotfiles
 
+info 'building default packages'
+./bin/build-default-packages
+
 # shellcheck disable=SC1091
 if source ./bin/dotf
 then
