@@ -1,1 +1,1 @@
-brew 'mosh', postinstall: "#{File.dirname(__FILE__)}/mosh.sh"
+brew 'mosh'
