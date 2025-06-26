@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+
+set -e
+
+ORG=$(echo "$1" | cut -d'/' -f1)
+REPO=$(echo "$1" | cut -d'/' -f2)
+TARGET="$PROJECTS/$ORG/$REPO"
+
+mkdir -p "$PROJECTS/$ORG"
+gh repo clone "$1" "$TARGET"
+cd "$TARGET"

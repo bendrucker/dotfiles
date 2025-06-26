@@ -6,3 +6,6 @@ brew 'hcledit'
 
 tap 'minamijoyo/tfschema'
 brew 'tfschema' 
+
+tap 'pulumi/tap'
+brew 'pulumi'

@@ -12,6 +12,10 @@ export ZSH="$HOME/.dotfiles"
 echo "› brew update"
 brew update
 
+# Build default package files
+echo "› building default packages"
+"$ZSH/bin/build-default-packages"
+
 # Install software
 echo "› $ZSH/scripts/install"
 "$ZSH/scripts/install"
