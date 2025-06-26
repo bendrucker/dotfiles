@@ -10,3 +10,5 @@ coverage
 
 # VS Code
 .vscode
+
+.claude/settings.local.json

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+shopt -s extglob
+
 if [ "$(uname -s)" != "Darwin" ]; then
   exit 0
 fi
@@ -7,8 +9,6 @@ fi
 if [ -z "$CI" ]; then
   sudo softwareupdate -i -a
 fi
-
-shopt -s extglob
 
 for file in "$ZSH"/macos/!(install).sh
 do
