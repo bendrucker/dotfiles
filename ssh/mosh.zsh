@@ -13,3 +13,5 @@ firewall_allow_mosh_server() {
   sudo "$fw" --unblockapp "$mosh_abs"
   sudo "$fw" --setglobalstate on
 }
+
+firewall_allow_mosh_server
