@@ -47,6 +47,7 @@ jobs:
           python
           python@3.11
           python@3.12
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   shellcheck:
     runs-on: ubuntu-latest
     steps:
