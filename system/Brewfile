@@ -3,5 +3,6 @@ brew 'gnu-sed'
 brew 'gnu-tar'
 brew 'mosh'
 brew 'nmap'
+brew 'tmux'
 
 cask 'tailscale'
