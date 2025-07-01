@@ -10,3 +10,10 @@ coverage
 
 # VS Code
 .vscode
+
+# Local settings for Claude Code
+.claude/settings.local.json
+
+# Temporary files
+tmp/
+

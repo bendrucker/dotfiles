@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:mise.jdx.dev)",
+      "WebFetch(domain:docs.brew.sh)"
+    ],
+    "deny": []
+  }
+}
