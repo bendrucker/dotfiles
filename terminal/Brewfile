@@ -1,1 +1,2 @@
 cask 'iterm2'
+brew 'tmux'
