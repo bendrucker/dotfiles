@@ -1,3 +1,4 @@
+#!/usr/bin/env zsh
 #compdef claude
 
 # Claude CLI completion for Zsh
@@ -41,6 +42,7 @@ _claude() {
   )
 
   # Define subcommands
+  # shellcheck disable=SC2034
   local -a subcommands=(
     'config:Manage configuration'
     'mcp:Configure and manage MCP servers'
@@ -51,7 +53,7 @@ _claude() {
   )
 
   _arguments -C \
-    $main_options \
+    "${main_options[@]}" \
     '1: :->command' \
     '*::arg:->args'
 
@@ -60,7 +62,7 @@ _claude() {
       _describe -t commands 'claude command' subcommands
       ;;
     args)
-      case $line[1] in
+      case ${line[1]} in
         config)
           _claude_config
           ;;
@@ -86,6 +88,7 @@ _claude_config() {
     '--help[Display help for command]'
   )
 
+  # shellcheck disable=SC2034
   local -a config_subcommands=(
     'get:Get a config value'
     'set:Set a config value'
@@ -97,7 +100,7 @@ _claude_config() {
   )
 
   _arguments -C \
-    $config_options \
+    "${config_options[@]}" \
     '1: :->command' \
     '*::arg:->args'
 
@@ -106,7 +109,7 @@ _claude_config() {
       _describe -t commands 'claude config command' config_subcommands
       ;;
     args)
-      case $line[1] in
+      case ${line[1]} in
         get)
           _arguments \
             '-g[Global config]' \
@@ -154,6 +157,7 @@ _claude_mcp() {
     '--help[Display help for command]'
   )
 
+  # shellcheck disable=SC2034
   local -a mcp_subcommands=(
     'serve:Start the Claude Code MCP server'
     'add:Add a server'
@@ -166,7 +170,7 @@ _claude_mcp() {
   )
 
   _arguments -C \
-    $mcp_options \
+    "${mcp_options[@]}" \
     '1: :->command' \
     '*::arg:->args'
 
@@ -175,7 +179,7 @@ _claude_mcp() {
       _describe -t commands 'claude mcp command' mcp_subcommands
       ;;
     args)
-      case $line[1] in
+      case ${line[1]} in
         serve)
           _arguments \
             '--port[Port to run the server on]:port:' \
