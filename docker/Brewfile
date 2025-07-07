@@ -1,4 +1,4 @@
 tap 'wagoodman/dive'
 brew 'dive'
 
-cask 'docker'
+cask 'docker-desktop'
