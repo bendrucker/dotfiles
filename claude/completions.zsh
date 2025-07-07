@@ -1,4 +1,5 @@
 #!/usr/bin/env zsh
+
 #compdef claude
 
 # Claude CLI completion for Zsh
