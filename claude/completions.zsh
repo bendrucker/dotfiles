@@ -225,6 +225,3 @@ _claude_install() {
     '--reinstall[Force reinstall even if already installed]' \
     '1:target:(stable latest)'
 }
-
-# Register the completion function
-compdef _claude claude
