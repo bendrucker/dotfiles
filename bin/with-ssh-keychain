@@ -32,5 +32,13 @@ if ! security show-keychain-info ~/Library/Keychains/login.keychain-db >/dev/nul
 fi
 # If we get here, keychain is unlocked (either was already, or we just unlocked it)
 
-# Execute the command, replacing this process entirely
-exec "$@"
+# If stdin is piped and we're running claude, read input and pass as argument
+if [ ! -t 0 ] && [ "$1" = "claude" ]; then
+  # Read all input from stdin
+  input=$(cat)
+  # Execute claude with the input as an argument
+  exec "$@" "$input"
+else
+  # Execute the command normally, replacing this process entirely
+  exec "$@"
+fi
