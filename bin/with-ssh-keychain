@@ -1,0 +1,36 @@
+#!/bin/sh
+#/ Usage: with-ssh-keychain <command> [<args>...]
+#/ Run a command with macOS keychain unlocked.
+#/ Assumes this is being called from an SSH/Mosh session.
+set -e
+
+# Help text
+test "${1:-}" = "--help" && {
+  grep ^#/ <"$0" | cut -c4-
+  exit 2
+}
+
+# Check if we have a command to run
+if [ $# -eq 0 ]; then
+  echo "Usage: with-ssh-keychain <command> [<args>...]" >&2
+  exit 1
+fi
+
+# Ensure we're in an interactive terminal (not being piped)
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+  # Not interactive - refuse to run to avoid password prompt issues
+  exit 1
+fi
+
+# Check if keychain is already unlocked
+if ! security show-keychain-info ~/Library/Keychains/login.keychain-db >/dev/null 2>&1; then
+  # Keychain is locked, try to unlock it
+  if ! security unlock-keychain ~/Library/Keychains/login.keychain-db; then
+    # If unlock fails (user cancelled or wrong password), exit
+    exit 1
+  fi
+fi
+# If we get here, keychain is unlocked (either was already, or we just unlocked it)
+
+# Execute the command, replacing this process entirely
+exec "$@"
