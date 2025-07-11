@@ -1,0 +1,34 @@
+#!/bin/sh
+#/ Usage: claude-ssh-wrapper [<claude-args>...]
+#/ Run Claude with macOS keychain unlocked in SSH/Mosh sessions.
+#/ Handles piped input by converting to command-line arguments.
+set -e
+
+# Help text
+test "${1:-}" = "--help" && {
+  grep ^#/ <"$0" | cut -c4-
+  exit 2
+}
+
+# All arguments are passed to claude
+
+# Check if keychain is already unlocked
+if ! security show-keychain-info ~/Library/Keychains/login.keychain-db >/dev/null 2>&1; then
+  # Keychain is locked, try to unlock it (will use /dev/tty for prompt)
+  if ! security unlock-keychain ~/Library/Keychains/login.keychain-db </dev/tty; then
+    # If unlock fails (user cancelled or wrong password), exit
+    exit 1
+  fi
+fi
+# If we get here, keychain is unlocked (either was already, or we just unlocked it)
+
+# If stdin is piped, read input and pass as argument to work around Claude's raw mode requirement
+if [ ! -t 0 ]; then
+  # Read all input from stdin
+  input=$(cat)
+  # Execute claude with the input as an argument, redirecting stdin from /dev/tty
+  exec claude "$@" "$input" </dev/tty
+else
+  # Execute claude normally, replacing this process entirely
+  exec claude "$@"
+fi
