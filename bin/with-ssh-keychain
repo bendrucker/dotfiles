@@ -36,8 +36,8 @@ fi
 if [ ! -t 0 ] && [ "$1" = "claude" ]; then
   # Read all input from stdin
   input=$(cat)
-  # Execute claude with the input as an argument
-  exec "$@" "$input"
+  # Execute claude with the input as an argument, redirecting stdin from /dev/tty
+  exec "$@" "$input" </dev/tty
 else
   # Execute the command normally, replacing this process entirely
   exec "$@"
