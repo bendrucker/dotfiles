@@ -16,15 +16,16 @@ if [ $# -eq 0 ]; then
   exit 1
 fi
 
-# Ensure we're in an interactive terminal (not being piped)
-if [ ! -t 0 ] || [ ! -t 1 ]; then
-  # Not interactive - refuse to run to avoid password prompt issues
-  exit 1
-fi
-
 # Check if keychain is already unlocked
 if ! security show-keychain-info ~/Library/Keychains/login.keychain-db >/dev/null 2>&1; then
-  # Keychain is locked, try to unlock it
+  # Keychain is locked - check if we're in an interactive terminal
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    # Not interactive - can't prompt for password
+    echo "Error: Keychain is locked and terminal is not interactive. Cannot prompt for password." >&2
+    exit 1
+  fi
+  
+  # Try to unlock it
   if ! security unlock-keychain ~/Library/Keychains/login.keychain-db; then
     # If unlock fails (user cancelled or wrong password), exit
     exit 1
