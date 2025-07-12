@@ -12,29 +12,26 @@ test "${1:-}" = "--help" && {
 
 # All arguments are passed to claude
 
-# Check if keychain is already unlocked
-if ! security show-keychain-info ~/Library/Keychains/login.keychain-db >/dev/null 2>&1; then
-  # Keychain is locked - check if we can access controlling terminal
-  if [ ! -c /dev/tty ]; then
-    echo "Error: Keychain is locked and no controlling terminal available. Use 'ssh -t' to allow password prompt." >&2
-    exit 1
-  fi
-  
+# Only try to unlock keychain if we have a proper TTY
+if [ -t 0 ] && ! security show-keychain-info ~/Library/Keychains/login.keychain-db >/dev/null 2>&1; then
   # Keychain is locked, try to unlock it
   if ! security unlock-keychain ~/Library/Keychains/login.keychain-db; then
-    # If unlock fails (user cancelled or wrong password), exit
+    # If unlock fails, exit
     exit 1
   fi
 fi
 # If we get here, keychain is unlocked (either was already, or we just unlocked it)
 
+# Find real claude binary (skip our wrapper)
+REAL_CLAUDE=$(which -a claude | head -n 2 | tail -n 1)
+
 # If stdin is piped, read input and pass as argument to work around Claude's raw mode requirement
 if [ ! -t 0 ]; then
   # Read all input from stdin
   input=$(cat)
-  # Execute claude with the input as an argument, redirecting stdin from /dev/tty
-  exec claude "$@" "$input" </dev/tty
+  # Execute real claude with the input as an argument, redirecting stdin from /dev/tty
+  exec "$REAL_CLAUDE" "$@" "$input" </dev/tty
 else
-  # Execute claude normally, replacing this process entirely
-  exec claude "$@"
+  # Execute real claude normally, replacing this process entirely
+  exec "$REAL_CLAUDE" "$@"
 fi

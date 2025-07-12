@@ -4,8 +4,7 @@ if [[ -n "$ZPROF" ]]; then
   zmodload zsh/zprof
 fi
 
-# Start with user-level paths: $ZSH/bin has highest priority
-export PATH="$ZSH/bin:$HOME/.local/bin:$PATH"
+# PATH will be set up after loading all path.zsh files
 
 export ZSH="$HOME/.dotfiles"
 export PROJECTS="$HOME/src"
@@ -24,14 +23,7 @@ then
   FPATH="$(brew --prefix)/share/zsh/site-functions:${FPATH}"
 fi
 
-# load the path files
-for file in ${(M)config_files:#*/path.zsh}
-do
-  source $file
-done
 
-# Add system paths at the end (lowest priority)
-export PATH="$PATH:/usr/local/bin:/usr/local/sbin"
 
 # load everything but the path and completion files
 for file in ${${config_files:#*/path.zsh}:#*/completion.zsh}

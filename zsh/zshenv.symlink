@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-export PATH="/usr/local/bin:/usr/local/sbin:$ZSH/bin:$PATH"
+# Initial PATH setup - will be reordered after loading all path.zsh files
 
 export ZSH="$HOME/.dotfiles"
 export PROJECTS="$HOME/src"
@@ -16,3 +16,6 @@ for file in ${(M)config_files:#*/path.zsh}
 do
   source $file
 done
+
+# After all path files are loaded (including mise), ensure our bins take priority
+export PATH="$ZSH/bin:$HOME/.local/bin:${PATH}"

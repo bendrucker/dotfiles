@@ -12,7 +12,7 @@ if [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_TTY:-
   # In remote session - use SSH wrapper
   exec "$DOTFILES/claude/ssh-wrapper" "$@"
 else
-  # Local session - use real claude (first entry from which -a)
-  REAL_CLAUDE=$(which -a claude | head -n 1)
+  # Local session - use real claude (second entry from which -a, skip our wrapper)
+  REAL_CLAUDE=$(which -a claude | head -n 2 | tail -n 1)
   exec "$REAL_CLAUDE" "$@"
 fi
