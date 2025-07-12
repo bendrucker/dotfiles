@@ -14,7 +14,13 @@ test "${1:-}" = "--help" && {
 
 # Check if keychain is already unlocked
 if ! security show-keychain-info ~/Library/Keychains/login.keychain-db >/dev/null 2>&1; then
-  # Keychain is locked, try to unlock it (without stdin redirection to preserve session)
+  # Keychain is locked - check if we can access controlling terminal
+  if [ ! -c /dev/tty ]; then
+    echo "Error: Keychain is locked and no controlling terminal available. Use 'ssh -t' to allow password prompt." >&2
+    exit 1
+  fi
+  
+  # Keychain is locked, try to unlock it
   if ! security unlock-keychain ~/Library/Keychains/login.keychain-db; then
     # If unlock fails (user cancelled or wrong password), exit
     exit 1
