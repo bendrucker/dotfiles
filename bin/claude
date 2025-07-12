@@ -1,0 +1,21 @@
+#!/bin/sh
+#/ Usage: claude [<args>...]
+#/ Run Claude with automatic SSH keychain handling
+
+# Get dotfiles path from script location
+DOTFILES="$(dirname "$(dirname "$(readlink -f "$0")")")"
+
+# Find real claude binary (exclude this script)
+SELF="$(readlink -f "$0")"
+CLAUDE=$(which -a claude | grep -v "^$SELF$" | head -n 1)
+
+# Check if we're in SSH/Mosh session
+if [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_TTY:-}" ] || \
+   [ -n "${MOSH:-}" ] || [ -n "${MOSH_SERVER:-}" ] || \
+   [ "${LC_IDENTIFICATION:-}" != "${LC_IDENTIFICATION#*mosh}" ]; then
+  # In remote session - use SSH wrapper, pass real claude as first arg
+  exec "$DOTFILES/claude/ssh-wrapper" "$CLAUDE" "$@"
+else
+  # Local session - use real claude directly
+  exec "$CLAUDE" "$@"
+fi
