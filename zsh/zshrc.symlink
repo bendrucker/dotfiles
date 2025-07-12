@@ -29,8 +29,9 @@ do
   source $file
 done
 
-# Ensure user paths take priority after mise activation
-export PATH="$HOME/.local/bin:$ZSH/bin:$PATH"
+# Ensure user paths take priority after mise activation and deduplicate
+typeset -gU path
+path=("$HOME/.local/bin" "$ZSH/bin" $path)
 
 # load everything but the path and completion files
 for file in ${${config_files:#*/path.zsh}:#*/completion.zsh}
