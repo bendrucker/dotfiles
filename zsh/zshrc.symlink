@@ -4,7 +4,7 @@ if [[ -n "$ZPROF" ]]; then
   zmodload zsh/zprof
 fi
 
-export PATH="$HOME/.local/bin:$ZSH/bin:$PATH"
+export PATH="$ZSH/bin:$HOME/.local/bin:$PATH"
 
 export ZSH="$HOME/.dotfiles"
 export PROJECTS="$HOME/src"
@@ -31,7 +31,7 @@ done
 
 # Ensure user paths take priority after mise activation and deduplicate
 typeset -gU path
-path=("$HOME/.local/bin" "$ZSH/bin" $path)
+path=("$ZSH/bin" "$HOME/.local/bin" $path)
 
 # load everything but the path and completion files
 for file in ${${config_files:#*/path.zsh}:#*/completion.zsh}
