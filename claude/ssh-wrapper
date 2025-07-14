@@ -13,12 +13,21 @@ test "${1:-}" = "--help" && {
 CLAUDE="$1"
 shift
 
-# Only try to unlock keychain if we have a proper TTY
-if [ -t 0 ] && ! security show-keychain-info ~/Library/Keychains/login.keychain-db >/dev/null 2>&1; then
+# Only try to unlock keychain if we have access to a TTY for password input
+# Check if we can access /dev/tty for interactive password entry
+if { [ -t 0 ] || [ -c /dev/tty ]; } && ! security show-keychain-info ~/Library/Keychains/login.keychain-db >/dev/null 2>&1; then
   # Keychain is locked, try to unlock it
-  if ! security unlock-keychain ~/Library/Keychains/login.keychain-db; then
-    # If unlock fails, exit
-    exit 1
+  # Always use /dev/tty for password prompt if available
+  if [ -c /dev/tty ]; then
+    if ! security unlock-keychain ~/Library/Keychains/login.keychain-db </dev/tty; then
+      # If unlock fails, exit
+      exit 1
+    fi
+  else
+    if ! security unlock-keychain ~/Library/Keychains/login.keychain-db; then
+      # If unlock fails, exit
+      exit 1
+    fi
   fi
 fi
 
