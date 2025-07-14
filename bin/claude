@@ -9,12 +9,38 @@ DOTFILES="$(dirname "$(dirname "$(readlink -f "$0")")")"
 SELF="$(readlink -f "$0")"
 CLAUDE=$(which -a claude | grep -v "^$SELF$" | head -n 1)
 
-# Check if we're in SSH/Mosh session
-if [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_TTY:-}" ] || \
-   [ -n "${MOSH:-}" ] || [ -n "${MOSH_SERVER:-}" ] || \
-   [ "${LC_IDENTIFICATION:-}" != "${LC_IDENTIFICATION#*mosh}" ]; then
-  # In remote session - use SSH wrapper, pass real claude as first arg
-  exec "$DOTFILES/claude/ssh-wrapper" "$CLAUDE" "$@"
+# Function to check if we're truly in a remote session
+is_remote_session() {
+  # If we're in tmux, we need to be more careful
+  if [ -n "${TMUX:-}" ]; then
+    # In tmux, only consider it remote if SSH_TTY exists and matches current tty
+    if [ -n "${SSH_TTY:-}" ] && [ "${SSH_TTY}" = "$(tty 2>/dev/null)" ]; then
+      return 0  # true - remote session
+    fi
+    return 1  # false - local tmux session
+  fi
+  
+  # Not in tmux - use standard checks
+  if [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_TTY:-}" ] || \
+     [ -n "${MOSH:-}" ] || [ -n "${MOSH_SERVER:-}" ] || \
+     [ "${LC_IDENTIFICATION:-}" != "${LC_IDENTIFICATION#*mosh}" ]; then
+    return 0  # true - remote session
+  fi
+  
+  return 1  # false - local session
+}
+
+# Check if we're in a remote session
+if is_remote_session; then
+  # In remote session - handle piped input and use SSH wrapper
+  if [ ! -t 0 ]; then
+    # Stdin is piped in remote session - read and convert to argument
+    input=$(cat)
+    exec "$DOTFILES/claude/ssh-wrapper" "$CLAUDE" "$@" "$input" </dev/tty
+  else
+    # No piped input - use SSH wrapper normally
+    exec "$DOTFILES/claude/ssh-wrapper" "$CLAUDE" "$@"
+  fi
 else
   # Local session - use real claude directly
   exec "$CLAUDE" "$@"
