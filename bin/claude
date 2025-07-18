@@ -14,7 +14,8 @@ is_remote_session() {
   # If we're in tmux, we need to be more careful
   if [ -n "${TMUX:-}" ]; then
     # In tmux, only consider it remote if SSH_TTY exists and matches current tty
-    if [ -n "${SSH_TTY:-}" ] && [ "${SSH_TTY}" = "$(tty 2>/dev/null)" ]; then
+    current_tty="$(tty 2>/dev/null || echo "")"
+    if [ -n "${SSH_TTY:-}" ] && [ -n "$current_tty" ] && [ "${SSH_TTY}" = "$current_tty" ]; then
       return 0  # true - remote session
     fi
     return 1  # false - local tmux session
