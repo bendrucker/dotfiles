@@ -9,7 +9,7 @@ if ENV['CI']
   end
 end
 
-corporate = File.exist?(File.join(__dir__, '.corporate'))
+corporate = Dir.exist?('/Library/Managed Preferences') && !Dir.empty?('/Library/Managed Preferences')
 
 cask_args appdir: '/Applications'
 
