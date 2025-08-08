@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ $# -ne 2 ]; then
+    echo "Usage: quick-pr <branch-name> <title>"
+    exit 1
+fi
+
+branch_name="$1"
+title="$2"
+
+if git diff --cached --quiet; then
+    echo "No staged changes found"
+    exit 1
+fi
+
+current_branch=$(git branch --show-current)
+default_branch=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')
+
+git checkout "$default_branch"
+git pull
+git checkout -b "$branch_name"
+git commit --message "$title"
+gh pr create --title "$title" --body ""
+git checkout "$current_branch"
+
+echo "PR created successfully, returned to $current_branch"
