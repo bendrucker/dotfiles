@@ -5,9 +5,8 @@
 # Get dotfiles path from script location
 DOTFILES="$(dirname "$(dirname "$(readlink -f "$0")")")"
 
-# Find real claude binary (exclude this script)
-SELF="$(readlink -f "$0")"
-CLAUDE=$(which -a claude | grep -v "^$SELF$" | head -n 1)
+# Find real claude binary
+CLAUDE="$HOME/.claude/local/claude"
 
 # Function to check if we're truly in a remote session
 is_remote_session() {
@@ -37,7 +36,11 @@ if is_remote_session; then
   if [ ! -t 0 ]; then
     # Stdin is piped in remote session - read and convert to argument
     input=$(cat)
-    exec "$DOTFILES/claude/ssh-wrapper" "$CLAUDE" "$@" "$input" </dev/tty
+    if [ -c /dev/tty ]; then
+      exec "$DOTFILES/claude/ssh-wrapper" "$CLAUDE" "$@" "$input" </dev/tty
+    else
+      exec "$DOTFILES/claude/ssh-wrapper" "$CLAUDE" "$@" "$input"
+    fi
   else
     # No piped input - use SSH wrapper normally
     exec "$DOTFILES/claude/ssh-wrapper" "$CLAUDE" "$@"
