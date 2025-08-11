@@ -13,6 +13,8 @@ coverage
 
 # Local settings for Claude Code
 .claude/settings.local.json
+CLAUDE.local.md
+.claude/hooks
 
 # Temporary files
 tmp/
