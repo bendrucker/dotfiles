@@ -1,7 +1,0 @@
-[user]
-  name = Ben Drucker
-  email = bvdrucker@gmail.com
-  signingkey = 720D491425B2016D
-
-[credential]
-  helper = osxkeychain
