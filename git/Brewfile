@@ -1,7 +1,9 @@
 tap 'withgraphite/tap'
 
 brew 'act'
+brew 'actionlint'
 brew 'git'
 brew 'gh'
+brew 'glab'
 brew 'pre-commit'
 brew 'withgraphite/tap/graphite-beta'
