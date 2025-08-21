@@ -2,6 +2,7 @@ tap 'withgraphite/tap'
 
 brew 'act'
 brew 'actionlint'
+brew 'diff-so-fancy'
 brew 'git'
 brew 'gh'
 brew 'glab'
