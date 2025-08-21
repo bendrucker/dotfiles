@@ -19,12 +19,36 @@
 
 [core]
   excludesfile = ~/.gitignore
+  pager = "diff-so-fancy | less --tabs=4 -RF"
+  compression = 9
+
+[interactive]
+  diffFilter = "diff-so-fancy --patch"
+
+[diff]
+  algorithm = "histogram"
+
+[commit]
+  verbose = true
+
+[branch]
+  sort = -committerdate
+
+[column]
+  ui = auto
+
+[tag]
+  sort = -version:refname
 
 [pull]
   ff = only
 
 [apply]
   whitespace = nowarn
+
+[status]
+  branch = true
+  showStash = true
 
 [mergetool]
   keepBackup = false
@@ -33,13 +57,18 @@
   prompt = false
 
 [help]
-  autocorrect = 1
+  autocorrect = prompt
 
 [push]
   default = current
+  autoSetupRemote = true
 
 [protocol]
   version = 2
+
+[maintenance]
+  auto = true
+  strategy = incremental
 
 [include]
   path = ~/.gitconfig.local
