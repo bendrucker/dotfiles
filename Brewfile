@@ -37,6 +37,7 @@ cask 'backblaze' unless corporate
 cask 'charles'
 cask 'disk-drill'
 cask 'dash'
+cask 'figma'
 cask 'geekbench'
 cask 'ghostty'
 cask 'google-chrome'
