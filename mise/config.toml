@@ -1,6 +1,6 @@
 [tools]
 go = "1.25.1"
 node = "lts"
-python = "3.13.7"
+python = "3.14.0"
 terraform = "1.13.3"
 uv = "latest"
