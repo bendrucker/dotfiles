@@ -19,3 +19,6 @@ CLAUDE.local.md
 # Temporary files
 tmp/
 
+# Git worktrees
+.worktrees/
+
