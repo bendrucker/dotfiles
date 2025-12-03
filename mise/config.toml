@@ -1,5 +1,5 @@
 [tools]
-go = "1.25.3"
+go = "1.25.4"
 node = "lts"
 python = "3.14.0"
 terraform = "1.14.0"
