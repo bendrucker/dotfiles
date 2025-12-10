@@ -42,7 +42,7 @@ Usage: dotfiles <command> [options]
 Commands:
   status, st    Show which dotfiles are active and their versions
   test, t       Start a subshell using development dotfiles
-  dev [on|off]  Toggle persistent development mode
+  dev [enable|disable]  Toggle persistent development mode
   sync          Sync installed dotfiles from remote
   edit, e       Open development dotfiles in editor
   cd [dev|home] Change to dotfiles directory (dev by default)
@@ -112,10 +112,10 @@ _dotfiles_test() {
 _dotfiles_dev() {
   local flag="$HOME/.dotfiles-dev-mode"
 
-  if [[ "$1" == "on" ]]; then
+  if [[ "$1" == "enable" ]]; then
     touch "$flag"
     echo "Dev mode enabled. Restart shell to use development dotfiles."
-  elif [[ "$1" == "off" ]]; then
+  elif [[ "$1" == "disable" ]]; then
     rm -f "$flag"
     echo "Dev mode disabled. Restart shell to use installed dotfiles."
   elif [[ -f "$flag" ]]; then
@@ -183,7 +183,7 @@ _dotfiles() {
     args)
       case ${line[1]} in
         dev)
-          _arguments '1:mode:(on off)'
+          _arguments '1:mode:(enable disable)'
           ;;
         cd)
           _arguments '1:target:(dev home)'
