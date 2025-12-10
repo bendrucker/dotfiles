@@ -187,9 +187,10 @@ main() {
   echo "  Restart your shell to apply changes."
   echo ""
   echo "  Useful commands:"
-  echo "    dotfiles-status  - Show which dotfiles are active"
-  echo "    dotfiles-test    - Test dev dotfiles in a subshell"
-  echo "    dotfiles-sync    - Manually sync installed dotfiles"
+  echo "    dotfiles status  - Show which dotfiles are active"
+  echo "    dotfiles test    - Test dev dotfiles in a subshell"
+  echo "    dotfiles sync    - Manually sync installed dotfiles"
+  echo "    dotfiles help    - Show all available commands"
 }
 
 setup_launchd() {
