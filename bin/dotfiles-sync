@@ -1,0 +1,124 @@
+#!/usr/bin/env zsh
+# Sync installed dotfiles from remote
+# Safe to run manually or via launchd (idempotent)
+
+set -e
+
+DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
+LOG_TAG="dotfiles-sync"
+
+log() {
+  local msg="$1"
+  logger -t "$LOG_TAG" "$msg" 2>/dev/null || true
+  echo "$msg"
+}
+
+# macOS notification helper
+notify() {
+  local title="$1"
+  local message="$2"
+  local is_success="$3"
+
+  if [[ "$(uname)" != "Darwin" ]]; then
+    return
+  fi
+
+  if [[ "$is_success" == "true" ]]; then
+    osascript -e "display notification \"$message\" with title \"$title\" sound name \"Glass\"" 2>/dev/null || true
+  else
+    osascript -e "display notification \"$message\" with title \"$title\" sound name \"Basso\"" 2>/dev/null || true
+  fi
+}
+
+# Ensure we're working with a real directory, not a symlink
+if [[ -L "$DOTFILES_HOME" ]]; then
+  log "ERROR: $DOTFILES_HOME is a symlink - run scripts/setup first"
+  notify "Dotfiles Sync" "Failed: ~/.dotfiles is a symlink" "false"
+  exit 1
+fi
+
+if [[ ! -d "$DOTFILES_HOME/.git" ]]; then
+  log "ERROR: $DOTFILES_HOME is not a git repository"
+  notify "Dotfiles Sync" "Failed: not a git repository" "false"
+  exit 1
+fi
+
+cd "$DOTFILES_HOME"
+
+# Check for local changes that would prevent pull
+if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+  log "ERROR: Local changes in $DOTFILES_HOME - skipping sync"
+  log "  Run 'git -C $DOTFILES_HOME status' to see changes"
+  notify "Dotfiles Sync" "Skipped: local changes present" "false"
+  exit 1
+fi
+
+# Get the default branch
+get_default_branch() {
+  local branch
+  branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+
+  if [[ -z "$branch" ]]; then
+    git remote set-head origin --auto 2>/dev/null || true
+    branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+  fi
+
+  echo "${branch:-main}"
+}
+
+DEFAULT_BRANCH=$(get_default_branch)
+
+# Fetch with retry logic
+fetch_with_retry() {
+  local retries=4
+  local delay=2
+
+  for ((i=1; i<=retries; i++)); do
+    if git fetch origin "$DEFAULT_BRANCH" 2>&1; then
+      return 0
+    fi
+
+    if ((i < retries)); then
+      log "Fetch failed, retrying in ${delay}s... (attempt $i/$retries)"
+      sleep $delay
+      delay=$((delay * 2))
+    fi
+  done
+
+  return 1
+}
+
+log "Fetching updates from origin/$DEFAULT_BRANCH..."
+if ! fetch_with_retry; then
+  log "ERROR: Failed to fetch after retries"
+  notify "Dotfiles Sync" "Failed: network error" "false"
+  exit 1
+fi
+
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git rev-parse "origin/$DEFAULT_BRANCH")
+
+if [[ "$LOCAL" == "$REMOTE" ]]; then
+  log "Already up to date (${LOCAL:0:7})"
+  exit 0
+fi
+
+log "Updating from ${LOCAL:0:7} to ${REMOTE:0:7}..."
+
+if git pull --ff-only origin "$DEFAULT_BRANCH" 2>&1; then
+  log "Successfully updated to $(git rev-parse --short HEAD)"
+  notify "Dotfiles Sync" "Updated to ${REMOTE:0:7}" "true"
+
+  # Optionally run bootstrap to update symlinks
+  # Only if --bootstrap flag is passed (not by default for launchd)
+  if [[ "$1" == "--bootstrap" ]] && [[ -x "$DOTFILES_HOME/scripts/bootstrap" ]]; then
+    log "Running bootstrap..."
+    "$DOTFILES_HOME/scripts/bootstrap" --no-prompt 2>&1 | while read line; do
+      log "  $line"
+    done
+  fi
+else
+  log "ERROR: Failed to pull - may need manual intervention"
+  notify "Dotfiles Sync" "Failed: could not pull" "false"
+  exit 1
+fi

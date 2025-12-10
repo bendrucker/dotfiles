@@ -1,0 +1,223 @@
+#!/usr/bin/env zsh
+# Set up dotfiles with separate installed and development directories
+#
+# This creates two independent clones:
+#   ~/.dotfiles     - Installed version (auto-syncs daily, used by your shell)
+#   ~/src/dotfiles  - Development version (where you make changes and submit PRs)
+#
+# Safe to run on new computers or existing setups (idempotent)
+
+set -e
+
+DOTFILES_HOME="$HOME/.dotfiles"
+DOTFILES_DEV="$HOME/src/dotfiles"
+
+# Detect repo URL from wherever this script is located
+SCRIPT_DIR="${0:A:h}"
+REPO_ROOT="${SCRIPT_DIR:h}"
+
+if [[ -d "$REPO_ROOT/.git" ]]; then
+  REPO_URL=$(git -C "$REPO_ROOT" remote get-url origin)
+else
+  echo "Error: Cannot detect repo URL - run this script from within the dotfiles repo"
+  exit 1
+fi
+
+info()    { echo "\033[0;34m==>\033[0m $1"; }
+warn()    { echo "\033[0;33mWarning:\033[0m $1"; }
+error()   { echo "\033[0;31mError:\033[0m $1" >&2; }
+success() { echo "\033[0;32m✓\033[0m $1"; }
+
+# Detect current state of ~/.dotfiles
+detect_state() {
+  if [[ -L "$DOTFILES_HOME" ]]; then
+    echo "symlink"
+  elif [[ -d "$DOTFILES_HOME/.git" ]]; then
+    echo "clone"
+  elif [[ ! -e "$DOTFILES_HOME" ]]; then
+    echo "missing"
+  else
+    echo "unknown"
+  fi
+}
+
+# Get the default branch from a remote
+get_default_branch() {
+  local repo_path="$1"
+  local branch
+
+  # Try to get from remote HEAD reference
+  branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+
+  if [[ -z "$branch" ]]; then
+    # Fetch and set remote HEAD
+    git -C "$repo_path" remote set-head origin --auto 2>/dev/null || true
+    branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+  fi
+
+  echo "${branch:-main}"
+}
+
+# Main setup logic
+main() {
+  info "Setting up dotfiles with separate installed and development directories"
+  echo "  Repo URL: $REPO_URL"
+  echo "  Installed: $DOTFILES_HOME"
+  echo "  Development: $DOTFILES_DEV"
+  echo ""
+
+  info "Detecting current dotfiles state..."
+  local state=$(detect_state)
+  echo "  Current state: $state"
+
+  # Handle DOTFILES_HOME based on current state
+  case $state in
+    symlink)
+      local target=$(readlink "$DOTFILES_HOME")
+      info "~/.dotfiles is a symlink to: $target"
+
+      if [[ "$target" == "$DOTFILES_DEV" ]] || [[ "$target" == "$DOTFILES_DEV/" ]]; then
+        info "Symlink points to dev directory - will replace with independent clone"
+      fi
+
+      info "Removing symlink..."
+      rm "$DOTFILES_HOME"
+
+      info "Cloning fresh copy to $DOTFILES_HOME..."
+      git clone "$REPO_URL" "$DOTFILES_HOME"
+
+      # Set up remote HEAD for default branch detection
+      git -C "$DOTFILES_HOME" remote set-head origin --auto 2>/dev/null || true
+
+      success "Installed dotfiles cloned"
+      ;;
+
+    clone)
+      info "~/.dotfiles is already a git clone"
+
+      local current_remote=$(git -C "$DOTFILES_HOME" remote get-url origin 2>/dev/null)
+      if [[ -n "$current_remote" ]]; then
+        echo "  Remote: $current_remote"
+      fi
+
+      # Ensure remote HEAD is set for default branch detection
+      git -C "$DOTFILES_HOME" remote set-head origin --auto 2>/dev/null || true
+      local default_branch=$(get_default_branch "$DOTFILES_HOME")
+
+      info "Updating to latest ($default_branch)..."
+      git -C "$DOTFILES_HOME" fetch origin "$default_branch"
+      git -C "$DOTFILES_HOME" checkout "$default_branch" 2>/dev/null || true
+      git -C "$DOTFILES_HOME" pull --ff-only origin "$default_branch" || {
+        warn "Could not fast-forward - you may have local changes"
+      }
+      success "Installed dotfiles updated"
+      ;;
+
+    missing)
+      info "No ~/.dotfiles found - fresh install"
+      info "Cloning to $DOTFILES_HOME..."
+      git clone "$REPO_URL" "$DOTFILES_HOME"
+
+      # Set up remote HEAD for default branch detection
+      git -C "$DOTFILES_HOME" remote set-head origin --auto 2>/dev/null || true
+
+      success "Installed dotfiles cloned"
+      ;;
+
+    *)
+      error "Unknown state at $DOTFILES_HOME - please investigate manually"
+      exit 1
+      ;;
+  esac
+
+  # Handle DOTFILES_DEV
+  info "Checking development directory..."
+  if [[ -d "$DOTFILES_DEV/.git" ]]; then
+    info "Development directory already exists at $DOTFILES_DEV"
+    success "Development dotfiles ready"
+  elif [[ -e "$DOTFILES_DEV" ]]; then
+    warn "$DOTFILES_DEV exists but is not a git repo"
+    warn "Please move or remove it, then re-run this script"
+  else
+    info "Creating development directory..."
+    mkdir -p "$(dirname "$DOTFILES_DEV")"
+    git clone "$REPO_URL" "$DOTFILES_DEV"
+
+    # Set up remote HEAD for default branch detection
+    git -C "$DOTFILES_DEV" remote set-head origin --auto 2>/dev/null || true
+
+    success "Development dotfiles cloned"
+  fi
+
+  # Verify we now have two separate directories
+  if [[ -L "$DOTFILES_HOME" ]]; then
+    error "~/.dotfiles is still a symlink - something went wrong"
+    exit 1
+  fi
+
+  local home_git=$(git -C "$DOTFILES_HOME" rev-parse --git-dir 2>/dev/null)
+  local dev_git=$(git -C "$DOTFILES_DEV" rev-parse --git-dir 2>/dev/null)
+
+  # Resolve to absolute paths for comparison
+  home_git=$(cd "$DOTFILES_HOME" && pwd -P)/.git
+  dev_git=$(cd "$DOTFILES_DEV" && pwd -P)/.git
+
+  if [[ "$home_git" == "$dev_git" ]]; then
+    error "Both directories share the same .git - this shouldn't happen"
+    exit 1
+  fi
+
+  success "Separate directories verified"
+
+  # Run bootstrap from installed version
+  info "Running bootstrap from installed dotfiles..."
+  "$DOTFILES_HOME/scripts/bootstrap"
+
+  # Setup launchd (macOS only)
+  if [[ "$(uname)" == "Darwin" ]]; then
+    setup_launchd
+  fi
+
+  echo ""
+  success "Setup complete!"
+  echo ""
+  echo "  Installed dotfiles: $DOTFILES_HOME (auto-syncs daily)"
+  echo "  Development dotfiles: $DOTFILES_DEV (for making changes)"
+  echo ""
+  echo "  Restart your shell to apply changes."
+  echo ""
+  echo "  Useful commands:"
+  echo "    dotfiles-status  - Show which dotfiles are active"
+  echo "    dotfiles-test    - Test dev dotfiles in a subshell"
+  echo "    dotfiles-sync    - Manually sync installed dotfiles"
+}
+
+setup_launchd() {
+  info "Setting up launchd for daily sync..."
+
+  local plist_name="com.user.dotfiles-sync.plist"
+  local plist_src="$DOTFILES_HOME/macos/$plist_name"
+  local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
+
+  if [[ ! -f "$plist_src" ]]; then
+    warn "launchd plist not found at $plist_src - skipping"
+    return
+  fi
+
+  mkdir -p "$HOME/Library/LaunchAgents"
+
+  # Unload if already loaded
+  launchctl unload "$plist_dst" 2>/dev/null || true
+
+  # Copy (not symlink) for reliability
+  cp "$plist_src" "$plist_dst"
+
+  # Load the job
+  if launchctl load "$plist_dst"; then
+    success "launchd job installed and loaded"
+  else
+    warn "Failed to load launchd job - you may need to log out and back in"
+  fi
+}
+
+main "$@"
