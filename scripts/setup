@@ -1,4 +1,5 @@
 #!/usr/bin/env zsh
+# shellcheck shell=bash
 # Set up dotfiles with separate installed and development directories
 #
 # This creates two independent clones:
@@ -67,13 +68,15 @@ main() {
   echo ""
 
   info "Detecting current dotfiles state..."
-  local state=$(detect_state)
+  local state
+  state=$(detect_state)
   echo "  Current state: $state"
 
   # Handle DOTFILES_HOME based on current state
   case $state in
     symlink)
-      local target=$(readlink "$DOTFILES_HOME")
+      local target
+      target=$(readlink "$DOTFILES_HOME")
       info "~/.dotfiles is a symlink to: $target"
 
       if [[ "$target" == "$DOTFILES_DEV" ]] || [[ "$target" == "$DOTFILES_DEV/" ]]; then
@@ -95,14 +98,16 @@ main() {
     clone)
       info "~/.dotfiles is already a git clone"
 
-      local current_remote=$(git -C "$DOTFILES_HOME" remote get-url origin 2>/dev/null)
+      local current_remote
+      current_remote=$(git -C "$DOTFILES_HOME" remote get-url origin 2>/dev/null)
       if [[ -n "$current_remote" ]]; then
         echo "  Remote: $current_remote"
       fi
 
       # Ensure remote HEAD is set for default branch detection
       git -C "$DOTFILES_HOME" remote set-head origin --auto 2>/dev/null || true
-      local default_branch=$(get_default_branch "$DOTFILES_HOME")
+      local default_branch
+      default_branch=$(get_default_branch "$DOTFILES_HOME")
 
       info "Updating to latest ($default_branch)..."
       git -C "$DOTFILES_HOME" fetch origin "$default_branch"
@@ -155,8 +160,9 @@ main() {
     exit 1
   fi
 
-  local home_git=$(git -C "$DOTFILES_HOME" rev-parse --git-dir 2>/dev/null)
-  local dev_git=$(git -C "$DOTFILES_DEV" rev-parse --git-dir 2>/dev/null)
+  local home_git dev_git
+  home_git=$(git -C "$DOTFILES_HOME" rev-parse --git-dir 2>/dev/null)
+  dev_git=$(git -C "$DOTFILES_DEV" rev-parse --git-dir 2>/dev/null)
 
   # Resolve to absolute paths for comparison
   home_git=$(cd "$DOTFILES_HOME" && pwd -P)/.git

@@ -1,4 +1,5 @@
 #!/usr/bin/env zsh
+# shellcheck shell=bash
 # Sync installed dotfiles from remote
 # Safe to run manually or via launchd (idempotent)
 
@@ -80,7 +81,7 @@ fetch_with_retry() {
 
     if ((i < retries)); then
       log "Fetch failed, retrying in ${delay}s... (attempt $i/$retries)"
-      sleep $delay
+      sleep "$delay"
       delay=$((delay * 2))
     fi
   done
@@ -113,7 +114,7 @@ if git pull --ff-only origin "$DEFAULT_BRANCH" 2>&1; then
   # Only if --bootstrap flag is passed (not by default for launchd)
   if [[ "$1" == "--bootstrap" ]] && [[ -x "$DOTFILES_HOME/scripts/bootstrap" ]]; then
     log "Running bootstrap..."
-    "$DOTFILES_HOME/scripts/bootstrap" --no-prompt 2>&1 | while read line; do
+    "$DOTFILES_HOME/scripts/bootstrap" --no-prompt 2>&1 | while read -r line; do
       log "  $line"
     done
   fi
