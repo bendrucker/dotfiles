@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Dotfiles management command
 # Provides subcommands for managing installed and development dotfiles
 
@@ -72,8 +73,9 @@ _dotfiles_status() {
   echo "Directories:"
 
   if [[ -d "$DOTFILES_HOME/.git" ]]; then
-    local home_rev=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null)
-    local home_date=$(git -C "$DOTFILES_HOME" log -1 --format=%cr 2>/dev/null)
+    local home_rev home_date
+    home_rev=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null)
+    home_date=$(git -C "$DOTFILES_HOME" log -1 --format=%cr 2>/dev/null)
     echo "  Installed:   $DOTFILES_HOME ($home_rev, $home_date)"
   elif [[ -L "$DOTFILES_HOME" ]]; then
     echo "  Installed:   $DOTFILES_HOME -> $(readlink "$DOTFILES_HOME") (symlink - legacy)"
@@ -82,8 +84,9 @@ _dotfiles_status() {
   fi
 
   if [[ -d "$DOTFILES_DEV/.git" ]]; then
-    local dev_rev=$(git -C "$DOTFILES_DEV" rev-parse --short HEAD 2>/dev/null)
-    local dev_date=$(git -C "$DOTFILES_DEV" log -1 --format=%cr 2>/dev/null)
+    local dev_rev dev_date
+    dev_rev=$(git -C "$DOTFILES_DEV" rev-parse --short HEAD 2>/dev/null)
+    dev_date=$(git -C "$DOTFILES_DEV" log -1 --format=%cr 2>/dev/null)
     echo "  Development: $DOTFILES_DEV ($dev_rev, $dev_date)"
   else
     echo "  Development: $DOTFILES_DEV (not found)"
@@ -143,10 +146,10 @@ _dotfiles_edit() {
 _dotfiles_cd() {
   case "$1" in
     home|installed)
-      cd "$DOTFILES_HOME"
+      cd "$DOTFILES_HOME" || return
       ;;
     dev|development|"")
-      cd "$DOTFILES_DEV"
+      cd "$DOTFILES_DEV" || return
       ;;
     *)
       echo "Unknown target: $1 (use 'dev' or 'home')"
@@ -159,6 +162,7 @@ _dotfiles_cd() {
 _dotfiles() {
   local line state
 
+  # shellcheck disable=SC2034 # used by _describe
   local -a commands=(
     'status:Show which dotfiles are active and their versions'
     'st:Show which dotfiles are active (alias for status)'
