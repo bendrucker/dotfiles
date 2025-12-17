@@ -1,8 +1,23 @@
 #!/usr/bin/env zsh
 
-# Initial PATH setup - will be reordered after loading all path.zsh files
+# Dotfiles directories
+export DOTFILES_HOME="$HOME/.dotfiles"
+export DOTFILES_DEV="$HOME/src/dotfiles"
 
-export ZSH="$HOME/.dotfiles"
+# Select dotfiles source:
+#   DOTFILES_USE_DEV=1  - use dev directory (for testing)
+#   ~/.dotfiles-dev-mode - persistent dev mode
+#   default             - use installed directory
+if [[ -n "$DOTFILES_USE_DEV" ]] || [[ -f "$HOME/.dotfiles-dev-mode" ]]; then
+  export ZSH="$DOTFILES_DEV"
+else
+  export ZSH="$DOTFILES_HOME"
+fi
+
+# Fallback if selected directory doesn't exist
+[[ ! -d "$ZSH" ]] && [[ -d "$DOTFILES_HOME" ]] && export ZSH="$DOTFILES_HOME"
+[[ ! -d "$ZSH" ]] && [[ -d "$DOTFILES_DEV" ]] && export ZSH="$DOTFILES_DEV"
+
 export PROJECTS="$HOME/src"
 
 eval "$(/opt/homebrew/bin/brew shellenv)"
