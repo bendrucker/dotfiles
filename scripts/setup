@@ -182,9 +182,10 @@ main() {
   info "Running bootstrap from installed dotfiles..."
   "$DOTFILES_HOME/scripts/bootstrap"
 
-  # Setup launchd (macOS only)
-  if [[ "$(uname)" == "Darwin" ]]; then
-    setup_launchd
+  # Run macOS setup (includes launchd job)
+  if [[ "$(uname)" == "Darwin" ]] && [[ -x "$DOTFILES_HOME/macos/install.sh" ]]; then
+    info "Running macOS setup..."
+    ZSH="$DOTFILES_HOME" "$DOTFILES_HOME/macos/install.sh"
   fi
 
   echo ""
@@ -199,35 +200,6 @@ main() {
   echo "    dotfiles status  - Show which dotfiles are active"
   echo "    dotfiles test    - Test dev dotfiles in a subshell"
   echo "    dotfiles sync    - Manually sync installed dotfiles"
-  echo "    dotfiles help    - Show all available commands"
-}
-
-setup_launchd() {
-  info "Setting up launchd for daily sync..."
-
-  local plist_name="com.user.dotfiles-sync.plist"
-  local plist_src="$DOTFILES_HOME/macos/$plist_name"
-  local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
-
-  if [[ ! -f "$plist_src" ]]; then
-    warn "launchd plist not found at $plist_src - skipping"
-    return
-  fi
-
-  mkdir -p "$HOME/Library/LaunchAgents"
-
-  # Unload if already loaded
-  launchctl unload "$plist_dst" 2>/dev/null || true
-
-  # Copy (not symlink) for reliability
-  cp "$plist_src" "$plist_dst"
-
-  # Load the job
-  if launchctl load "$plist_dst"; then
-    success "launchd job installed and loaded"
-  else
-    warn "Failed to load launchd job - you may need to log out and back in"
-  fi
 }
 
 main "$@"

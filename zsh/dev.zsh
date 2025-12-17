@@ -11,19 +11,13 @@ dotfiles() {
       _dotfiles_status
       ;;
     test|t)
-      _dotfiles_test
+      _dotfiles_test "$@"
       ;;
     dev)
       _dotfiles_dev "$@"
       ;;
     sync)
       _dotfiles_sync "$@"
-      ;;
-    edit|e)
-      _dotfiles_edit
-      ;;
-    cd)
-      _dotfiles_cd "$@"
       ;;
     help|--help|-h|"")
       _dotfiles_help
@@ -38,16 +32,14 @@ dotfiles() {
 
 _dotfiles_help() {
   cat <<EOF
-Usage: dotfiles <command> [options]
+Usage: dotfiles <command>
 
 Commands:
-  status, st    Show which dotfiles are active and their versions
-  test, t       Start a subshell using development dotfiles
-  dev [enable|disable]  Toggle persistent development mode
-  sync          Sync installed dotfiles from remote
-  edit, e       Open development dotfiles in editor
-  cd [dev|home] Change to dotfiles directory (dev by default)
-  help          Show this help message
+  status    Show which dotfiles are active and their versions
+  test      Start a subshell using development dotfiles
+  dev       Toggle persistent development mode
+  sync      Sync installed dotfiles from remote
+  help      Show this help message
 
 Directories:
   Installed:    $DOTFILES_HOME
@@ -58,38 +50,27 @@ EOF
 _dotfiles_status() {
   echo "Dotfiles Status"
   echo "==============="
-  echo ""
-  echo "Active:      $ZSH"
 
   if [[ "$ZSH" == "$DOTFILES_DEV" ]]; then
-    echo "Mode:        development"
+    echo "Mode:    development"
   elif [[ "$ZSH" == "$DOTFILES_HOME" ]]; then
-    echo "Mode:        installed"
+    echo "Mode:    installed"
   else
-    echo "Mode:        custom/legacy"
+    echo "Mode:    custom ($ZSH)"
   fi
 
-  echo ""
-  echo "Directories:"
-
   if [[ -d "$DOTFILES_HOME/.git" ]]; then
-    local home_rev home_date
+    local home_rev
     home_rev=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null)
-    home_date=$(git -C "$DOTFILES_HOME" log -1 --format=%cr 2>/dev/null)
-    echo "  Installed:   $DOTFILES_HOME ($home_rev, $home_date)"
+    echo "Home:    $DOTFILES_HOME ($home_rev)"
   elif [[ -L "$DOTFILES_HOME" ]]; then
-    echo "  Installed:   $DOTFILES_HOME -> $(readlink "$DOTFILES_HOME") (symlink - legacy)"
-  else
-    echo "  Installed:   $DOTFILES_HOME (not found)"
+    echo "Home:    $DOTFILES_HOME -> $(readlink "$DOTFILES_HOME") (symlink)"
   fi
 
   if [[ -d "$DOTFILES_DEV/.git" ]]; then
-    local dev_rev dev_date
+    local dev_rev
     dev_rev=$(git -C "$DOTFILES_DEV" rev-parse --short HEAD 2>/dev/null)
-    dev_date=$(git -C "$DOTFILES_DEV" log -1 --format=%cr 2>/dev/null)
-    echo "  Development: $DOTFILES_DEV ($dev_rev, $dev_date)"
-  else
-    echo "  Development: $DOTFILES_DEV (not found)"
+    echo "Dev:     $DOTFILES_DEV ($dev_rev)"
   fi
 
   if [[ -f "$HOME/.dotfiles-dev-mode" ]]; then
@@ -101,13 +82,12 @@ _dotfiles_status() {
 _dotfiles_test() {
   if [[ ! -d "$DOTFILES_DEV" ]]; then
     echo "Development dotfiles not found at $DOTFILES_DEV"
-    echo "Run: ~/.dotfiles/scripts/setup"
+    echo "Run: scripts/setup"
     return 1
   fi
 
   echo "Starting test shell with development dotfiles..."
-  echo "  Source: $DOTFILES_DEV"
-  echo "  Exit this shell to return to normal"
+  echo "Exit to return to normal."
   echo ""
   DOTFILES_USE_DEV=1 exec zsh
 }
@@ -115,19 +95,29 @@ _dotfiles_test() {
 _dotfiles_dev() {
   local flag="$HOME/.dotfiles-dev-mode"
 
-  if [[ "$1" == "enable" ]]; then
-    touch "$flag"
-    echo "Dev mode enabled. Restart shell to use development dotfiles."
-  elif [[ "$1" == "disable" ]]; then
-    rm -f "$flag"
-    echo "Dev mode disabled. Restart shell to use installed dotfiles."
-  elif [[ -f "$flag" ]]; then
-    rm "$flag"
-    echo "Dev mode disabled. Restart shell to use installed dotfiles."
-  else
-    touch "$flag"
-    echo "Dev mode enabled. Restart shell to use development dotfiles."
-  fi
+  case "$1" in
+    enable)
+      touch "$flag"
+      echo "Dev mode enabled. Restart shell to apply."
+      ;;
+    disable)
+      rm -f "$flag"
+      echo "Dev mode disabled. Restart shell to apply."
+      ;;
+    "")
+      if [[ -f "$flag" ]]; then
+        rm "$flag"
+        echo "Dev mode disabled. Restart shell to apply."
+      else
+        touch "$flag"
+        echo "Dev mode enabled. Restart shell to apply."
+      fi
+      ;;
+    *)
+      echo "Usage: dotfiles dev [enable|disable]"
+      return 1
+      ;;
+  esac
 }
 
 _dotfiles_sync() {
@@ -139,64 +129,29 @@ _dotfiles_sync() {
   fi
 }
 
-_dotfiles_edit() {
-  ${EDITOR:-code} "$DOTFILES_DEV"
-}
-
-_dotfiles_cd() {
-  case "$1" in
-    home|installed)
-      cd "$DOTFILES_HOME" || return
-      ;;
-    dev|development|"")
-      cd "$DOTFILES_DEV" || return
-      ;;
-    *)
-      echo "Unknown target: $1 (use 'dev' or 'home')"
-      return 1
-      ;;
-  esac
-}
-
-# Completion function
+# Completion
 _dotfiles() {
-  local line state
-
-  # shellcheck disable=SC2034 # used by _describe
   local -a commands=(
-    'status:Show which dotfiles are active and their versions'
-    'st:Show which dotfiles are active (alias for status)'
+    'status:Show which dotfiles are active'
     'test:Start a subshell using development dotfiles'
-    't:Start a test subshell (alias for test)'
     'dev:Toggle persistent development mode'
     'sync:Sync installed dotfiles from remote'
-    'edit:Open development dotfiles in editor'
-    'e:Open in editor (alias for edit)'
-    'cd:Change to dotfiles directory'
     'help:Show help message'
   )
 
-  _arguments -C \
-    '1: :->command' \
-    '*::arg:->args'
+  _arguments -C '1: :->command' '*::arg:->args'
 
   case $state in
     command)
       _describe -t commands 'dotfiles command' commands
       ;;
     args)
-      case ${line[1]} in
+      case ${words[1]} in
         dev)
           _arguments '1:mode:(enable disable)'
           ;;
-        cd)
-          _arguments '1:target:(dev home)'
-          ;;
         sync)
           _arguments '--bootstrap[Run bootstrap after sync]'
-          ;;
-        *)
-          _message 'no more arguments'
           ;;
       esac
       ;;
