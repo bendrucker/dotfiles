@@ -129,7 +129,8 @@ _dotfiles_sync() {
   fi
 }
 
-# Completion
+# Completion (variables set by zsh completion system)
+# shellcheck disable=SC2034,SC2154
 _dotfiles() {
   local -a commands=(
     'status:Show which dotfiles are active'
