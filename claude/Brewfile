@@ -1,2 +1,3 @@
 cask 'claude'
+cask 'claude-code'
 brew 'claude-squad'
