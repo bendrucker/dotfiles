@@ -2,5 +2,5 @@
 go = "1.25.5"
 node = "lts"
 python = "3.14.2"
-terraform = "1.14.2"
+terraform = "1.14.3"
 uv = "latest"
