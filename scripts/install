@@ -6,6 +6,13 @@ set -e
 
 cd "$(dirname "$0")"/..
 
+# Detect interactive mode (stdin is a tty)
+if [[ -t 0 ]]; then
+  export DOTFILES_INTERACTIVE=1
+else
+  export DOTFILES_INTERACTIVE=0
+fi
+
 echo "› brew bundle"
 brew bundle
 

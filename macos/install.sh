@@ -4,7 +4,8 @@ if [ "$(uname -s)" != "Darwin" ]; then
   exit 0
 fi
 
-if [ -z "$CI" ]; then
+# Software update requires sudo, skip in non-interactive mode
+if [ -z "$CI" ] && [ "${DOTFILES_INTERACTIVE:-1}" = "1" ]; then
   sudo softwareupdate -i -a
 fi
 
