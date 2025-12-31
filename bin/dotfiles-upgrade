@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # shellcheck shell=bash
 # Nightly dotfiles sync and dependency upgrade
-# Syncs dotfiles, runs mise install, runs brew bundle, creates Things task for failures
+# Syncs dotfiles, runs scripts/install, creates Things task on failure
 
 set -e
 
@@ -23,17 +23,6 @@ notify() {
   fi
 
   osascript -e "display notification \"$message\" with title \"$title\" sound name \"Basso\"" 2>/dev/null || true
-}
-
-# Track failures for Things task
-declare -a FAILED_ITEMS
-declare -A FAILURE_LOGS
-
-record_failure() {
-  local item="$1"
-  local log="$2"
-  FAILED_ITEMS+=("$item")
-  FAILURE_LOGS[$item]="$log"
 }
 
 sync_dotfiles() {
@@ -103,45 +92,16 @@ sync_dotfiles() {
   fi
 }
 
-run_mise_install() {
-  log "Running mise install..."
-  if ! mise install --yes 2>&1; then
-    log "WARNING: mise install had issues (continuing)"
+run_install() {
+  log "Running install..."
+  local output
+  if ! output=$("$DOTFILES_HOME/scripts/install" 2>&1); then
+    log "ERROR: install failed"
+    echo "$output"
+    create_things_task "$output"
+    return 1
   fi
-}
-
-run_brew_bundle() {
-  log "Running brew bundle..."
-  cd "$DOTFILES_HOME"
-
-  local bundle_output
-  bundle_output=$(brew bundle 2>&1) || {
-    local current_item=""
-    local current_log=""
-    local in_error=false
-
-    while IFS= read -r line; do
-      if [[ "$line" =~ ^(Installing|Upgrading)\ ([a-zA-Z0-9_-]+) ]]; then
-        if [[ -n "$current_item" ]] && $in_error; then
-          record_failure "$current_item" "$current_log"
-        fi
-        current_item="${match[2]}"
-        current_log=""
-        in_error=false
-      elif [[ "$line" =~ ^Error: ]] || [[ "$line" =~ "failed to install" ]]; then
-        in_error=true
-        current_log+="$line"$'\n'
-      elif $in_error; then
-        current_log+="$line"$'\n'
-      fi
-    done <<< "$bundle_output"
-
-    if [[ -n "$current_item" ]] && $in_error; then
-      record_failure "$current_item" "$current_log"
-    fi
-  }
-
-  echo "$bundle_output"
+  echo "$output"
 }
 
 run_brew_cleanup() {
@@ -150,33 +110,26 @@ run_brew_cleanup() {
 }
 
 create_things_task() {
-  if [[ ${#FAILED_ITEMS[@]} -eq 0 ]]; then
-    return 0
-  fi
+  local output="$1"
 
-  log "Creating Things task for ${#FAILED_ITEMS[@]} failed items..."
+  log "Creating Things task for install failure..."
 
   local notes='```sh
-brew install '"${(j: :)FAILED_ITEMS}"'
+brew bundle
 ```
 
-'
-
-  for item in "${FAILED_ITEMS[@]}"; do
-    notes+="## $item
-\`\`\`
-${FAILURE_LOGS[$item]}\`\`\`
-
-"
-  done
+## Error Output
+```
+'"$output"'
+```'
 
   local encoded_notes encoded_title
   encoded_notes=$(echo "$notes" | jq -sRr @uri)
-  encoded_title=$(echo "Manual homebrew upgrade" | jq -sRr @uri)
+  encoded_title=$(echo "Dotfiles install failed" | jq -sRr @uri)
 
   open "things:///add?title=${encoded_title}&notes=${encoded_notes}&when=today"
 
-  notify "Dotfiles Upgrade" "${#FAILED_ITEMS[@]} packages need manual upgrade"
+  notify "Dotfiles Upgrade" "Install failed - see Things task"
 }
 
 # --- Main ---
@@ -184,14 +137,10 @@ if ! sync_dotfiles; then
   exit 1
 fi
 
-run_mise_install
-run_brew_bundle
-run_brew_cleanup
-create_things_task
-
-if [[ ${#FAILED_ITEMS[@]} -gt 0 ]]; then
-  log "ERROR: ${#FAILED_ITEMS[@]} packages failed to upgrade"
+if ! run_install; then
   exit 1
 fi
+
+run_brew_cleanup
 
 log "All upgrades completed successfully"

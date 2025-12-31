@@ -12,7 +12,19 @@ brew bundle
 # Expose brew configuration to installers
 eval "$(brew shellenv)"
 
+# Symlink all topic mise.toml files to conf.d
+echo "› mise config"
+CONF_D="$HOME/.config/mise/conf.d"
+mkdir -p "$CONF_D"
+for file in */mise.toml; do
+  [ -f "$file" ] || continue
+  topic="${file%/mise.toml}"
+  ln -sf "$PWD/$file" "$CONF_D/$topic.toml"
+  mise trust "$file" --yes 2>/dev/null
+done
+
 # Install mise tools
+echo "› mise install"
 mise install
 
 # Activate mise shims so that installers can use any shell
