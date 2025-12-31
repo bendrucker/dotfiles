@@ -1,5 +1,6 @@
 brew 'bash'
 brew 'findutils'
+brew 'fzf'
 brew 'gnu-sed'
 brew 'gnu-tar'
 brew 'nmap'
