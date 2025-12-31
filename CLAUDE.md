@@ -30,6 +30,18 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 - **Language versions**: Use `mise` configuration in `mise/` directory
 - **Build packages**: Use `bin/build-default-packages` script
 
+#### Brewfile Aggregation
+
+The root `Brewfile` recursively loads all topic Brewfiles using:
+
+```ruby
+Dir.glob(File.join(File.dirname(__FILE__), '*', '**', 'Brewfile')) do |brewfile|
+  eval(IO.read(brewfile), binding)
+end
+```
+
+This means `brew bundle` from the repo root installs everything from all topic Brewfiles. The root Brewfile also conditionally skips casks/MAS in CI and some apps on corporate machines.
+
 ### Shell Configuration
 
 - **Aliases**: Add to `<topic>/aliases.zsh`
