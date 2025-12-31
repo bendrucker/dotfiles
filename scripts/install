@@ -23,6 +23,14 @@ eval "$(brew shellenv)"
 echo "› mise config"
 CONF_D="$HOME/.config/mise/conf.d"
 mkdir -p "$CONF_D"
+
+# Remove stale symlinks (topics that no longer exist)
+for link in "$CONF_D"/*.toml; do
+  [ -L "$link" ] || continue
+  [[ "$(readlink "$link")" == "$PWD/"* ]] || continue
+  [ -e "$link" ] || rm "$link"
+done
+
 for file in */mise.toml; do
   [ -f "$file" ] || continue
   topic="${file%/mise.toml}"
