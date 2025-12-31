@@ -110,6 +110,9 @@ if git pull --ff-only origin "$DEFAULT_BRANCH" 2>&1; then
   log "Successfully updated to $(git rev-parse --short HEAD)"
   notify "Dotfiles Sync" "Updated to ${REMOTE:0:7}" "true"
 
+  # Update last-sync marker
+  "$DOTFILES_HOME/bin/dotfiles-mark-sync"
+
   # Optionally run bootstrap to update symlinks
   # Only if --bootstrap flag is passed (not by default for launchd)
   if [[ "$1" == "--bootstrap" ]] && [[ -x "$DOTFILES_HOME/scripts/bootstrap" ]]; then

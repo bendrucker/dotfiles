@@ -96,6 +96,9 @@ sync_dotfiles() {
 
   if git pull --ff-only origin "$default_branch" 2>&1; then
     log "Dotfiles updated to $(git rev-parse --short HEAD)"
+
+    # Update last-sync marker
+    "$DOTFILES_HOME/bin/dotfiles-mark-sync"
   else
     log "ERROR: Failed to pull dotfiles"
     notify "Dotfiles Upgrade" "Failed: could not pull"
