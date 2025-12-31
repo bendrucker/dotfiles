@@ -3,7 +3,7 @@
 set -e
 
 # SSH config requires sudo, skip in non-interactive mode
-if [[ "${DOTFILES_INTERACTIVE:-1}" != "1" ]]; then
+if [[ -n "${NONINTERACTIVE-}" ]]; then
   exit 0
 fi
 
