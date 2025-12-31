@@ -73,6 +73,14 @@ _dotfiles_status() {
     echo "Dev:     $DOTFILES_DEV ($dev_rev)"
   fi
 
+  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles"
+  local last_sync="$state_dir/last-sync"
+  if [[ -f "$last_sync" ]]; then
+    local sync_time
+    sync_time=$(cat "$last_sync" 2>/dev/null)
+    echo "Synced:  $sync_time"
+  fi
+
   if [[ -f "$HOME/.dotfiles-dev-mode" ]]; then
     echo ""
     echo "Note: Persistent dev mode is ON (~/.dotfiles-dev-mode exists)"
