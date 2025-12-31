@@ -21,8 +21,12 @@ eval "$(brew shellenv)"
 
 # Symlink all topic mise.toml files to conf.d
 echo "› mise config"
-CONF_D="$HOME/.config/mise/conf.d"
+MISE_CONFIG="$HOME/.config/mise"
+CONF_D="$MISE_CONFIG/conf.d"
 mkdir -p "$CONF_D"
+
+# Remove old central config symlink (replaced by conf.d)
+rm -f "$MISE_CONFIG/config.toml"
 
 # Remove stale symlinks (topics that no longer exist)
 for link in "$CONF_D"/*.toml; do
