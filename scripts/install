@@ -27,7 +27,7 @@ mkdir -p "$CONF_D"
 rm -f "$MISE_CONFIG/config.toml"
 
 # Remove stale symlinks (topics that no longer exist)
-for link in "$CONF_D"/*.toml; do
+for link in "$CONF_D"/*.toml(N); do
   [ -L "$link" ] || continue
   [[ "$(readlink "$link")" == "$PWD/"* ]] || continue
   [ -e "$link" ] || rm "$link"
