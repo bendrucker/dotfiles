@@ -27,7 +27,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 ### Managing Dependencies
 
 - **Homebrew packages**: Add to topic-specific `Brewfile` or main `Brewfile`
-- **Language versions**: Use `mise` configuration in `mise/` directory
+- **Language versions**: Add `mise.toml` to the relevant topic directory (e.g., `go/mise.toml`)
 - **Build packages**: Use `bin/build-default-packages` script
 
 #### Brewfile Aggregation
@@ -41,6 +41,10 @@ end
 ```
 
 This means `brew bundle` from the repo root installs everything from all topic Brewfiles. The root Brewfile also conditionally skips casks/MAS in CI and some apps on corporate machines.
+
+#### mise Aggregation
+
+Topic directories can contain `mise.toml` files for language/tool versions. The `scripts/install` script auto-discovers these and symlinks them to `~/.config/mise/conf.d/`, where mise merges them alphabetically.
 
 ### Shell Configuration
 
@@ -82,6 +86,28 @@ Based on recent history:
 - Test bootstrap script after major changes
 - Ensure Linux compatibility outside of `macos/` directory
 - Use GitHub Actions for automated testing
+
+## Sync and Upgrade System
+
+### Automated Nightly Upgrades (macOS)
+
+- `macos/com.user.dotfiles-upgrade.plist` runs `bin/dotfiles-upgrade` daily at 3am
+- Syncs dotfiles, runs `scripts/install`, cleans up stale packages
+- Creates a Things task on failure with error output
+
+### Manual Commands
+
+- `dotfiles sync` — Pull latest from remote
+- `dotfiles sync --bootstrap` — Sync and re-run bootstrap for symlinks
+- `dotf` — Full install/update: Homebrew, brew bundle, mise install, topic installers
+
+### Installation Flow
+
+`scripts/install` is the main entry point:
+1. `brew bundle` — Install Brewfile dependencies
+2. Symlink `*/mise.toml` → `~/.config/mise/conf.d/`
+3. `mise install` — Install language runtimes
+4. Run topic `install.sh` scripts
 
 ## Development Notes
 

@@ -2,6 +2,11 @@
 
 set -e
 
+# SSH config requires sudo, skip in non-interactive mode
+if [[ -n "${NONINTERACTIVE-}" ]]; then
+  exit 0
+fi
+
 # Copy SSH daemon configuration to system directory
 sudo cp "$(dirname "$0")/200-require-key-auth.conf" /etc/ssh/sshd_config.d/
 
