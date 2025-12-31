@@ -3,32 +3,32 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.user.dotfiles-sync</string>
+    <string>com.user.dotfiles-upgrade</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
         <string>-l</string>
         <string>-c</string>
-        <string>$HOME/.dotfiles/bin/dotfiles-sync</string>
+        <string>$HOME/.dotfiles/bin/dotfiles-upgrade</string>
     </array>
 
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>9</integer>
+        <integer>3</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>
 
     <key>RunAtLoad</key>
-    <true/>
+    <false/>
 
     <key>StandardOutPath</key>
-    <string>/tmp/dotfiles-sync.log</string>
+    <string>/tmp/dotfiles-upgrade.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/tmp/dotfiles-sync.log</string>
+    <string>/tmp/dotfiles-upgrade.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

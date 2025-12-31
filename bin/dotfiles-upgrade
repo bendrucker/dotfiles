@@ -1,0 +1,197 @@
+#!/usr/bin/env zsh
+# shellcheck shell=bash
+# Nightly dotfiles sync and dependency upgrade
+# Syncs dotfiles, runs mise install, runs brew bundle, creates Things task for failures
+
+set -e
+
+DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
+LOG_TAG="dotfiles-upgrade"
+
+log() {
+  local msg="$1"
+  logger -t "$LOG_TAG" "$msg" 2>/dev/null || true
+  echo "$msg"
+}
+
+notify() {
+  local title="$1"
+  local message="$2"
+
+  if [[ "$(uname)" != "Darwin" ]]; then
+    return
+  fi
+
+  osascript -e "display notification \"$message\" with title \"$title\" sound name \"Basso\"" 2>/dev/null || true
+}
+
+# Track failures for Things task
+declare -a FAILED_ITEMS
+declare -A FAILURE_LOGS
+
+record_failure() {
+  local item="$1"
+  local log="$2"
+  FAILED_ITEMS+=("$item")
+  FAILURE_LOGS[$item]="$log"
+}
+
+sync_dotfiles() {
+  log "Syncing dotfiles..."
+
+  if [[ -L "$DOTFILES_HOME" ]]; then
+    log "ERROR: $DOTFILES_HOME is a symlink - run scripts/setup first"
+    notify "Dotfiles Upgrade" "Failed: ~/.dotfiles is a symlink"
+    return 1
+  fi
+
+  if [[ ! -d "$DOTFILES_HOME/.git" ]]; then
+    log "ERROR: $DOTFILES_HOME is not a git repository"
+    notify "Dotfiles Upgrade" "Failed: not a git repository"
+    return 1
+  fi
+
+  cd "$DOTFILES_HOME"
+
+  if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+    log "ERROR: Local changes in $DOTFILES_HOME - skipping sync"
+    notify "Dotfiles Upgrade" "Skipped: local changes present"
+    return 1
+  fi
+
+  local default_branch
+  default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+  if [[ -z "$default_branch" ]]; then
+    git remote set-head origin --auto 2>/dev/null || true
+    default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+  fi
+  default_branch="${default_branch:-main}"
+
+  local retries=4 delay=2
+  for ((i=1; i<=retries; i++)); do
+    if git fetch origin "$default_branch" 2>&1; then
+      break
+    fi
+    if ((i < retries)); then
+      log "Fetch failed, retrying in ${delay}s... (attempt $i/$retries)"
+      sleep "$delay"
+      delay=$((delay * 2))
+    else
+      log "ERROR: Failed to fetch after retries"
+      notify "Dotfiles Upgrade" "Failed: network error"
+      return 1
+    fi
+  done
+
+  local local_rev remote_rev
+  local_rev=$(git rev-parse HEAD)
+  remote_rev=$(git rev-parse "origin/$default_branch")
+
+  if [[ "$local_rev" == "$remote_rev" ]]; then
+    log "Dotfiles already up to date (${local_rev:0:7})"
+    return 0
+  fi
+
+  log "Updating dotfiles from ${local_rev:0:7} to ${remote_rev:0:7}..."
+
+  if git pull --ff-only origin "$default_branch" 2>&1; then
+    log "Dotfiles updated to $(git rev-parse --short HEAD)"
+  else
+    log "ERROR: Failed to pull dotfiles"
+    notify "Dotfiles Upgrade" "Failed: could not pull"
+    return 1
+  fi
+}
+
+run_mise_install() {
+  log "Running mise install..."
+  if ! mise install --yes 2>&1; then
+    log "WARNING: mise install had issues (continuing)"
+  fi
+}
+
+run_brew_bundle() {
+  log "Running brew bundle..."
+  cd "$DOTFILES_HOME"
+
+  local bundle_output
+  bundle_output=$(brew bundle 2>&1) || {
+    local current_item=""
+    local current_log=""
+    local in_error=false
+
+    while IFS= read -r line; do
+      if [[ "$line" =~ ^(Installing|Upgrading)\ ([a-zA-Z0-9_-]+) ]]; then
+        if [[ -n "$current_item" ]] && $in_error; then
+          record_failure "$current_item" "$current_log"
+        fi
+        current_item="${match[2]}"
+        current_log=""
+        in_error=false
+      elif [[ "$line" =~ ^Error: ]] || [[ "$line" =~ "failed to install" ]]; then
+        in_error=true
+        current_log+="$line"$'\n'
+      elif $in_error; then
+        current_log+="$line"$'\n'
+      fi
+    done <<< "$bundle_output"
+
+    if [[ -n "$current_item" ]] && $in_error; then
+      record_failure "$current_item" "$current_log"
+    fi
+  }
+
+  echo "$bundle_output"
+}
+
+run_brew_cleanup() {
+  log "Running brew cleanup..."
+  brew cleanup 2>&1 || log "WARNING: brew cleanup had issues"
+}
+
+create_things_task() {
+  if [[ ${#FAILED_ITEMS[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  log "Creating Things task for ${#FAILED_ITEMS[@]} failed items..."
+
+  local notes='```sh
+brew install '"${(j: :)FAILED_ITEMS}"'
+```
+
+'
+
+  for item in "${FAILED_ITEMS[@]}"; do
+    notes+="## $item
+\`\`\`
+${FAILURE_LOGS[$item]}\`\`\`
+
+"
+  done
+
+  local encoded_notes encoded_title
+  encoded_notes=$(echo "$notes" | jq -sRr @uri)
+  encoded_title=$(echo "Manual homebrew upgrade" | jq -sRr @uri)
+
+  open "things:///add?title=${encoded_title}&notes=${encoded_notes}&when=today"
+
+  notify "Dotfiles Upgrade" "${#FAILED_ITEMS[@]} packages need manual upgrade"
+}
+
+# --- Main ---
+if ! sync_dotfiles; then
+  exit 1
+fi
+
+run_mise_install
+run_brew_bundle
+run_brew_cleanup
+create_things_task
+
+if [[ ${#FAILED_ITEMS[@]} -gt 0 ]]; then
+  log "ERROR: ${#FAILED_ITEMS[@]} packages failed to upgrade"
+  exit 1
+fi
+
+log "All upgrades completed successfully"
