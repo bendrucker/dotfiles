@@ -34,6 +34,15 @@ jobs:
           mise-${{ runner.os }}-
         path: |
           ~/.local/share/mise
+    - name: Cache Homebrew packages
+      uses: actions/cache@v5
+      with:
+        key: homebrew-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
+        restore-keys: |
+          homebrew-${{ runner.os }}-
+        path: |
+          ~/Library/Caches/Homebrew
+          /home/linuxbrew/.linuxbrew
     - name: Bootstrap
       run: ./scripts/bootstrap
       env:
