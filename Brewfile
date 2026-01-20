@@ -54,6 +54,7 @@ cask 'raycast'
 cask 'screens-connect'
 cask 'slack'
 cask 'the-unarchiver'
+cask 'wispr-flow'
 cask 'zoom', args: corporate_cask_args
 
 mas '1Password for Safari', id: 1569813296
