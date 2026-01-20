@@ -1,2 +1,4 @@
 set -g history-limit 1000000
 set -g mouse on
+
+source-file -q ~/.tmux.conf.local

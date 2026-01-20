@@ -35,3 +35,5 @@ done
 # After all path files are loaded (including mise), ensure our bins take priority and deduplicate
 typeset -gU path
 path=("$ZSH/bin" "$HOME/.local/bin" $path)
+
+[[ -f ~/.zshenv.local ]] && source ~/.zshenv.local
