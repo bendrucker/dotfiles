@@ -1,2 +1,2 @@
-cask 'visual-studio-code'
+cask 'visual-studio-code', args: corporate_cask_args
 cask 'visual-studio-code@insiders'
