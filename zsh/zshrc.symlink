@@ -9,10 +9,9 @@ export PATH="$ZSH/bin:$HOME/.local/bin:$PATH"
 export ZSH="$HOME/.dotfiles"
 export PROJECTS="$HOME/src"
 
-if [[ -a ~/.localrc ]]
-then
-  source ~/.localrc
-fi
+for localrc in ~/.localrc ~/.zshrc.local; do
+  [[ -f $localrc ]] && source $localrc
+done
 
 # all of our zsh files
 typeset -U config_files
