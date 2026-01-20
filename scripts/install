@@ -17,35 +17,8 @@ brew bundle
 # Expose brew configuration to installers
 eval "$(brew shellenv)"
 
-# Symlink all topic mise.toml files to conf.d
-echo "› mise config"
-MISE_CONFIG="$HOME/.config/mise"
-CONF_D="$MISE_CONFIG/conf.d"
-mkdir -p "$CONF_D"
-
-# Remove old central config symlink (replaced by conf.d)
-rm -f "$MISE_CONFIG/config.toml"
-
-# Remove stale symlinks (topics that no longer exist)
-for link in "$CONF_D"/*.toml(N); do
-  [ -L "$link" ] || continue
-  [[ "$(readlink "$link")" == "$PWD/"* ]] || continue
-  [ -e "$link" ] || rm "$link"
-done
-
-for file in */mise.toml; do
-  [ -f "$file" ] || continue
-  topic="${file%/mise.toml}"
-  ln -sf "$PWD/$file" "$CONF_D/$topic.toml"
-  mise trust "$file" --yes 2>/dev/null
-done
-
-# Install mise tools
-echo "› mise install"
-mise install
-
-# Activate mise shims so that installers can use any shell
-eval "$(mise activate --shims)"
+# Install mise tools and activate shims
+source mise/install.sh
 
 # find the installers other than mise and run them iteratively
 find . -name install.sh ! -path "./mise/*" | while read -r installer ; do "${installer}"; done
