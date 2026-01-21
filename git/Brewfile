@@ -1,5 +1,4 @@
 tap 'withgraphite/tap'
-tap 'max-sixty/worktrunk'
 
 brew 'act'
 brew 'actionlint'
@@ -9,4 +8,4 @@ brew 'gh'
 brew 'glab'
 brew 'pre-commit'
 brew 'withgraphite/tap/graphite'
-brew 'max-sixty/worktrunk/wt'
+brew 'worktrunk'
