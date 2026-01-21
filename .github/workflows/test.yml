@@ -43,8 +43,6 @@ jobs:
         path: |
           ~/Library/Caches/Homebrew
           /home/linuxbrew/.linuxbrew
-    - name: Uninstall old wt formula
-      run: brew uninstall wt 2>/dev/null || true
     - name: Bootstrap
       run: ./scripts/bootstrap
       env:
