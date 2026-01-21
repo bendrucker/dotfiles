@@ -43,11 +43,15 @@ jobs:
         path: |
           ~/Library/Caches/Homebrew
           /home/linuxbrew/.linuxbrew
+    - name: Uninstall old wt formula
+      run: brew uninstall wt 2>/dev/null || true
     - name: Bootstrap
       run: ./scripts/bootstrap
       env:
         # skip updates/upgrades to speed up install
         HOMEBREW_NO_INSTALL_UPGRADE: '1'
+        # remove stale packages from cache
+        HOMEBREW_BUNDLE_INSTALL_CLEANUP: '1'
         # skip deps installed without homebrew in https://github.com/actions/virtual-environments/blob/main/images/macos/macos-10.15-Readme.md
         HOMEBREW_BUNDLE_BREW_SKIP: >
           awscli
