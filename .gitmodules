@@ -1,0 +1,3 @@
+[submodule "claude/theme-sync"]
+	path = claude/theme-sync
+	url = https://github.com/alfredomtx/claude-theme-sync
