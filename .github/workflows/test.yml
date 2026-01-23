@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v6
+      with:
+        submodules: true
     - name: Link to home
       run: ln -s "$PWD" "$HOME/.dotfiles"
     - name: Add brew bin/ to Linux $PATH
