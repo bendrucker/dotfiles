@@ -20,5 +20,11 @@ eval "$(brew shellenv)"
 # Install mise tools and activate shims
 source mise/install.sh
 
-# find the installers other than mise and run them iteratively
-find . -name install.sh ! -path "./mise/*" | while read -r installer ; do "${installer}"; done
+# Build exclusions for mise and any git submodules
+local -a excludes=("!" "-path" "./mise/*")
+for path in ${(f)"$(git submodule foreach --quiet 'echo $sm_path' 2>/dev/null)"}; do
+  excludes+=("!" "-path" "./$path/*")
+done
+
+# Find and run topic installers
+find . -name install.sh "${excludes[@]}" | while read -r installer; do "${installer}"; done
