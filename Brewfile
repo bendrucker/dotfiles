@@ -17,11 +17,12 @@ cask_args appdir: '/Applications'
 tap 'teamookla/speedtest'
 
 brew 'bat'
+brew 'btop'
 brew 'cloc'
 brew 'coreutils'
 brew 'csvkit'
+brew 'htop'
 brew 'jq'
-brew 'mas' if OS.mac?
 brew 'openssl'
 brew 'shellcheck'
 brew 'teamookla/speedtest/speedtest'
