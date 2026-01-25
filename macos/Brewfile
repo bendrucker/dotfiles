@@ -1,0 +1,4 @@
+return unless OS.mac?
+
+brew 'mactop'
+brew 'mas'
