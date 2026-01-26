@@ -73,12 +73,12 @@ _dotfiles_status() {
     echo "Dev:     $DOTFILES_DEV ($dev_rev)"
   fi
 
-  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles"
-  local last_sync="$state_dir/last-sync"
-  if [[ -f "$last_sync" ]]; then
-    local sync_time
-    sync_time=$(cat "$last_sync" 2>/dev/null)
-    echo "Synced:  $sync_time"
+  if [[ -d "$DOTFILES_HOME/.git" ]]; then
+    local commit_time
+    commit_time=$(git -C "$DOTFILES_HOME" log -1 --format=%cI 2>/dev/null)
+    if [[ -n "$commit_time" ]]; then
+      echo "Synced:  $commit_time"
+    fi
   fi
 
   if [[ -f "$HOME/.dotfiles-dev-mode" ]]; then
