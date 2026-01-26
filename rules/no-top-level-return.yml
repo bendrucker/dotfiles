@@ -1,0 +1,14 @@
+id: no-top-level-return
+language: ruby
+severity: error
+message: >-
+  return exits homebrew-bundle eval host method,
+  skipping all Brewfiles loaded after this one.
+  Use an if/unless block instead.
+rule:
+  all:
+    - kind: return
+    - not:
+        inside:
+          kind: method
+          stopBy: end
