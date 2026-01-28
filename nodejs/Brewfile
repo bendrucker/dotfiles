@@ -1,1 +1,3 @@
-brew 'oven-sh/bun/bun'
+tap 'oven-sh/bun'
+
+brew 'bun'
