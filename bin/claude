@@ -18,6 +18,12 @@ if [ -z "${GITHUB_PERSONAL_ACCESS_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; 
   fi
 fi
 
+# Use per-user temp directory to avoid multi-user /tmp conflicts
+# https://github.com/anthropics/claude-code/issues/12938#issuecomment-3810049902
+if [ -z "${CLAUDE_CODE_TMPDIR:-}" ] && [ -n "${TMPDIR:-}" ]; then
+  export CLAUDE_CODE_TMPDIR="$TMPDIR"
+fi
+
 # Function to check if we're truly in a remote session
 is_remote_session() {
   # If we're in tmux, we need to be more careful
