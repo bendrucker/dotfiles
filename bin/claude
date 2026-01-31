@@ -9,6 +9,15 @@ DOTFILES="$(dirname "$(dirname "$(readlink -f "$0")")")"
 SELF="$(readlink -f "$0")"
 CLAUDE=$(which -a claude | grep -v "^$SELF$" | head -n 1)
 
+# Pass GitHub auth token to Claude for MCP integration
+# https://github.com/anthropics/claude-plugins-official/blob/main/external_plugins/github/.mcp.json
+if [ -z "${GITHUB_PERSONAL_ACCESS_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
+  token=$(gh auth token 2>/dev/null) || true
+  if [ -n "$token" ]; then
+    export GITHUB_PERSONAL_ACCESS_TOKEN="$token"
+  fi
+fi
+
 # Function to check if we're truly in a remote session
 is_remote_session() {
   # If we're in tmux, we need to be more careful
