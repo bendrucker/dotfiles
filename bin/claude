@@ -12,7 +12,7 @@ CLAUDE=$(which -a claude | grep -v "^$SELF$" | head -n 1)
 # Pass GitHub auth token to Claude for MCP integration
 # https://github.com/anthropics/claude-plugins-official/blob/main/external_plugins/github/.mcp.json
 if [ -z "${GITHUB_PERSONAL_ACCESS_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
-  token=$(gh auth token 2>/dev/null)
+  token=$(gh auth token 2>/dev/null) || true
   if [ -n "$token" ]; then
     export GITHUB_PERSONAL_ACCESS_TOKEN="$token"
   fi
