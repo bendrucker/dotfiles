@@ -26,6 +26,11 @@ jobs:
     - name: Install zsh on Linux
       if: ${{ runner.os == 'Linux' }}
       run: sudo apt-get install -y zsh
+    - name: Overwrite conflicting formulae
+      if: ${{ runner.os == 'macOS' }}
+      run: |
+        brew update
+        brew upgrade openssl@3 || brew link --overwrite openssl@3
     - name: Print Homebrew configuration
       run: brew config
     - name: Cache mise installs
