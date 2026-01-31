@@ -1,4 +1,4 @@
-return unless OS.mac?
-
-brew 'mactop'
-brew 'mas'
+if OS.mac?
+  brew 'mactop'
+  brew 'mas'
+end
