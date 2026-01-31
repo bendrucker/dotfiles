@@ -1,6 +1,0 @@
-#!/usr/bin/env sh
-# Update the last-sync marker for dotfiles status
-
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles"
-mkdir -p "$STATE_DIR"
-date -u +%Y-%m-%dT%H:%M:%SZ > "$STATE_DIR/last-sync"
