@@ -1,4 +1,5 @@
 cask 'claude'
 cask 'claude-code'
+cask 'commander'
 brew 'ast-grep'
 brew 'claude-squad'
