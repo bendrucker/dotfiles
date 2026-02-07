@@ -1,0 +1,2 @@
+[post-create]
+claude-settings = "[ -f {{ primary_worktree_path }}/.claude/settings.local.json ] && mkdir -p {{ worktree_path }}/.claude && cp {{ primary_worktree_path }}/.claude/settings.local.json {{ worktree_path }}/.claude/settings.local.json || true"
