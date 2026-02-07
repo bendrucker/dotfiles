@@ -1,3 +1,4 @@
 tap 'oven-sh/bun'
 
+brew 'deno'
 brew 'oven-sh/bun/bun'
