@@ -1,0 +1,3 @@
+#compdef clone
+
+compadd $(clone-repo "$PREFIX" --completions)
