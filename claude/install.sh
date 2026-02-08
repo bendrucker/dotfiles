@@ -8,14 +8,30 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Install theme-sync daemon
 "$SCRIPT_DIR/theme-sync/install.sh"
 
-# Symlink Claude config from repo to ~/.claude
+CLAUDE_REPO_URL="https://github.com/bendrucker/claude.git"
+CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
+
+setup_claude_repo() {
+  if [[ -d "$CLAUDE_REPO_HOME/.git" ]]; then
+    return 0
+  fi
+
+  if [[ -L "$CLAUDE_REPO_HOME" ]]; then
+    echo "  Removing symlink at $CLAUDE_REPO_HOME..."
+    rm "$CLAUDE_REPO_HOME"
+  fi
+
+  echo "  Cloning Claude config repo..."
+  git clone "$CLAUDE_REPO_URL" "$CLAUDE_REPO_HOME"
+  git -C "$CLAUDE_REPO_HOME" remote set-head origin --auto 2>/dev/null || true
+}
+
 install_claude_symlinks() {
-  local claude_repo="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
-  local source_dir="$claude_repo/user"
+  local source_dir="$CLAUDE_REPO_HOME/user"
   local target_dir="$HOME/.claude"
 
   if [[ ! -d "$source_dir" ]]; then
-    echo "  Claude repo not found at $claude_repo, skipping symlinks"
+    echo "  Claude repo user/ not found, skipping symlinks"
     return 0
   fi
 
@@ -36,4 +52,5 @@ install_claude_symlinks() {
   done
 }
 
+setup_claude_repo
 install_claude_symlinks
