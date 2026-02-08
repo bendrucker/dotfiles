@@ -1,7 +1,5 @@
 #!/usr/bin/env bun
 
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import { $ } from "bun";
 
 const input = process.argv[2];
@@ -17,8 +15,8 @@ try {
   [org, repo] = input.split("/");
 }
 
-const target = join(projects, org, repo);
-await mkdir(join(projects, org), { recursive: true });
+const target = `${projects}/${org}/${repo}`;
+await $`mkdir -p ${projects}/${org}`;
 
 switch (host) {
   case "gitlab.com":
