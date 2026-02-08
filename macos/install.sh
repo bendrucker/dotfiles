@@ -46,7 +46,35 @@ setup_dotfiles_upgrade() {
   fi
 }
 
+setup_claude_upgrade() {
+  # Remove old plist that pointed to ~/.claude-repo/bin/claude-upgrade
+  local old_plist="$HOME/Library/LaunchAgents/com.user.claude-upgrade.plist"
+  launchctl unload "$old_plist" 2>/dev/null || true
+
+  local plist_name="com.user.claude-upgrade.plist"
+  local plist_src="$ZSH/macos/$plist_name"
+  local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
+
+  if [[ ! -f "$plist_src" ]]; then
+    echo "  Claude upgrade plist not found, skipping"
+    return
+  fi
+
+  echo "  Setting up nightly Claude upgrade..."
+
+  mkdir -p "$HOME/Library/LaunchAgents"
+
+  cp "$plist_src" "$plist_dst"
+
+  if launchctl load "$plist_dst" 2>/dev/null; then
+    echo "  ✓ Claude upgrade launchd job installed"
+  else
+    echo "  ⚠ Failed to load Claude upgrade launchd job (may need re-login)"
+  fi
+}
+
 # Only setup upgrade if we're in separate-directory mode (not a symlink)
 if [[ ! -L "$HOME/.dotfiles" ]]; then
   setup_dotfiles_upgrade
+  setup_claude_upgrade
 fi
