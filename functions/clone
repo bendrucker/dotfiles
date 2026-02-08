@@ -8,5 +8,9 @@ REPO=$(echo "$SLUG" | cut -d'/' -f2)
 TARGET="$PROJECTS/$ORG/$REPO"
 
 mkdir -p "$PROJECTS/$ORG"
-gh repo clone "$1" "$TARGET"
+
+case "$1" in
+  *gitlab.com*) glab repo clone "$1" "$TARGET" ;;
+  *)            gh repo clone "$1" "$TARGET" ;;
+esac
 cd "$TARGET"
