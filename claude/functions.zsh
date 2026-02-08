@@ -32,7 +32,7 @@ _cc_resolve() {
   shift
 
   local repo_list
-  repo_list=$(find ~/src -maxdepth 3 -name .git -type d -exec dirname {} \; 2>/dev/null | sort)
+  repo_list=$(find "$PROJECTS" -maxdepth 3 -name .git -type d -exec dirname {} \; 2>/dev/null | sort)
 
   local result
   result=$(claude -p --model haiku --no-session-persistence --output-format json \
