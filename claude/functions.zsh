@@ -3,22 +3,22 @@
 # Create a worktree and start Claude
 #
 # With a branch name (no spaces): use current repo, explicit branch
-#   cc branch-name                    # interactive Claude
-#   cc branch-name 'fix the bug'      # Claude with prompt
+#   ccw branch-name                    # interactive Claude
+#   ccw branch-name 'fix the bug'      # Claude with prompt
 #
 # With a prompt (has spaces): resolve repo + branch via Claude
-#   cc 'fix the auth bug in the API'
-cc() {
+#   ccw 'fix the auth bug in the API'
+ccw() {
   if [[ $# -lt 1 ]]; then
-    echo "Usage: cc <branch> [claude args...]" >&2
-    echo "       cc <prompt> [claude args...]" >&2
+    echo "Usage: ccw <branch> [claude args...]" >&2
+    echo "       ccw <prompt> [claude args...]" >&2
     return 1
   fi
 
   local branch repo
 
   if ! git rev-parse --is-inside-work-tree &>/dev/null || [[ "$1" == *" "* ]]; then
-    _cc_resolve "$@"
+    _ccw_resolve "$@"
     return
   fi
 
@@ -27,7 +27,7 @@ cc() {
   wt switch --create "$branch" && claude "$@"
 }
 
-_cc_resolve() {
+_ccw_resolve() {
   local prompt="$1"
   shift
 
