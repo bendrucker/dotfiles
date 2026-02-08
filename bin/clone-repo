@@ -1,0 +1,31 @@
+#!/usr/bin/env bun
+
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+
+const input = process.argv[2];
+const projects = process.env.PROJECTS!;
+
+let org: string, repo: string;
+let host: string | undefined;
+try {
+  const url = new URL(input);
+  host = url.hostname;
+  [, org, repo] = url.pathname.replace(/\.git$/, "").split("/");
+} catch {
+  [org, repo] = input.split("/");
+}
+
+const target = join(projects, org, repo);
+await mkdir(join(projects, org), { recursive: true });
+
+switch (host) {
+  case "gitlab.com":
+    await $`glab repo clone ${input} ${target}`;
+    break;
+  default:
+    await $`gh repo clone ${input} ${target}`;
+    break;
+}
+
+console.log(target);

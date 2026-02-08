@@ -1,16 +1,3 @@
-#!/usr/bin/env sh
+#!/usr/bin/env zsh
 
-set -e
-
-SLUG=$(echo "$1" | sed -E 's|^https?://[^/]+/||' | sed 's|\.git$||')
-ORG=$(echo "$SLUG" | cut -d'/' -f1)
-REPO=$(echo "$SLUG" | cut -d'/' -f2)
-TARGET="$PROJECTS/$ORG/$REPO"
-
-mkdir -p "$PROJECTS/$ORG"
-
-case "$1" in
-  *gitlab.com*) glab repo clone "$1" "$TARGET" ;;
-  *)            gh repo clone "$1" "$TARGET" ;;
-esac
-cd "$TARGET"
+cd "$(clone-repo "$1")"
