@@ -2,6 +2,7 @@
 
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { $ } from "bun";
 
 const input = process.argv[2];
 const projects = process.env.PROJECTS!;
