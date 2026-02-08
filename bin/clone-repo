@@ -1,0 +1,55 @@
+#!/usr/bin/env bun
+
+import { $ } from "bun";
+
+const input = process.argv[2];
+const completions = process.argv.includes("--completions");
+const projects = process.env.PROJECTS!;
+
+let org: string, repo: string;
+let host: string | undefined;
+try {
+  const url = new URL(input);
+  host = url.hostname;
+  [, org, repo] = url.pathname.replace(/\.git$/, "").split("/");
+} catch {
+  [org, repo] = input.split("/");
+}
+
+if (completions) {
+  const repos = await listRepos(org, repo, host);
+  for (const name of repos) {
+    console.log(name);
+  }
+  process.exit(0);
+}
+
+const target = `${projects}/${org}/${repo}`;
+await $`mkdir -p ${projects}/${org}`;
+
+switch (host) {
+  case "gitlab.com":
+    await $`glab repo clone ${input} ${target}`;
+    break;
+  default:
+    await $`gh repo clone ${input} ${target}`;
+    break;
+}
+
+console.log(target);
+
+async function listRepos(org: string, query?: string, host?: string): Promise<string[]> {
+  switch (host) {
+    case "gitlab.com": {
+      const search = query ? `&search=${query}` : "";
+      const result = await $`glab api "users/${org}/projects?per_page=20${search}" -q '.[].path_with_namespace'`.text();
+      return result.trim().split("\n").filter(Boolean);
+    }
+    default: {
+      const args = ["search", "repos", "--owner", org, "--json", "fullName", "--jq", ".[].fullName", "--limit", "20"];
+      if (query) args.splice(2, 0, query);
+      const result = await Bun.spawn(["gh", ...args], { stdout: "pipe" });
+      return (await new Response(result.stdout).text()).trim().split("\n").filter(Boolean);
+    }
+  }
+}
