@@ -109,6 +109,17 @@ Based on recent history:
 3. `mise install` — Install language runtimes
 4. Run topic `install.sh` scripts
 
+## Stacked PRs
+
+I use worktrunk for worktree creation and git-town for stack sync and PR management:
+
+1. Create base branch: `wt switch --create feature/base`
+2. Work, commit, then stack next branch: `wt switch --create child-name --base=@`
+3. Sync entire stack: `git town sync --stack`
+4. Propose all PRs: `git town propose --stack`
+
+Ship branches oldest-first. After a stack branch merges, `git town sync` rebases remaining branches.
+
 ## Development Notes
 
 - This is a personal configuration repo - changes should reflect actual usage
