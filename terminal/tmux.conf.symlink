@@ -1,5 +1,24 @@
+# Terminal capabilities (true color, clickable links, system clipboard)
+set -g default-terminal "tmux-256color"
+set -ga terminal-features "*:RGB"
+set -ga terminal-features "*:hyperlinks"
+set -g set-clipboard on                    # copy mode selections → system clipboard via OSC 52
+set -g allow-passthrough on                # let programs send escapes directly to outer terminal
+
+# Usability
 set -g history-limit 1000000
 set -g mouse on
-set -ga terminal-features "*:hyperlinks"
+set -g escape-time 10                      # default 500ms adds lag when pressing Escape in editors
+set -g base-index 1
+setw -g pane-base-index 1
+set -g renumber-windows on
+set -g focus-events on                     # apps detect pane/window focus changes
+
+# Only break words on spaces and @ so double-click selects full URLs and ticket IDs
+setw -g word-separators ' @'
+
+# Show session/branch name without truncation
+set -g status-left-length 30
+set -g status-right ""
 
 source-file -q ~/.tmux.conf.local
