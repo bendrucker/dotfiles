@@ -1,2 +1,8 @@
 [post-create]
 copy = "wt step copy-ignored"
+
+[post-switch]
+tmux-rename = '[ -n "$TMUX" ] && tmux rename-window {{ branch | sanitize }}'
+
+[post-remove]
+tmux-kill = 'tmux kill-session -t {{ branch | sanitize }} 2>/dev/null || true'
