@@ -107,6 +107,10 @@ fi
 log "Updating from ${LOCAL:0:7} to ${REMOTE:0:7}..."
 
 if git pull --ff-only origin "$DEFAULT_BRANCH" 2>&1; then
+  git submodule update --init 2>&1 | while read -r line; do
+    log "  $line"
+  done
+
   log "Successfully updated to $(git rev-parse --short HEAD)"
   notify "Dotfiles Sync" "Updated to ${REMOTE:0:7}" "true"
 
