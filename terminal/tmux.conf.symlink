@@ -21,4 +21,22 @@ setw -g word-separators ' @'
 set -g status-left-length 30
 set -g status-right ""
 
+# Keep current directory when splitting panes
+bind '"' split-window -c "#{pane_current_path}"
+bind % split-window -h -c "#{pane_current_path}"
+bind c new-window -c "#{pane_current_path}"
+
+# Override right-click menu to preserve working directory
+bind-key -n MouseDown3Pane display-menu -T "#[align=centre]#{pane_index} (#{pane_id})" -x M -y M \
+  "Horizontal Split" h "split-window -h -c '#{pane_current_path}'" \
+  "Vertical Split" v "split-window -v -c '#{pane_current_path}'" \
+  "" \
+  "Swap Up" u "swap-pane -U" \
+  "Swap Down" d "swap-pane -D" \
+  "" \
+  "Kill Pane" X "kill-pane" \
+  "Kill Others" x "kill-pane -a" \
+  "" \
+  "#{?window_zoomed_flag,Unzoom,Zoom}" z "resize-pane -Z"
+
 source-file -q ~/.tmux.conf.local
