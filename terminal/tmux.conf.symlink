@@ -1,3 +1,8 @@
+unbind r
+bind r source-file ~/.tmux.conf
+
+set -g prefix C-s
+
 # Terminal capabilities (true color, clickable links, system clipboard)
 set -g default-terminal "tmux-256color"
 set -ga terminal-features "*:RGB"
