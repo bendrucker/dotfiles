@@ -22,8 +22,8 @@ source mise/install.sh
 
 # Build exclusions for mise and any git submodules
 local -a excludes=("!" "-path" "./mise/*")
-for path in ${(f)"$(git submodule foreach --quiet 'echo $sm_path' 2>/dev/null)"}; do
-  excludes+=("!" "-path" "./$path/*")
+for sm_path in ${(f)"$(git submodule foreach --quiet 'echo $sm_path' 2>/dev/null)"}; do
+  excludes+=("!" "-path" "./$sm_path/*")
 done
 
 # Find and run topic installers
