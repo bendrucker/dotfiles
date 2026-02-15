@@ -21,7 +21,8 @@ set -g focus-events on                     # apps detect pane/window focus chang
 # Only break words on spaces and @ so double-click selects full URLs and ticket IDs
 setw -g word-separators ' @'
 
-# Show session/branch name without truncation
+# Status bar
+set -g status-position top
 set -g status-left-length 30
 set -g status-right ""
 
