@@ -37,26 +37,51 @@ Usage: dotfiles <command>
 Commands:
   status    Show which dotfiles are active and their versions
   test      Start a subshell using development dotfiles
-  dev       Toggle persistent development mode
+  dev       Toggle persistent development mode (repoints symlinks)
   sync      Sync installed dotfiles from remote
   help      Show this help message
 
 Directories:
-  Installed:    $DOTFILES_HOME
-  Development:  $DOTFILES_DEV
+  Installed:  $DOTFILES_HOME
+  Active:     $ZSH
 EOF
+}
+
+_dotfiles_detect_repo() {
+  local dir="${1:-$(pwd -P)}"
+  while [[ "$dir" != "/" ]]; do
+    if [[ -f "$dir/scripts/bootstrap" && -d "$dir/zsh" ]]; then
+      echo "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+_dotfiles_repoint_symlinks() {
+  local target="$1"
+  local src dst
+
+  # shellcheck disable=SC2044
+  for src in $(find -H "$target" -maxdepth 2 -name '*.symlink' -not -path '*.git*'); do
+    dst="$HOME/.$(basename "${src%.*}")"
+    [[ -L "$dst" ]] && ln -sfn "$src" "$dst"
+  done
+
+  if [[ -f "$target/ssh/config" && -L "$HOME/.ssh/config" ]]; then
+    ln -sfn "$target/ssh/config" "$HOME/.ssh/config"
+  fi
 }
 
 _dotfiles_status() {
   echo "Dotfiles Status"
   echo "==============="
 
-  if [[ "$ZSH" == "$DOTFILES_DEV" ]]; then
-    echo "Mode:    development"
-  elif [[ "$ZSH" == "$DOTFILES_HOME" ]]; then
+  if [[ "$ZSH" == "$DOTFILES_HOME" ]]; then
     echo "Mode:    installed"
   else
-    echo "Mode:    custom ($ZSH)"
+    echo "Mode:    development"
   fi
 
   if [[ -d "$DOTFILES_HOME/.git" ]]; then
@@ -67,10 +92,10 @@ _dotfiles_status() {
     echo "Home:    $DOTFILES_HOME -> $(readlink "$DOTFILES_HOME") (symlink)"
   fi
 
-  if [[ -d "$DOTFILES_DEV/.git" ]]; then
+  if [[ "$ZSH" != "$DOTFILES_HOME" && -d "$ZSH/.git" ]]; then
     local dev_rev
-    dev_rev=$(git -C "$DOTFILES_DEV" rev-parse --short HEAD 2>/dev/null)
-    echo "Dev:     $DOTFILES_DEV ($dev_rev)"
+    dev_rev=$(git -C "$ZSH" rev-parse --short HEAD 2>/dev/null)
+    echo "Dev:     $ZSH ($dev_rev)"
   fi
 
   if [[ -d "$DOTFILES_HOME/.git" ]]; then
@@ -83,21 +108,21 @@ _dotfiles_status() {
 
   if [[ -f "$HOME/.dotfiles-dev-mode" ]]; then
     echo ""
-    echo "Note: Persistent dev mode is ON (~/.dotfiles-dev-mode exists)"
+    echo "Persistent dev mode: $(<"$HOME/.dotfiles-dev-mode")"
   fi
 }
 
 _dotfiles_test() {
-  if [[ ! -d "$DOTFILES_DEV" ]]; then
-    echo "Development dotfiles not found at $DOTFILES_DEV"
-    echo "Run: scripts/setup"
+  local dev_dir
+  dev_dir="$(_dotfiles_detect_repo)" || {
+    echo "Not inside a dotfiles repository or worktree."
     return 1
-  fi
+  }
 
-  echo "Starting test shell with development dotfiles..."
+  echo "Starting test shell with dotfiles from: $dev_dir"
   echo "Exit to return to normal."
   echo ""
-  DOTFILES_USE_DEV=1 exec zsh
+  DOTFILES_USE_DEV="$dev_dir" exec zsh
 }
 
 _dotfiles_dev() {
@@ -105,20 +130,27 @@ _dotfiles_dev() {
 
   case "$1" in
     enable)
-      touch "$flag"
-      echo "Dev mode enabled. Restart shell to apply."
+      local dev_dir
+      dev_dir="$(_dotfiles_detect_repo)" || {
+        echo "Not inside a dotfiles repository or worktree."
+        return 1
+      }
+      echo "$dev_dir" > "$flag"
+      _dotfiles_repoint_symlinks "$dev_dir"
+      echo "Dev mode enabled: $dev_dir"
+      echo "Restart shell to load dev zsh files."
       ;;
     disable)
       rm -f "$flag"
-      echo "Dev mode disabled. Restart shell to apply."
+      _dotfiles_repoint_symlinks "$DOTFILES_HOME"
+      echo "Dev mode disabled. Symlinks restored to $DOTFILES_HOME"
+      echo "Restart shell to apply."
       ;;
     "")
       if [[ -f "$flag" ]]; then
-        rm "$flag"
-        echo "Dev mode disabled. Restart shell to apply."
+        _dotfiles_dev disable
       else
-        touch "$flag"
-        echo "Dev mode enabled. Restart shell to apply."
+        _dotfiles_dev enable
       fi
       ;;
     *)
