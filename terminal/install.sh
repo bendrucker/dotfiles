@@ -4,6 +4,15 @@ set -e
 
 TOPIC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# TPM (Tmux Plugin Manager)
+TPM_DIR="$HOME/.tmux/plugins/tpm"
+if [ ! -d "$TPM_DIR" ]; then
+  git clone https://github.com/tmux-plugins/tpm "$TPM_DIR"
+fi
+"$TPM_DIR/bin/install_plugins"
+"$TPM_DIR/bin/update_plugins" all
+"$TPM_DIR/bin/clean_plugins"
+
 # Ghostty (cross-platform)
 GHOSTTY_CONFIG="$HOME/.config/ghostty"
 mkdir -p "$GHOSTTY_CONFIG"

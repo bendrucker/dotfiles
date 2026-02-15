@@ -1,2 +1,4 @@
 cask 'iterm2'
 brew 'tmux'
+brew 'sesh'
+brew 'zoxide'
