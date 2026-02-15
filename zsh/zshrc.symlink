@@ -6,9 +6,6 @@ fi
 
 export PATH="$ZSH/bin:$HOME/.local/bin:$PATH"
 
-export ZSH="$HOME/.dotfiles"
-export PROJECTS="$HOME/src"
-
 for localrc in ~/.localrc ~/.zshrc.local; do
   [[ -f $localrc ]] && source $localrc
 done

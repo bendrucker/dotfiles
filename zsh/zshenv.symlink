@@ -1,22 +1,21 @@
 #!/usr/bin/env zsh
 
-# Dotfiles directories
 export DOTFILES_HOME="$HOME/.dotfiles"
-export DOTFILES_DEV="$HOME/src/dotfiles"
 
 # Select dotfiles source:
-#   DOTFILES_USE_DEV=1  - use dev directory (for testing)
-#   ~/.dotfiles-dev-mode - persistent dev mode
-#   default             - use installed directory
-if [[ -n "$DOTFILES_USE_DEV" ]] || [[ -f "$HOME/.dotfiles-dev-mode" ]]; then
-  export ZSH="$DOTFILES_DEV"
+#   DOTFILES_USE_DEV=/path - use specified dev directory (for dotfiles test)
+#   ~/.dotfiles-dev-mode   - persistent dev mode (file contains path)
+#   default                - use installed directory
+if [[ -n "$DOTFILES_USE_DEV" ]]; then
+  export ZSH="$DOTFILES_USE_DEV"
+elif [[ -f "$HOME/.dotfiles-dev-mode" ]]; then
+  export ZSH="$(<"$HOME/.dotfiles-dev-mode")"
 else
   export ZSH="$DOTFILES_HOME"
 fi
 
 # Fallback if selected directory doesn't exist
-[[ ! -d "$ZSH" ]] && [[ -d "$DOTFILES_HOME" ]] && export ZSH="$DOTFILES_HOME"
-[[ ! -d "$ZSH" ]] && [[ -d "$DOTFILES_DEV" ]] && export ZSH="$DOTFILES_DEV"
+[[ ! -d "$ZSH" ]] && export ZSH="$DOTFILES_HOME"
 
 export PROJECTS="$HOME/src"
 
