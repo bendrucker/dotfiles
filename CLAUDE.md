@@ -60,11 +60,19 @@ Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`).
 - Name files with `.symlink` extension
 - Bootstrap script creates `~/.filename` from `topic/filename.symlink`
 - Special case: `ssh/config` is symlinked directly to `~/.ssh/config`
+- Symlinks point to `~/.dotfiles` (the installed copy), **not** the development working tree. Edits to `.symlink` files in a dev checkout won't take effect until synced unless dev mode is enabled.
+
+### Dev Mode
+
+`dotfiles dev enable` repoints all home-directory symlinks from `~/.dotfiles` to the current working tree. This lets you test `.symlink` file changes (e.g., `tmux.conf.symlink`) immediately without syncing. Run `dotfiles dev disable` to restore symlinks to `~/.dotfiles`.
 
 ### Testing Changes
 
-- Run `scripts/bootstrap` to apply symlinks
-- Source shell: `source ~/.zshrc` or restart terminal
+Both `.symlink` and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev checkout won't take effect without one of these approaches:
+
+- **`dotfiles test`** — replaces the current shell with one using the dev working tree (temporary, session-only)
+- **`dotfiles dev enable`** — persistently repoints all symlinks to the dev working tree and sets a flag so new shells load dev `.zsh` files. Undo with `dotfiles dev disable`.
+- Run `scripts/bootstrap` to apply new symlinks
 - Test dependencies: `bin/dotf` installs/updates packages
 
 ### Version Updates
