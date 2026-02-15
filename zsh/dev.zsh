@@ -63,7 +63,8 @@ _dotfiles_repoint_symlinks() {
   local target="$1"
   local src dst
 
-  for src in "$target"/**/*.symlink(N); do
+  # shellcheck disable=SC2044
+  for src in $(find -H "$target" -maxdepth 2 -name '*.symlink' -not -path '*.git*'); do
     dst="$HOME/.$(basename "${src%.*}")"
     [[ -L "$dst" ]] && ln -sfn "$src" "$dst"
   done
