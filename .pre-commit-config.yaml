@@ -12,7 +12,7 @@ repos:
     rev: v0.11.0.1
     hooks:
       - id: shellcheck
-        args: ["-e", "SC1071"]
+        args: ["-x", "--source-path=SCRIPTDIR", "-e", "SC1071"]
 
   - repo: https://github.com/boidolr/ast-grep-pre-commit
     rev: v0.2.0

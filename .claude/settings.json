@@ -7,12 +7,23 @@
     "deny": []
   },
   "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-post-tool-use"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit"
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-stop"
           }
         ]
       }
