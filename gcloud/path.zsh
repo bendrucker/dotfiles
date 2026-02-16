@@ -1,3 +1,4 @@
 #!/usr/bin/env zsh
 
-source "$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
+local inc="$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
+[[ -f "$inc" ]] && source "$inc"
