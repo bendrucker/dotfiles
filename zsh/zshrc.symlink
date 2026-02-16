@@ -14,16 +14,7 @@ done
 typeset -U config_files
 config_files=($ZSH/**/*.zsh)
 
-if type brew &>/dev/null
-then
-  FPATH="$(brew --prefix)/share/zsh/site-functions:${FPATH}"
-fi
-
-# load the path files
-for file in ${(M)config_files:#*/path.zsh}
-do
-  source $file
-done
+FPATH="$HOMEBREW_PREFIX/share/zsh/site-functions:${FPATH}"
 
 # Ensure user paths take priority after mise activation and deduplicate
 typeset -gU path
@@ -37,15 +28,19 @@ done
 
 # initialize autocomplete
 autoload -Uz compinit
-compinit
-
-# load every completion
-for file in ${(M)config_files:#*/completion.zsh}
-do
-  source $file
-done
+compinit -C
 
 unset config_files
+
+# defer all completions until after first prompt
+autoload -Uz add-zsh-hook
+_load_deferred_completions() {
+  add-zsh-hook -d precmd _load_deferred_completions
+  for file in $ZSH/**/completion.zsh; do
+    source $file
+  done
+}
+add-zsh-hook precmd _load_deferred_completions
 
 if [[ -n "$ZPROF" ]]; then
   zprof

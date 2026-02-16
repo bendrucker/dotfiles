@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
 
-if command -v gt > /dev/null; then
+if (( $+commands[gt] )); then
   eval "$(gt completion)"
 fi
