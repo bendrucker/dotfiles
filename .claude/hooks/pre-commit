@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+output=$(pre-commit run --all-files 2>&1) && exit 0
+
+jq -n --arg reason "pre-commit found issues. Fix them before finishing:
+
+$output" \
+  '{decision: "block", reason: $reason}'

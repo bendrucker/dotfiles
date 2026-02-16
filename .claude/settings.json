@@ -5,5 +5,17 @@
       "WebFetch(domain:docs.brew.sh)"
     ],
     "deny": []
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit"
+          }
+        ]
+      }
+    ]
   }
 }
