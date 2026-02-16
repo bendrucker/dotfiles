@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PREK_HOME="${PREK_HOME:-${CLAUDE_CODE_TMPDIR:-/tmp}/prek}"
+config="${CLAUDE_PROJECT_DIR:-.}/.pre-commit-config.yaml"
+if [[ ! -f "$config" ]]; then
+  exit 0
+fi
 
-output=$(prek run --all-files 2>&1) && exit 0
+cache_root="${CLAUDE_CODE_TMPDIR:-/tmp}"
 
-jq -n --arg reason "prek found issues. Fix them before finishing:
+if command -v prek > /dev/null 2>&1; then
+  export PREK_HOME="${PREK_HOME:-$cache_root/prek}"
+  runner="prek"
+elif command -v pre-commit > /dev/null 2>&1; then
+  export PRE_COMMIT_HOME="${PRE_COMMIT_HOME:-$cache_root/pre-commit}"
+  runner="pre-commit"
+else
+  exit 0
+fi
+
+output=$($runner run --all-files 2>&1) && exit 0
+
+jq -n --arg reason "$runner found issues. Fix them before finishing:
 
 $output" \
   '{decision: "block", reason: $reason}'
