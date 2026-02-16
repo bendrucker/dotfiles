@@ -8,7 +8,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 - **topic/**: Each topic is a directory (e.g., `git/`, `zsh/`, `docker/`)
   - `*.zsh`: Shell configuration files loaded by zsh
   - `path.zsh`: Loaded first for `$PATH` setup
-  - `completion.zsh`: Loaded last for autocomplete
+  - `completion.zsh`: Deferred until after first prompt renders (via `precmd` hook)
   - `*.symlink`: Files symlinked to `$HOME` as dotfiles
   - `Brewfile`: Homebrew packages for the topic
 - **scripts/**: Bootstrap and setup scripts
@@ -129,6 +129,19 @@ I use worktrunk for worktree creation and git-town for stack sync and PR managem
 4. Propose all PRs: `git town propose --stack`
 
 Ship branches oldest-first. After a stack branch merges, `git town sync` rebases remaining branches.
+
+## ZSH Startup Performance
+
+Shell startup time is CI-gated (<1s). Follow these rules to avoid regressions:
+
+- **Never call `brew --prefix`** in `.zsh` files — use `$HOMEBREW_PREFIX` (already exported by `brew shellenv` in `zshenv`)
+- **Never call `$(command ...)` or `` `command` `` during startup** unless guarded — subshell forks are ~15-50ms each
+- **All completions are deferred** — `completion.zsh` files are sourced via a one-shot `precmd` hook after the first prompt, not during startup. Put completion registrations (e.g., `eval "$(tool completion)"`, `compdef`) in `completion.zsh`, never in regular `.zsh` files.
+- **Use `compinit -C`** — skips the security audit on every startup (directory permission check). The full audit runs during `dotfiles-upgrade`.
+- **`path.zsh` is sourced only in `zshenv`** — do not re-source path files in `zshrc`
+- **File naming matters** — the zshrc filter matches `completion.zsh` (singular). Files named `completions.zsh` (plural) will be sourced eagerly in the main loop, bypassing deferral. CI enforces this via `lint-completion-names`.
+- **Defer everything interactive** — anything not needed before the first prompt (completions, key bindings that shell out, etc.) should run in the `precmd` deferred hook, not during startup
+- **Benchmarking**: `bench-startup` measures the current worktree; `bench-startup /path/to/other` compares two worktrees. Uses `ZDOTDIR` + `DOTFILES_USE_DEV` to isolate each worktree's rc files without modifying symlinks. Use `ZPROF=1 zsh -i -c exit` for per-file breakdown.
 
 ## Development Notes
 

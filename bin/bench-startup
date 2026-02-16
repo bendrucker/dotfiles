@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+#
+# Benchmark zsh interactive startup time.
+#
+# Usage:
+#   bench-startup                  # benchmark current worktree
+#   bench-startup /path/to/other   # compare current worktree vs another
+#
+# Requires: hyperfine
+
+set -euo pipefail
+
+if ! command -v hyperfine &>/dev/null; then
+  echo "hyperfine not found — install with: brew install hyperfine" >&2
+  exit 1
+fi
+
+setup_zdotdir() {
+  local dir="$1" name="$2"
+  local zdotdir
+  zdotdir=$(mktemp -d)
+  ln -s "$dir/zsh/zshenv.symlink" "$zdotdir/.zshenv"
+  ln -s "$dir/zsh/zshrc.symlink" "$zdotdir/.zshrc"
+  echo "$zdotdir"
+}
+
+cleanup() {
+  rm -rf "${zdotdirs[@]}"
+}
+trap cleanup EXIT
+
+current="$(cd "$(dirname "$0")/.." && pwd)"
+zdotdirs=()
+
+current_zdotdir=$(setup_zdotdir "$current" "current")
+zdotdirs+=("$current_zdotdir")
+
+if [[ $# -ge 1 ]]; then
+  other="$(cd "$1" && pwd)"
+  other_zdotdir=$(setup_zdotdir "$other" "other")
+  zdotdirs+=("$other_zdotdir")
+
+  current_label="${current##*/}"
+  other_label="${other##*/}"
+
+  hyperfine --warmup 3 --runs 10 --shell=none \
+    --command-name "$other_label" \
+      "/usr/bin/env ZDOTDIR=$other_zdotdir DOTFILES_USE_DEV=$other /bin/zsh -i -c exit" \
+    --command-name "$current_label" \
+      "/usr/bin/env ZDOTDIR=$current_zdotdir DOTFILES_USE_DEV=$current /bin/zsh -i -c exit"
+else
+  hyperfine --warmup 3 --runs 10 --shell=none \
+    --command-name "zsh startup" \
+      "/usr/bin/env ZDOTDIR=$current_zdotdir DOTFILES_USE_DEV=$current /bin/zsh -i -c exit"
+fi
