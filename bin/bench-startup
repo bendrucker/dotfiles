@@ -16,8 +16,7 @@ if ! command -v hyperfine &>/dev/null; then
 fi
 
 setup_zdotdir() {
-  local dir="$1" name="$2"
-  local zdotdir
+  local dir="$1" zdotdir
   zdotdir=$(mktemp -d)
   ln -s "$dir/zsh/zshenv.symlink" "$zdotdir/.zshenv"
   ln -s "$dir/zsh/zshrc.symlink" "$zdotdir/.zshrc"
