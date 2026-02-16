@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+bell_windows=$(tmux list-windows -a -F '#{session_name}:#{window_index} #{window_name}' -f '#{window_bell_flag}')
+
+if [[ -z "$bell_windows" ]]; then
+  tmux display-message "No windows with bell"
+  exit 0
+fi
+
+count=$(echo "$bell_windows" | wc -l | tr -d ' ')
+
+if [[ "$count" -eq 1 ]]; then
+  target=$(echo "$bell_windows" | awk '{print $1}')
+  tmux switch-client -t "$target"
+else
+  target=$(echo "$bell_windows" | tmux display-popup -E -w 60% -h 60% "fzf --no-sort --border --prompt 'bell> ' --preview 'tmux capture-pane -t {1} -p'" | awk '{print $1}')
+  [[ -n "$target" ]] && tmux switch-client -t "$target"
+fi
