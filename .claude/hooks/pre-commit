@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PREK_HOME="${PREK_HOME:-${TMPDIR:-/tmp}/prek}"
+export PREK_HOME="${PREK_HOME:-${CLAUDE_CODE_TMPDIR:-/tmp}/prek}"
 
 output=$(prek run --all-files 2>&1) && exit 0
 
