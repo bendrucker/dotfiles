@@ -51,7 +51,7 @@ Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`).
 ### Shell Configuration
 
 - **Aliases**: Add to `<topic>/aliases.zsh`
-- **Functions**: Add to `<topic>/functions.zsh` 
+- **Functions**: Add to `<topic>/functions.zsh`
 - **PATH modifications**: Add to `<topic>/path.zsh`
 - **Completions**: Add to `<topic>/completion.zsh`
 

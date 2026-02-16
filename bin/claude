@@ -35,14 +35,14 @@ is_remote_session() {
     fi
     return 1  # false - local tmux session
   fi
-  
+
   # Not in tmux - use standard checks
   if [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_TTY:-}" ] || \
      [ -n "${MOSH:-}" ] || [ -n "${MOSH_SERVER:-}" ] || \
      [ "${LC_IDENTIFICATION:-}" != "${LC_IDENTIFICATION#*mosh}" ]; then
     return 0  # true - remote session
   fi
-  
+
   return 1  # false - local session
 }
 
