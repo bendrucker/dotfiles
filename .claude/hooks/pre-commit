@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-output=$(pre-commit run --all-files 2>&1) && exit 0
+export PREK_HOME="${PREK_HOME:-/tmp/claude/prek}"
 
-jq -n --arg reason "pre-commit found issues. Fix them before finishing:
+output=$(prek run --all-files 2>&1) && exit 0
+
+jq -n --arg reason "prek found issues. Fix them before finishing:
 
 $output" \
   '{decision: "block", reason: $reason}'
