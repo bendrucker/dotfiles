@@ -163,6 +163,7 @@ claude-upgrade
 main() {
   local output
   output=$(mktemp)
+  # shellcheck disable=SC2064
   trap "rm -f $output" EXIT
 
   {

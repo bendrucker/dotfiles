@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Shared setup for pre-commit hooks. Sourced by post-tool-use and stop scripts.
+# Sets $runner to prek or pre-commit, or exits 0 if neither is available.
+
+config="${CLAUDE_PROJECT_DIR:-.}/.pre-commit-config.yaml"
+if [[ ! -f "$config" ]]; then
+  exit 0
+fi
+
+cache_root="${CLAUDE_CODE_TMPDIR:-/tmp}"
+
+if command -v prek > /dev/null 2>&1; then
+  export PREK_HOME="${PREK_HOME:-$cache_root/prek}"
+  export runner="prek"
+elif command -v pre-commit > /dev/null 2>&1; then
+  export PRE_COMMIT_HOME="${PRE_COMMIT_HOME:-$cache_root/pre-commit}"
+  export runner="pre-commit"
+else
+  exit 0
+fi

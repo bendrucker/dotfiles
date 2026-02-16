@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+hook_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$hook_dir/pre-commit"
+
+# First pass: let fixers (trailing-whitespace, end-of-file-fixer, etc.) auto-fix.
+$runner run --all-files > /dev/null 2>&1 || true
+
+# Second pass: check for remaining issues after auto-fix.
+output=$($runner run --all-files 2>&1) && exit 0
+
+jq -n --arg reason "$runner found issues that could not be auto-fixed:
+
+$output" \
+  '{decision: "block", reason: $reason}'

@@ -69,13 +69,11 @@ jobs:
           python@3.11
           python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  lint-brewfiles:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: ast-grep/action@cf62e780f0c88301228978d593a7784427a097a6 # v1.5.0
-        with:
-          paths: '*/Brewfile'
+      - uses: j178/prek-action@v1
   startup-time:
     runs-on: macos-15
     timeout-minutes: 15
@@ -143,10 +141,3 @@ jobs:
             echo "$bad"
             exit 1
           fi
-  shellcheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # tag=2.0.0
-        env:
-          SHELLCHECK_OPTS: -e SC1071
