@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+cd "$1" 2>/dev/null || exit 0
+
+branch=$(git branch --show-current 2>/dev/null)
+if [[ -z "$branch" ]]; then
+  branch=$(git rev-parse --short HEAD 2>/dev/null)
+fi
+
+if [[ -n "$branch" ]]; then
+  dirty=""
+  git diff --quiet --ignore-submodules HEAD 2>/dev/null || dirty=" *"
+  printf '%s%s' "$branch" "$dirty"
+else
+  basename "$1"
+fi
