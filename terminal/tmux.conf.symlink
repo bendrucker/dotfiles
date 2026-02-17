@@ -27,8 +27,8 @@ setw -g word-separators ' @'
 
 # Status bar
 set -g status-position top
-set -g status-left-length 30
-set -g status-right ""
+set -g status-left-length 100
+set -g status-right-length 100
 
 # Splits inherit the current pane's working directory
 bind '"' split-window -v -c "#{pane_current_path}"
@@ -48,7 +48,20 @@ set -g @plugin 'alberti42/tmux-fzf-links'
 
 # Catppuccin
 set -g @catppuccin_flavor 'mocha'
+set -g @catppuccin_window_status_style 'rounded'
+set -g @catppuccin_window_flags 'icon'
+set -g @catppuccin_directory_icon "󰘬 "
+set -g @catppuccin_session_icon "󰆍 "
+set -g @catppuccin_directory_color "#fab387"
+set -g @catppuccin_directory_text " #(tmux-git-status #{pane_current_path})"
 
 source-file -q ~/.tmux.conf.local
 
 run '~/.tmux/plugins/tpm/tpm'
+
+# Status modules (must load after TPM processes catppuccin)
+set -g status-left "#{E:@catppuccin_status_session}"
+set -g status-right "#{E:@catppuccin_status_directory}"
+
+# Bolder selection highlight for choose-tree / copy mode
+set -g mode-style "bg=#{@thm_surface_2},bold"
