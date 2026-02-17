@@ -11,12 +11,12 @@ find . -name "default-*-packages" -type f | while read -r file; do
     if [[ $(basename "$file") =~ ^default-([^-]+)-packages$ ]]; then
         package_type="${BASH_REMATCH[1]}"
         output_file="$HOME/.default-${package_type}-packages"
-        
+
         {
             echo "# Auto-generated from dotfiles - do not edit directly"
             find . -name "default-${package_type}-packages" -type f -exec sh -c 'echo "# From $(dirname "$1" | sed s,^./,,)"; cat "$1"; echo' _ {} \;
         } > "$output_file"
-        
+
         echo "Updated ~/.default-${package_type}-packages"
     fi
 done | sort -u

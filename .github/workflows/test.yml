@@ -7,9 +7,12 @@ jobs:
   bootstrap:
     strategy:
       matrix:
-        os:
-          - ubuntu-22.04
-          - macos-14
+        include:
+          - name: linux
+            os: ubuntu-22.04
+          - name: macos
+            os: macos-15
+    name: bootstrap (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -69,71 +72,46 @@ jobs:
           python@3.11
           python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  lint-brewfiles:
+    - name: Benchmark shell startup
+      run: |
+        hyperfine --warmup 3 --runs 10 --shell=none \
+          'zsh -i -c exit' \
+          --export-json /tmp/bench.json \
+          --export-markdown /tmp/bench.md
+
+        median=$(python3 -c "import json; print(json.load(open('/tmp/bench.json'))['results'][0]['median'])")
+
+        {
+          echo '## Shell Startup Benchmark'
+          echo ''
+          echo '```'
+          hyperfine --warmup 0 --runs 1 --shell=none 'zsh -i -c exit'
+          echo '```'
+          echo ''
+          cat /tmp/bench.md
+          echo ''
+          echo '<details><summary>ZPROF breakdown</summary>'
+          echo ''
+          echo '```'
+          ZPROF=1 zsh -i -c exit 2>&1
+          echo '```'
+          echo ''
+          echo '</details>'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        python3 -c "
+        import json, sys
+        median = json.load(open('/tmp/bench.json'))['results'][0]['median']
+        if median > 1.0:
+            print(f'FAIL: median startup {median:.3f}s > 1.0s')
+            sys.exit(1)
+        print(f'OK: median startup {median:.3f}s')
+        "
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: ast-grep/action@cf62e780f0c88301228978d593a7784427a097a6 # v1.5.0
-        with:
-          paths: '*/Brewfile'
-  startup-time:
-    runs-on: macos-15
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: true
-      - name: Link to home
-        run: ln -s "$PWD" "$HOME/.dotfiles"
-      - name: Overwrite conflicting formulae
-        run: |
-          brew update
-          brew upgrade openssl@3 || brew link --overwrite openssl@3
-      - name: Cache Homebrew packages
-        uses: actions/cache@v5
-        with:
-          key: homebrew-startup-${{ hashFiles('**/Brewfile') }}
-          restore-keys: |
-            homebrew-startup-
-          path: |
-            ~/Library/Caches/Homebrew
-      - name: Bootstrap
-        run: ./scripts/bootstrap
-        env:
-          HOMEBREW_NO_INSTALL_UPGRADE: '1'
-          HOMEBREW_BUNDLE_INSTALL_CLEANUP: '1'
-          HOMEBREW_BUNDLE_BREW_SKIP: >
-            awscli
-            go
-            golangci-lint
-            kubernetes-cli
-            kubectx
-            minikube
-            python
-            python@3.11
-            python@3.12
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install hyperfine
-        run: brew install hyperfine
-      - name: Benchmark shell startup
-        run: |
-          hyperfine --warmup 3 --runs 10 --shell=none \
-            'zsh -i -c exit' \
-            --export-json /tmp/bench.json
-          median=$(python3 -c "import json; print(json.load(open('/tmp/bench.json'))['results'][0]['median'])")
-          echo "Median startup: ${median}s"
-          python3 -c "
-          import json, sys
-          median = json.load(open('/tmp/bench.json'))['results'][0]['median']
-          if median > 1.0:
-              print(f'FAIL: median startup {median:.3f}s > 1.0s')
-              sys.exit(1)
-          print(f'OK: median startup {median:.3f}s')
-          "
-  lint-completion-names:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
+      - uses: j178/prek-action@v1
       - name: Check completion file naming convention
         run: |
           bad=$(find . -name 'completions.zsh' -not -path './.git/*')
@@ -143,10 +121,3 @@ jobs:
             echo "$bad"
             exit 1
           fi
-  shellcheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # tag=2.0.0
-        env:
-          SHELLCHECK_OPTS: -e SC1071

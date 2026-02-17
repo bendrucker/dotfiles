@@ -19,7 +19,12 @@ fi
 
 export PROJECTS="$HOME/src"
 
-eval "$(/opt/homebrew/bin/brew shellenv)"
+for brew in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
+  if [[ -x "$brew" ]]; then
+    eval "$("$brew" shellenv)"
+    break
+  fi
+done
 
 # all of our zsh files
 typeset -U config_files

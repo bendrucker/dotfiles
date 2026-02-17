@@ -1,3 +1,4 @@
 brew 'highlight'
+brew 'hyperfine'
 brew 'pure'
 brew 'zsh'

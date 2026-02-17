@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+input=$(cat)
+file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
+
+if [[ -z "$file_path" ]]; then
+  exit 0
+fi
+
+hook_dir="$(cd "$(dirname "$0")" && pwd)"
+source "$hook_dir/pre-commit"
+
+output=$($runner run --files "$file_path" 2>&1) && exit 0
+
+jq -n --arg ctx "$runner issues in $file_path:
+
+$output" \
+  '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $ctx}}'
