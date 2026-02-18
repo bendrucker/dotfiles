@@ -198,5 +198,3 @@ _dotfiles() {
       ;;
   esac
 }
-
-compdef _dotfiles dotfiles
