@@ -43,6 +43,8 @@ bind b run-shell -b tmux-bell-jump
 # Plugins
 set -g @plugin 'tmux-plugins/tpm'
 set -g @plugin 'tmux-plugins/tmux-resurrect'
+set -g @plugin 'tmux-plugins/tmux-continuum'
+set -g @continuum-restore 'on'
 set -g @plugin 'catppuccin/tmux'
 set -g @plugin 'alberti42/tmux-fzf-links'
 
