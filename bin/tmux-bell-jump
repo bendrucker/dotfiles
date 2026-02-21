@@ -14,6 +14,8 @@ if [[ "$count" -eq 1 ]]; then
   target=$(echo "$bell_windows" | awk '{print $1}')
   tmux switch-client -t "$target"
 else
-  target=$(echo "$bell_windows" | tmux display-popup -E -w 60% -h 60% "fzf --no-sort --border --prompt 'bell> ' --preview 'tmux capture-pane -t {1} -p'" | awk '{print $1}')
-  [[ -n "$target" ]] && tmux switch-client -t "$target"
+  tmux display-popup -E -w 60% -h 60% "tmux list-windows -a -F '#{session_name}:#{window_index} #{window_name}' -f '#{window_bell_flag}' \
+    | fzf --no-sort --border --prompt 'bell> ' --preview 'tmux capture-pane -t {1} -p' \
+    | awk '{print \$1}' \
+    | xargs -r tmux switch-client -t"
 fi
