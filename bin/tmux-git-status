@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 cd "$1" 2>/dev/null || exit 0
 
-branch=$(git branch --show-current 2>/dev/null)
-if [[ -z "$branch" ]]; then
-  branch=$(git rev-parse --short HEAD 2>/dev/null)
+# max visible branch name length before ellipsizing
+max=8
+
+label=$(git branch --show-current 2>/dev/null)
+label=${label:-$(git rev-parse --short HEAD 2>/dev/null)}
+label=${label:-$(basename "$1")}
+label=${label##*/}
+
+if [[ ${#label} -gt $max ]]; then
+  label="${label:0:$max}…"
 fi
 
-if [[ -n "$branch" ]]; then
-  dirty=""
-  git diff --quiet --ignore-submodules HEAD 2>/dev/null || dirty=" *"
-  printf '%s%s' "$branch" "$dirty"
-else
-  basename "$1"
-fi
+dirty=""
+git diff --quiet --ignore-submodules HEAD 2>/dev/null || dirty=" *"
+printf '%s%s' "$label" "$dirty"
