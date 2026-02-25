@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+#/ Usage: claude-trust-worktree <primary-path> <worktree-path>
+#/ Copy Claude Code workspace trust from a primary worktree to a new worktree.
+#/ If the primary path is trusted in ~/.claude.json, marks the worktree path as trusted too.
+
+set -e
+
+primary_path="$1"
+worktree_path="$2"
+
+if [ -z "$primary_path" ] || [ -z "$worktree_path" ]; then
+  grep '^#/' "$0" | cut -c 4-
+  exit 1
+fi
+
+config="$HOME/.claude.json"
+
+if [ ! -f "$config" ]; then
+  exit 0
+fi
+
+is_trusted=$(jq -r --arg path "$primary_path" '.projects[$path].hasTrustDialogAccepted // false' "$config")
+
+if [ "$is_trusted" != "true" ]; then
+  exit 0
+fi
+
+already_trusted=$(jq -r --arg path "$worktree_path" '.projects[$path].hasTrustDialogAccepted // false' "$config")
+
+if [ "$already_trusted" = "true" ]; then
+  exit 0
+fi
+
+tmp="${config}.tmp.$$"
+jq --arg path "$worktree_path" '.projects[$path].hasTrustDialogAccepted = true' "$config" > "$tmp"
+mv "$tmp" "$config"

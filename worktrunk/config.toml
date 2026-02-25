@@ -1,5 +1,6 @@
 [post-create]
 copy = "wt step copy-ignored"
+claude-trust = "claude-trust-worktree '{{ primary_worktree_path }}' '{{ worktree_path }}'"
 
 [post-switch]
 tmux-rename = '[ -n "$TMUX" ] && tmux rename-window {{ branch | sanitize }}'
