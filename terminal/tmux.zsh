@@ -17,6 +17,8 @@ twd() {
     return 1
   fi
 
-  tmux attach-session -t . -c "$dir"
+  local session
+  session=$(tmux display-message -p '#S')
+  echo detach-client | TMUX= tmux -C attach-session -t "=$session" -c "$dir" >/dev/null 2>&1
   echo "tmux working directory → $dir"
 }
