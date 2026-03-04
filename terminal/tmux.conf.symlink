@@ -62,6 +62,8 @@ set -g @catppuccin_directory_icon "󰘬 "
 set -g @catppuccin_session_icon "󰆍 "
 set -g @catppuccin_directory_color "#fab387"
 set -g @catppuccin_directory_text " #(tmux-git-status #{pane_current_path})"
+set -g @catppuccin_window_text " #W#(tmux-window-label '#{pane_title}')"
+set -g @catppuccin_window_current_text " #W#(tmux-window-label '#{pane_title}')"
 
 source-file -q ~/.tmux.conf.local
 
