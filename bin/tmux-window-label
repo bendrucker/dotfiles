@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+title="$1"
+[[ -z "$title" ]] && exit 0
+first="${title::1}"
+[[ "$first" =~ ^[[:ascii:]]$ ]] || printf ' %s' "$first"

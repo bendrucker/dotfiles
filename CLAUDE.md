@@ -72,6 +72,7 @@ Both `.symlink` and `.zsh` files are loaded from `~/.dotfiles` by default. Edits
 
 - **`dotfiles test`** — replaces the current shell with one using the dev working tree (temporary, session-only)
 - **`dotfiles dev enable`** — persistently repoints all symlinks to the dev working tree and sets a flag so new shells load dev `.zsh` files. Undo with `dotfiles dev disable`.
+- **Source directly from the worktree** — for configs like tmux that support runtime reload, source the worktree file explicitly (e.g., `tmux source-file /path/to/worktree/terminal/tmux.conf.symlink`). Do **not** suggest `prefix+r` or `tmux source-file ~/.tmux.conf` — those follow the symlink to `~/.dotfiles`, not the worktree.
 - Run `scripts/bootstrap` to apply new symlinks
 - Test dependencies: `bin/dotf` installs/updates packages
 
