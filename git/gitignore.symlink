@@ -20,3 +20,4 @@ tmp/
 
 # Git worktrees
 .worktrees/
+.claude/worktrees
