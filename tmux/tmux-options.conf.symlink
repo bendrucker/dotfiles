@@ -1,0 +1,31 @@
+# Prefix
+set -g prefix C-s
+unbind C-b
+
+unbind r
+bind r source-file ~/.tmux.conf
+
+
+# Terminal capabilities (true color, clickable links, system clipboard)
+set -g default-terminal "tmux-256color"
+set -ga terminal-features "*:RGB"
+set -ga terminal-features "*:hyperlinks"
+set -g set-clipboard on                    # copy mode selections → system clipboard via OSC 52
+set -g allow-passthrough on                # let programs send escapes directly to outer terminal
+
+# Usability
+set -g history-limit 1000000
+set -g mouse on
+set -g escape-time 10                      # default 500ms adds lag when pressing Escape in editors
+set -g base-index 1
+setw -g pane-base-index 1
+set -g renumber-windows on
+set -g focus-events on                     # apps detect pane/window focus changes
+
+# Only break words on spaces and @ so double-click selects full URLs and ticket IDs
+setw -g word-separators ' @'
+
+# Status bar
+set -g status-position top
+set -g status-left-length 100
+set -g status-right-length 100

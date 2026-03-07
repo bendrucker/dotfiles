@@ -1,0 +1,6 @@
+source-file ~/.tmux-options.conf
+source-file ~/.tmux-keys.conf
+source-file ~/.tmux-plugins.conf
+source-file -q ~/.tmux.conf.local
+run '~/.tmux/plugins/tpm/tpm'
+source-file ~/.tmux-status.conf

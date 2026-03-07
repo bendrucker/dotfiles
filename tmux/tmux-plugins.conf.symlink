@@ -1,0 +1,21 @@
+# Plugins
+set -g @plugin 'tmux-plugins/tpm'
+set -g @plugin 'tmux-plugins/tmux-resurrect'
+set -g @plugin 'tmux-plugins/tmux-continuum'
+set -g @continuum-restore 'on'
+set -g @plugin 'catppuccin/tmux'
+set -g @plugin 'alberti42/tmux-fzf-links'
+set -g @plugin 'roosta/tmux-fuzzback'
+set -g @fuzzback-popup 1
+set -g @fuzzback-popup-size '80%'
+
+# Catppuccin
+set -g @catppuccin_flavor 'mocha'
+set -g @catppuccin_window_status_style 'rounded'
+set -g @catppuccin_window_flags 'icon'
+set -g @catppuccin_directory_icon "󰘬 "
+set -g @catppuccin_session_icon "󰆍 "
+set -g @catppuccin_directory_color "#fab387"
+set -g @catppuccin_directory_text " #(tmux-git-status #{pane_current_path})"
+set -g @catppuccin_window_text " #W#(tmux-window-label '#{pane_title}')"
+set -g @catppuccin_window_current_text " #W#(tmux-window-label '#{pane_title}')"
