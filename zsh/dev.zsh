@@ -63,15 +63,28 @@ _dotfiles_repoint_symlinks() {
   local target="$1"
   local src dst
 
+  # Repoint traditional ~/.symlink files (zshenv, editorconfig)
   # shellcheck disable=SC2044
   for src in $(find -H "$target" -maxdepth 2 -name '*.symlink' -not -path '*.git*'); do
     dst="$HOME/.$(basename "${src%.*}")"
     [[ -L "$dst" ]] && ln -sfn "$src" "$dst"
   done
 
+  # Repoint ssh config
   if [[ -f "$target/ssh/config" && -L "$HOME/.ssh/config" ]]; then
     ln -sfn "$target/ssh/config" "$HOME/.ssh/config"
   fi
+
+  # Repoint XDG symlinks: find symlinks under ~/.config pointing into dotfiles
+  local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  local link current_target relative
+  find "$config_home" -type l 2>/dev/null | while read -r link; do
+    current_target="$(readlink "$link")"
+    if [[ "$current_target" == "$DOTFILES_HOME/"* ]]; then
+      relative="${current_target#"$DOTFILES_HOME"/}"
+      [[ -e "$target/$relative" ]] && ln -sfn "$target/$relative" "$link"
+    fi
+  done
 }
 
 _dotfiles_status() {

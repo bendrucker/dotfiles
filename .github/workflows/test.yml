@@ -92,11 +92,11 @@ jobs:
 
         # tmux = catppuccin/tmux (TPM uses repo name as directory)
         for plugin in tpm tmux-resurrect tmux-continuum tmux tmux-fzf-links; do
-          if [[ ! -d "$HOME/.tmux/plugins/$plugin" ]]; then
-            echo "FAIL: plugin directory missing: ~/.tmux/plugins/$plugin"
+          if [[ ! -d "$HOME/.config/tmux/plugins/$plugin" ]]; then
+            echo "FAIL: plugin directory missing: ~/.config/tmux/plugins/$plugin"
             exit 1
           fi
-          echo "OK: ~/.tmux/plugins/$plugin"
+          echo "OK: ~/.config/tmux/plugins/$plugin"
         done
 
         tmux_opt() {
