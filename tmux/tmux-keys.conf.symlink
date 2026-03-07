@@ -10,3 +10,6 @@ bind w display-popup -E -w 60% -h 60% tmux-windows
 
 # Jump to window with bell alert
 bind b run-shell -b tmux-bell-jump
+
+# Zoom has no hook — wrap the binding to log it
+bind z resize-pane -Z \; run-shell -b "tmux-usage-log pane-zoom"

@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Summarize tmux usage patterns from the hook-based usage log.
+#
+# Usage: tmux-usage-report [days]
+#   days  — look back this many days (default: 30)
+#
+# Reads ~/.local/share/tmux/usage.jsonl (newline-delimited JSON)
+
+set -euo pipefail
+
+log_file="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/usage.jsonl"
+
+if [[ ! -f "$log_file" ]]; then
+  echo "No usage log found at $log_file"
+  echo "Hooks will start recording once tmux loads the updated config."
+  exit 0
+fi
+
+days="${1:-30}"
+
+if date -v-1d +%s &>/dev/null; then
+  cutoff=$(date -u -v-"${days}d" +%Y-%m-%dT%H:%M:%SZ)
+else
+  cutoff=$(date -u -d "$days days ago" +%Y-%m-%dT%H:%M:%SZ)
+fi
+
+# Filter to recent entries
+recent=$(jq -c --arg cutoff "$cutoff" 'select(.ts >= $cutoff)' "$log_file")
+
+if [[ -z "$recent" ]]; then
+  echo "No events in the last $days days."
+  exit 0
+fi
+
+count() { echo "$recent" | jq -r --arg e "$1" 'select(.event == $e)' | wc -l | tr -d ' '; }
+
+total=$(echo "$recent" | wc -l | tr -d ' ')
+first=$(echo "$recent" | head -1 | jq -r .ts)
+last=$(echo "$recent" | tail -1 | jq -r .ts)
+
+echo "=== tmux usage report (last $days days) ==="
+echo "Period: $first → $last"
+echo "Total events: $total"
+echo
+
+echo "--- Event frequency ---"
+echo "$recent" | jq -r .event | sort | uniq -c | sort -rn
+echo
+
+sessions=$(count session-created)
+new_windows=$(count window-created)
+splits=$(count pane-created)
+copies=$(count copy-mode)
+layouts=$(count layout-changed)
+zooms=$(count pane-zoom)
+renames=$(count window-renamed)
+
+echo "--- Sessions created: $sessions"
+echo "--- Windows created: $new_windows"
+echo "--- Pane splits: $splits"
+echo "--- Copy mode entries: $copies"
+echo "--- Layout changes: $layouts"
+echo "--- Zoom toggles: $zooms"
+echo "--- Window renames: $renames"
+echo
+
+echo "--- Hourly distribution (UTC) ---"
+echo "$recent" | jq -r '.ts[:13]' | sed 's/.*T//' | sort | uniq -c | sort -k2n
+echo
+
+echo "--- Suggestions ---"
+echo
+if [[ "$zooms" -eq 0 ]]; then
+  echo "• You haven't used pane zoom (prefix+z). It's great for temporarily"
+  echo "  maximizing a pane without rearranging your layout."
+fi
+if [[ "$layouts" -eq 0 ]]; then
+  echo "• No layout changes detected. Try prefix+space to cycle through"
+  echo "  preset layouts (even-horizontal, tiled, etc.)."
+fi
+if [[ "$copies" -eq 0 ]]; then
+  echo "• No copy mode usage detected. prefix+[ enters copy mode for"
+  echo "  keyboard-driven scrollback search and selection."
+fi
+if [[ "$renames" -eq 0 ]] && [[ "$new_windows" -gt 10 ]]; then
+  echo "• You create lots of windows but never rename them. prefix+,"
+  echo "  lets you give windows meaningful names."
+fi
+if [[ "$splits" -eq 0 ]] && [[ "$new_windows" -gt 5 ]]; then
+  echo "• You create windows but rarely split panes. Splits can keep"
+  echo "  related tasks visible side-by-side."
+fi

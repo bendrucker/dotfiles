@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Append a timestamped event to the tmux usage log.
+# Usage: tmux-usage-log <event> [detail...]
+#
+# Called by tmux hooks (set-hook) to passively record session activity.
+# The log lives at ~/.local/share/tmux/usage.jsonl — one JSON object per line:
+#   {"ts":"...","event":"...","detail":"..."}
+
+set -euo pipefail
+
+log_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tmux"
+log_file="$log_dir/usage.jsonl"
+
+mkdir -p "$log_dir"
+
+event="${1:?usage: tmux-usage-log <event> [detail...]}"
+shift
+detail="$*"
+
+# jq-free JSON — these values never contain quotes or backslashes
+printf '{"ts":"%s","event":"%s","detail":"%s"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$event" "$detail" >> "$log_file"
