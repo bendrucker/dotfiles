@@ -29,13 +29,3 @@ setw -g word-separators ' @'
 set -g status-position top
 set -g status-left-length 100
 set -g status-right-length 100
-
-# Usage tracking — passive hook-based logging to ~/.local/share/tmux/usage.jsonl
-set-hook -g session-created  'run-shell -b "tmux-usage-log session-created #{session_name}"'
-set-hook -g after-new-window 'run-shell -b "tmux-usage-log window-created #{window_index}"'
-set-hook -g after-split-window 'run-shell -b "tmux-usage-log pane-created #{pane_index}"'
-set-hook -g after-select-window 'run-shell -b "tmux-usage-log window-selected #{window_index}"'
-set-hook -g pane-focus-in    'run-shell -b "tmux-usage-log pane-focused #{pane_index}"'
-set-hook -g after-resize-pane 'run-shell -b "tmux-usage-log layout-changed"'
-set-hook -g after-copy-mode  'run-shell -b "tmux-usage-log copy-mode"'
-set-hook -g window-renamed   'run-shell -b "tmux-usage-log window-renamed #{window_name}"'
