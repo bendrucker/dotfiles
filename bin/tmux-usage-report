@@ -66,27 +66,3 @@ echo
 
 echo "--- Hourly distribution (UTC) ---"
 echo "$recent" | jq -r '.ts[:13]' | sed 's/.*T//' | sort | uniq -c | sort -k2n
-echo
-
-echo "--- Suggestions ---"
-echo
-if [[ "$zooms" -eq 0 ]]; then
-  echo "• You haven't used pane zoom (prefix+z). It's great for temporarily"
-  echo "  maximizing a pane without rearranging your layout."
-fi
-if [[ "$layouts" -eq 0 ]]; then
-  echo "• No layout changes detected. Try prefix+space to cycle through"
-  echo "  preset layouts (even-horizontal, tiled, etc.)."
-fi
-if [[ "$copies" -eq 0 ]]; then
-  echo "• No copy mode usage detected. prefix+[ enters copy mode for"
-  echo "  keyboard-driven scrollback search and selection."
-fi
-if [[ "$renames" -eq 0 ]] && [[ "$new_windows" -gt 10 ]]; then
-  echo "• You create lots of windows but never rename them. prefix+,"
-  echo "  lets you give windows meaningful names."
-fi
-if [[ "$splits" -eq 0 ]] && [[ "$new_windows" -gt 5 ]]; then
-  echo "• You create windows but rarely split panes. Splits can keep"
-  echo "  related tasks visible side-by-side."
-fi
