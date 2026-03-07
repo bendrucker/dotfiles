@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+count=$(tmux list-windows -a -f '#{window_bell_flag}' -F '#{window_id}' 2>/dev/null | wc -l | tr -d ' ')
+echo "$count"
