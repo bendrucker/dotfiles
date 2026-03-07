@@ -13,8 +13,8 @@ vim.g.mapleader = " "
 require("lazy").setup({
   {
     "nvim-telescope/telescope.nvim",
-    branch = "0.1.x",
-    dependencies = { "nvim-lua/plenary.nvim" },
+    tag = "v0.2.1",    dependencies = {
+      { "nvim-lua/plenary.nvim", tag = "v0.1.4" },    },
     keys = {
       { "<leader>f", "<cmd>Telescope find_files<cr>", desc = "Find files" },
       { "<leader>g", "<cmd>Telescope live_grep<cr>", desc = "Live grep" },
@@ -24,7 +24,7 @@ require("lazy").setup({
 
   {
     "nvim-treesitter/nvim-treesitter",
-    build = ":TSUpdate",
+    tag = "v0.10.0",    build = ":TSUpdate",
     config = function()
       require("nvim-treesitter.configs").setup({
         ensure_installed = {
@@ -40,7 +40,7 @@ require("lazy").setup({
 
   {
     "neovim/nvim-lspconfig",
-    config = function()
+    tag = "v2.6.0",    config = function()
       local lspconfig = require("lspconfig")
       local servers = { "gopls", "ts_ls", "ty", "rust_analyzer", "terraformls" }
       for _, server in ipairs(servers) do
@@ -60,5 +60,4 @@ require("lazy").setup({
     end,
   },
 
-  { "christoomey/vim-tmux-navigator" },
-})
+  { "christoomey/vim-tmux-navigator", tag = "v1.0" },})

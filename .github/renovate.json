@@ -4,6 +4,16 @@
     "config:recommended"
   ],
   "automerge": true,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["neovim/config/init\\.lua$"],
+      "matchStrings": [
+        "\"(?<depName>[^\"]+/[^\"]+)\"[,\\s]*tag\\s*=\\s*\"(?<currentValue>v[^\"]+)\""
+      ],
+      "datasourceTemplate": "github-tags"
+    }
+  ],
   "packageRules": [
     {
       "matchUpdateTypes": ["major"],
