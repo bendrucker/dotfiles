@@ -1,0 +1,6 @@
+# Status modules (must load after TPM processes catppuccin)
+set -g status-left "#{E:@catppuccin_status_session}"
+set -g status-right "#{E:@catppuccin_status_directory}"
+
+# Bolder selection highlight for choose-tree / copy mode
+set -g mode-style "bg=#{@thm_surface_2},bold"
