@@ -17,6 +17,13 @@ fi
 # Fallback if selected directory doesn't exist
 [[ ! -d "$ZSH" ]] && export ZSH="$DOTFILES_HOME"
 
+export DOTFILES_TMUX="$ZSH/tmux"
+
+if [[ "$ZSH" != "$DOTFILES_HOME" ]]; then
+  export GIT_CONFIG_GLOBAL="$ZSH/git/gitconfig.symlink"
+  export CURL_HOME="$ZSH/http"
+fi
+
 export PROJECTS="$HOME/src"
 
 for brew in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
