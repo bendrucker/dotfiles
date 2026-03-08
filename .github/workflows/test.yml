@@ -163,6 +163,19 @@ jobs:
             sys.exit(1)
         print(f'OK: median startup {median:.3f}s')
         "
+  skill-tests:
+    strategy:
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-22.04
+          - name: macos
+            os: macos-15
+    name: skill tests (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: .claude/skills/dotfiles-suggestions/scripts/test.sh
   lint:
     runs-on: ubuntu-latest
     steps:

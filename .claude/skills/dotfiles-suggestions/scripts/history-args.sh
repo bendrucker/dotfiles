@@ -5,11 +5,12 @@
 # Output: for each top command, the most frequent argument combinations
 #
 # Usage:
-#   history-args                      # top 20 commands, 10 patterns each, all-time
-#   history-args --recent 6m          # last 6 months
-#   history-args -n 10 --patterns 5   # top 10 commands, 5 patterns each
+#   history-args.sh                      # top 20 commands, 10 patterns each, all-time
+#   history-args.sh --recent 6m          # last 6 months
+#   history-args.sh -n 10 --patterns 5   # top 10 commands, 5 patterns each
 
 set -euo pipefail
+source "$(dirname "$0")/common.sh"
 
 # Avoid multibyte conversion errors from binary data in history
 export LC_ALL=C
@@ -22,14 +23,17 @@ RECENT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --recent)
+      require_arg "$1" $#
       RECENT="$2"
       shift 2
       ;;
     -n)
+      require_arg "$1" $#
       CMD_COUNT="$2"
       shift 2
       ;;
     --patterns)
+      require_arg "$1" $#
       PATTERN_COUNT="$2"
       shift 2
       ;;
@@ -40,33 +44,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-parse_duration() {
-  local val="${1%[mMdDyY]}"
-  local unit="${1: -1}"
-  case "$unit" in
-    m|M) echo "-v-${val}m" ;;
-    d|D) echo "-v-${val}d" ;;
-    y|Y) echo "-v-${val}y" ;;
-    *)   echo "-v-${1}m" ;;
-  esac
-}
+tmpfile=$(mktemp)
+trap 'rm -f "$tmpfile"' EXIT
 
-extract_commands() {
-  if [[ -n "$RECENT" ]]; then
-    local cutoff
-    cutoff=$(date "$(parse_duration "$RECENT")" +%s)
-    LC_ALL=C awk -F'[:;]' -v cutoff="$cutoff" \
-      '/^: [0-9]/ && $2 >= cutoff {sub(/^: [0-9]+:[0-9]+;/, ""); print $0}' \
-      "$HISTFILE"
-  else
-    LC_ALL=C sed 's/^: [0-9]*:[0-9]*;//' "$HISTFILE"
-  fi
-}
+if [[ -n "$RECENT" ]]; then
+  cutoff=$(duration_to_cutoff "$RECENT")
+  extract_commands "$HISTFILE" "$cutoff" > "$tmpfile"
+else
+  extract_commands "$HISTFILE" > "$tmpfile"
+fi
 
-top_cmds=$(extract_commands | awk '{print $1}' | sort | uniq -c | sort -rn | head -"$CMD_COUNT" | awk '{print $2}')
+top_cmds=$(awk '{print $1}' "$tmpfile" | sort | uniq -c | sort -rn | head -"$CMD_COUNT" | awk '{print $2}')
 
-for cmd in $top_cmds; do
+while IFS= read -r cmd; do
   echo "=== $cmd ==="
-  # Strip command name to isolate arguments, e.g. "git push --force" → "push --force"
-  extract_commands | grep "^$cmd " | sed "s/^$cmd //" | sort | uniq -c | sort -rn | head -"$PATTERN_COUNT"
-done
+  awk -v cmd="$cmd" '$1 == cmd {sub(/^[^ ]+ /, ""); print}' "$tmpfile" \
+    | sort | uniq -c | sort -rn | head -"$PATTERN_COUNT"
+done <<< "$top_cmds"
