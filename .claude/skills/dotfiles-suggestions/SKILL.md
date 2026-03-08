@@ -1,7 +1,10 @@
 ---
-name: suggest-improvements
+name: dotfiles-suggestions
 description: Analyze shell history and installed tools to suggest dotfiles improvements. Use when looking for missing aliases, functions, completions, or topics based on actual usage patterns. Trigger on "what aliases should I add", "what's missing from my dotfiles", "audit my shell setup", "suggest improvements", "what should I add to my dotfiles", or any request to review dotfiles for gaps.
-allowed-tools: [Read, Bash, Grep, Glob, Agent]
+allowed-tools:
+  - "Bash(${CLAUDE_SKILL_ROOT}/scripts/history-freq.sh:*)"
+  - "Bash(${CLAUDE_SKILL_ROOT}/scripts/history-args.sh:*)"
+  - "Bash(${CLAUDE_SKILL_ROOT}/scripts/history-sequences.sh:*)"
 ---
 
 # Suggest Improvements
@@ -29,11 +32,11 @@ History spans a long time, so raw counts can be misleading — a command used he
 
 Run all of these in parallel:
 
-- **Date range**: `scripts/history-freq --date-range`
-- **Recent frequency**: `scripts/history-freq --recent 6m`
-- **All-time frequency**: `scripts/history-freq`
-- **Argument patterns**: `scripts/history-args --recent 6m`
-- **Multi-command sequences**: `scripts/history-sequences --recent 6m`
+- **Date range**: `scripts/history-freq.sh --date-range`
+- **Recent frequency**: `scripts/history-freq.sh --recent 6m`
+- **All-time frequency**: `scripts/history-freq.sh`
+- **Argument patterns**: `scripts/history-args.sh --recent 6m`
+- **Multi-command sequences**: `scripts/history-sequences.sh --recent 6m`
 
 Comparing recent vs all-time frequency reveals commands trending up (recent > all-time ratio) vs. fading out (high all-time but absent from recent). Focus suggestions on recently active commands.
 
