@@ -27,8 +27,9 @@ do
 done
 
 # initialize autocomplete
-autoload -Uz compinit
+autoload -Uz compinit bashcompinit
 compinit -C
+bashcompinit
 
 unset config_files
 
