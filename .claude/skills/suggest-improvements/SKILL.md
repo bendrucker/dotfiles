@@ -14,7 +14,7 @@ Inventory what the dotfiles already provide:
 
 - **Aliases**: `Grep` for `^alias ` across `*/aliases.zsh` and `*/*.zsh`
 - **Functions**: `Grep` for function definitions across `*/*.zsh`
-- **Completions**: `Glob` for `*/completion.zsh`
+- **Completions**: `Glob` for `*/completion.zsh`, plus list Homebrew-provided completions via `ls $HOMEBREW_PREFIX/share/zsh/site-functions/_*`
 - **Topics**: list topic directories (top-level dirs excluding `.git`, `.github`, `.claude`, `scripts`, `bin`, `tmp`)
 - **Brew packages**: `Grep` for `^brew ` across `*/Brewfile`
 - **bin/ scripts**: list `bin/`
@@ -64,7 +64,7 @@ The sub-agent prompt should ask it to identify:
 - Multi-step sequences repeated 3+ times that could become functions
 - Tools in history missing from topic directories
 - Commands with verbose repeated flags that could be aliased
-- Commands likely supporting completions without a `completion.zsh`
+- Commands lacking completions from **both** Homebrew site-functions and an explicit `completion.zsh`
 
 The sub-agent returns a structured list of suggestions with category, priority, and rationale.
 
@@ -74,7 +74,7 @@ Beyond history, the main agent also checks:
 
 - **Brew packages without topics**: compare `brew list` against topic directories
 - **Stale aliases**: check if aliased commands still exist on PATH
-- **Missing completions**: for top-used commands, check if the tool supports `completion zsh` or similar but lacks a `completion.zsh`
+- **Missing completions**: only flag a tool if it lacks **both** a Homebrew-provided completion (`_tool` in `$HOMEBREW_PREFIX/share/zsh/site-functions/`) **and** an explicit `completion.zsh` in the repo. Most Homebrew formulae ship completions that `compinit` picks up automatically — these do not need a `completion.zsh`. Only suggest one when the tool requires explicit `eval` registration or is not installed via Homebrew.
 
 ## Present Results
 
@@ -82,7 +82,7 @@ Merge sub-agent findings with installed-tool observations. Group into these top-
 
 - **New Aliases** — frequently typed commands that could be shortened
 - **Function Candidates** — repeated multi-command sequences
-- **Missing Completions** — tools supporting shell completions without a `completion.zsh`
+- **Missing Completions** — tools lacking completions from both Homebrew site-functions and an explicit `completion.zsh`
 - **New Topics** — tools installed/used but lacking a topic directory
 - **Stale Configuration** — aliases pointing to missing commands, unused topics
 
