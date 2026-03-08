@@ -10,6 +10,7 @@ else
 fi
 
 session=$(sesh list -t | fzf --no-sort --border --prompt 'session> ' --preview 'sesh preview {}' --color="$colors" \
+  --tmux center,60%,60% \
   --header 'ctrl-x: kill' \
   --bind "ctrl-x:execute-silent(tmux kill-session -t {})+reload(sesh list -t)")
 [[ -n "$session" ]] && sesh connect "$session"
