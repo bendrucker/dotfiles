@@ -39,7 +39,7 @@ duration_to_cutoff() {
 # Supports both BSD (macOS) and GNU (Linux) date.
 format_epoch() {
   local epoch="$1"
-  if date -r 0 +%s >/dev/null 2>&1; then
+  if date -v-1d +%s >/dev/null 2>&1; then
     date -r "$epoch" +%Y-%m-%d
   else
     date -d "@$epoch" +%Y-%m-%d
