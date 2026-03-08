@@ -23,48 +23,82 @@ Run all of these in parallel.
 
 ## Pre-process History
 
-Run Bash commands to produce compact frequency tables from `~/.zsh_history`. All `sed` commands that parse history must include an inline comment documenting the input format they handle.
+Run Bash commands to produce compact frequency tables from `~/.zsh_history`. All `awk`/`sed` commands that parse history must include an inline comment documenting the input format they handle.
 
-**Command frequency table:**
+History spans a long time, so raw counts can be misleading — a command used heavily years ago but not recently is not a good alias candidate. Split analysis into **recent** (last 6 months) and **all-time** to distinguish active patterns from stale ones.
+
+**History date range:**
+
+```bash
+# Input format (EXTENDED_HISTORY): ": 1661789533:0;git push --force"
+# Show first and last entry timestamps to understand history span
+# Use head/tail on raw file (not sort) since entries are chronological
+head -1 ~/.zsh_history | awk -F'[:;]' '{print $2}' | xargs -I{} date -r {} "+%Y-%m-%d"
+tail -1 ~/.zsh_history | awk -F'[:;]' '{print $2}' | xargs -I{} date -r {} "+%Y-%m-%d"
+```
+
+**Recent command frequency (last 6 months):**
+
+```bash
+# Input format (EXTENDED_HISTORY): ": 1661789533:0;git push --force"
+# Filter to entries with timestamp in the last 6 months, then count command frequencies
+# LC_ALL=C avoids multibyte conversion errors from binary data in history
+SIX_MONTHS_AGO=$(date -v-6m +%s)
+LC_ALL=C awk -F'[:;]' -v cutoff="$SIX_MONTHS_AGO" \
+  '/^: [0-9]/ && $2 >= cutoff {sub(/^: [0-9]+:[0-9]+;/, ""); print $0}' \
+  ~/.zsh_history | awk '{print $1}' | sort | uniq -c | sort -rn | head -60
+```
+
+**All-time command frequency:**
 
 ```bash
 # Input format (EXTENDED_HISTORY): ": 1661789533:0;git push --force"
 # Strip timestamp prefix, extract first word (command name), count frequencies
-sed 's/^: [0-9]*:[0-9]*;//' ~/.zsh_history | awk '{print $1}' | sort | uniq -c | sort -rn | head -80
+LC_ALL=C sed 's/^: [0-9]*:[0-9]*;//' ~/.zsh_history | awk '{print $1}' | sort | uniq -c | sort -rn | head -80
 ```
 
-**Argument patterns for top commands:**
+Comparing these two tables reveals commands that are trending up (recent > all-time ratio) vs. fading out (high all-time but absent from recent). Focus suggestions on recently active commands.
+
+**Argument patterns for top recent commands:**
 
 ```bash
-# For each of the top 20 commands, show most common argument patterns
-for cmd in $(sed 's/^: [0-9]*:[0-9]*;//' ~/.zsh_history | awk '{print $1}' | sort | uniq -c | sort -rn | head -20 | awk '{print $2}'); do
+# For each of the top 20 recent commands, show most common argument patterns
+SIX_MONTHS_AGO=$(date -v-6m +%s)
+for cmd in $(LC_ALL=C awk -F'[:;]' -v cutoff="$SIX_MONTHS_AGO" \
+  '/^: [0-9]/ && $2 >= cutoff {sub(/^: [0-9]+:[0-9]+;/, ""); print $0}' \
+  ~/.zsh_history | awk '{print $1}' | sort | uniq -c | sort -rn | head -20 | awk '{print $2}'); do
   echo "=== $cmd ==="
   # Input format: ": 1661789533:0;git push --force"
-  # Strip timestamp, then strip command name to isolate arguments
-  # e.g., "git push --force" → "push --force"
-  sed 's/^: [0-9]*:[0-9]*;//' ~/.zsh_history | grep "^$cmd " | sed "s/^$cmd //" | sort | uniq -c | sort -rn | head -10
+  # Filter to recent, strip timestamp + command name to isolate arguments
+  LC_ALL=C awk -F'[:;]' -v cutoff="$SIX_MONTHS_AGO" \
+    '/^: [0-9]/ && $2 >= cutoff {sub(/^: [0-9]+:[0-9]+;/, ""); print $0}' \
+    ~/.zsh_history | grep "^$cmd " | sed "s/^$cmd //" | sort | uniq -c | sort -rn | head -10
 done
 ```
 
-**Multi-command sequences:**
+**Multi-command sequences (recent):**
 
 ```bash
 # Input format (EXTENDED_HISTORY): ": 1661789533:0;git add . && git commit -m 'fix'"
-# Find repeated pipelines and chained commands
-sed 's/^: [0-9]*:[0-9]*;//' ~/.zsh_history | grep -E '&&|\|' | sort | uniq -c | sort -rn | head -30
+# Find repeated pipelines and chained commands from the last 6 months
+SIX_MONTHS_AGO=$(date -v-6m +%s)
+LC_ALL=C awk -F'[:;]' -v cutoff="$SIX_MONTHS_AGO" \
+  '/^: [0-9]/ && $2 >= cutoff {sub(/^: [0-9]+:[0-9]+;/, ""); print $0}' \
+  ~/.zsh_history | grep -E '&&|\|' | sort | uniq -c | sort -rn | head -30
 ```
 
 ## Analyze Patterns via Sub-Agent
 
 Launch a general-purpose Agent to do pure text pattern matching on the pre-processed data. Include the full frequency tables and dotfiles inventory directly in the agent prompt — the sub-agent needs no tools since all data is already extracted. This is a text analysis task well-suited to a fast, cheap model.
 
-The sub-agent prompt should ask it to identify:
+The sub-agent prompt should include both the recent and all-time frequency tables and ask it to identify:
 
-- Commands used 10+ times lacking aliases
-- Multi-step sequences repeated 3+ times that could become functions
-- Tools in history missing from topic directories
+- Commands used 10+ times **recently** lacking aliases
+- Multi-step sequences repeated 3+ times recently that could become functions
+- Tools active in recent history missing from topic directories
 - Commands with verbose repeated flags that could be aliased
 - Commands lacking completions from **both** Homebrew site-functions and an explicit `completion.zsh`
+- Commands with high all-time counts but zero/low recent usage (candidates for stale config)
 
 The sub-agent returns a structured list of suggestions with category, priority, and rationale.
 
