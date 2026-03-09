@@ -73,6 +73,7 @@ jobs:
           python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: Test tmux
+      shell: zsh {0}
       run: |
         tmux_stderr=$(mktemp)
         trap 'tmux kill-server 2>/dev/null; rm -f "$tmux_stderr"' EXIT
