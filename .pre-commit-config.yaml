@@ -19,3 +19,12 @@ repos:
     hooks:
       - id: ast-grep
         files: Brewfile$
+
+  - repo: local
+    hooks:
+      - id: shellspec
+        name: shellspec
+        language: system
+        entry: bash -c 'for dir in $(find . -name .shellspec -not -path "./.git/*" -exec dirname {} \;); do echo "shellspec $dir" && (cd "$dir" && shellspec) || exit 1; done'
+        files: \.(sh|shellspec)$
+        pass_filenames: false
