@@ -1,6 +1,16 @@
+%if "$DOTFILES_TMUX"
+source-file "$DOTFILES_TMUX/tmux-options.conf.symlink"
+source-file "$DOTFILES_TMUX/tmux-keys.conf.symlink"
+source-file "$DOTFILES_TMUX/tmux-plugins.conf.symlink"
+%else
 source-file ~/.tmux-options.conf
 source-file ~/.tmux-keys.conf
 source-file ~/.tmux-plugins.conf
+%endif
 source-file -q ~/.tmux.conf.local
 run '~/.tmux/plugins/tpm/tpm'
+%if "$DOTFILES_TMUX"
+source-file "$DOTFILES_TMUX/tmux-status.conf.symlink"
+%else
 source-file ~/.tmux-status.conf
+%endif
