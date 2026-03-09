@@ -177,15 +177,22 @@ jobs:
       - uses: actions/checkout@v6
       - name: Install shellspec
         run: |
-          curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix=$HOME/.local
+          curl -fsSL https://raw.githubusercontent.com/shellspec/shellspec/master/install.sh | sh -s -- --yes --prefix=$HOME/.local
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Run tests
-        working-directory: .claude/skills/dotfiles-suggestions/scripts
-        run: shellspec
+        run: |
+          for dir in $(find . -name .shellspec -not -path "./.git/*" -exec dirname {} \;); do
+            echo "shellspec $dir"
+            (cd "$dir" && shellspec) || exit 1
+          done
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Install shellspec
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/shellspec/shellspec/master/install.sh | sh -s -- --yes --prefix=$HOME/.local
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: j178/prek-action@v1
       - name: Check completion file naming convention
         run: |
