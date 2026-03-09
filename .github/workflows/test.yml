@@ -163,10 +163,37 @@ jobs:
             sys.exit(1)
         print(f'OK: median startup {median:.3f}s')
         "
+  skill-tests:
+    strategy:
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-22.04
+          - name: macos
+            os: macos-15
+    name: skill tests (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Add brew to Linux PATH
+        if: runner.os == 'Linux'
+        run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
+      - name: Install shellspec
+        run: brew install shellspec
+      - name: Run tests
+        run: |
+          for dir in $(find . -name .shellspec -not -path "./.git/*" -exec dirname {} \;); do
+            echo "shellspec $dir"
+            (cd "$dir" && shellspec) || exit 1
+          done
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Add brew to PATH
+        run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
+      - name: Install shellspec
+        run: brew install shellspec
       - uses: j178/prek-action@v1
       - name: Check completion file naming convention
         run: |

@@ -1,2 +1,3 @@
 cask 'iterm2'
+brew 'shellspec'
 brew 'zoxide'
