@@ -1,4 +1,5 @@
-#!/usr/bin/env sh
+#!/usr/bin/env zsh
+
 set -e
 TOPIC_DIR="$(cd "$(dirname "$0")" && pwd)"
 TMUX_CONFIG="$HOME/.config/tmux"
