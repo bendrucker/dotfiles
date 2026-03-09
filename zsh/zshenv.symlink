@@ -26,6 +26,13 @@ fi
 
 export PROJECTS="$HOME/src"
 
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_STATE_HOME="$HOME/.local/state"
+export XDG_CACHE_HOME="$HOME/.cache"
+
+export ZDOTDIR="${ZDOTDIR:-$XDG_CONFIG_HOME/zsh}"
+
 for brew in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
   if [[ -x "$brew" ]]; then
     eval "$("$brew" shellenv)"

@@ -26,7 +26,7 @@ Example: `claude/completion.zsh`
 
 ### Loading Process
 
-From `zsh/zshrc.symlink`:
+From `zsh/zshrc`:
 
 1. `compinit` is called to initialize the completion system
 2. All `*/completion.zsh` files are sourced

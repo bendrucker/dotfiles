@@ -19,7 +19,7 @@ setup_zdotdir() {
   local dir="$1" zdotdir
   zdotdir=$(mktemp -d)
   ln -s "$dir/zsh/zshenv.symlink" "$zdotdir/.zshenv"
-  ln -s "$dir/zsh/zshrc.symlink" "$zdotdir/.zshrc"
+  ln -s "$dir/zsh/zshrc" "$zdotdir/.zshrc"
   echo "$zdotdir"
 }
 

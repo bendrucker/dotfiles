@@ -53,8 +53,8 @@ current automatically. To manage manually inside tmux:
 
 ### Local overrides
 
-Machine-specific settings go in `~/.tmux.conf.local`, which is sourced at the
-end of the config (before TPM runs).
+Machine-specific settings go in `~/.config/tmux/tmux.conf.local`, which is sourced
+at the end of the config (before TPM runs).
 
 ## Ghostty
 
