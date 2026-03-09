@@ -1,9 +1,15 @@
 #!/usr/bin/env sh
-
 set -e
+TOPIC_DIR="$(cd "$(dirname "$0")" && pwd)"
+TMUX_CONFIG="$HOME/.config/tmux"
+mkdir -p "$TMUX_CONFIG"
+
+for conf in tmux.conf options.conf keys.conf plugins.conf status.conf; do
+  ln -sf "$TOPIC_DIR/$conf" "$TMUX_CONFIG/$conf"
+done
 
 # TPM (Tmux Plugin Manager)
-TPM_DIR="$HOME/.tmux/plugins/tpm"
+TPM_DIR="$TMUX_CONFIG/plugins/tpm"
 if [ ! -d "$TPM_DIR" ]; then
   git clone https://github.com/tmux-plugins/tpm "$TPM_DIR"
 fi
@@ -17,7 +23,7 @@ if ! tmux has-session -t "$_tpm_session" 2>/dev/null; then
   tmux new-session -d -s "$_tpm_session"
   _created_session=true
 fi
-tmux set-environment -g TMUX_PLUGIN_MANAGER_PATH "$HOME/.tmux/plugins/"
+tmux set-environment -g TMUX_PLUGIN_MANAGER_PATH "$TMUX_CONFIG/plugins/"
 
 "$TPM_DIR/bin/install_plugins"
 "$TPM_DIR/bin/update_plugins" all
