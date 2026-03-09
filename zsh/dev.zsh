@@ -37,7 +37,7 @@ Usage: dotfiles <command>
 Commands:
   status    Show which dotfiles are active and their versions
   test      Start a subshell using development dotfiles
-  dev       Toggle persistent development mode (repoints symlinks)
+  dev       Toggle persistent development mode
   sync      Sync installed dotfiles from remote
   help      Show this help message
 
@@ -57,34 +57,6 @@ _dotfiles_detect_repo() {
     dir="$(dirname "$dir")"
   done
   return 1
-}
-
-_dotfiles_repoint_symlinks() {
-  local target="$1"
-  local src dst
-
-  # Repoint traditional ~/.symlink files (zshenv, editorconfig)
-  # shellcheck disable=SC2044
-  for src in $(find -H "$target" -maxdepth 2 -name '*.symlink' -not -path '*.git*'); do
-    dst="$HOME/.$(basename "${src%.*}")"
-    [[ -L "$dst" ]] && ln -sfn "$src" "$dst"
-  done
-
-  # Repoint ssh config
-  if [[ -f "$target/ssh/config" && -L "$HOME/.ssh/config" ]]; then
-    ln -sfn "$target/ssh/config" "$HOME/.ssh/config"
-  fi
-
-  # Repoint XDG symlinks: find symlinks under ~/.config pointing into dotfiles
-  local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
-  local link current_target relative
-  find "$config_home" -type l 2>/dev/null | while read -r link; do
-    current_target="$(readlink "$link")"
-    if [[ "$current_target" == "$DOTFILES_HOME/"* ]]; then
-      relative="${current_target#"$DOTFILES_HOME"/}"
-      [[ -e "$target/$relative" ]] && ln -sfn "$target/$relative" "$link"
-    fi
-  done
 }
 
 _dotfiles_status() {
@@ -149,14 +121,12 @@ _dotfiles_dev() {
         return 1
       }
       echo "$dev_dir" > "$flag"
-      _dotfiles_repoint_symlinks "$dev_dir"
       echo "Dev mode enabled: $dev_dir"
-      echo "Restart shell to load dev zsh files."
+      echo "Restart shell to apply."
       ;;
     disable)
       rm -f "$flag"
-      _dotfiles_repoint_symlinks "$DOTFILES_HOME"
-      echo "Dev mode disabled. Symlinks restored to $DOTFILES_HOME"
+      echo "Dev mode disabled."
       echo "Restart shell to apply."
       ;;
     "")
