@@ -175,7 +175,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - run: .claude/skills/dotfiles-suggestions/scripts/test.sh
+      - name: Install shellspec
+        run: |
+          curl -fsSL https://git.io/shellspec | sh -s -- --yes --prefix=$HOME/.local
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Run tests
+        working-directory: .claude/skills/dotfiles-suggestions/scripts
+        run: shellspec
   lint:
     runs-on: ubuntu-latest
     steps:

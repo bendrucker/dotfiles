@@ -2,7 +2,7 @@
 # Shared helpers for history analysis scripts.
 
 # Convert a human-friendly duration (6m, 30d, 1y) to an epoch cutoff timestamp.
-# Supports both BSD (macOS) and GNU (Linux) date.
+# Uses approximate month/year lengths — precise enough for history analysis.
 duration_to_cutoff() {
   local input="$1"
   if [[ ! "$input" =~ ^[0-9]+[mMdDyY]?$ ]]; then
@@ -12,38 +12,20 @@ duration_to_cutoff() {
 
   local val="${input%[mMdDyY]}"
   local unit="${input: -1}"
+  local seconds
 
-  # Bare number defaults to months
-  if [[ "$unit" =~ ^[0-9]$ ]]; then
-    unit="m"
-  fi
+  case "$unit" in
+    d|D) seconds=$((val * 86400)) ;;
+    y|Y) seconds=$((val * 365 * 86400)) ;;
+    *)   seconds=$((val * 30 * 86400)) ;;
+  esac
 
-  if date -v-1d +%s >/dev/null 2>&1; then
-    # BSD date (macOS)
-    case "$unit" in
-      m|M) date -v-"${val}m" +%s ;;
-      d|D) date -v-"${val}d" +%s ;;
-      y|Y) date -v-"${val}y" +%s ;;
-    esac
-  else
-    # GNU date (Linux)
-    case "$unit" in
-      m|M) date -d "$val months ago" +%s ;;
-      d|D) date -d "$val days ago" +%s ;;
-      y|Y) date -d "$val years ago" +%s ;;
-    esac
-  fi
+  echo $(( $(date +%s) - seconds ))
 }
 
 # Format an epoch timestamp as YYYY-MM-DD.
-# Supports both BSD (macOS) and GNU (Linux) date.
 format_epoch() {
-  local epoch="$1"
-  if date -v-1d +%s >/dev/null 2>&1; then
-    date -r "$epoch" +%Y-%m-%d
-  else
-    date -d "@$epoch" +%Y-%m-%d
-  fi
+  perl -e 'use POSIX qw(strftime); print strftime("%Y-%m-%d", localtime($ARGV[0])), "\n"' "$1"
 }
 
 # Extract full command lines from a zsh EXTENDED_HISTORY file.
