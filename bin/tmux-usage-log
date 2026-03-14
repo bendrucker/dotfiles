@@ -22,3 +22,13 @@ jq -nc \
   --arg event "$event" \
   --arg detail "$detail" \
   '{ts: $ts, event: $event, detail: $detail}' >> "$log_file"
+
+max_bytes=1000000
+max_lines=10000
+if [[ -f "$log_file" ]]; then
+  file_size=$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null || echo 0)
+  if (( file_size > max_bytes )); then
+    tmp="$log_file.new"
+    tail -n "$max_lines" "$log_file" > "$tmp" && mv "$tmp" "$log_file"
+  fi
+fi
