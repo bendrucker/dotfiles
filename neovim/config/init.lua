@@ -40,7 +40,7 @@ require("lazy").setup({
 
   {
     "neovim/nvim-lspconfig",
-    tag = "v2.6.0",    config = function()
+    tag = "v2.7.0",    config = function()
       local lspconfig = require("lspconfig")
       local servers = { "gopls", "ts_ls", "ty", "rust_analyzer", "terraformls" }
       for _, server in ipairs(servers) do
