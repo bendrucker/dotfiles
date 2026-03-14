@@ -40,13 +40,8 @@ for brew in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
   fi
 done
 
-# all of our zsh files
-typeset -U config_files
-config_files=($ZSH/**/*.zsh)
-
 # load the path files
-for file in ${(M)config_files:#*/path.zsh}
-do
+for file in $ZSH/**/path.zsh; do
   source $file
 done
 
