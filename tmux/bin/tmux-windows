@@ -9,6 +9,7 @@ fi
 
 target=$(tmux list-windows -F '#{window_index} #{window_name} [#{pane_current_command}]' \
   | fzf --no-sort --border --prompt 'window> ' --color="$colors" \
+    --tmux center,60%,60% \
     --preview 'tmux capture-pane -t :{1} -p')
 
 [[ -n "$target" ]] && tmux select-window -t :"$(echo "$target" | awk '{print $1}')"

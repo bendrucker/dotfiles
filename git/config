@@ -18,7 +18,7 @@
   ui = true
 
 [core]
-  excludesfile = ~/.gitignore
+  excludesfile = ~/.config/git/ignore
   pager = "diff-so-fancy | less --tabs=4 -RF"
   compression = 9
 
@@ -71,4 +71,4 @@
   strategy = incremental
 
 [include]
-  path = ~/.gitconfig.local
+  path = ~/.config/git/config.local

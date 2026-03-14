@@ -9,7 +9,8 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
   - `*.zsh`: Shell configuration files loaded by zsh
   - `path.zsh`: Loaded first for `$PATH` setup
   - `completion.zsh`: Deferred until after first prompt renders (via `precmd` hook)
-  - `*.symlink`: Files symlinked to `$HOME` as dotfiles
+  - `*.symlink`: Files symlinked to `$HOME` as dotfiles (legacy: `zshenv`, `editorconfig`)
+  - `install.sh`: Topic installer that creates XDG symlinks under `~/.config/<tool>/`
   - `Brewfile`: Homebrew packages for the topic
 - **scripts/**: Bootstrap and setup scripts
 
@@ -20,9 +21,9 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 1. Create directory: `mkdir <topic>/`
 2. Add configuration files as needed:
    - `<topic>/<tool>.zsh` for shell configuration
-   - `<topic>/<config>.symlink` for dotfiles that need symlinking
+   - `<topic>/install.sh` to symlink configs into `~/.config/<tool>/`
    - `<topic>/Brewfile` for dependencies
-3. Run `scripts/bootstrap` to symlink new dotfiles
+3. Run `scripts/install` to run topic installers
 
 ### Managing Dependencies
 
@@ -55,24 +56,24 @@ Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`).
 - **PATH modifications**: Add to `<topic>/path.zsh`
 - **Completions**: Add to `<topic>/completion.zsh`
 
-### Symlinked Dotfiles
+### Config File Installation
 
-- Name files with `.symlink` extension
-- Bootstrap script creates `~/.filename` from `topic/filename.symlink`
-- Special case: `ssh/config` is symlinked directly to `~/.ssh/config`
-- Symlinks point to `~/.dotfiles` (the installed copy), **not** the development working tree. Edits to `.symlink` files in a dev checkout won't take effect until synced unless dev mode is enabled.
+Most tool configs live under `~/.config/<tool>/` (XDG Base Directory). Each topic's `install.sh` creates symlinks from `~/.config/<tool>/` → the topic directory. A few legacy files still use `*.symlink` → `$HOME` (`zshenv`, `editorconfig`).
+
+- `ssh/config` is symlinked directly to `~/.ssh/config`
+- Symlinks point to `~/.dotfiles` (the installed copy), **not** the development working tree. Edits in a dev checkout won't take effect until synced unless dev mode is enabled.
 
 ### Dev Mode
 
-`dotfiles dev enable` repoints all home-directory symlinks from `~/.dotfiles` to the current working tree. This lets you test `.symlink` file changes (e.g., `tmux.conf.symlink`) immediately without syncing. Run `dotfiles dev disable` to restore symlinks to `~/.dotfiles`.
+`dotfiles dev enable` repoints all symlinks (both `$HOME` and `~/.config/`) from `~/.dotfiles` to the current working tree. This lets you test config changes immediately without syncing. Run `dotfiles dev disable` to restore symlinks to `~/.dotfiles`.
 
 ### Testing Changes
 
-Both `.symlink` and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev checkout won't take effect without one of these approaches:
+Config and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev checkout won't take effect without one of these approaches:
 
 - **`dotfiles test`** — replaces the current shell with one using the dev working tree (temporary, session-only)
-- **`dotfiles dev enable`** — persistently repoints all symlinks to the dev working tree and sets a flag so new shells load dev `.zsh` files. Undo with `dotfiles dev disable`.
-- **Source directly from the worktree** — for configs like tmux that support runtime reload, source the worktree file explicitly (e.g., `tmux source-file /path/to/worktree/terminal/tmux.conf.symlink`). Do **not** suggest `prefix+r` or `tmux source-file ~/.tmux.conf` — those follow the symlink to `~/.dotfiles`, not the worktree.
+- **`dotfiles dev enable`** — persistently repoints all symlinks (home and XDG) to the dev working tree and sets a flag so new shells load dev `.zsh` files. Undo with `dotfiles dev disable`.
+- **Source directly from the worktree** — for configs like tmux that support runtime reload, source the worktree file explicitly (e.g., `tmux source-file /path/to/worktree/tmux/tmux.conf`). Do **not** suggest `prefix+r` or `tmux source-file ~/.config/tmux/tmux.conf` — those follow the symlink to `~/.dotfiles`, not the worktree.
 - Run `scripts/bootstrap` to apply new symlinks
 - Test dependencies: `bin/dotf` installs/updates packages
 
