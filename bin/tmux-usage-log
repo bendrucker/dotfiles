@@ -3,7 +3,7 @@
 # Usage: tmux-usage-log <event> [detail...]
 #
 # Called by tmux hooks (set-hook) to passively record session activity.
-# The log lives at ~/.local/share/tmux/usage.jsonl — one JSON object per line:
+# The log lives at $XDG_DATA_HOME/tmux/usage.jsonl — one JSON object per line:
 #   {"ts":"...","event":"...","detail":"..."}
 
 set -euo pipefail
@@ -17,6 +17,8 @@ event="${1:?usage: tmux-usage-log <event> [detail...]}"
 shift
 detail="$*"
 
-# jq-free JSON — these values never contain quotes or backslashes
-printf '{"ts":"%s","event":"%s","detail":"%s"}\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$event" "$detail" >> "$log_file"
+jq -nc \
+  --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg event "$event" \
+  --arg detail "$detail" \
+  '{ts: $ts, event: $event, detail: $detail}' >> "$log_file"

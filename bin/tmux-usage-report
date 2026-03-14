@@ -4,7 +4,7 @@
 # Usage: tmux-usage-report [days]
 #   days  — look back this many days (default: 30)
 #
-# Reads ~/.local/share/tmux/usage.jsonl (newline-delimited JSON)
+# Reads $XDG_DATA_HOME/tmux/usage.jsonl (newline-delimited JSON)
 
 set -euo pipefail
 
@@ -24,7 +24,6 @@ else
   cutoff=$(date -u -d "$days days ago" +%Y-%m-%dT%H:%M:%SZ)
 fi
 
-# Filter to recent entries
 recent=$(jq -c --arg cutoff "$cutoff" 'select(.ts >= $cutoff)' "$log_file")
 
 if [[ -z "$recent" ]]; then
@@ -32,7 +31,7 @@ if [[ -z "$recent" ]]; then
   exit 0
 fi
 
-count() { echo "$recent" | jq -r --arg e "$1" 'select(.event == $e)' | wc -l | tr -d ' '; }
+count() { echo "$recent" | jq -c --arg e "$1" 'select(.event == $e)' | wc -l | tr -d ' '; }
 
 total=$(echo "$recent" | wc -l | tr -d ' ')
 first=$(echo "$recent" | head -1 | jq -r .ts)
@@ -65,4 +64,4 @@ echo "--- Window renames: $renames"
 echo
 
 echo "--- Hourly distribution (UTC) ---"
-echo "$recent" | jq -r '.ts[:13]' | sed 's/.*T//' | sort | uniq -c | sort -k2n
+echo "$recent" | jq -r '.ts | split("T")[1][:2]' | sort | uniq -c | sort -k2n
