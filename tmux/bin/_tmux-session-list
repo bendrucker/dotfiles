@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tmux list-sessions -F '#{session_name} #{session_windows}' \
+  | while read -r name count; do
+      if [[ "$count" -gt 1 ]]; then
+        echo "$name ($count)"
+      else
+        echo "$name"
+      fi
+    done
+sesh list -c

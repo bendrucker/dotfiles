@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" == "Dark" ]]; then
-  # catppuccin mocha
-  colors="bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8,fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc,marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8,selected-bg:#45475a"
-else
-  # catppuccin latte
-  colors="bg+:#ccd0da,bg:#eff1f5,spinner:#dc8a78,hl:#d20f39,fg:#4c4f69,header:#d20f39,info:#8839ef,pointer:#dc8a78,marker:#7287fd,fg+:#4c4f69,prompt:#8839ef,hl+:#d20f39,selected-bg:#bcc0cc"
-fi
+self_dir=$(dirname "$0")
+source "$self_dir/_fzf-colors"
 
-session=$(sesh list -t | fzf --no-sort --border --prompt 'session> ' --preview 'sesh preview {}' --color="$colors" \
-  --tmux center,60%,60% \
-  --header 'ctrl-x: kill' \
-  --bind "ctrl-x:execute-silent(tmux kill-session -t {})+reload(sesh list -t)")
-[[ -n "$session" ]] && sesh connect "$session"
+target=$("$self_dir/_tmux-session-list" \
+  | fzf --no-sort --border --prompt 'session> ' --color="$colors" \
+    --tmux center,60%,60% \
+    --header 'ctrl-x: kill' \
+    --bind 'focus:transform-header([[ {} == *\(* ]] && echo "ctrl-x: kill · tab: windows" || echo "ctrl-x: kill")' \
+    --preview 'tmux capture-pane -t {1} -p 2>/dev/null || sesh preview {}' \
+    --bind "tab:transform([[ {1} == *:* || {} == *\(* ]] && echo become\\($self_dir/tmux-windows\\ {1}\\))" \
+    --bind "ctrl-x:execute-silent(tmux kill-session -t {1})+reload($self_dir/_tmux-session-list)") || true
+
+if [[ -n "$target" ]]; then
+  key=$(echo "$target" | awk '{print $1}')
+  if tmux has-session -t "$key" 2>/dev/null; then
+    tmux switch-client -t "$key"
+  else
+    sesh connect "$key"
+  fi
+fi
