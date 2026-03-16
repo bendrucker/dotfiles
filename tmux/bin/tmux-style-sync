@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ "$(uname -s)" == "Darwin" ]] || exit 0
+
+if [[ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" == "Dark" ]]; then
+  flavor="mocha"
+else
+  flavor="latte"
+fi
+
+current=$(tmux show -gv @catppuccin_flavor 2>/dev/null || echo "")
+[[ "$current" == "$flavor" ]] && exit 0
+
+tmux_config="${XDG_CONFIG_HOME:-$HOME/.config}/tmux"
+plugin_dir="$tmux_config/plugins/tmux"
+
+for f in "$plugin_dir/catppuccin_options_tmux.conf" \
+         "$plugin_dir/catppuccin_tmux.conf" \
+         "$tmux_config/status.conf"; do
+  if [[ ! -f "$f" ]]; then
+    echo "tmux-style-sync: missing $f" >&2
+    exit 1
+  fi
+done
+
+# Unset @thm_* and @catppuccin_* variables so -ogq (only-if-unset) defaults can re-apply
+while IFS= read -r var; do
+  tmux set -gu "$var"
+done < <(tmux show -g | awk '/^@(thm_|catppuccin_)/{print $1}')
+
+# Unset @_ctp_* variables (not matched by the pattern above)
+tmux set -gu @_ctp_status_bg 2>/dev/null || true
+
+tmux set -g @catppuccin_flavor "$flavor"
+tmux source-file "$plugin_dir/catppuccin_options_tmux.conf"
+tmux source-file "$plugin_dir/catppuccin_tmux.conf"
+tmux source-file "$tmux_config/status.conf"
