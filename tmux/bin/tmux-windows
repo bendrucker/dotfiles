@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" == "Dark" ]]; then
-  colors="bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8,fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc,marker:#b4befe,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8,selected-bg:#45475a"
-else
-  colors="bg+:#ccd0da,bg:#eff1f5,spinner:#dc8a78,hl:#d20f39,fg:#4c4f69,header:#d20f39,info:#8839ef,pointer:#dc8a78,marker:#7287fd,fg+:#4c4f69,prompt:#8839ef,hl+:#d20f39,selected-bg:#bcc0cc"
-fi
+source "$(dirname "$0")/_fzf-colors"
 
-target=$(tmux list-windows -F '#{window_index} #{window_name} [#{pane_current_command}]' \
-  | fzf --no-sort --border --prompt 'window> ' --color="$colors" \
+session=${1:-$(tmux display-message -p '#{session_name}')}
+format="#{session_name}:#{window_index} #{window_name} [#{pane_current_command}]"
+
+target=$(tmux list-windows -t "$session" -F "$format" \
+  | fzf --no-sort --border --prompt "window ($session)> " --color="$colors" \
     --tmux center,60%,60% \
-    --preview 'tmux capture-pane -t :{1} -p')
+    --header 'ctrl-x: kill' \
+    --preview 'tmux capture-pane -t {1} -p' \
+    --bind "ctrl-x:execute-silent(tmux kill-window -t {1})+reload(tmux list-windows -t $session -F '$format')") || true
 
-[[ -n "$target" ]] && tmux select-window -t :"$(echo "$target" | awk '{print $1}')"
+[[ -n "$target" ]] && tmux switch-client -t "$(echo "$target" | awk '{print $1}')"

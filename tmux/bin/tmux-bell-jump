@@ -14,10 +14,10 @@ if [[ "$count" -eq 1 ]]; then
   target=$(echo "$bell_windows" | awk '{print $1}')
   tmux switch-client -t "$target"
 else
-  target=$(echo "$bell_windows" \
+  selected=$(echo "$bell_windows" \
     | fzf --no-sort --border --prompt 'bell> ' \
       --tmux center,60%,60% \
-      --preview 'tmux capture-pane -t {1} -p' \
-    | awk '{print $1}')
+      --preview 'tmux capture-pane -t {1} -p') || true
+  target=$(echo "$selected" | awk '{print $1}')
   [[ -n "$target" ]] && tmux switch-client -t "$target"
 fi
