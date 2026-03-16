@@ -4,4 +4,4 @@ set -euo pipefail
 [[ "$(uname -s)" == "Darwin" ]] || exit 0
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec swift "$SCRIPT_DIR/tmux-style-watch.swift" "$SCRIPT_DIR"
+exec swift "$SCRIPT_DIR/_tmux-style-watch.swift" "$SCRIPT_DIR"

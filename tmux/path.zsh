@@ -1,3 +1,5 @@
 #!/usr/bin/env zsh
 
-export PATH="$ZSH/tmux/bin:$PATH"
+for d in $ZSH/tmux/*/bin(N); do
+  export PATH="$d:$PATH"
+done
