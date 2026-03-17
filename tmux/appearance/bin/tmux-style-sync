@@ -12,12 +12,11 @@ fi
 current=$(tmux show -gv @catppuccin_flavor 2>/dev/null || echo "")
 [[ "$current" == "$flavor" ]] && exit 0
 
+plugin_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/plugins/tmux"
 tmux_config="${XDG_CONFIG_HOME:-$HOME/.config}/tmux"
-plugin_dir="$tmux_config/plugins/tmux"
 
 for f in "$plugin_dir/catppuccin_options_tmux.conf" \
-         "$plugin_dir/catppuccin_tmux.conf" \
-         "$tmux_config/status.conf"; do
+         "$plugin_dir/catppuccin_tmux.conf"; do
   if [[ ! -f "$f" ]]; then
     echo "tmux-style-sync: missing $f" >&2
     exit 1
@@ -35,4 +34,8 @@ tmux set -gu @_ctp_status_bg 2>/dev/null || true
 tmux set -g @catppuccin_flavor "$flavor"
 tmux source-file "$plugin_dir/catppuccin_options_tmux.conf"
 tmux source-file "$plugin_dir/catppuccin_tmux.conf"
-tmux source-file "$tmux_config/status.conf"
+tmux source-file "$tmux_config/appearance/appearance.conf"
+tmux source-file "$tmux_config/alerts/alerts.conf"
+
+# Re-evaluate post-TPM status (catppuccin module variables changed)
+tmux source-file "$tmux_config/appearance/status.conf"

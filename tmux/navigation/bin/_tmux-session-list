@@ -9,4 +9,4 @@ tmux list-sessions -F '#{session_name} #{session_windows}' \
         echo "$name"
       fi
     done
-sesh list -c
+command -v sesh >/dev/null && sesh list -c

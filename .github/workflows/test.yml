@@ -92,43 +92,35 @@ jobs:
         fi
 
         # tmux = catppuccin/tmux (TPM uses repo name as directory)
+        plugin_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/plugins"
         for plugin in tpm tmux-resurrect tmux-continuum tmux tmux-fzf-links; do
-          if [[ ! -d "$HOME/.config/tmux/plugins/$plugin" ]]; then
-            echo "FAIL: plugin directory missing: ~/.config/tmux/plugins/$plugin"
+          if [[ ! -d "$plugin_dir/$plugin" ]]; then
+            echo "FAIL: plugin directory missing: $plugin_dir/$plugin"
             exit 1
           fi
-          echo "OK: ~/.config/tmux/plugins/$plugin"
+          echo "OK: $plugin_dir/$plugin"
         done
 
-        tmux_opt() {
-          local val
-          if ! val=$(tmux show-options -gv "$1" 2>&1); then
-            echo "FAIL: tmux show-options $1 failed: $val"
-            exit 1
+        tmux_assert_opt() {
+          local key=$1 expected=$2 val
+          if ! val=$(tmux show-options -gv "$key" 2>&1); then
+            echo "FAIL: tmux show-options $key failed: $val"
+            return 1
           fi
-          echo "$val"
+          if [[ -n "$expected" ]] && [[ "$val" != "$expected" ]]; then
+            echo "FAIL: $key=$val, expected $expected"
+            return 1
+          fi
+          if [[ -z "$val" ]]; then
+            echo "FAIL: $key is empty"
+            return 1
+          fi
+          echo "OK: $key=$val"
         }
 
-        thm_surface_2=$(tmux_opt @thm_surface_2)
-        if [[ -z "$thm_surface_2" ]]; then
-          echo "FAIL: @thm_surface_2 not set (catppuccin theme not loaded)"
-          exit 1
-        fi
-        echo "OK: @thm_surface_2=$thm_surface_2"
-
-        prefix=$(tmux_opt prefix)
-        if [[ "$prefix" != "C-s" ]]; then
-          echo "FAIL: prefix=$prefix, expected C-s"
-          exit 1
-        fi
-        echo "OK: prefix=$prefix"
-
-        status_position=$(tmux_opt status-position)
-        if [[ "$status_position" != "top" ]]; then
-          echo "FAIL: status-position=$status_position, expected top"
-          exit 1
-        fi
-        echo "OK: status-position=$status_position"
+        tmux_assert_opt @thm_surface_2 || exit 1
+        tmux_assert_opt prefix C-s || exit 1
+        tmux_assert_opt status-position top || exit 1
     - name: Benchmark shell startup
       run: |
         hyperfine --warmup 3 --runs 10 --shell=none \
