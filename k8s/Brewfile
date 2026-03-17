@@ -1,4 +1,0 @@
-brew 'minikube'
-brew 'kubectx'
-brew 'kubernetes-cli'
-brew 'helm'

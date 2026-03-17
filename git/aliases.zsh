@@ -8,5 +8,3 @@ alias gco='git checkout'
 alias gp='git push'
 alias gr='git rebase'
 alias gs='git status'
-
-alias pr='git pull-request'
