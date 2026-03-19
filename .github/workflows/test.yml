@@ -187,7 +187,7 @@ jobs:
         run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
       - name: Install shellspec
         run: brew install shellspec
-      - uses: j178/prek-action@v1
+      - uses: j178/prek-action@v2
       - name: Check completion file naming convention
         run: |
           bad=$(find . -name 'completions.zsh' -not -path './.git/*')
