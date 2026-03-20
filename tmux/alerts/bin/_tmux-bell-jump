@@ -17,7 +17,7 @@ else
   selected=$(echo "$bell_windows" \
     | fzf --no-sort --border --prompt 'bell> ' \
       --tmux center,60%,60% \
-      --preview 'tmux capture-pane -t {1} -p') || true
+      --preview "tmux capture-pane -t {1} -p | tail -n \"\$FZF_PREVIEW_LINES\"") || true
   target=$(echo "$selected" | awk '{print $1}')
   [[ -n "$target" ]] && tmux switch-client -t "$target"
 fi

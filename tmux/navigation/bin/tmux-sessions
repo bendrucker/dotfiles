@@ -9,7 +9,7 @@ target=$("$self_dir/_tmux-session-list" \
     --tmux center,60%,60% \
     --header 'ctrl-x: kill' \
     --bind 'focus:transform-header([[ {} == *\(* ]] && echo "ctrl-x: kill · tab: windows" || echo "ctrl-x: kill")' \
-    --preview 'tmux capture-pane -t {1} -p 2>/dev/null || sesh preview {}' \
+    --preview "tmux capture-pane -t {1} -p 2>/dev/null | tail -n \"\$FZF_PREVIEW_LINES\" || sesh preview {}" \
     --bind "tab:transform([[ {1} == *:* || {} == *\(* ]] && echo become\\($self_dir/tmux-windows\\ {1}\\))" \
     --bind "ctrl-x:execute-silent(tmux kill-session -t {1})+reload($self_dir/_tmux-session-list)") || true
 
