@@ -2,6 +2,8 @@
 
 set -e
 TOPIC_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+mkdir -p "$HOME/.tmux"
 TMUX_CONFIG="$HOME/.config/tmux"
 
 # TPM plugins in XDG_DATA_HOME (not inside config dir)
