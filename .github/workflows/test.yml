@@ -6,6 +6,7 @@ on:
 jobs:
   bootstrap:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: linux
