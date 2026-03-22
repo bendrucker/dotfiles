@@ -1,5 +1,3 @@
 [tools]
-# TODO: restore 3.14 once mise fixes freethreaded variant selection
-# https://github.com/jdx/mise/commit/c26370d
-python = "3.13.5"
+python = "3.14.3"
 uv = "latest"
