@@ -1,12 +1,9 @@
 # In CI, avoid installing Casks and Mac App Store apps which are slow and depended upon by dotfiles
 if ENV['CI']
-  def cask(*args)
-    # no-op
-  end
-
-  def mas(*args)
-    # noop
-  end
+  def cask(*args) end
+  def mas(*args) end
+elsif !$stdin.tty?
+  def mas(*args) end
 end
 
 corporate = Dir.exist?('/Library/Managed Preferences') && !Dir.empty?('/Library/Managed Preferences')

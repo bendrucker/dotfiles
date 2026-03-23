@@ -40,7 +40,7 @@ jobs:
     - name: Cache mise installs
       uses: actions/cache@v5
       with:
-        key: mise-${{ runner.os }}-${{ hashFiles('**/mise/config.toml') }}
+        key: mise-${{ runner.os }}-${{ hashFiles('**/mise.toml') }}
         restore-keys: |
           mise-${{ runner.os }}-
         path: |
