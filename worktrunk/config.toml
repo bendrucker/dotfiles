@@ -1,4 +1,4 @@
-[post-create]
+[pre-start]
 claude-trust = "claude-trust-worktree '{{ primary_worktree_path }}' '{{ worktree_path }}'"
 claude-settings = "cp '{{ primary_worktree_path }}/.claude/settings.local.json' '{{ worktree_path }}/.claude/settings.local.json' 2>/dev/null || true"
 
