@@ -25,6 +25,27 @@ notify() {
   osascript -e "display notification \"$message\" with title \"$title\" sound name \"Basso\"" 2>/dev/null || true
 }
 
+revert_cosmetic_json_changes() {
+  local changed_files
+  changed_files=$(git diff HEAD --name-only 2>/dev/null)
+
+  [[ -z "$changed_files" ]] && return
+
+  while IFS= read -r file; do
+    [[ "$file" == *.json ]] || continue
+    [[ -f "$file" ]] || continue
+
+    local working_sorted head_sorted
+    working_sorted=$(jq -S . "$file" 2>/dev/null) || continue
+    head_sorted=$(git show "HEAD:$file" 2>/dev/null | jq -S . 2>/dev/null) || continue
+
+    if [[ "$working_sorted" == "$head_sorted" ]]; then
+      log "Reverting cosmetic reorder in $file"
+      git checkout HEAD -- "$file"
+    fi
+  done <<< "$changed_files"
+}
+
 sync_repo() {
   log "Syncing Claude repository..."
 
@@ -42,8 +63,16 @@ sync_repo() {
 
   cd "$CLAUDE_REPO_HOME"
 
-  if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+  revert_cosmetic_json_changes
+
+  local status
+  status=$(git status --porcelain 2>/dev/null)
+  if [[ -n "$status" ]]; then
     log "ERROR: Local changes in $CLAUDE_REPO_HOME - skipping sync"
+    log "Changed files:"
+    echo "$status" | while IFS= read -r line; do log "  $line"; done
+    log "Diff:"
+    git diff HEAD 2>/dev/null
     notify "Claude Upgrade" "Skipped: local changes present"
     return 1
   fi
