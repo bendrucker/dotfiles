@@ -1,9 +1,6 @@
 #!/usr/bin/env zsh
-# shellcheck shell=bash
 # Claude configuration sync and plugin upgrade
 # Syncs claude repo, updates marketplaces and plugins
-
-set -e
 
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 LOG_TAG="claude-upgrade"
@@ -40,7 +37,7 @@ sync_repo() {
     return 1
   fi
 
-  cd "$CLAUDE_REPO_HOME"
+  cd "$CLAUDE_REPO_HOME" || return 1
 
   if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
     log "ERROR: Local changes in $CLAUDE_REPO_HOME - skipping sync"
@@ -178,7 +175,7 @@ main() {
     update_plugins
   } 2>&1 | tee "$output"
 
-  if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+  if [[ ${pipestatus[1]} -ne 0 ]]; then
     create_things_task "$(cat "$output")"
     exit 1
   fi
