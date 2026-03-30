@@ -13,7 +13,7 @@ vim.g.mapleader = " "
 require("lazy").setup({
   {
     "nvim-telescope/telescope.nvim",
-    tag = "v0.2.1",    dependencies = {
+    tag = "v0.2.2",    dependencies = {
       { "nvim-lua/plenary.nvim", tag = "v0.1.4" },    },
     keys = {
       { "<leader>f", "<cmd>Telescope find_files<cr>", desc = "Find files" },
