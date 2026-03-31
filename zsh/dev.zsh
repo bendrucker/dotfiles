@@ -121,11 +121,13 @@ _dotfiles_dev() {
         return 1
       }
       echo "$dev_dir" > "$flag"
+      "$dev_dir/scripts/install-links" "$dev_dir"
       echo "Dev mode enabled: $dev_dir"
       echo "Restart shell to apply."
       ;;
     disable)
       rm -f "$flag"
+      "$DOTFILES_HOME/scripts/install-links" "$DOTFILES_HOME"
       echo "Dev mode disabled."
       echo "Restart shell to apply."
       ;;

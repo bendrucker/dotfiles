@@ -19,11 +19,6 @@ fi
 
 export DOTFILES_TMUX="$ZSH/tmux"
 
-if [[ "$ZSH" != "$DOTFILES_HOME" ]]; then
-  export GIT_CONFIG_GLOBAL="$ZSH/git/gitconfig.symlink"
-  export CURL_HOME="$ZSH/http"
-fi
-
 export PROJECTS="$HOME/src"
 
 export XDG_CONFIG_HOME="$HOME/.config"
