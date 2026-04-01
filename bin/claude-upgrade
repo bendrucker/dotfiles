@@ -62,12 +62,12 @@ sync_repo() {
 
   revert_cosmetic_json_changes
 
-  local status
-  status=$(git status --porcelain 2>/dev/null)
-  if [[ -n "$status" ]]; then
+  local git_status
+  git_status=$(git status --porcelain 2>/dev/null)
+  if [[ -n "$git_status" ]]; then
     log "ERROR: Local changes in $CLAUDE_REPO_HOME - skipping sync"
     log "Changed files:"
-    echo "$status" | while IFS= read -r line; do log "  $line"; done
+    echo "$git_status" | while IFS= read -r line; do log "  $line"; done
     log "Diff:"
     git diff HEAD 2>/dev/null
     notify "Claude Upgrade" "Skipped: local changes present"
