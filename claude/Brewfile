@@ -1,5 +1,5 @@
 cask 'claude'
-cask 'claude-code'
+cask 'claude-code@latest'
 cask 'claude-devtools'
 cask 'commander'
 brew 'agent-browser'
