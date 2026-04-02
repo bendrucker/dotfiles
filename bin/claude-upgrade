@@ -43,6 +43,33 @@ revert_cosmetic_json_changes() {
   done <<< "$changed_files"
 }
 
+render_diff() {
+  local git_status="$1"
+
+  local changed_files
+  changed_files=$(echo "$git_status" | awk '{print $2}')
+
+  local all_json=true
+  while IFS= read -r f; do
+    [[ "$f" == *.json ]] || { all_json=false; break; }
+  done <<< "$changed_files"
+
+  if $all_json; then
+    while IFS= read -r f; do
+      [[ -f "$f" ]] || continue
+      local head_sorted working_sorted normalized_diff
+      head_sorted=$(git show "HEAD:$f" 2>/dev/null | jq -S . 2>/dev/null) || continue
+      working_sorted=$(jq -S . "$f" 2>/dev/null) || continue
+      normalized_diff=$(diff -u <(echo "$head_sorted") <(echo "$working_sorted")) || true
+      if [[ -n "$normalized_diff" ]]; then
+        echo "$normalized_diff" | sed "1s|.*|--- a/$f|;2s|.*|+++ b/$f|"
+      fi
+    done <<< "$changed_files"
+  else
+    git diff HEAD 2>/dev/null
+  fi
+}
+
 sync_repo() {
   log "Syncing Claude repository..."
 
@@ -69,7 +96,7 @@ sync_repo() {
     log "Changed files:"
     echo "$git_status" | while IFS= read -r line; do log "  $line"; done
     log "Diff:"
-    git diff HEAD 2>/dev/null
+    render_diff "$git_status"
     notify "Claude Upgrade" "Skipped: local changes present"
     return 1
   fi
