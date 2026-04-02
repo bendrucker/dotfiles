@@ -53,12 +53,11 @@ render_diff() {
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
     if [[ "$f" == *.json ]]; then
-      head_sorted=$(git show "HEAD:$f" 2>/dev/null | jq -S . 2>/dev/null) || continue
-      working_sorted=$(jq -S . "$f" 2>/dev/null) || continue
-      diff -u --label "a/$f" --label "b/$f" <(echo "$head_sorted") <(echo "$working_sorted") || true
-    else
-      git diff HEAD -- "$f" 2>/dev/null
+      head_sorted=$(git show "HEAD:$f" 2>/dev/null | jq -S . 2>/dev/null) &&
+        working_sorted=$(jq -S . "$f" 2>/dev/null) &&
+        { diff -u --label "a/$f" --label "b/$f" <(echo "$head_sorted") <(echo "$working_sorted") || true; continue; }
     fi
+    git diff HEAD -- "$f" 2>/dev/null
   done <<< "$changed_files"
 }
 
