@@ -1,11 +1,24 @@
 vim.g.mapleader = " "
 
 vim.pack.add({
+  "https://github.com/catppuccin/nvim",
   "https://github.com/nvim-telescope/telescope.nvim",
   "https://github.com/nvim-lua/plenary.nvim",
   "https://github.com/nvim-treesitter/nvim-treesitter",
   "https://github.com/christoomey/vim-tmux-navigator",
 })
+
+require("catppuccin").setup({
+  flavour = "auto",
+  background = { light = "latte", dark = "mocha" },
+  integrations = {
+    treesitter = true,
+    telescope = { enabled = true },
+    native_lsp = { enabled = true },
+  },
+})
+
+vim.cmd.colorscheme("catppuccin")
 
 vim.keymap.set("n", "<leader>f", "<cmd>Telescope find_files<cr>", { desc = "Find files" })
 vim.keymap.set("n", "<leader>g", "<cmd>Telescope live_grep<cr>", { desc = "Live grep" })
