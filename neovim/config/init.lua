@@ -21,22 +21,32 @@ require("nvim-treesitter.configs").setup({
   highlight = { enable = true },
 })
 
-local servers = {
-  gopls = { filetypes = { "go", "gomod" } },
-  ts_ls = { filetypes = { "javascript", "javascriptreact", "typescript", "typescriptreact" } },
-  ty = { filetypes = { "python" } },
-  rust_analyzer = { filetypes = { "rust" } },
-  terraformls = { filetypes = { "terraform", "terraform-vars" } },
+vim.lsp.config.gopls = {
+  cmd = { "gopls" },
+  filetypes = { "go", "gomod" },
 }
 
-for name, config in pairs(servers) do
-  vim.lsp.config[name] = {
-    cmd = { name },
-    filetypes = config.filetypes,
-    root_markers = { ".git" },
-  }
-  vim.lsp.enable(name)
-end
+vim.lsp.config.ts_ls = {
+  cmd = { "typescript-language-server", "--stdio" },
+  filetypes = { "javascript", "javascriptreact", "typescript", "typescriptreact" },
+}
+
+vim.lsp.config.ty = {
+  cmd = { "ty" },
+  filetypes = { "python" },
+}
+
+vim.lsp.config.rust_analyzer = {
+  cmd = { "rust-analyzer" },
+  filetypes = { "rust" },
+}
+
+vim.lsp.config.terraformls = {
+  cmd = { "terraformls" },
+  filetypes = { "terraform", "terraform-vars" },
+}
+
+vim.lsp.enable({ "gopls", "ts_ls", "ty", "rust_analyzer", "terraformls" })
 
 vim.o.autocomplete = true
 vim.o.pumborder = "rounded"
