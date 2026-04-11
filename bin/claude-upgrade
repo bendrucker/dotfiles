@@ -205,6 +205,12 @@ claude-upgrade
 }
 
 main() {
+  # Force HTTPS for github.com: SSH agents (Secretive, 1Password, etc.)
+  # can't sign while the Mac is locked, breaking unattended runs.
+  export GIT_CONFIG_COUNT=1
+  export GIT_CONFIG_KEY_0='url.https://github.com/.insteadOf'
+  export GIT_CONFIG_VALUE_0='git@github.com:'
+
   local output
   output=$(mktemp)
   # shellcheck disable=SC2064
