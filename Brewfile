@@ -34,6 +34,7 @@ cask 'adobe-creative-cloud' unless corporate
 cask 'android-file-transfer' unless corporate
 cask 'backblaze' unless corporate
 cask 'charles'
+cask 'copyq'
 cask 'disk-drill'
 cask 'dash'
 cask 'figma'
