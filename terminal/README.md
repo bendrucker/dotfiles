@@ -9,26 +9,25 @@ access via mosh/Blink Shell, and sane copy/paste defaults.
 
 ### Features
 
-- **True color and hyperlinks** — programs inside tmux get full color and
+- **True color and hyperlinks:** programs inside tmux get full color and
   clickable OSC 8 links (in supported terminals like Ghostty)
-- **System clipboard integration** — selections in tmux copy mode go straight to
+- **System clipboard integration:** selections in tmux copy mode go straight to
   the system clipboard via OSC 52, including through mosh
-- **Sensible numbering** — windows and panes start at 1, auto-renumber on close
-- **Fast escape** — no half-second delay when pressing Escape in editors
-- **URL-friendly word selection** — double-click selects entire URLs and ticket
+- **Sensible numbering:** windows and panes start at 1, auto-renumber on close
+- **Fast escape:** no half-second delay when pressing Escape in editors
+- **URL-friendly word selection:** double-click selects entire URLs and ticket
   IDs instead of breaking on `/`, `-`, `.`
-- **Session switching** — `prefix + T` opens a fuzzy session picker powered by
-  [sesh](https://github.com/joshmedeski/sesh) and fzf, with
-  [zoxide](https://github.com/ajeetdsouza/zoxide) for frecency-ranked
-  directories
-- **Session persistence** —
+- **Session switching:** `prefix + T` opens
+  [tmux-fzf](https://github.com/sainnhe/tmux-fzf), a fuzzy picker for sessions,
+  windows, panes, and more
+- **Session persistence:**
   [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) saves and
   restores sessions across tmux server restarts (`prefix + Ctrl-s` to save,
   `prefix + Ctrl-r` to restore)
-- **Catppuccin theme** —
+- **Catppuccin theme:**
   [catppuccin/tmux](https://github.com/catppuccin/tmux) (mocha) for the status
   bar
-- **Link opener** —
+- **Link opener:**
   [tmux-fzf-links](https://github.com/alberti42/tmux-fzf-links) extracts URLs
   from the terminal and opens them via fzf
 

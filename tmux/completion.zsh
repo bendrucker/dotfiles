@@ -1,8 +1,5 @@
 #!/usr/bin/env zsh
 
-eval "$(sesh completion zsh)"
-compdef _sesh sesh
-
 if [[ -n "$TMUX" ]]; then
   __tmux_fzf_autocomplete() {
     local selected
