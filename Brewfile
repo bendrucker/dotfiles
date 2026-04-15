@@ -11,6 +11,7 @@ corporate_cask_args = corporate ? { adopt: true } : {}
 
 cask_args appdir: '/Applications'
 
+tap 'schpet/tap'
 tap 'teamookla/speedtest'
 
 brew 'bat'
@@ -21,6 +22,7 @@ brew 'csvkit'
 brew 'htop'
 brew 'jq'
 brew 'openssl'
+brew 'schpet/tap/linear'
 brew 'shellcheck'
 brew 'teamookla/speedtest/speedtest'
 brew 'the_silver_searcher'
