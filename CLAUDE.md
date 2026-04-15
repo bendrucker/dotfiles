@@ -11,7 +11,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
   - `completion.zsh`: Deferred until after first prompt renders (via `precmd` hook)
   - `install.sh`: Topic installer for non-symlink setup (e.g., plugin managers, system config)
   - `Brewfile`: Homebrew packages for the topic
-- **links.conf**: Declarative symlink map (`source:target`) processed by `scripts/install-links`
+- **`*/symlinks.conf`**: Per-topic declarative symlink maps (`source:target`) discovered and processed by `scripts/install-symlinks`
 - **scripts/**: Bootstrap and setup scripts
 
 ## Common Tasks
@@ -21,7 +21,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 1. Create directory: `mkdir <topic>/`
 2. Add configuration files as needed:
    - `<topic>/<tool>.zsh` for shell configuration
-   - Add symlink entries to `links.conf` for config files targeting `~/.config/<tool>/`
+   - Add a `symlinks.conf` in the topic directory for config files targeting `~/.config/<tool>/`
    - `<topic>/install.sh` only if non-symlink setup is needed (plugin managers, system config)
    - `<topic>/Brewfile` for dependencies
 3. Run `scripts/install` to install links and run topic installers
@@ -59,7 +59,7 @@ Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`).
 
 ### Config File Installation
 
-Most tool configs live under `~/.config/<tool>/` (XDG Base Directory). Symlinks are declared in `links.conf` and installed by `scripts/install-links`. Topics with non-symlink setup logic (plugin managers, system config) use `install.sh`.
+Most tool configs live under `~/.config/<tool>/` (XDG Base Directory). Symlinks are declared in per-topic `symlinks.conf` files and installed by `scripts/install-symlinks`. Topics with non-symlink setup logic (plugin managers, system config) use `install.sh`.
 
 - `ssh/config` is symlinked directly to `~/.ssh/config` (via `scripts/bootstrap`)
 - Symlinks point to `~/.dotfiles` (the installed copy), **not** the development working tree. Edits in a dev checkout won't take effect until synced unless dev mode is enabled.
@@ -119,7 +119,7 @@ Based on recent history:
 1. `brew bundle` — Install Brewfile dependencies
 2. Symlink `*/mise.toml` → `~/.config/mise/conf.d/`
 3. `mise install` — Install language runtimes
-4. `scripts/install-links` — Install declarative symlinks from `links.conf`
+4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
 5. Run topic `install.sh` scripts
 
 ## Stacked PRs

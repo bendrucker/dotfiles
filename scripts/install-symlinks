@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+# Install declarative symlinks from per-topic symlinks.conf files
+# Usage: install-links [dotfiles-root]
+set -e
+
+DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
+
+for conf in "$DOTFILES_ROOT"/*/symlinks.conf; do
+  [ -f "$conf" ] || continue
+  topic_dir="$(dirname "$conf")"
+  while IFS=: read -r src dst; do
+    case "$src" in "#"*|"") continue ;; esac
+    dst=$(echo "$dst" | sed "s|^~|$HOME|")
+    mkdir -p "$(dirname "$dst")"
+    ln -sf "$topic_dir/$src" "$dst"
+  done < "$conf"
+done

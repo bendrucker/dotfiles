@@ -21,7 +21,7 @@ eval "$(brew shellenv)"
 source mise/install.sh
 
 # Install declarative symlinks
-./scripts/install-links
+./scripts/install-symlinks
 
 # Build exclusions for mise and any git submodules
 local -a excludes=("!" "-path" "./mise/*")
