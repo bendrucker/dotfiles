@@ -25,6 +25,6 @@ repos:
       - id: shellspec
         name: shellspec
         language: system
-        entry: bash -c 'for dir in $(find . -name .shellspec -not -path "./.git/*" -exec dirname {} \;); do echo "shellspec $dir" && (cd "$dir" && shellspec) || exit 1; done'
+        entry: bash -c 'for dir in $(find .claude/skills -name .shellspec -exec dirname {} \;); do echo "shellspec $dir" && (cd "$dir" && shellspec) || exit 1; done'
         files: \.(sh|shellspec)$
         pass_filenames: false

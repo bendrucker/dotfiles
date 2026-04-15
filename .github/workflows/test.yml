@@ -73,6 +73,14 @@ jobs:
           python@3.11
           python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Run topic tests
+      run: |
+        shopt -s nullglob
+        for spec in */.shellspec; do
+          dir="${spec%/.shellspec}"
+          echo "shellspec $dir"
+          (cd "$dir" && shellspec) || exit 1
+        done
     - name: Test tmux
       shell: zsh {0}
       run: |
@@ -176,7 +184,7 @@ jobs:
         run: brew install shellspec
       - name: Run tests
         run: |
-          for dir in $(find . -name .shellspec -not -path "./.git/*" -exec dirname {} \;); do
+          for dir in $(find .claude/skills -name .shellspec -exec dirname {} \;); do
             echo "shellspec $dir"
             (cd "$dir" && shellspec) || exit 1
           done
