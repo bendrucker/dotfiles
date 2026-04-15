@@ -1,6 +1,5 @@
 #!/usr/bin/env sh
-# Install declarative symlinks from per-topic symlinks.conf files
-# Usage: install-links [dotfiles-root]
+# Usage: install-symlinks [dotfiles-root]
 set -e
 
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
@@ -12,6 +11,10 @@ for conf in "$DOTFILES_ROOT"/*/symlinks.conf; do
   while IFS=: read -r src dst; do
     case "$src" in "#"*|"") continue ;; esac
     dst=$(echo "$dst" | sed "s|^~|$HOME|; s|\$XDG_CONFIG_HOME|$XDG_CONFIG_HOME|g")
+    if [ ! -e "$topic_dir/$src" ]; then
+      echo "install-symlinks: $conf: source '$src' does not exist" >&2
+      exit 1
+    fi
     mkdir -p "$(dirname "$dst")"
     ln -sf "$topic_dir/$src" "$dst"
   done < "$conf"

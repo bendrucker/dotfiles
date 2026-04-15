@@ -64,9 +64,8 @@ setup_gitconfig () {
 
 install_dotfiles () {
   info 'installing dotfiles'
-  mkdir -p "$HOME/.ssh"
-  ln -sf "$DOTFILES_ROOT/ssh/config" "$HOME/.ssh/config"
-  success "linked ssh/config"
+  "$DOTFILES_ROOT/scripts/install-symlinks" "$DOTFILES_ROOT"
+  success "symlinks installed"
 }
 
 setup_gitconfig

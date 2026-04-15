@@ -61,7 +61,6 @@ Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`).
 
 Most tool configs live under `~/.config/<tool>/` (XDG Base Directory). Symlinks are declared in per-topic `symlinks.conf` files and installed by `scripts/install-symlinks`. Topics with non-symlink setup logic (plugin managers, system config) use `install.sh`.
 
-- `ssh/config` is symlinked directly to `~/.ssh/config` (via `scripts/bootstrap`)
 - Symlinks point to `~/.dotfiles` (the installed copy), **not** the development working tree. Edits in a dev checkout won't take effect until synced unless dev mode is enabled.
 
 ### Dev Mode
