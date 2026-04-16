@@ -8,16 +8,48 @@ if [[ -z "$bell_windows" ]]; then
   exit 0
 fi
 
-count=$(echo "$bell_windows" | wc -l | tr -d ' ')
+# fzf placeholders ({1}, {q}, {fzf:prompt}) are not shell variables
+# shellcheck disable=SC2016
+result=$(echo "$bell_windows" \
+  | fzf --no-sort --border --prompt 'bell> ' \
+    --tmux center,60%,60% \
+    --preview 'tmux capture-pane -t {1} -p | tail -n "$FZF_PREVIEW_LINES"' \
+    --header 'enter: jump · opt-enter: send keys' \
+    --bind 'alt-enter:disable-search+clear-query+change-prompt(send> )+change-header(type keys + enter · esc: cancel)+unbind(up,down,alt-enter)' \
+    --bind 'enter:transform:
+      prompt={fzf:prompt}
+      if [[ "$prompt" == "send> " ]]; then
+        q={q}
+        if [[ -z "$q" ]]; then
+          echo "print(SEND|{1}|Enter)+accept"
+        else
+          echo "print(SEND|{1}|{q})+accept"
+        fi
+      else
+        echo "print(JUMP|{1})+accept"
+      fi' \
+    --bind 'esc:transform:
+      prompt={fzf:prompt}
+      if [[ "$prompt" == "send> " ]]; then
+        echo "enable-search+clear-query+change-prompt(bell> )+change-header(enter: jump · opt-enter: send keys)+rebind(up,down,alt-enter)"
+      else
+        echo "abort"
+      fi' \
+) || true
 
-if [[ "$count" -eq 1 ]]; then
-  target=$(echo "$bell_windows" | awk '{print $1}')
+if [[ -z "$result" ]]; then
+  exit 0
+fi
+
+action_line=$(head -1 <<< "$result")
+action_line=${action_line//\'/}
+
+if [[ "$action_line" == SEND\|* ]]; then
+  target=$(cut -d'|' -f2 <<< "$action_line")
+  keys=$(cut -d'|' -f3- <<< "$action_line")
+  # shellcheck disable=SC2086
+  tmux send-keys -t "$target" $keys
+elif [[ "$action_line" == JUMP\|* ]]; then
+  target=$(cut -d'|' -f2 <<< "$action_line")
   tmux switch-client -t "$target"
-else
-  selected=$(echo "$bell_windows" \
-    | fzf --no-sort --border --prompt 'bell> ' \
-      --tmux center,60%,60% \
-      --preview "tmux capture-pane -t {1} -p | tail -n \"\$FZF_PREVIEW_LINES\"") || true
-  target=$(echo "$selected" | awk '{print $1}')
-  [[ -n "$target" ]] && tmux switch-client -t "$target"
 fi
