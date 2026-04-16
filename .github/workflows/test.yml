@@ -73,6 +73,11 @@ jobs:
           python@3.11
           python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # actions/checkout writes credentials to ~/.gitconfig, which takes
+    # precedence over the XDG path (~/.config/git/config) where
+    # install-symlinks places the dotfiles git config.
+    - name: Remove runner gitconfig so XDG config takes effect
+      run: rm -f ~/.gitconfig
     - name: Run topic tests
       run: |
         shopt -s nullglob
