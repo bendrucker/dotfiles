@@ -1,26 +1,12 @@
 #!/usr/bin/env zsh
 
 set -e
-TOPIC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 mkdir -p "$HOME/.tmux"
-TMUX_CONFIG="$HOME/.config/tmux"
 
 # TPM plugins in XDG_DATA_HOME (not inside config dir)
 TPM_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/plugins/tpm"
 
-# Migrate plugins from old per-file layout (~/.config/tmux/plugins/) to XDG_DATA_HOME
-if [ -d "$TMUX_CONFIG/plugins" ] && [ ! -L "$TMUX_CONFIG" ]; then
-  if [ ! -d "$(dirname "$TPM_DIR")" ]; then
-    mkdir -p "$(dirname "$TPM_DIR")"
-    mv "$TMUX_CONFIG/plugins"/* "$(dirname "$TPM_DIR")/" 2>/dev/null || true
-  fi
-  rm -rf "$TMUX_CONFIG"
-fi
-
-# Symlink the entire directory
-mkdir -p "$(dirname "$TMUX_CONFIG")"
-ln -sfn "$TOPIC_DIR" "$TMUX_CONFIG"
 if [ ! -d "$TPM_DIR" ]; then
   git clone https://github.com/tmux-plugins/tpm "$TPM_DIR"
 fi

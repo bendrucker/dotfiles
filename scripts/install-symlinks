@@ -1,0 +1,68 @@
+#!/usr/bin/env sh
+# Usage: install-symlinks [dotfiles-root]
+set -e
+
+DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
+: "${XDG_CONFIG_HOME:=$HOME/.config}"
+
+desired_targets=""
+
+for conf in "$DOTFILES_ROOT"/*/symlinks.conf; do
+  [ -f "$conf" ] || continue
+  topic_dir="$(dirname "$conf")"
+  while IFS=: read -r src dst; do
+    case "$src" in "#"*|"") continue ;; esac
+    dst=$(echo "$dst" | sed "s|^~|$HOME|; s|\$XDG_CONFIG_HOME|$XDG_CONFIG_HOME|g")
+    if [ ! -e "$topic_dir/$src" ]; then
+      echo "install-symlinks: $conf: source '$src' does not exist" >&2
+      exit 1
+    fi
+    mkdir -p "$(dirname "$dst")"
+    ln -sfn "$topic_dir/$src" "$dst"
+    if [ -z "$desired_targets" ]; then
+      desired_targets="$dst"
+    else
+      desired_targets="$desired_targets
+$dst"
+    fi
+  done < "$conf"
+done
+
+# Remove stale symlinks pointing into DOTFILES_ROOT that are no longer declared
+is_desired() {
+  printf '%s\n' "$desired_targets" | grep -qFx "$1"
+}
+
+remove_stale() {
+  for link in "$@"; do
+    [ -L "$link" ] || continue
+    target="$(readlink "$link" 2>/dev/null)" || continue
+    case "$target" in
+      "$DOTFILES_ROOT"/*) ;;
+      *) continue ;;
+    esac
+    is_desired "$link" || {
+      echo "install-symlinks: removing stale symlink $link -> $target"
+      rm "$link"
+    }
+  done
+}
+
+# Scan directories that could contain managed symlinks
+remove_stale "$HOME"/.[!.]*
+[ -d "$HOME/.ssh" ] && remove_stale "$HOME/.ssh"/*
+
+stale_links="${TMPDIR:-/tmp}/install-symlinks.$$"
+find "$XDG_CONFIG_HOME" -type l > "$stale_links" 2>/dev/null || true
+while read -r link; do
+  target="$(readlink "$link" 2>/dev/null)" || continue
+  case "$target" in
+    "$DOTFILES_ROOT"/*) ;;
+    *) continue ;;
+  esac
+  is_desired "$link" || {
+    echo "install-symlinks: removing stale symlink $link -> $target"
+    rm "$link"
+  }
+done < "$stale_links"
+rm -f "$stale_links"

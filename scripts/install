@@ -20,6 +20,9 @@ eval "$(brew shellenv)"
 # Install mise tools and activate shims
 source mise/install.sh
 
+# Install declarative symlinks
+./scripts/install-symlinks
+
 # Build exclusions for mise and any git submodules
 local -a excludes=("!" "-path" "./mise/*")
 for sm_path in ${(f)"$(git submodule foreach --quiet 'echo $sm_path' 2>/dev/null)"}; do

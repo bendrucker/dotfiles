@@ -9,9 +9,9 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
   - `*.zsh`: Shell configuration files loaded by zsh
   - `path.zsh`: Loaded first for `$PATH` setup
   - `completion.zsh`: Deferred until after first prompt renders (via `precmd` hook)
-  - `*.symlink`: Files symlinked to `$HOME` as dotfiles (legacy: `zshenv`, `editorconfig`)
-  - `install.sh`: Topic installer that creates XDG symlinks under `~/.config/<tool>/`
+  - `install.sh`: Topic installer for non-symlink setup (e.g., plugin managers, system config)
   - `Brewfile`: Homebrew packages for the topic
+- **`*/symlinks.conf`**: Per-topic declarative symlink maps (`source:target`) discovered and processed by `scripts/install-symlinks`
 - **scripts/**: Bootstrap and setup scripts
 
 ## Common Tasks
@@ -21,9 +21,10 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 1. Create directory: `mkdir <topic>/`
 2. Add configuration files as needed:
    - `<topic>/<tool>.zsh` for shell configuration
-   - `<topic>/install.sh` to symlink configs into `~/.config/<tool>/`
+   - Add a `symlinks.conf` in the topic directory for config files targeting `~/.config/<tool>/`
+   - `<topic>/install.sh` only if non-symlink setup is needed (plugin managers, system config)
    - `<topic>/Brewfile` for dependencies
-3. Run `scripts/install` to run topic installers
+3. Run `scripts/install` to install links and run topic installers
 
 ### Managing Dependencies
 
@@ -58,9 +59,8 @@ Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`).
 
 ### Config File Installation
 
-Most tool configs live under `~/.config/<tool>/` (XDG Base Directory). Each topic's `install.sh` creates symlinks from `~/.config/<tool>/` → the topic directory. A few legacy files still use `*.symlink` → `$HOME` (`zshenv`, `editorconfig`).
+Most tool configs live under `~/.config/<tool>/` (XDG Base Directory). Symlinks are declared in per-topic `symlinks.conf` files and installed by `scripts/install-symlinks`. Topics with non-symlink setup logic (plugin managers, system config) use `install.sh`.
 
-- `ssh/config` is symlinked directly to `~/.ssh/config`
 - Symlinks point to `~/.dotfiles` (the installed copy), **not** the development working tree. Edits in a dev checkout won't take effect until synced unless dev mode is enabled.
 
 ### Dev Mode
@@ -74,7 +74,6 @@ Config and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev
 - **`dotfiles test`** — replaces the current shell with one using the dev working tree (temporary, session-only)
 - **`dotfiles dev enable`** — persistently repoints all symlinks (home and XDG) to the dev working tree and sets a flag so new shells load dev `.zsh` files. Undo with `dotfiles dev disable`.
 - **Source directly from the worktree** — for configs like tmux that support runtime reload, source the worktree file explicitly (e.g., `tmux source-file /path/to/worktree/tmux/tmux.conf`). Do **not** suggest `prefix+r` or `tmux source-file ~/.config/tmux/tmux.conf` — those follow the symlink to `~/.dotfiles`, not the worktree.
-- Run `scripts/bootstrap` to apply new symlinks
 - Test dependencies: `bin/dotf` installs/updates packages
 
 ### Version Updates
@@ -119,7 +118,8 @@ Based on recent history:
 1. `brew bundle` — Install Brewfile dependencies
 2. Symlink `*/mise.toml` → `~/.config/mise/conf.d/`
 3. `mise install` — Install language runtimes
-4. Run topic `install.sh` scripts
+4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
+5. Run topic `install.sh` scripts
 
 ## Stacked PRs
 
