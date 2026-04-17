@@ -1,2 +1,3 @@
 brew 'tmux'
 brew 'smug'
+brew 'fcsonline/tmux-thumbs/tmux-thumbs'
