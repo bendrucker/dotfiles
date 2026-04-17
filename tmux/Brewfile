@@ -1,2 +1,3 @@
 brew 'tmux'
+brew 'sesh'
 brew 'smug'

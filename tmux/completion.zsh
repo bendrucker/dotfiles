@@ -1,6 +1,11 @@
 #!/usr/bin/env zsh
 
 if [[ -n "$TMUX" ]]; then
+  if command -v sesh >/dev/null 2>&1; then
+    eval "$(sesh completion zsh)"
+    compdef _sesh sesh
+  fi
+
   __tmux_fzf_autocomplete() {
     local selected
     selected=$(tmux capture-pane -pS -10000 \
