@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-cmd=$(fzf --prompt '⚡ ' --no-sort --height 100% --border=rounded --border-label ' launch ' <<'TOOLS'
+cmd=$(fzf --prompt ' ' --no-sort --height 100% --border=rounded --border-label '  launch ' <<'TOOLS'
 lazygit
 gh dash
 TOOLS
