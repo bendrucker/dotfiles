@@ -1,4 +1,5 @@
 brew 'tmux'
+brew 'sesh'
 brew 'smug'
 brew 'lazygit'
 brew 'dlvhdr/formulae/gh-dash'
