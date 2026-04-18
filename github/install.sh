@@ -16,31 +16,33 @@ for arg in "$@"; do
 done
 
 typeset -A desired
+line_no=0
 while read -r repo version; do
+  (( ++line_no ))
   [[ -z "$repo" || "$repo" == \#* ]] && continue
+  if [[ -z "$version" ]]; then
+    echo "extensions.conf:$line_no: missing version for '$repo'" >&2
+    exit 1
+  fi
   desired[$repo]=$version
 done < extensions.conf
 
-# Binary extensions (release tag has compiled assets) install cleanly via
-# `gh extension install --pin <tag>`. Script extensions (git clone + checkout)
-# hit a gh bug where `--pin` is ignored and origin/HEAD is checked out
-# regardless; force the tag via git for those.
+# `gh extension install --pin <tag>` works for binary extensions (downloads
+# the tagged release asset) but silently no-ops the pin for script
+# extensions, leaving them on origin/HEAD. Detect script extensions by the
+# presence of .git under the extension dir and force the pinned tag via git.
 install_extension() {
-  local repo=$1 tag=$2 assets dir
-  assets=$(gh release view "$tag" --repo "$repo" --json assets --jq '.assets | length' 2>/dev/null) || assets=0
-  dir=$HOME/.local/share/gh/extensions/${repo##*/}
+  local repo=$1 tag=$2 data_home dir
+  data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+  dir=$data_home/gh/extensions/${repo##*/}
 
   echo "→ $repo @ $tag"
-  if (( assets > 0 )); then
-    gh extension install --force --pin "$tag" "$repo"
-    return
-  fi
+  gh extension install --force --pin "$tag" "$repo"
 
-  if [[ ! -d "$dir/.git" ]]; then
-    gh extension install "$repo" >/dev/null
+  if [[ -d "$dir/.git" ]]; then
+    git -C "$dir" fetch --tags --quiet origin
+    git -C "$dir" -c advice.detachedHead=false checkout --quiet "refs/tags/$tag"
   fi
-  git -C "$dir" fetch --tags --quiet origin
-  git -C "$dir" -c advice.detachedHead=false checkout --quiet "refs/tags/$tag"
 }
 
 for repo in ${(k)desired}; do
