@@ -13,6 +13,7 @@ coverage
 
 # Local settings for Claude Code
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 CLAUDE.local.md
 
 # Temporary files
