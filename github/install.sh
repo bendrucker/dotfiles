@@ -74,7 +74,7 @@ for repo in "${undeclared[@]}"; do
   if [[ "$force" == true ]]; then
     gh extension remove "$name"
   else
-    read -r "reply?Remove gh-$name? [y/N] "
+    read -r "reply?Remove gh-$name? [y/N] " || break
     [[ "$reply" == [Yy]* ]] && gh extension remove "$name"
   fi
 done
