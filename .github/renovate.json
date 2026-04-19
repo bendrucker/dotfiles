@@ -12,6 +12,14 @@
         "\"(?<depName>[^\"]+/[^\"]+)\"[,\\s]*tag\\s*=\\s*\"(?<currentValue>v[^\"]+)\""
       ],
       "datasourceTemplate": "github-tags"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^github/extensions\\.conf$"],
+      "matchStrings": [
+        "(?m)^(?<depName>[^\\s#/]+/[^\\s#]+)\\s+(?<currentValue>\\S+)"
+      ],
+      "datasourceTemplate": "github-releases"
     }
   ],
   "packageRules": [
