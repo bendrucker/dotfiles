@@ -17,7 +17,7 @@ done
 
 typeset -A desired
 line_no=0
-while read -r repo version; do
+while read -r repo version _; do
   (( ++line_no ))
   [[ -z "$repo" || "$repo" == \#* ]] && continue
   if [[ -z "$version" ]]; then
