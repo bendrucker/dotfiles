@@ -45,6 +45,7 @@ cask 'google-chrome', args: corporate_cask_args
 cask 'hazel'
 cask 'jordanbaird-ice'
 cask 'istat-menus'
+cask 'linearmouse'
 cask 'logi-options+'
 cask 'monitorcontrol'
 cask 'monodraw'
