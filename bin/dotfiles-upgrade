@@ -52,7 +52,16 @@ create_things_task() {
 
   log "Creating Things task for install failure..."
 
-  local notes='```sh
+  local host time revision
+  host=$(hostname -s)
+  time=$(date "+%Y-%m-%d %H:%M:%S %Z")
+  revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+  local notes='- **Host:** '"$host"'
+- **Time:** '"$time"'
+- **Revision:** '"$revision"'
+
+```sh
 brew bundle
 ```
 

@@ -186,7 +186,18 @@ create_things_task() {
 
   log "Creating Things task for upgrade failure..."
 
-  local notes='```sh
+  local host time revision version
+  host=$(hostname -s)
+  time=$(date "+%Y-%m-%d %H:%M:%S %Z")
+  revision=$(git -C "$CLAUDE_REPO_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  version=$(claude --version 2>/dev/null || echo "unknown")
+
+  local notes='- **Host:** '"$host"'
+- **Time:** '"$time"'
+- **Revision:** '"$revision"'
+- **Claude:** '"$version"'
+
+```sh
 claude-upgrade
 ```
 
