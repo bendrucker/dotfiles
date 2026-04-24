@@ -76,6 +76,17 @@ Config and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev
 - **Source directly from the worktree** — for configs like tmux that support runtime reload, source the worktree file explicitly (e.g., `tmux source-file /path/to/worktree/tmux/tmux.conf`). Do **not** suggest `prefix+r` or `tmux source-file ~/.config/tmux/tmux.conf` — those follow the symlink to `~/.dotfiles`, not the worktree.
 - Test dependencies: `bin/dotf` installs/updates packages
 
+### Topic Integration Tests
+
+Topics can ship a shellspec integration test that runs in CI after bootstrap (so symlinks are installed and packages are available). The bootstrap job iterates `*/.shellspec` and runs `shellspec` in each matching directory.
+
+To add tests to a topic:
+
+1. Create `<topic>/.shellspec` with shellspec options (e.g., `--shell bash`)
+2. Create `<topic>/spec/<name>_spec.sh` with `Describe`/`It` blocks
+
+Existing examples: `git/spec/`, `neovim/spec/`. Tests run against the installed config (symlinks from `~/.dotfiles`), so they verify the real post-bootstrap state.
+
 ### Version Updates
 
 Recent patterns show dependency updates via PRs:

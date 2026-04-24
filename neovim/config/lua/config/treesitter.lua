@@ -1,9 +1,25 @@
-require("nvim-treesitter.configs").setup({
-  ensure_installed = {
-    "bash", "dockerfile", "go", "gomod",
-    "hcl", "javascript", "json", "lua",
-    "python", "rust", "terraform", "toml",
-    "typescript", "tsx", "yaml",
+require("nvim-treesitter").install({
+  "bash", "dockerfile", "go", "gomod",
+  "hcl", "javascript", "json", "lua",
+  "python", "rust", "terraform", "toml",
+  "typescript", "tsx", "yaml",
+})
+
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = {
+    "bash", "sh",
+    "dockerfile",
+    "go", "gomod",
+    "hcl",
+    "javascript", "javascriptreact",
+    "json",
+    "lua",
+    "python",
+    "rust",
+    "terraform",
+    "toml",
+    "typescript", "typescriptreact",
+    "yaml",
   },
-  highlight = { enable = true },
+  callback = function() vim.treesitter.start() end,
 })
