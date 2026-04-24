@@ -83,13 +83,28 @@ sync_repo() {
   local git_status
   git_status=$(git status --porcelain 2>/dev/null)
   if [[ -n "$git_status" ]]; then
-    log "ERROR: Local changes in $CLAUDE_REPO_HOME - skipping sync"
-    log "Changed files:"
+    log "Local changes in $CLAUDE_REPO_HOME:"
     echo "$git_status" | while IFS= read -r line; do log "  $line"; done
     log "Diff:"
     render_diff
-    notify "Claude Upgrade" "Skipped: local changes present"
-    return 1
+
+    if [[ -t 0 && -t 1 ]]; then
+      local response
+      read -q "response?Discard local changes and continue? [y/N] "
+      echo
+      if [[ "$response" == "y" ]]; then
+        log "Discarding local changes..."
+        git reset --hard HEAD
+        git clean -fd
+      else
+        log "ERROR: Local changes present - skipping sync"
+        return 1
+      fi
+    else
+      log "ERROR: Local changes in $CLAUDE_REPO_HOME - skipping sync"
+      notify "Claude Upgrade" "Skipped: local changes present"
+      return 1
+    fi
   fi
 
   local default_branch
