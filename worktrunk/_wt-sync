@@ -1,0 +1,13 @@
+#compdef wt-sync
+
+_arguments \
+  '(-s --stack -a --all)'{-s,--stack}'[Only sync the current stack (default)]' \
+  '(-s --stack -a --all)'{-a,--all}'[Sync all stacks]' \
+  '(-f --fetch)'{-f,--fetch}'[Fetch from remote before syncing]' \
+  '(-p --push)'{-p,--push}'[Push rebased branches after syncing]' \
+  '(-P --prune)'{-P,--prune}'[Remove integrated worktrees after syncing]' \
+  '(-F --force)'{-F,--force}'[Force removal of dirty integrated worktrees]' \
+  '(-v --verbose)'{-v,--verbose}'[Show git commands that would be executed]' \
+  '(-n --dry-run)'{-n,--dry-run}'[Preview the sync plan without executing]' \
+  '(- *)'{-h,--help}'[Print help]' \
+  '(- *)'{-V,--version}'[Print version]'
