@@ -182,8 +182,23 @@ update_plugins() {
     return 0
   fi
 
+  local installed_json
+  installed_json=$(claude plugin list --json 2>/dev/null || echo '[]')
+
   local failed=0
   while IFS= read -r plugin; do
+    local is_installed
+    is_installed=$(echo "$installed_json" | jq -r --arg p "$plugin" 'any(.id == $p)')
+    if [[ "$is_installed" != "true" ]]; then
+      log "  Installing $plugin (not yet installed)..."
+      if claude plugin install "$plugin" 2>&1; then
+        continue
+      else
+        log "  WARNING: Failed to install $plugin"
+        ((failed++))
+        continue
+      fi
+    fi
     log "  Updating $plugin..."
     if ! claude plugin update "$plugin" 2>&1; then
       log "  WARNING: Failed to update $plugin"
