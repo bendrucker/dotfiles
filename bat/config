@@ -1,0 +1,4 @@
+# Use the macOS system appearance to pick light vs. dark.
+--theme=auto:system
+--theme-light="Catppuccin Latte"
+--theme-dark="Catppuccin Mocha"

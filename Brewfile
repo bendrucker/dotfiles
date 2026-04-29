@@ -14,8 +14,6 @@ cask_args appdir: '/Applications'
 tap 'schpet/tap'
 tap 'teamookla/speedtest'
 
-brew 'bat'
-brew 'btop'
 brew 'cloc'
 brew 'coreutils'
 brew 'csvkit'

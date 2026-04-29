@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Print the active catppuccin flavor based on macOS appearance.
+# Outputs "mocha" for Dark, "latte" for Light. Other systems get "mocha".
+set -euo pipefail
+
+if [[ "$(uname -s)" == "Darwin" ]] \
+  && [[ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" != "Dark" ]]; then
+  echo latte
+else
+  echo mocha
+fi
