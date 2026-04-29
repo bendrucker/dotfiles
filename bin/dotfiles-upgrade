@@ -4,6 +4,7 @@
 # Syncs dotfiles, runs scripts/install, creates Things task on failure
 
 set -e
+set -o pipefail
 
 DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 
@@ -51,8 +52,8 @@ if ! gum spin --show-output --show-error --title "Syncing dotfiles" -- \
   exit 1
 fi
 
-if ! gum spin --show-output --show-error --title "Running install" -- \
-  "$DOTFILES_HOME/scripts/install" > "$INSTALL_LOG" 2>&1; then
+gum log --level info "Running install"
+if ! "$DOTFILES_HOME/scripts/install" 2>&1 | tee "$INSTALL_LOG"; then
   gum log --level error "install failed"
   create_things_task
   exit 1
