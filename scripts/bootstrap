@@ -62,6 +62,12 @@ setup_gitconfig () {
   fi
 }
 
+init_submodules () {
+  info 'initializing submodules'
+  git -C "$DOTFILES_ROOT" submodule update --init --recursive
+  success 'submodules initialized'
+}
+
 install_dotfiles () {
   info 'installing dotfiles'
   "$DOTFILES_ROOT/scripts/install-symlinks" "$DOTFILES_ROOT"
@@ -69,6 +75,7 @@ install_dotfiles () {
 }
 
 setup_gitconfig
+init_submodules
 install_dotfiles
 
 info 'building default packages'
