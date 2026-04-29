@@ -69,12 +69,16 @@ if [[ "$force" != true && ( -n "${NONINTERACTIVE-}" || ! -t 0 ) ]]; then
   exit 0
 fi
 
-for repo in "${undeclared[@]}"; do
+if [[ "$force" == true ]]; then
+  to_remove=$(printf '%s\n' "${undeclared[@]}")
+else
+  to_remove=$(printf '%s\n' "${undeclared[@]}" | \
+    gum choose --no-limit \
+      --header "Undeclared gh extensions — Tab to select, Enter to confirm")
+fi
+
+while IFS= read -r repo; do
+  [[ -z "$repo" ]] && continue
   name=${${repo##*/}#gh-}
-  if [[ "$force" == true ]]; then
-    gh extension remove "$name"
-  else
-    read -r "reply?Remove gh-$name? [y/N] " || break
-    [[ "$reply" == [Yy]* ]] && gh extension remove "$name"
-  fi
-done
+  gum spin --title "Removing gh-$name" -- gh extension remove "$name"
+done <<< "$to_remove"

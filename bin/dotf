@@ -9,8 +9,7 @@ export ZSH="$HOME/.dotfiles"
 # Install homebrew
 "$ZSH/scripts/homebrew.sh"
 # Upgrade homebrew
-echo "› brew update"
-brew update
+gum spin --show-output --show-error --title "brew update" -- brew update
 
 # Build default package files
 echo "› building default packages"

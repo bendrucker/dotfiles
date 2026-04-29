@@ -6,13 +6,6 @@
 set -e
 
 DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
-LOG_TAG="dotfiles-sync"
-
-log() {
-  local msg="$1"
-  logger -t "$LOG_TAG" "$msg" 2>/dev/null || true
-  echo "$msg"
-}
 
 # macOS notification helper
 notify() {
@@ -33,13 +26,13 @@ notify() {
 
 # Ensure we're working with a real directory, not a symlink
 if [[ -L "$DOTFILES_HOME" ]]; then
-  log "ERROR: $DOTFILES_HOME is a symlink - run scripts/setup first"
+  gum log --level error "$DOTFILES_HOME is a symlink - run scripts/setup first"
   notify "Dotfiles Sync" "Failed: ~/.dotfiles is a symlink" "false"
   exit 1
 fi
 
 if [[ ! -d "$DOTFILES_HOME/.git" ]]; then
-  log "ERROR: $DOTFILES_HOME is not a git repository"
+  gum log --level error "$DOTFILES_HOME is not a git repository"
   notify "Dotfiles Sync" "Failed: not a git repository" "false"
   exit 1
 fi
@@ -48,8 +41,8 @@ cd "$DOTFILES_HOME"
 
 # Check for local changes that would prevent pull
 if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-  log "ERROR: Local changes in $DOTFILES_HOME - skipping sync"
-  log "  Run 'git -C $DOTFILES_HOME status' to see changes"
+  gum log --level error "Local changes in $DOTFILES_HOME - skipping sync"
+  gum log --level error "  Run 'git -C $DOTFILES_HOME status' to see changes"
   notify "Dotfiles Sync" "Skipped: local changes present" "false"
   exit 1
 fi
@@ -75,12 +68,13 @@ fetch_with_retry() {
   local delay=2
 
   for ((i=1; i<=retries; i++)); do
-    if git fetch origin "$DEFAULT_BRANCH" 2>&1; then
+    if gum spin --title "Fetching origin/$DEFAULT_BRANCH (attempt $i/$retries)" -- \
+      git fetch origin "$DEFAULT_BRANCH"; then
       return 0
     fi
 
     if ((i < retries)); then
-      log "Fetch failed, retrying in ${delay}s... (attempt $i/$retries)"
+      gum log --level warn "Fetch failed, retrying in ${delay}s... (attempt $i/$retries)"
       sleep "$delay"
       delay=$((delay * 2))
     fi
@@ -89,9 +83,8 @@ fetch_with_retry() {
   return 1
 }
 
-log "Fetching updates from origin/$DEFAULT_BRANCH..."
 if ! fetch_with_retry; then
-  log "ERROR: Failed to fetch after retries"
+  gum log --level error "Failed to fetch after retries"
   notify "Dotfiles Sync" "Failed: network error" "false"
   exit 1
 fi
@@ -100,30 +93,26 @@ LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse "origin/$DEFAULT_BRANCH")
 
 if [[ "$LOCAL" == "$REMOTE" ]]; then
-  log "Already up to date (${LOCAL:0:7})"
+  gum log --level info "Already up to date (${LOCAL:0:7})"
   exit 0
 fi
 
-log "Updating from ${LOCAL:0:7} to ${REMOTE:0:7}..."
+gum log --level info "Updating from ${LOCAL:0:7} to ${REMOTE:0:7}..."
 
-if git pull --ff-only origin "$DEFAULT_BRANCH" 2>&1; then
-  git submodule update --init 2>&1 | while read -r line; do
-    log "  $line"
-  done
+if git pull --ff-only origin "$DEFAULT_BRANCH"; then
+  git submodule update --init
 
-  log "Successfully updated to $(git rev-parse --short HEAD)"
+  gum log --level info "Successfully updated to $(git rev-parse --short HEAD)"
   notify "Dotfiles Sync" "Updated to ${REMOTE:0:7}" "true"
 
   # Optionally run bootstrap to update symlinks
   # Only if --bootstrap flag is passed (not by default for launchd)
   if [[ "$1" == "--bootstrap" ]] && [[ -x "$DOTFILES_HOME/scripts/bootstrap" ]]; then
-    log "Running bootstrap..."
-    "$DOTFILES_HOME/scripts/bootstrap" --no-prompt 2>&1 | while read -r line; do
-      log "  $line"
-    done
+    gum log --level info "Running bootstrap..."
+    "$DOTFILES_HOME/scripts/bootstrap" --no-prompt
   fi
 else
-  log "ERROR: Failed to pull - may need manual intervention"
+  gum log --level error "Failed to pull - may need manual intervention"
   notify "Dotfiles Sync" "Failed: could not pull" "false"
   exit 1
 fi

@@ -11,8 +11,7 @@ if [[ -z "${NONINTERACTIVE-}" ]] && [[ ! -t 0 ]]; then
   export NONINTERACTIVE=1
 fi
 
-echo "› brew bundle"
-brew bundle
+gum spin --show-output --show-error --title "brew bundle" -- brew bundle
 
 # Expose brew configuration to installers
 eval "$(brew shellenv)"
