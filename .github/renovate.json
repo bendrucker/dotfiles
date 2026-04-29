@@ -4,6 +4,9 @@
     "config:recommended"
   ],
   "automerge": true,
+  "git-submodules": {
+    "enabled": true
+  },
   "customManagers": [
     {
       "customType": "regex",
