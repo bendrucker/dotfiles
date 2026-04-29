@@ -1,6 +1,7 @@
 ---
 name: gum
-description: Add interactive prompts, spinners, and styled logging to shell scripts using gum. Use when adding a prompt, asking for confirmation, showing progress on a long-running command, picking from a list, formatting status output, or making a script interactive. Trigger on "add a prompt", "show progress", "spinner", "make this script interactive", "confirm before", "ask the user".
+description: Add interactive prompts, spinners, styled logging, and pickers to shell scripts using gum. Use when editing a shell script and adding a prompt, asking for confirmation, wrapping a long-running command in a spinner, picking from a list, logging styled status output, or otherwise making a script interactive. Trigger on "add a prompt", "show progress", "spinner", "make this script interactive", "confirm before", "ask the user", "pick from a list", "menu", "styled logs", "gum log", "gum spin", "gum confirm", "gum choose", "gum input".
+allowed-tools: [Read, Write, Edit, Grep, Glob]
 ---
 
 # gum
@@ -26,7 +27,7 @@ There is no `success` level. Use `info` for completion messages.
 
 ## Spinners
 
-Wrap any command whose output is uninteresting until it fails:
+Wrap commands whose output only matters when something goes wrong:
 
 ```sh
 gum spin --show-output --show-error --title "brew bundle" -- brew bundle
@@ -37,6 +38,8 @@ gum spin --show-output --show-error --title "brew bundle" -- brew bundle
 ```sh
 gum spin --show-output --title "install" -- ./scripts/install > "$logfile"
 ```
+
+For determinate progress (known total), use `gum progress` instead of `gum spin`. The README has the syntax.
 
 ## Confirm
 
@@ -55,6 +58,12 @@ name=$(gum input --header "GitHub author name" --placeholder "Jane Doe")
 ```
 
 ## Choose
+
+Single-select:
+
+```sh
+choice=$(printf '%s\n' "${candidates[@]}" | gum choose --header "Pick one")
+```
 
 Multi-select with no item-count limit:
 
