@@ -1,4 +1,5 @@
 brew 'bash'
+brew 'btop'
 brew 'findutils'
 brew 'fzf'
 brew 'gnu-sed'
