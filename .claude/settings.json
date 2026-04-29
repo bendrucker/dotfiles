@@ -2,9 +2,19 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:mise.jdx.dev)",
-      "WebFetch(domain:docs.brew.sh)"
+      "WebFetch(domain:docs.brew.sh)",
+      "Skill(tmux:tmux)",
+      "Bash(tmux source-file:*)",
+      "Bash(tmux list-keys:*)",
+      "Bash(tmux show-options:*)",
+      "Bash(tmux show-messages:*)",
+      "Bash(tmux show-environment:*)",
+      "Bash(tmux unbind:*)"
     ],
     "deny": []
+  },
+  "enabledPlugins": {
+    "tmux@bendrucker": true
   },
   "hooks": {
     "PostToolUse": [
