@@ -1,6 +1,3 @@
-[submodule "claude/theme-sync"]
-	path = claude/theme-sync
-	url = https://github.com/alfredomtx/claude-theme-sync
 [submodule "bat/catppuccin"]
 	path = bat/catppuccin
 	url = https://github.com/catppuccin/bat.git
