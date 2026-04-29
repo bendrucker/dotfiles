@@ -4,6 +4,7 @@ brew 'findutils'
 brew 'fzf'
 brew 'gnu-sed'
 brew 'gnu-tar'
+brew 'gum'
 brew 'hyperfine'
 brew 'nmap'
 

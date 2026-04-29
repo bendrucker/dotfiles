@@ -8,64 +8,83 @@ set -e
 DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 LOG_TAG="dotfiles-upgrade"
 
-log() {
-  local msg="$1"
-  logger -t "$LOG_TAG" "$msg" 2>/dev/null || true
-  echo "$msg"
+LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles-upgrade"
+mkdir -p "$LOG_DIR"
+SYNC_LOG="$LOG_DIR/sync.log"
+INSTALL_LOG="$LOG_DIR/install.log"
+CLEANUP_LOG="$LOG_DIR/cleanup.log"
+for f in "$SYNC_LOG" "$INSTALL_LOG" "$CLEANUP_LOG"; do : > "$f"; done
+
+if [[ -t 1 ]]; then
+  C_BOLD=$'\033[1m'
+  C_DIM=$'\033[2m'
+  C_RED=$'\033[31m'
+  C_YELLOW=$'\033[33m'
+  C_BLUE=$'\033[34m'
+  C_RESET=$'\033[0m'
+else
+  C_BOLD='' C_DIM='' C_RED='' C_YELLOW='' C_BLUE='' C_RESET=''
+fi
+
+info() {
+  logger -t "$LOG_TAG" "$1" 2>/dev/null || true
+  printf '%s==>%s %s%s%s\n' "$C_BLUE" "$C_RESET" "$C_BOLD" "$1" "$C_RESET"
+}
+
+warn() {
+  logger -t "$LOG_TAG" "WARN: $1" 2>/dev/null || true
+  printf '%s !!%s %s\n' "$C_YELLOW" "$C_RESET" "$1"
+}
+
+error() {
+  logger -t "$LOG_TAG" "ERROR: $1" 2>/dev/null || true
+  printf '%s xx%s %s\n' "$C_RED" "$C_RESET" "$1"
 }
 
 notify() {
-  local title="$1"
-  local message="$2"
+  [[ "$(uname)" == "Darwin" ]] || return 0
+  osascript -e "display notification \"$2\" with title \"$1\" sound name \"Basso\"" 2>/dev/null || true
+}
 
-  if [[ "$(uname)" != "Darwin" ]]; then
-    return
+# Run a command, capturing all output to logfile. With gum on a TTY, show a
+# live spinner; otherwise stream raw output. gum writes the captured output
+# to its stdout post-run (--show-output on success, --show-error on failure),
+# which we redirect to the logfile. Stderr stays on the terminal so the
+# spinner remains visible.
+stream() {
+  local logfile="$1" title="$2"; shift 2
+
+  if [[ -t 2 ]] && command -v gum >/dev/null 2>&1; then
+    logger -t "$LOG_TAG" "$title" 2>/dev/null || true
+    gum spin --show-output --show-error --title "$title" -- "$@" > "$logfile"
+    return $?
   fi
 
-  osascript -e "display notification \"$message\" with title \"$title\" sound name \"Basso\"" 2>/dev/null || true
-}
-
-sync_dotfiles() {
-  log "Syncing dotfiles..."
-  "$DOTFILES_HOME/bin/dotfiles-sync"
-}
-
-run_install() {
-  log "Running install..."
-  local output
-  if ! output=$("$DOTFILES_HOME/scripts/install" 2>&1); then
-    log "ERROR: install failed"
-    echo "$output"
-    create_things_task "$output"
-    return 1
-  fi
-  echo "$output"
-}
-
-run_brew_cleanup() {
-  log "Running brew cleanup..."
-  brew cleanup 2>&1 || log "WARNING: brew cleanup had issues"
+  info "$title"
+  "$@" 2>&1 | tee -a "$logfile"
+  # shellcheck disable=SC2154  # zsh: $pipestatus is the zsh equivalent of $PIPESTATUS
+  return "${pipestatus[1]}"
 }
 
 create_things_task() {
-  local output="$1"
+  info "Creating Things task for install failure"
 
-  log "Creating Things task for install failure..."
-
-  local host time revision
+  local host time revision output
   host=$(hostname -s)
   time=$(date "+%Y-%m-%d %H:%M:%S %Z")
   revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  output=$(tail -n 100 "$INSTALL_LOG")
 
   local notes='- **Host:** '"$host"'
 - **Time:** '"$time"'
 - **Revision:** '"$revision"'
+- **Log:** `'"$INSTALL_LOG"'`
 
 ```sh
 brew bundle
 ```
 
-## Error Output
+## Error Output (last 100 lines)
 ```
 '"$output"'
 ```'
@@ -75,19 +94,26 @@ brew bundle
   encoded_title=$(echo "Dotfiles install failed" | jq -sRr @uri)
 
   open "things:///add?title=${encoded_title}&notes=${encoded_notes}&when=today"
-
   notify "Dotfiles Upgrade" "Install failed - see Things task"
 }
 
-# --- Main ---
-if ! sync_dotfiles; then
+if ! stream "$SYNC_LOG" "Syncing dotfiles" "$DOTFILES_HOME/bin/dotfiles-sync"; then
+  error "sync failed"
+  printf '%s--- last 50 lines of %s ---%s\n' "$C_DIM" "$SYNC_LOG" "$C_RESET"
+  tail -n 50 "$SYNC_LOG"
   exit 1
 fi
 
-if ! run_install; then
+if ! stream "$INSTALL_LOG" "Running install" "$DOTFILES_HOME/scripts/install"; then
+  error "install failed"
+  printf '%s--- last 50 lines of %s ---%s\n' "$C_DIM" "$INSTALL_LOG" "$C_RESET"
+  tail -n 50 "$INSTALL_LOG"
+  create_things_task
   exit 1
 fi
 
-run_brew_cleanup
+if ! stream "$CLEANUP_LOG" "Running brew cleanup" brew cleanup; then
+  warn "brew cleanup had issues (see $CLEANUP_LOG)"
+fi
 
-log "All upgrades completed successfully"
+info "All upgrades completed successfully"
