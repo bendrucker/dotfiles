@@ -37,13 +37,17 @@ total=$(echo "$recent" | wc -l | tr -d ' ')
 first=$(echo "$recent" | head -1 | jq -r .ts)
 last=$(echo "$recent" | tail -1 | jq -r .ts)
 
-echo "=== tmux usage report (last $days days) ==="
-echo "Period: $first → $last"
-echo "Total events: $total"
+gum format --type markdown <<EOF
+# tmux usage report (last $days days)
+- **Period:** $first to $last
+- **Total events:** $total
+EOF
 echo
 
-echo "--- Event frequency ---"
-echo "$recent" | jq -r .event | sort | uniq -c | sort -rn
+{ echo "Event,Count"
+  echo "$recent" | jq -r .event | sort | uniq -c | sort -rn | \
+    awk '{ printf "%s,%s\n", $2, $1 }'
+} | gum table --print
 echo
 
 sessions=$(count session-created)

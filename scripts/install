@@ -11,16 +11,13 @@ if [[ -z "${NONINTERACTIVE-}" ]] && [[ ! -t 0 ]]; then
   export NONINTERACTIVE=1
 fi
 
-echo "› brew bundle"
 brew bundle
 
 # Expose brew configuration to installers
 eval "$(brew shellenv)"
 
-# Install mise tools and activate shims
 source mise/install.sh
 
-# Install declarative symlinks
 ./scripts/install-symlinks
 
 # Build exclusions for mise and any git submodules
@@ -29,5 +26,4 @@ for sm_path in ${(f)"$(git submodule foreach --quiet 'echo $sm_path' 2>/dev/null
   excludes+=("!" "-path" "./$sm_path/*")
 done
 
-# Find and run topic installers
 find . -name install.sh "${excludes[@]}" | while read -r installer; do "${installer}"; done

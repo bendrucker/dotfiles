@@ -1,21 +1,13 @@
 #!/bin/sh
 #
-# dotf
-#
-# `dotf` handles installation, updates, things like that. Run it periodically
-# to make sure you're on the latest and greatest.
+# Install and update dotfiles dependencies; run periodically.
 export ZSH="$HOME/.dotfiles"
 
-# Install homebrew
 "$ZSH/scripts/homebrew.sh"
-# Upgrade homebrew
-echo "› brew update"
-brew update
+gum spin --show-output --show-error --title "brew update" -- brew update
 
-# Build default package files
 echo "› building default packages"
 "$ZSH/bin/build-default-packages"
 
-# Install software
 echo "› $ZSH/scripts/install"
 "$ZSH/scripts/install"

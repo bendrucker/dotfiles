@@ -24,11 +24,6 @@ else
   exit 1
 fi
 
-info()    { printf "\033[0;34m==>\033[0m %s\n" "$1"; }
-warn()    { printf "\033[0;33mWarning:\033[0m %s\n" "$1"; }
-error()   { printf "\033[0;31mError:\033[0m %s\n" "$1" >&2; }
-success() { printf "\033[0;32m✓\033[0m %s\n" "$1"; }
-
 # Detect current state of ~/.dotfiles
 detect_state() {
   if [[ -L "$DOTFILES_HOME" ]]; then
@@ -61,44 +56,44 @@ get_default_branch() {
 
 # Main setup logic
 main() {
-  info "Setting up dotfiles with separate installed and development directories"
+  "$SCRIPT_DIR/homebrew.sh"
+
+  gum log --level info "Setting up dotfiles with separate installed and development directories"
   echo "  Repo URL: $REPO_URL"
   echo "  Installed: $DOTFILES_HOME"
   echo "  Development: $DOTFILES_DEV"
   echo ""
 
-  info "Detecting current dotfiles state..."
   local state
   state=$(detect_state)
-  echo "  Current state: $state"
+  gum log --level info "Current dotfiles state: $state"
 
-  # Handle DOTFILES_HOME based on current state
   case $state in
     symlink)
       local target
       target=$(readlink "$DOTFILES_HOME")
       # shellcheck disable=SC2088 # tilde is intentional display text
-      info "~/.dotfiles is a symlink to: $target"
+      gum log --level info "~/.dotfiles is a symlink to: $target"
 
       if [[ "$target" == "$DOTFILES_DEV" ]] || [[ "$target" == "$DOTFILES_DEV/" ]]; then
-        info "Symlink points to dev directory - will replace with independent clone"
+        gum log --level info "Symlink points to dev directory - will replace with independent clone"
       fi
 
-      info "Removing symlink..."
+      gum log --level info "Removing symlink..."
       rm "$DOTFILES_HOME"
 
-      info "Cloning fresh copy to $DOTFILES_HOME..."
+      gum log --level info "Cloning fresh copy to $DOTFILES_HOME..."
       git clone "$REPO_URL" "$DOTFILES_HOME"
 
       # Set up remote HEAD for default branch detection
       git -C "$DOTFILES_HOME" remote set-head origin --auto 2>/dev/null || true
 
-      success "Installed dotfiles cloned"
+      gum log --level info "Installed dotfiles cloned"
       ;;
 
     clone)
       # shellcheck disable=SC2088 # tilde is intentional display text
-      info "~/.dotfiles is already a git clone"
+      gum log --level info "~/.dotfiles is already a git clone"
 
       local current_remote
       current_remote=$(git -C "$DOTFILES_HOME" remote get-url origin 2>/dev/null)
@@ -111,55 +106,53 @@ main() {
       local default_branch
       default_branch=$(get_default_branch "$DOTFILES_HOME")
 
-      info "Updating to latest ($default_branch)..."
+      gum log --level info "Updating to latest ($default_branch)..."
       git -C "$DOTFILES_HOME" fetch origin "$default_branch"
       git -C "$DOTFILES_HOME" checkout "$default_branch" 2>/dev/null || true
       git -C "$DOTFILES_HOME" pull --ff-only origin "$default_branch" || {
-        warn "Could not fast-forward - you may have local changes"
+        gum log --level warn "Could not fast-forward - you may have local changes"
       }
-      success "Installed dotfiles updated"
+      gum log --level info "Installed dotfiles updated"
       ;;
 
     missing)
-      info "No ~/.dotfiles found - fresh install"
-      info "Cloning to $DOTFILES_HOME..."
+      gum log --level info "No ~/.dotfiles found - fresh install"
+      gum log --level info "Cloning to $DOTFILES_HOME..."
       git clone "$REPO_URL" "$DOTFILES_HOME"
 
       # Set up remote HEAD for default branch detection
       git -C "$DOTFILES_HOME" remote set-head origin --auto 2>/dev/null || true
 
-      success "Installed dotfiles cloned"
+      gum log --level info "Installed dotfiles cloned"
       ;;
 
     *)
-      error "Unknown state at $DOTFILES_HOME - please investigate manually"
+      gum log --level error "Unknown state at $DOTFILES_HOME - please investigate manually"
       exit 1
       ;;
   esac
 
-  # Handle DOTFILES_DEV
-  info "Checking development directory..."
+  gum log --level info "Checking development directory..."
   if [[ -d "$DOTFILES_DEV/.git" ]]; then
-    info "Development directory already exists at $DOTFILES_DEV"
-    success "Development dotfiles ready"
+    gum log --level info "Development directory already exists at $DOTFILES_DEV"
   elif [[ -e "$DOTFILES_DEV" ]]; then
-    warn "$DOTFILES_DEV exists but is not a git repo"
-    warn "Please move or remove it, then re-run this script"
+    gum log --level warn "$DOTFILES_DEV exists but is not a git repo"
+    gum log --level warn "Please move or remove it, then re-run this script"
   else
-    info "Creating development directory..."
+    gum log --level info "Creating development directory..."
     mkdir -p "$(dirname "$DOTFILES_DEV")"
     git clone "$REPO_URL" "$DOTFILES_DEV"
 
     # Set up remote HEAD for default branch detection
     git -C "$DOTFILES_DEV" remote set-head origin --auto 2>/dev/null || true
 
-    success "Development dotfiles cloned"
+    gum log --level info "Development dotfiles cloned"
   fi
 
   # Verify we now have two separate directories
   if [[ -L "$DOTFILES_HOME" ]]; then
     # shellcheck disable=SC2088 # tilde is intentional display text
-    error "~/.dotfiles is still a symlink - something went wrong"
+    gum log --level error "~/.dotfiles is still a symlink - something went wrong"
     exit 1
   fi
 
@@ -172,24 +165,23 @@ main() {
   dev_git=$(cd "$DOTFILES_DEV" && pwd -P)/.git
 
   if [[ "$home_git" == "$dev_git" ]]; then
-    error "Both directories share the same .git - this shouldn't happen"
+    gum log --level error "Both directories share the same .git - this shouldn't happen"
     exit 1
   fi
 
-  success "Separate directories verified"
+  gum log --level info "Separate directories verified"
 
-  # Run bootstrap from installed version
-  info "Running bootstrap from installed dotfiles..."
+  gum log --level info "Running bootstrap from installed dotfiles..."
   "$DOTFILES_HOME/scripts/bootstrap"
 
   # Run macOS setup (includes launchd job)
   if [[ "$(uname)" == "Darwin" ]] && [[ -x "$DOTFILES_HOME/macos/install.sh" ]]; then
-    info "Running macOS setup..."
+    gum log --level info "Running macOS setup..."
     ZSH="$DOTFILES_HOME" "$DOTFILES_HOME/macos/install.sh"
   fi
 
   echo ""
-  success "Setup complete!"
+  gum log --level info "Setup complete"
   echo ""
   echo "  Installed dotfiles: $DOTFILES_HOME (auto-syncs daily)"
   echo "  Development dotfiles: $DOTFILES_DEV (for making changes)"

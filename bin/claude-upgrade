@@ -3,13 +3,6 @@
 # Syncs claude repo, updates marketplaces and plugins
 
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
-LOG_TAG="claude-upgrade"
-
-log() {
-  local msg="$1"
-  logger -t "$LOG_TAG" "$msg" 2>/dev/null || true
-  echo "$msg"
-}
 
 notify() {
   local title="$1"
@@ -37,7 +30,7 @@ revert_cosmetic_json_changes() {
     head_sorted=$(git show "HEAD:$file" 2>/dev/null | jq -S . 2>/dev/null) || continue
 
     if [[ "$working_sorted" == "$head_sorted" ]]; then
-      log "Reverting cosmetic reorder in $file"
+      gum log --level info "Reverting cosmetic reorder in $file"
       git checkout HEAD -- "$file"
     fi
   done <<< "$changed_files"
@@ -62,16 +55,16 @@ render_diff() {
 }
 
 sync_repo() {
-  log "Syncing Claude repository..."
+  gum log --level info "Syncing Claude repository..."
 
   if [[ -L "$CLAUDE_REPO_HOME" ]]; then
-    log "ERROR: $CLAUDE_REPO_HOME is a symlink"
+    gum log --level error "$CLAUDE_REPO_HOME is a symlink"
     notify "Claude Upgrade" "Failed: ~/.claude-repo is a symlink"
     return 1
   fi
 
   if [[ ! -d "$CLAUDE_REPO_HOME/.git" ]]; then
-    log "ERROR: $CLAUDE_REPO_HOME is not a git repository"
+    gum log --level error "$CLAUDE_REPO_HOME is not a git repository"
     notify "Claude Upgrade" "Failed: not a git repository"
     return 1
   fi
@@ -83,25 +76,17 @@ sync_repo() {
   local git_status
   git_status=$(git status --porcelain 2>/dev/null)
   if [[ -n "$git_status" ]]; then
-    log "Local changes in $CLAUDE_REPO_HOME:"
-    echo "$git_status" | while IFS= read -r line; do log "  $line"; done
-    log "Diff:"
+    gum log --level info "Local changes in $CLAUDE_REPO_HOME:"
+    echo "$git_status"
+    gum log --level info "Diff:"
     render_diff
 
-    if [[ -t 0 && -t 1 ]]; then
-      local response
-      read -q "response?Discard local changes and continue? [y/N] "
-      echo
-      if [[ "$response" == "y" ]]; then
-        log "Discarding local changes..."
-        git reset --hard HEAD
-        git clean -fd
-      else
-        log "ERROR: Local changes present - skipping sync"
-        return 1
-      fi
+    if gum confirm "Discard local changes and continue?" --default=no; then
+      gum log --level info "Discarding local changes..."
+      git reset --hard HEAD
+      git clean -fd
     else
-      log "ERROR: Local changes in $CLAUDE_REPO_HOME - skipping sync"
+      gum log --level error "Local changes present - skipping sync"
       notify "Claude Upgrade" "Skipped: local changes present"
       return 1
     fi
@@ -117,15 +102,16 @@ sync_repo() {
 
   local retries=4 delay=2
   for ((i=1; i<=retries; i++)); do
-    if git fetch origin "$default_branch" 2>&1; then
+    if gum spin --show-error --title "Fetching origin/$default_branch (attempt $i/$retries)" -- \
+      git fetch origin "$default_branch"; then
       break
     fi
     if ((i < retries)); then
-      log "Fetch failed, retrying in ${delay}s... (attempt $i/$retries)"
+      gum log --level warn "Fetch failed, retrying in ${delay}s... (attempt $i/$retries)"
       sleep "$delay"
       delay=$((delay * 2))
     else
-      log "ERROR: Failed to fetch after retries"
+      gum log --level error "Failed to fetch after retries"
       notify "Claude Upgrade" "Failed: network error"
       return 1
     fi
@@ -136,31 +122,28 @@ sync_repo() {
   remote_rev=$(git rev-parse "origin/$default_branch")
 
   if [[ "$local_rev" == "$remote_rev" ]]; then
-    log "Repository already up to date (${local_rev:0:7})"
+    gum log --level info "Repository already up to date (${local_rev:0:7})"
     return 0
   fi
 
-  log "Updating repository from ${local_rev:0:7} to ${remote_rev:0:7}..."
+  gum log --level info "Updating repository from ${local_rev:0:7} to ${remote_rev:0:7}..."
 
-  if git pull --ff-only origin "$default_branch" 2>&1; then
-    log "Repository updated to $(git rev-parse --short HEAD)"
+  if git pull --ff-only origin "$default_branch"; then
+    gum log --level info "Repository updated to $(git rev-parse --short HEAD)"
   else
-    log "ERROR: Failed to pull repository"
+    gum log --level error "Failed to pull repository"
     notify "Claude Upgrade" "Failed: could not pull"
     return 1
   fi
 }
 
 update_marketplaces() {
-  log "Updating marketplaces..."
-  if ! claude plugin marketplace update 2>&1; then
-    log "WARNING: marketplace update had issues"
-    return 1
-  fi
+  gum log --level info "Updating marketplaces..."
+  claude plugin marketplace update || gum log --level warn "marketplace update had issues, continuing"
 }
 
 update_plugins() {
-  log "Updating plugins..."
+  gum log --level info "Updating plugins..."
 
   local marketplace_file="$CLAUDE_REPO_HOME/.claude-plugin/marketplace.json"
   local marketplace_name
@@ -168,7 +151,7 @@ update_plugins() {
 
   local settings_file="$HOME/.claude/settings.json"
   if [[ ! -f "$settings_file" ]]; then
-    log "WARNING: settings.json not found at $settings_file"
+    gum log --level warn "settings.json not found at $settings_file"
     return 0
   fi
 
@@ -178,7 +161,7 @@ update_plugins() {
     "$settings_file" 2>/dev/null)
 
   if [[ -z "$plugins" ]]; then
-    log "No first-party plugins found"
+    gum log --level info "No first-party plugins found"
     return 0
   fi
 
@@ -190,31 +173,31 @@ update_plugins() {
     local is_installed
     is_installed=$(echo "$installed_json" | jq -r --arg p "$plugin" 'any(.id == $p)')
     if [[ "$is_installed" != "true" ]]; then
-      log "  Installing $plugin (not yet installed)..."
-      if claude plugin install "$plugin" 2>&1; then
+      gum log --level info "Installing $plugin (not yet installed)..."
+      if claude plugin install "$plugin"; then
         continue
       else
-        log "  WARNING: Failed to install $plugin"
+        gum log --level warn "Failed to install $plugin"
         ((failed++))
         continue
       fi
     fi
-    log "  Updating $plugin..."
-    if ! claude plugin update "$plugin" 2>&1; then
-      log "  WARNING: Failed to update $plugin"
+    gum log --level info "Updating $plugin..."
+    if ! claude plugin update "$plugin"; then
+      gum log --level warn "Failed to update $plugin"
       ((failed++))
     fi
   done <<< "$plugins"
 
   if ((failed > 0)); then
-    log "WARNING: $failed plugin(s) failed to update"
+    gum log --level warn "$failed plugin(s) failed to update"
   fi
 }
 
 create_things_task() {
   local output="$1"
 
-  log "Creating Things task for upgrade failure..."
+  gum log --level info "Creating Things task for upgrade failure..."
 
   local host time revision version
   host=$(hostname -s)
@@ -264,10 +247,7 @@ main() {
       exit 1
     fi
 
-    if ! update_marketplaces; then
-      log "WARNING: Marketplace update failed, continuing..."
-    fi
-
+    update_marketplaces
     update_plugins
   } 2>&1 | tee "$output"
 
@@ -276,7 +256,7 @@ main() {
     exit 1
   fi
 
-  log "All Claude upgrades completed successfully"
+  gum log --level info "All Claude upgrades completed successfully"
 }
 
 main

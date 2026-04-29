@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2059
 #
 # bootstrap installs things.
 
 cd "$(dirname "$0")/.." || exit 1
 DOTFILES_ROOT=$(pwd -P)
 
-# Parse arguments
 NO_PROMPT=false
 for arg in "$@"; do
   case $arg in
@@ -14,80 +12,50 @@ for arg in "$@"; do
   esac
 done
 
-echo ''
-
-info () {
-  printf "\r  [ \033[00;34m..\033[0m ] $1\n"
-}
-
-user () {
-  printf "\r  [ \033[0;33m??\033[0m ] $1\n"
-}
-
-success () {
-  printf "\r\033[2K  [ \033[00;32mOK\033[0m ] $1\n"
-}
-
-fail () {
-  printf "\r\033[2K  [\033[0;31mFAIL\033[0m] $1\n"
-  echo ''
-  exit 1
-}
+"$DOTFILES_ROOT/scripts/homebrew.sh"
 
 setup_gitconfig () {
-  if ! [ -f git/config.local ]
-  then
-    # Skip gitconfig setup in no-prompt mode
-    if [ "$NO_PROMPT" == "true" ]; then
-      info 'skipping gitconfig setup (no-prompt mode)'
-      return
-    fi
+  [ -f git/config.local ] && return
 
-    info 'setup gitconfig'
-
-    git_credential='cache'
-    if [ "$(uname -s)" == "Darwin" ]
-    then
-      git_credential='osxkeychain'
-    fi
-
-    user ' - What is your github author name?'
-    read -r -e git_authorname
-    user ' - What is your github author email?'
-    read -r -e git_authoremail
-
-    sed -e "s/AUTHORNAME/$git_authorname/g" -e "s/AUTHOREMAIL/$git_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$git_credential/g" git/config.local.example > git/config.local
-
-    success 'gitconfig'
+  if [ "$NO_PROMPT" == "true" ]; then
+    gum log --level info 'skipping gitconfig setup (no-prompt mode)'
+    return
   fi
+
+  gum log --level info 'setup gitconfig'
+
+  git_credential='cache'
+  if [ "$(uname -s)" == "Darwin" ]; then
+    git_credential='osxkeychain'
+  fi
+
+  git_authorname=$(gum input --header "GitHub author name" --placeholder "Jane Doe")
+  git_authoremail=$(gum input --header "GitHub author email" --placeholder "jane@example.com")
+
+  sed -e "s/AUTHORNAME/$git_authorname/g" -e "s/AUTHOREMAIL/$git_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$git_credential/g" git/config.local.example > git/config.local
 }
 
 init_submodules () {
-  info 'initializing submodules'
+  gum log --level info 'initializing submodules'
   git -C "$DOTFILES_ROOT" submodule update --init --recursive
-  success 'submodules initialized'
 }
 
 install_dotfiles () {
-  info 'installing dotfiles'
+  gum log --level info 'installing dotfiles'
   "$DOTFILES_ROOT/scripts/install-symlinks" "$DOTFILES_ROOT"
-  success "symlinks installed"
 }
 
 setup_gitconfig
 init_submodules
 install_dotfiles
 
-info 'building default packages'
+gum log --level info 'building default packages'
 ./bin/build-default-packages
 
 # shellcheck disable=SC1091
-if source ./bin/dotf
-then
-  success "dependencies installed"
-else
-  fail "error installing dependencies"
+if ! source ./bin/dotf; then
+  gum log --level error 'error installing dependencies'
+  exit 1
 fi
 
-echo ''
-echo '  All installed!'
+gum log --level info 'all installed'
