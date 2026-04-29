@@ -4,15 +4,21 @@ You handle reloads. Don't ask the user to run `tmux source-file`. Do it.
 
 ## Reloading
 
-`tmux.conf` sources its modules with `-F "#{d:current_file}/<topic>/<topic>.conf"`, so they load from the same directory the `tmux.conf` itself was sourced from. To reload a worktree edit:
+`tmux.conf` sources modules via `~/.config/tmux/<topic>/<topic>.conf` (TPM's plugin discovery only parses `source-file` lines without `-F`, so worktree-relative paths there break plugin install). For worktree edits, source the specific module file directly:
 
 ```sh
-tmux source-file "$(git rev-parse --show-toplevel)/tmux/tmux.conf"
+tmux source-file "$(git rev-parse --show-toplevel)/tmux/<topic>/<topic>.conf"
 ```
 
-Don't use `~/.config/tmux/tmux.conf` or `prefix r`. Both follow the symlink to `~/.dotfiles` and miss your changes.
+For `tmux.conf` itself or for a clean reload of everything, you must sync the worktree to `~/.dotfiles` first (or hardlink the changed file in). `prefix r` reloads the installed copy at `~/.config/tmux/tmux.conf` and misses unsynced worktree edits.
 
 Don't `tmux kill-server` or restart tmux. That nukes the user's panes.
+
+## Removed bindings
+
+`tmux source-file` only adds bindings, never removes them. When you delete a custom binding from a topic conf, also append `unbind <key>` to `tmux/core/unbinds.conf`. That file is sourced after `core.conf` on every reload. Old entries get trimmed periodically once any tmux server that had them is gone.
+
+Permanent unbinds of tmux defaults (e.g. `unbind C-b` to free the prefix) stay with their topic, not in `unbinds.conf`.
 
 ## Plugin variable changes
 
@@ -30,10 +36,6 @@ For new plugins added via `set -g @plugin '...'`, source the conf first, then ru
 ```sh
 bash $TMUX_PLUGIN_MANAGER_PATH/tpm/bindings/install_plugins
 ```
-
-## Removing a binding
-
-Sourcing won't unbind anything the conf no longer mentions. Use `tmux unbind -T <table> <key>` (defaults to `prefix` if `-T` is omitted).
 
 ## Verification
 
