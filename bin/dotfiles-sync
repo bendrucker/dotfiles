@@ -42,7 +42,7 @@ cd "$DOTFILES_HOME"
 # Check for local changes that would prevent pull
 if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
   gum log --level error "Local changes in $DOTFILES_HOME - skipping sync"
-  gum log --level error "  Run 'git -C $DOTFILES_HOME status' to see changes"
+  gum log --level error "Run 'git -C $DOTFILES_HOME status' to see changes"
   notify "Dotfiles Sync" "Skipped: local changes present" "false"
   exit 1
 fi

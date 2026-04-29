@@ -62,10 +62,9 @@ main() {
   echo "  Development: $DOTFILES_DEV"
   echo ""
 
-  gum log --level info "Detecting current dotfiles state..."
   local state
   state=$(detect_state)
-  echo "  Current state: $state"
+  gum log --level info "Current dotfiles state: $state"
 
   # Handle DOTFILES_HOME based on current state
   case $state in

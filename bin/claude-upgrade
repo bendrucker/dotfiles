@@ -139,10 +139,7 @@ sync_repo() {
 
 update_marketplaces() {
   gum log --level info "Updating marketplaces..."
-  if ! claude plugin marketplace update; then
-    gum log --level warn "marketplace update had issues"
-    return 1
-  fi
+  claude plugin marketplace update || gum log --level warn "marketplace update had issues, continuing"
 }
 
 update_plugins() {
@@ -250,10 +247,7 @@ main() {
       exit 1
     fi
 
-    if ! update_marketplaces; then
-      gum log --level warn "Marketplace update failed, continuing..."
-    fi
-
+    update_marketplaces
     update_plugins
   } 2>&1 | tee "$output"
 
