@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Searchable picker over `prefix` bindings. The selected binding is dispatched
+# via `tmux run-shell -b` to a tempfile so this picker's popup closes first —
+# popup-based bindings (sesh, scratch, fingers) would otherwise collide with
+# our still-open popup.
+# shellcheck disable=SC2016  # literal $TMUX_PLUGIN_MANAGER_PATH appears in tmux binding text
+set -euo pipefail
+
+# tmux escapes shell metacharacters in the raw `list-keys` key column (`\"`,
+# `\#`, `\$`, ...) but `list-keys -N` reports them unescaped. Normalize raw to
+# match so the merge and cmd lookup key on the same string.
+raw=$(tmux list-keys -T prefix | sed -E 's/^bind-key +-T +prefix +//; s/^\\(.)/\1/')
+notes=$(tmux list-keys -N -P 'prefix ' -T prefix | sed 's/^prefix //')
+
+rows=$(awk '
+    FNR==NR { seen[$1]=1; key=$1; $1=""; sub(/^ +/,""); print key "\t" $0; next }
+    !($1 in seen) { key=$1; $1=""; sub(/^ +/,""); print key "\t" $0 }
+  ' <(echo "$notes") <(echo "$raw") \
+  | sed -E '
+    s|/opt/homebrew/Cellar/[^[:space:]"]*/bin/||g
+    s|/Users/[^[:space:]"]*/\.local/share/tmux/plugins/||g
+    s|\$TMUX_PLUGIN_MANAGER_PATH/||g
+    s|/scripts/|/|g
+    s| >>[^[:space:]]*\.log 2>&1||g
+    s|	run-shell -b "(.*)"$|	\1|
+    s|	run-shell "(.*)"$|	\1|
+    s|	run-shell -b |	|
+    s|	run-shell |	|
+  ' | sort | column -t -s $'\t')
+
+selection=$(echo "$rows" | fzf \
+  --prompt='desc> ' \
+  --header='prefix bindings (tab: key/desc, enter: invoke)' \
+  --nth=2.. \
+  --bind 'tab:change-nth(2..|1)+transform-prompt(case "$FZF_NTH" in 1) echo "key> ";; *) echo "desc> ";; esac)')
+
+[[ -z $selection ]] && exit 0
+
+key=$(awk '{print $1}' <<< "$selection")
+[[ -z $key ]] && exit 0
+
+cmd=$(awk -v k="$key" '$1 == k { $1=""; sub(/^ +/,""); print; exit }' <<< "$raw")
+if [[ -z $cmd ]]; then
+  tmux display-message "tmux-keys: no binding found for '$key'"
+  exit 1
+fi
+
+tmpf=$(mktemp -t tmux-keys)
+printf '%s\n' "$cmd" > "$tmpf"
+tmux run-shell -b "xargs tmux < '$tmpf'; rm -f '$tmpf'"
