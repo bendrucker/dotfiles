@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Apply the active catppuccin flavor to btop.
+# Patches color_theme in btop.conf and sends SIGUSR2 to running btop processes
+# (which triggers an in-place config + theme reload).
+set -euo pipefail
+
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+flavor="$("$bin_dir/theme-flavor")"
+want="catppuccin_${flavor}"
+
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/btop/btop.conf"
+[[ -f "$conf" ]] || exit 0
+
+current=$(awk -F'"' '/^color_theme = /{print $2; exit}' "$conf")
+[[ "$current" == "$want" ]] && exit 0
+
+# Cross-platform sed -i: write to a temp and move.
+tmp="$conf.tmp.$$"
+sed -e "s|^color_theme = .*|color_theme = \"$want\"|" "$conf" > "$tmp"
+mv "$tmp" "$conf"
+
+# SIGUSR2 -> btop sets reload_conf = true and re-reads config + theme + banner.
+pkill -USR2 -x btop 2>/dev/null || true

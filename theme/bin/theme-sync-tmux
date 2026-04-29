@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
+# Apply the active catppuccin flavor to a running tmux server.
+# Self-gates: exits 0 without work if the server is already on the right flavor,
+# or if no tmux server is running.
 set -euo pipefail
 
-[[ "$(uname -s)" == "Darwin" ]] || exit 0
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+flavor="$("$bin_dir/theme-flavor")"
 
-if [[ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" == "Dark" ]]; then
-  flavor="mocha"
-else
-  flavor="latte"
-fi
+# No tmux server, nothing to sync. Next `tmux` will pick up the flavor at startup.
+tmux list-sessions >/dev/null 2>&1 || exit 0
 
 current=$(tmux show -gv @catppuccin_flavor 2>/dev/null || echo "")
 [[ "$current" == "$flavor" ]] && exit 0
@@ -18,7 +19,7 @@ tmux_config="${XDG_CONFIG_HOME:-$HOME/.config}/tmux"
 for f in "$plugin_dir/catppuccin_options_tmux.conf" \
          "$plugin_dir/catppuccin_tmux.conf"; do
   if [[ ! -f "$f" ]]; then
-    echo "tmux-style-sync: missing $f" >&2
+    echo "theme-sync-tmux: missing $f" >&2
     exit 1
   fi
 done

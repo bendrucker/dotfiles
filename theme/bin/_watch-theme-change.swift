@@ -1,7 +1,7 @@
 import Foundation
 
 guard CommandLine.arguments.count > 1 else {
-    FileHandle.standardError.write(Data("usage: tmux-style-watch.swift <bin-dir>\n".utf8))
+    FileHandle.standardError.write(Data("usage: watch-theme-change.swift <bin-dir>\n".utf8))
     exit(1)
 }
 
@@ -13,13 +13,13 @@ DistributedNotificationCenter.default().addObserver(
     queue: .main
 ) { _ in
     let task = Process()
-    task.executableURL = URL(fileURLWithPath: "\(binDir)/tmux-style-sync")
+    task.executableURL = URL(fileURLWithPath: "\(binDir)/theme-sync")
     do {
         try task.run()
         task.waitUntilExit()
     } catch {
         FileHandle.standardError.write(
-            Data("tmux-style-watch: failed to run tmux-style-sync: \(error)\n".utf8)
+            Data("watch-theme-change: failed to run theme-sync: \(error)\n".utf8)
         )
     }
 }

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Run all per-tool theme sync scripts.
+# Each `theme-sync-<tool>` self-gates and exits early if no change is needed.
+set -uo pipefail
+
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+
+status=0
+for sync in "$bin_dir"/theme-sync-*; do
+  [[ -x "$sync" ]] || continue
+  if ! "$sync"; then
+    status=$?
+    echo "theme-sync: $(basename "$sync") exited $status" >&2
+  fi
+done
+exit "$status"

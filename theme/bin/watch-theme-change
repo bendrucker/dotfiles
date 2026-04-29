@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Watch macOS appearance changes (light/dark) and re-sync all themed tools.
+# Backgrounded daemon, invokes theme-sync on every AppleInterfaceTheme change.
+set -euo pipefail
+
+[[ "$(uname -s)" == "Darwin" ]] || exit 0
+
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+exec swift "$bin_dir/_watch-theme-change.swift" "$bin_dir"
