@@ -102,7 +102,7 @@ sync_repo() {
 
   local retries=4 delay=2
   for ((i=1; i<=retries; i++)); do
-    if gum spin --title "Fetching origin/$default_branch (attempt $i/$retries)" -- \
+    if gum spin --show-error --title "Fetching origin/$default_branch (attempt $i/$retries)" -- \
       git fetch origin "$default_branch"; then
       break
     fi

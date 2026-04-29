@@ -12,6 +12,8 @@ for arg in "$@"; do
   esac
 done
 
+"$DOTFILES_ROOT/scripts/homebrew.sh"
+
 setup_gitconfig () {
   [ -f git/config.local ] && return
 

@@ -40,7 +40,7 @@ gum spin --show-output --title "install" -- ./scripts/install > "$logfile"
 
 ## Confirm
 
-`gum confirm` exits with status 1 on "no". Under `set -e`, that aborts the script. Always branch on it:
+`gum confirm` exits 1 on "no". Always use it as an `if` condition; don't rely on `set -e` to stop the script.
 
 ```sh
 if gum confirm "Discard local changes?" --default=no; then

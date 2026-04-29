@@ -56,6 +56,8 @@ get_default_branch() {
 
 # Main setup logic
 main() {
+  "$SCRIPT_DIR/homebrew.sh"
+
   gum log --level info "Setting up dotfiles with separate installed and development directories"
   echo "  Repo URL: $REPO_URL"
   echo "  Installed: $DOTFILES_HOME"
@@ -66,7 +68,6 @@ main() {
   state=$(detect_state)
   gum log --level info "Current dotfiles state: $state"
 
-  # Handle DOTFILES_HOME based on current state
   case $state in
     symlink)
       local target
@@ -131,7 +132,6 @@ main() {
       ;;
   esac
 
-  # Handle DOTFILES_DEV
   gum log --level info "Checking development directory..."
   if [[ -d "$DOTFILES_DEV/.git" ]]; then
     gum log --level info "Development directory already exists at $DOTFILES_DEV"
@@ -171,7 +171,6 @@ main() {
 
   gum log --level info "Separate directories verified"
 
-  # Run bootstrap from installed version
   gum log --level info "Running bootstrap from installed dotfiles..."
   "$DOTFILES_HOME/scripts/bootstrap"
 

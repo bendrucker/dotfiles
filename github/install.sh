@@ -74,7 +74,7 @@ if [[ "$force" == true ]]; then
 else
   to_remove=$(printf '%s\n' "${undeclared[@]}" | \
     gum choose --no-limit \
-      --header "Undeclared gh extensions — Tab to select, Enter to confirm")
+      --header "Undeclared gh extensions: Tab to select, Enter to confirm")
 fi
 
 while IFS= read -r repo; do

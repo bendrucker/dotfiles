@@ -22,7 +22,7 @@ create_things_task() {
   host=$(hostname -s)
   time=$(date "+%Y-%m-%d %H:%M:%S %Z")
   revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  output=$(tail -n 100 "$INSTALL_LOG")
+  output=$(tail -n 100 "$INSTALL_LOG" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')
 
   local notes='- **Host:** '"$host"'
 - **Time:** '"$time"'
@@ -52,7 +52,7 @@ if ! gum spin --show-output --show-error --title "Syncing dotfiles" -- \
 fi
 
 if ! gum spin --show-output --show-error --title "Running install" -- \
-  "$DOTFILES_HOME/scripts/install" > "$INSTALL_LOG"; then
+  "$DOTFILES_HOME/scripts/install" > "$INSTALL_LOG" 2>&1; then
   gum log --level error "install failed"
   create_things_task
   exit 1

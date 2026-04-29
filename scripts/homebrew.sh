@@ -18,4 +18,10 @@ then
 
 fi
 
+# install gum early so dotfiles-bootstrap helpers can use it before scripts/install runs brew bundle
+if test ! "$(command -v gum)"
+then
+  brew install gum
+fi
+
 exit 0
