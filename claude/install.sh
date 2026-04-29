@@ -3,11 +3,6 @@ set -e
 
 [[ "$(uname -s)" == "Darwin" ]] || exit 0
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-# Install theme-sync daemon
-"$SCRIPT_DIR/theme-sync/install.sh"
-
 CLAUDE_REPO_URL="https://github.com/bendrucker/claude.git"
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 
