@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Check whether the host can produce useful screenshots.
+# Prints a single JSON line; exits 0 if ready, non-zero otherwise.
+# Failure modes covered:
+#   screen-locked        loginwindow / Display Shield topmost
+#   no-terminal-windows  nothing to capture
+# Usage: preflight
+
+set -euo pipefail
+
+result=$(osascript -l JavaScript <<'JXA'
+ObjC.import('CoreGraphics');
+ObjC.import('Foundation');
+const onscreen = $.kCGWindowListOptionOnScreenOnly;
+const cf = $.CGWindowListCopyWindowInfo(onscreen, $.kCGNullWindowID);
+const count = $.CFArrayGetCount(cf);
+const wins = [];
+for (let i = 0; i < count; i++) {
+  wins.push(ObjC.deepUnwrap(ObjC.castRefToObject($.CFArrayGetValueAtIndex(cf, i))));
+}
+const locked = wins.some(w =>
+  w.kCGWindowOwnerName === 'loginwindow' ||
+  (w.kCGWindowOwnerName === 'Window Server' && /Shield/.test(w.kCGWindowName || ''))
+);
+const TERMS = /ghostty|iterm|terminal|alacritty|wezterm|kitty/i;
+const terms = wins.filter(w => TERMS.test(w.kCGWindowOwnerName || '') && (w.kCGWindowLayer || 0) === 0);
+const out = { locked, terminal_window_count: terms.length };
+if (locked)            JSON.stringify({ ok: false, reason: 'screen-locked',       detail: out });
+else if (!terms.length) JSON.stringify({ ok: false, reason: 'no-terminal-windows', detail: out });
+else                    JSON.stringify({ ok: true,                                 detail: out });
+JXA
+)
+
+echo "$result"
+case "$result" in
+  *'"ok":true'*)                 exit 0 ;;
+  *'"reason":"screen-locked"'*)  exit 2 ;;
+  *'"reason":"no-terminal-windows"'*) exit 3 ;;
+  *)                             exit 1 ;;
+esac

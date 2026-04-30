@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Enumerate on-screen terminal windows via Quartz. Output JSON.
+# Usage: list-terminal-windows [name-pattern]
+#   name-pattern: optional case-insensitive regex; filters by window name (kCGWindowName)
+
+set -euo pipefail
+
+pattern="${1:-}"
+
+PATTERN="$pattern" osascript -l JavaScript <<'JXA'
+ObjC.import('CoreGraphics');
+ObjC.import('Foundation');
+const env = $.NSProcessInfo.processInfo.environment;
+const patternStr = ObjC.unwrap(env.objectForKey('PATTERN')) || '';
+const opts = $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements;
+const cf = $.CGWindowListCopyWindowInfo(opts, $.kCGNullWindowID);
+const count = $.CFArrayGetCount(cf);
+const out = [];
+for (let i = 0; i < count; i++) {
+  const dict = $.CFArrayGetValueAtIndex(cf, i);
+  out.push(ObjC.deepUnwrap(ObjC.castRefToObject(dict)));
+}
+const TERMS = /ghostty|iterm|terminal|alacritty|wezterm|kitty/i;
+let terms = out.filter(w => TERMS.test(w.kCGWindowOwnerName || '') && (w.kCGWindowLayer || 0) === 0);
+if (patternStr) {
+  const re = new RegExp(patternStr, 'i');
+  terms = terms.filter(w => re.test(w.kCGWindowName || ''));
+}
+JSON.stringify(terms.map(w => ({
+  owner: w.kCGWindowOwnerName,
+  id: w.kCGWindowNumber,
+  name: w.kCGWindowName || '',
+  bounds: w.kCGWindowBounds
+})), null, 2);
+JXA

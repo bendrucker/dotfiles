@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Crop a PNG via NSBitmapImageRep. Use this instead of `sips` because sips
+# writes to /var/folders scratch which the Claude Code sandbox blocks.
+# Coordinates are in physical pixels, origin top-left.
+# Usage: crop-png <src> <dst> <x> <y> <w> <h>
+
+set -euo pipefail
+
+if [[ $# -ne 6 ]]; then
+  echo "usage: crop-png <src> <dst> <x> <y> <w> <h>  (physical pixels, origin top-left)" >&2
+  exit 64
+fi
+
+SRC="$1" DST="$2" X="$3" Y="$4" W="$5" H="$6"
+mkdir -p "$(dirname "$DST")"
+
+SRC="$SRC" DST="$DST" X="$X" Y="$Y" W="$W" H="$H" osascript -l JavaScript <<'JXA'
+ObjC.import('AppKit');
+ObjC.import('Foundation');
+
+const env = $.NSProcessInfo.processInfo.environment;
+const get = k => ObjC.unwrap(env.objectForKey(k));
+const src = get('SRC'), dst = get('DST');
+const x = parseFloat(get('X')), y = parseFloat(get('Y'));
+const w = parseFloat(get('W')), h = parseFloat(get('H'));
+
+const data = $.NSData.dataWithContentsOfFile(src);
+if (!data.js) throw new Error(`could not read ${src}`);
+const nsimg = $.NSImage.alloc.initWithData(data);
+const cgimg = nsimg.CGImageForProposedRectContextHints($(), $(), $());
+
+const cropped = $.CGImageCreateWithImageInRect(cgimg, $.CGRectMake(x, y, w, h));
+const rep = $.NSBitmapImageRep.alloc.initWithCGImage(cropped);
+// NSBitmapImageFileTypePNG = 4
+const pngData = rep.representationUsingTypeProperties(4, $());
+const ok = pngData.writeToFileAtomically(dst, true);
+if (!ok) throw new Error(`could not write ${dst}`);
+JSON.stringify({ src, dst, src_size: [Number($.CGImageGetWidth(cgimg)), Number($.CGImageGetHeight(cgimg))], crop: [x, y, w, h] });
+JXA
