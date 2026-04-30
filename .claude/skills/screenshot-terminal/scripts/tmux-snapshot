@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Dump a structured snapshot of the current tmux server: sessions, windows,
+# panes, and per-pane visible buffer. Pairs with capture-window output so the
+# rendered chrome and the textual contents are inspectable side-by-side.
+# Usage: tmux-snapshot [out-dir]   (default: tmp/tmux-snapshot)
+
+set -euo pipefail
+
+out="${1:-tmp/tmux-snapshot}"
+mkdir -p "$out"
+
+tmux list-sessions \
+  -F '#{session_name}|#{session_windows}|#{session_attached}|#{session_created}' \
+  > "$out/sessions.tsv"
+
+tmux list-windows -a \
+  -F '#{session_name}|#{window_index}|#{window_name}|#{window_panes}|#{window_active}|#{window_flags}|#{window_layout}' \
+  > "$out/windows.tsv"
+
+tmux list-panes -a \
+  -F '#{session_name}|#{window_index}|#{window_name}|#{pane_index}|#{pane_id}|#{pane_active}|#{pane_current_command}|#{pane_width}x#{pane_height}|#{pane_title}' \
+  > "$out/panes.tsv"
+
+# Visible buffer per pane (no scrollback).
+mkdir -p "$out/panes"
+while IFS='|' read -r _s _w _wn _p pane_id _; do
+  tmux capture-pane -p -t "$pane_id" > "$out/panes/${pane_id#%}.txt" 2>/dev/null || true
+done < "$out/panes.tsv"
+
+cat <<INFO
+$out/
+  sessions.tsv  $(wc -l < "$out/sessions.tsv" | tr -d ' ') session(s)
+  windows.tsv   $(wc -l < "$out/windows.tsv" | tr -d ' ') window(s)
+  panes.tsv     $(wc -l < "$out/panes.tsv" | tr -d ' ') pane(s)
+  panes/        per-pane visible buffer
+INFO

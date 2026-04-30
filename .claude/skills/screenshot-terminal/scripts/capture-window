@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Capture a single CGWindow by ID into a PNG.
+# Usage: capture-window <window-id> <out.png>
+# Does not steal focus; works on windows that are not topmost.
+
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: capture-window <window-id> <out.png>" >&2
+  exit 64
+fi
+
+window_id="$1"
+out="$2"
+
+mkdir -p "$(dirname "$out")"
+screencapture -x -o -l "$window_id" -t png "$out"
+
+if [[ ! -s "$out" ]]; then
+  echo "capture-window: no output written. The terminal app may lack Screen Recording permission." >&2
+  exit 1
+fi

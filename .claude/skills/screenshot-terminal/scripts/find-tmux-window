@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Resolve the CGWindowID of the terminal window hosting a tmux client.
+#
+# Strategy 1 (precise): walk the tmux client's process tree up to a terminal
+# app PID, then match Quartz windows owned by that PID. Falls back when the
+# ancestor chain is broken (e.g. mosh-server detaches and reparents to PID 1).
+#
+# Strategy 2 (heuristic): scan all on-screen terminal windows, prefer ones
+# whose title contains "tmux", "mosh", or the active session name; otherwise
+# take the topmost terminal window.
+#
+# Usage: find-tmux-window [client-target]
+#   find-tmux-window
+#   find-tmux-window /dev/ttys013
+
+set -euo pipefail
+
+target="${1:-}"
+if [[ -n "$target" ]]; then
+  client_pid=$(tmux display-message -p -t "$target" '#{client_pid}' 2>/dev/null)
+  session=$(tmux display-message -p -t "$target" '#S' 2>/dev/null || true)
+else
+  client_pid=$(tmux display-message -p '#{client_pid}' 2>/dev/null)
+  session=$(tmux display-message -p '#S' 2>/dev/null || true)
+fi
+
+if [[ -z "$client_pid" ]]; then
+  echo "find-tmux-window: no tmux client found" >&2
+  exit 1
+fi
+
+TERMS_RE='^(Ghostty|iTerm2|Terminal|Alacritty|WezTerm|kitty)$'
+pid=$client_pid
+terminal_pid=
+for _ in {1..16}; do
+  [[ -z "$pid" || "$pid" == "1" ]] && break
+  comm=$(ps -p "$pid" -o comm= 2>/dev/null | sed 's|.*/||' | xargs)
+  if [[ "$comm" =~ $TERMS_RE ]]; then
+    terminal_pid=$pid
+    break
+  fi
+  pid=$(ps -p "$pid" -o ppid= 2>/dev/null | xargs)
+done
+
+result=$(TERMINAL_PID="${terminal_pid:-0}" SESSION="$session" osascript -l JavaScript <<'JXA'
+ObjC.import('CoreGraphics');
+ObjC.import('Foundation');
+const env = $.NSProcessInfo.processInfo.environment;
+const pid = parseInt(ObjC.unwrap(env.objectForKey('TERMINAL_PID')), 10);
+const session = ObjC.unwrap(env.objectForKey('SESSION')) || '';
+const TERM_RE = /ghostty|iterm|terminal|alacritty|wezterm|kitty/i;
+
+const opts = $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements;
+const cf = $.CGWindowListCopyWindowInfo(opts, $.kCGNullWindowID);
+const count = $.CFArrayGetCount(cf);
+const all = [];
+for (let i = 0; i < count; i++) {
+  const w = ObjC.deepUnwrap(ObjC.castRefToObject($.CFArrayGetValueAtIndex(cf, i)));
+  if ((w.kCGWindowLayer || 0) !== 0) continue;
+  if (!TERM_RE.test(w.kCGWindowOwnerName || '')) continue;
+  all.push({
+    id: w.kCGWindowNumber,
+    name: w.kCGWindowName || '',
+    pid: w.kCGWindowOwnerPID,
+    zorder: i,
+  });
+}
+
+const candidates = pid ? all.filter(w => w.pid === pid) : all;
+const pool = candidates.length ? candidates : all;
+
+const titleScore = w => {
+  const n = w.name;
+  if (session && n.indexOf(session) !== -1) return 3;
+  if (/tmux/i.test(n)) return 2;
+  if (/mosh|ssh/i.test(n)) return 1;
+  return 0;
+};
+pool.sort((a, b) => titleScore(b) - titleScore(a) || a.zorder - b.zorder);
+pool[0] ? String(pool[0].id) : '';
+JXA
+)
+
+if [[ -z "$result" ]]; then
+  echo "find-tmux-window: no on-screen terminal window found" >&2
+  exit 3
+fi
+
+echo "$result"
