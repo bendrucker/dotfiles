@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
+# Emit ' <glyph>' if the pane title's first character is a non-ASCII glyph
+# (spinner, icon, etc.), so window labels surface Claude's status without
+# leaking ASCII punctuation or directory names.
+#
+# Bash 3.2 (system bash on macOS) does not support [[:ascii:]] inside =~,
+# so detect non-ASCII via byte length: any UTF-8 codepoint outside ASCII
+# encodes to >1 byte.
 title="$1"
 [[ -z "$title" ]] && exit 0
 first="${title::1}"
-[[ "$first" =~ ^[[:ascii:]]$ ]] || printf ' %s' "$first"
+(( $(LC_ALL=C printf %s "$first" | wc -c) > 1 )) && printf ' %s' "$first"
