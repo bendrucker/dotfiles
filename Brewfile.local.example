@@ -1,0 +1,12 @@
+# Brewfile.local — untracked, machine-specific packages
+#
+# Copy to Brewfile.local (gitignored via *.local) for entries you want
+# `brew bundle` to manage but don't want in source control, such as
+# corporate-mandated tools. Without this, `brew bundle cleanup` would
+# flag them for removal.
+#
+# Has access to the same `corporate` and `corporate_cask_args` locals
+# as the root Brewfile.
+
+# brew 'some-corporate-cli'
+# cask 'some-corporate-app', args: corporate_cask_args
