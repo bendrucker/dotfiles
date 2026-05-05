@@ -81,7 +81,5 @@ Dir.glob(File.join(File.dirname(__FILE__), '*', '**', 'Brewfile')) do |brewfile|
   eval(IO.read(brewfile), binding)
 end
 
-# Load an untracked Brewfile.local for machine-specific (e.g. corporate) packages
-# so `brew bundle cleanup` won't flag them. See Brewfile.local.example.
 local_brewfile = File.join(File.dirname(__FILE__), 'Brewfile.local')
 eval(IO.read(local_brewfile), binding) if File.exist?(local_brewfile)
