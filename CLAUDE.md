@@ -44,6 +44,8 @@ end
 
 This means `brew bundle` from the repo root installs everything from all topic Brewfiles. The root Brewfile also conditionally skips casks/MAS in CI and some apps on corporate machines.
 
+The root Brewfile additionally evaluates `~/Brewfile.local` when present. Use it for machine-specific packages (e.g. corporate-mandated tools) so they're managed by `brew bundle` without being flagged by `brew bundle cleanup`.
+
 #### mise Aggregation
 
 Topic directories can contain `mise.toml` files for language/tool versions. The `scripts/install` script auto-discovers these and symlinks them to `~/.config/mise/conf.d/`, where mise merges them alphabetically.

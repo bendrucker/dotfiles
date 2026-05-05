@@ -80,3 +80,6 @@ mas 'Paku', id: 1534130193
 Dir.glob(File.join(File.dirname(__FILE__), '*', '**', 'Brewfile')) do |brewfile|
   eval(IO.read(brewfile), binding)
 end
+
+local_brewfile = File.expand_path('~/Brewfile.local')
+eval(IO.read(local_brewfile), binding) if File.exist?(local_brewfile)
