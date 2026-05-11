@@ -56,6 +56,7 @@ install_herdr_claude_hook() {
   # herdr's installer also adds hook entries to ~/.claude/settings.json,
   # which the bendrucker/herdr plugin already provides via hooks.json.
   # Route the installer at a throwaway HOME and copy out only the script.
+  mkdir -p "$temp_home/.claude"
   HOME="$temp_home" herdr integration install claude >/dev/null
   mkdir -p "$hook_dir"
   cp -p "$temp_home/.claude/hooks/herdr-agent-state.sh" "$hook_path"
