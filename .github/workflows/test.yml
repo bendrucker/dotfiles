@@ -32,9 +32,7 @@ jobs:
       run: sudo apt-get install -y zsh
     - name: Overwrite conflicting formulae
       if: ${{ runner.os == 'macOS' }}
-      run: |
-        brew update
-        brew upgrade openssl@3 || brew link --overwrite openssl@3
+      run: brew link --overwrite openssl@3 || true
     - name: Print Homebrew configuration
       run: brew config
     - name: Cache mise installs
@@ -48,16 +46,19 @@ jobs:
     - name: Cache Homebrew packages
       uses: actions/cache@v5
       with:
-        key: homebrew-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
+        key: homebrew-v2-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
         restore-keys: |
-          homebrew-${{ runner.os }}-
+          homebrew-v2-${{ runner.os }}-
         path: |
           ~/Library/Caches/Homebrew
           /home/linuxbrew/.linuxbrew
     - name: Bootstrap
       run: ./scripts/bootstrap
       env:
-        # skip updates/upgrades to speed up install
+        # skip updates/upgrades to speed up install and keep cached bottles
+        # stable. Upgrades relink against host libs that may be missing on
+        # later runs (e.g. bat against libllhttp.so on Linux).
+        HOMEBREW_NO_AUTO_UPDATE: '1'
         HOMEBREW_NO_INSTALL_UPGRADE: '1'
         # remove stale packages from cache
         HOMEBREW_BUNDLE_INSTALL_CLEANUP: '1'
