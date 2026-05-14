@@ -4,11 +4,6 @@ if [ "$(uname -s)" != "Darwin" ]; then
   exit 0
 fi
 
-# Software update requires sudo, skip in non-interactive mode
-if [ -z "$CI" ] && [ -z "${NONINTERACTIVE-}" ]; then
-  sudo softwareupdate -i -a
-fi
-
 shopt -s extglob
 
 for file in "$ZSH"/macos/!(install).sh
