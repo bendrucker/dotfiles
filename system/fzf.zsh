@@ -4,8 +4,10 @@
 # system appearance changes. Falls back to mocha on first install before
 # the cache exists.
 _fzf_opts_cache="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/fzf-default-opts"
-if [[ -r "$_fzf_opts_cache" ]]; then
-  export FZF_DEFAULT_OPTS="$(<$_fzf_opts_cache)"
+# -s (non-empty) guards against a truncated/zero-byte cache from an interrupted
+# write; -r alone would let an empty cache blank out FZF_DEFAULT_OPTS entirely.
+if [[ -s "$_fzf_opts_cache" ]]; then
+  export FZF_DEFAULT_OPTS="$(<"$_fzf_opts_cache")"
 else
   export FZF_DEFAULT_OPTS=" \
 --color=bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8 \

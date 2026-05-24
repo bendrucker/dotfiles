@@ -18,7 +18,9 @@ if [[ ! -f "$cache" ]] || [[ "$(<"$cache")" != "$want" ]]; then
 fi
 
 if tmux list-sessions >/dev/null 2>&1; then
-  current=$(tmux show-environment -g FZF_DEFAULT_OPTS 2>/dev/null | sed 's/^FZF_DEFAULT_OPTS=//')
+  # tmux show-environment exits 1 with "unknown variable" on stderr when the
+  # var isn't set; the || keeps set -euo pipefail from aborting first-run.
+  current=$(tmux show-environment -g FZF_DEFAULT_OPTS 2>/dev/null | sed 's/^FZF_DEFAULT_OPTS=//') || current=""
   if [[ "$current" != "$want" ]]; then
     tmux set-environment -g FZF_DEFAULT_OPTS "$want"
   fi
