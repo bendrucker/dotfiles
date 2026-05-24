@@ -1,5 +1,7 @@
 brew 'terraform-docs'
-brew 'tflint'
+
+tap 'terraform-linters/tap'
+cask 'tflint'
 
 tap 'minamijoyo/hcledit'
 brew 'hcledit'

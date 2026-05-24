@@ -12,3 +12,4 @@ if [ ! -f "$btop_conf" ]; then
   btop --default-config > "$btop_conf"
 fi
 "$script_dir/../theme/bin/theme-sync-btop"
+"$script_dir/../theme/bin/theme-sync-fzf"
