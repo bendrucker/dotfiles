@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Apply the active catppuccin flavor to fzf.
+# Writes the opts cache for new shells; also pushes the value into tmux's
+# global env so popup commands (which run sh -c, not zsh) get the right palette.
+set -euo pipefail
+
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+want="$("$bin_dir/theme-fzf-opts")"
+
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles"
+cache="$cache_dir/fzf-default-opts"
+
+mkdir -p "$cache_dir"
+if [[ ! -f "$cache" ]] || [[ "$(<"$cache")" != "$want" ]]; then
+  tmp="$cache.tmp.$$"
+  printf '%s\n' "$want" > "$tmp"
+  mv "$tmp" "$cache"
+fi
+
+if tmux list-sessions >/dev/null 2>&1; then
+  current=$(tmux show-environment -g FZF_DEFAULT_OPTS 2>/dev/null | sed 's/^FZF_DEFAULT_OPTS=//')
+  if [[ "$current" != "$want" ]]; then
+    tmux set-environment -g FZF_DEFAULT_OPTS "$want"
+  fi
+fi
