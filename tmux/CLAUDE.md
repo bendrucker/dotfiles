@@ -45,6 +45,14 @@ Always confirm the change registered before handing off:
 - Plugin var: `tmux show-options -gv "@<plugin>-<var>"`.
 - If a reload looks silent, check `tmux show-messages` and `~/.cache/tmux/tmux-server-*.log`.
 
+## Testing style changes
+
+Create a detached `tmux-lab` session with windows that exercise each visual scenario (auto-named, custom-named, single-pane, multi-pane with same/different worktrees). Apply format overrides as session-scoped options (`tmux set -t tmux-lab ...`) so the user's real sessions stay untouched.
+
+New scripts in the worktree won't be on PATH until installed. Symlink them into `~/.dotfiles/tmux/appearance/bin/` temporarily so tmux's `#(...)` calls can find them.
+
+The user attaches from a separate Ghostty window (`tmux attach -t tmux-lab`) to provide visual feedback. Iterate on formats there before applying to real config.
+
 ## Use the `tmux:tmux` skill
 
 Load `tmux:tmux` (auto-allowed) when you need pane/window/session awareness.
