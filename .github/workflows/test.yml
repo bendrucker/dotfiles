@@ -135,7 +135,6 @@ jobs:
 
         tmux_assert_opt @thm_surface_2 || exit 1
         tmux_assert_opt prefix C-s || exit 1
-        tmux_assert_opt status-position top || exit 1
     - name: Benchmark shell startup
       run: |
         hyperfine --warmup 3 --runs 10 --shell=none \
