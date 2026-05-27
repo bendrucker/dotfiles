@@ -3,3 +3,9 @@ claude-trust = "claude-trust-worktree '{{ primary_worktree_path }}' '{{ worktree
 
 [[pre-start]]
 claude-settings = "cp '{{ primary_worktree_path }}/.claude/settings.local.json' '{{ worktree_path }}/.claude/settings.local.json' 2>/dev/null || true"
+
+[list]
+summary = true
+
+[commit.generation]
+command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
