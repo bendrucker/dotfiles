@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+pane_id="$1"
+path=$(tmux display -p -t "$pane_id" '#{pane_current_path}') || exit 0
+
+dir=$(git -C "$path" rev-parse --path-format=absolute --git-dir 2>/dev/null) || exit 0
+common=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+[[ "$dir" == "$common" ]] && exit 0
+
+this_toplevel=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+all_same=true
+while IFS= read -r other_path; do
+  other_toplevel=$(git -C "$other_path" rev-parse --show-toplevel 2>/dev/null) || continue
+  if [[ "$other_toplevel" != "$this_toplevel" ]]; then
+    all_same=false
+    break
+  fi
+done < <(tmux list-panes -t "$pane_id" -F '#{pane_current_path}')
+
+$all_same && exit 0
+
+branch=$(git -C "$path" rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
+printf ' %.8s' "$branch"

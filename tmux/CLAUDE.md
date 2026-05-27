@@ -45,6 +45,21 @@ Always confirm the change registered before handing off:
 - Plugin var: `tmux show-options -gv "@<plugin>-<var>"`.
 - If a reload looks silent, check `tmux show-messages` and `~/.cache/tmux/tmux-server-*.log`.
 
+## Testing appearance changes
+
+Use a disposable `tmux-lab` session to iterate on status-bar and pane-border formats without touching real sessions.
+
+1. Create a detached session with representative windows — auto-named, custom-named (`prefix ,`), single-pane, multi-pane with same/different worktrees.
+2. Apply formats as **session-scoped** overrides so existing sessions are untouched:
+   ```sh
+   tmux set -t tmux-lab window-status-format '...'
+   tmux set -t tmux-lab window-status-current-format '...'
+   # pane-border-format is per-window; set on windows with 2+ panes
+   ```
+3. The user attaches from a separate terminal (`tmux attach -t tmux-lab`) and provides visual feedback.
+4. Once approved, apply the formats to `status.conf` and source the config.
+5. Kill the lab session: `tmux kill-session -t tmux-lab`.
+
 ## Use the `tmux:tmux` skill
 
 Load `tmux:tmux` (auto-allowed) when you need pane/window/session awareness.
