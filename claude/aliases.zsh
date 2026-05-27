@@ -1,9 +1,10 @@
 #!/usr/bin/env zsh
 
-alias sonnet='claude --model sonnet'
-alias ccw='wt switch --create --execute=claude'
+alias cw='wt switch --execute="claude --name={{ branch }}"'
+alias ccw='cw --create'
 
-claude-preset() {
-  local preset="$1"; shift
-  claude --settings "${HOME}/.config/claude-presets/${preset}.json" "$@"
+cwp() {
+  wt switch --create --execute="claude --name={{ branch }} --permission-mode=plan" "$@" -- "$(pbpaste)"
 }
+
+alias cwa='wt switch --execute="claude --name={{ branch }} --permission-mode=auto"'

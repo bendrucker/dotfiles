@@ -2,20 +2,23 @@
 
 Shell integration for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
-## `ccw` — Claude in a worktree
+## Worktree Aliases
 
-Create a new [worktrunk](https://github.com/nicholasgasior/worktrunk) worktree and launch Claude in it:
+Launch Claude in a [Worktrunk](https://worktrunk.dev) worktree. All variants pass `--name` to Claude, set from the branch name.
+
+| Command | Branch | Permission mode |
+|---------|--------|-----------------|
+| `cw <branch>` | existing | default |
+| `ccw <branch>` | create | default |
+| `cwp <branch>` | create | plan |
+| `cwa <branch>` | existing | auto |
+
+Arguments after `--` are forwarded to `claude`:
 
 ```
-ccw <branch>                      # interactive Claude session
-ccw <branch> -- 'fix the bug'    # Claude with a prompt
+ccw my-feature -- 'fix the bug'
+ccw my-feature --base=@ -- 'stack on current branch'
+cwa pr:123
 ```
 
-Arguments after `--` are forwarded to `claude`.
-
-## Aliases
-
-| Alias | Expands to |
-|-------|-----------|
-| `ccw` | `wt switch --create --execute=claude` |
-| `sonnet` | `claude --model sonnet` |
+`cwp` reads the pasteboard and passes it as Claude's initial prompt — paste an issue URL or Linear prompt, then run `cwp <branch>`.
