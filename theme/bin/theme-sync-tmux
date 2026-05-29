@@ -33,9 +33,15 @@ done < <(tmux show -g | awk '/^@(thm_|catppuccin_)/{print $1}')
 tmux set -gu @_ctp_status_bg 2>/dev/null || true
 
 tmux set -g @catppuccin_flavor "$flavor"
+
+# appearance.conf must be sourced before the catppuccin confs, matching startup
+# order in tmux.conf. catppuccin_tmux.conf reads @catppuccin_window_status_style
+# (set to "rounded" by appearance.conf) when it builds the window-status formats.
+# Sourcing appearance.conf afterward leaves the style unset during the rebuild, so
+# the defaults apply and window pills render with square "basic" separators.
+tmux source-file "$tmux_config/appearance/appearance.conf"
 tmux source-file "$plugin_dir/catppuccin_options_tmux.conf"
 tmux source-file "$plugin_dir/catppuccin_tmux.conf"
-tmux source-file "$tmux_config/appearance/appearance.conf"
 tmux source-file "$tmux_config/alerts/alerts.conf"
 
 # Re-evaluate post-TPM status (catppuccin module variables changed)
