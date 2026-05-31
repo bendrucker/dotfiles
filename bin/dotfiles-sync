@@ -7,110 +7,47 @@ set -e
 
 DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 
+source "${0:A:h}/../scripts/lib/git-sync.sh"
+
 notify() {
   local title="$1"
   local message="$2"
-  local is_success="$3"
+  local sound="${3:-Basso}"
 
-  if [[ "$(uname)" != "Darwin" ]]; then
-    return
-  fi
-
-  if [[ "$is_success" == "true" ]]; then
-    osascript -e "display notification \"$message\" with title \"$title\" sound name \"Glass\"" 2>/dev/null || true
-  else
-    osascript -e "display notification \"$message\" with title \"$title\" sound name \"Basso\"" 2>/dev/null || true
-  fi
+  [[ "$(uname)" == "Darwin" ]] || return 0
+  osascript -e "display notification \"$message\" with title \"$title\" sound name \"$sound\"" 2>/dev/null || true
 }
 
-if [[ -L "$DOTFILES_HOME" ]]; then
-  gum log --level error "$DOTFILES_HOME is a symlink - run scripts/setup first"
-  notify "Dotfiles Sync" "Failed: ~/.dotfiles is a symlink" "false"
-  exit 1
-fi
-
-if [[ ! -d "$DOTFILES_HOME/.git" ]]; then
-  gum log --level error "$DOTFILES_HOME is not a git repository"
-  notify "Dotfiles Sync" "Failed: not a git repository" "false"
-  exit 1
-fi
-
-cd "$DOTFILES_HOME"
-
-if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+if [[ -d "$DOTFILES_HOME/.git" ]] && { ! git -C "$DOTFILES_HOME" diff --quiet 2>/dev/null || ! git -C "$DOTFILES_HOME" diff --cached --quiet 2>/dev/null; }; then
   gum log --level error "Local changes in $DOTFILES_HOME - skipping sync"
   gum log --level error "Run 'git -C $DOTFILES_HOME status' to see changes"
-  notify "Dotfiles Sync" "Skipped: local changes present" "false"
+  notify "Dotfiles Sync" "Skipped: local changes present"
   exit 1
 fi
 
-get_default_branch() {
-  local branch
-  branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-
-  if [[ -z "$branch" ]]; then
-    git remote set-head origin --auto 2>/dev/null || true
-    branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-  fi
-
-  echo "${branch:-main}"
-}
-
-DEFAULT_BRANCH=$(get_default_branch)
-
-fetch_with_retry() {
-  local retries=4
-  local delay=2
-
-  for ((i=1; i<=retries; i++)); do
-    if gum spin --show-error --title "Fetching origin/$DEFAULT_BRANCH (attempt $i/$retries)" -- \
-      git fetch origin "$DEFAULT_BRANCH"; then
-      return 0
-    fi
-
-    if ((i < retries)); then
-      gum log --level warn "Fetch failed, retrying in ${delay}s... (attempt $i/$retries)"
-      sleep "$delay"
-      delay=$((delay * 2))
-    fi
-  done
-
-  return 1
-}
-
-if ! fetch_with_retry; then
-  gum log --level error "Failed to fetch after retries"
-  notify "Dotfiles Sync" "Failed: network error" "false"
-  exit 1
-fi
-
-LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse "origin/$DEFAULT_BRANCH")
-
-if [[ "$LOCAL" == "$REMOTE" ]]; then
-  gum log --level info "Already up to date (${LOCAL:0:7})"
-  exit 0
-fi
-
-gum log --level info "Updating from ${LOCAL:0:7} to ${REMOTE:0:7}..."
-
-if git pull --ff-only origin "$DEFAULT_BRANCH"; then
-  if ! gum spin --show-error --title "Updating submodules" -- git submodule update --init; then
-    gum log --level error "Submodule update failed"
-    notify "Dotfiles Sync" "Failed: submodules" "false"
+new_rev=$(git_sync "$DOTFILES_HOME")
+case $? in
+  "$GIT_SYNC_CURRENT")
+    exit 0
+    ;;
+  "$GIT_SYNC_FAILED")
+    notify "Dotfiles Sync" "Failed: could not sync"
     exit 1
-  fi
+    ;;
+esac
 
-  gum log --level info "Successfully updated to $(git rev-parse --short HEAD)"
-  notify "Dotfiles Sync" "Updated to ${REMOTE:0:7}" "true"
-
-  # Symlink refresh is opt-in; the launchd job skips it.
-  if [[ "$1" == "--bootstrap" ]] && [[ -x "$DOTFILES_HOME/scripts/bootstrap" ]]; then
-    gum log --level info "Running bootstrap..."
-    "$DOTFILES_HOME/scripts/bootstrap" --no-prompt
-  fi
-else
-  gum log --level error "Failed to pull - may need manual intervention"
-  notify "Dotfiles Sync" "Failed: could not pull" "false"
+if ! gum spin --show-error --title "Updating submodules" -- \
+  git -C "$DOTFILES_HOME" submodule update --init; then
+  gum log --level error "Submodule update failed"
+  notify "Dotfiles Sync" "Failed: submodules"
   exit 1
+fi
+
+gum log --level info "Successfully updated to $new_rev"
+notify "Dotfiles Sync" "Updated to $new_rev" "Glass"
+
+# Symlink refresh is opt-in; the launchd job skips it.
+if [[ "$1" == "--bootstrap" ]] && [[ -x "$DOTFILES_HOME/scripts/bootstrap" ]]; then
+  gum log --level info "Running bootstrap..."
+  "$DOTFILES_HOME/scripts/bootstrap" --no-prompt
 fi
