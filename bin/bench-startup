@@ -18,8 +18,8 @@ fi
 setup_zdotdir() {
   local dir="$1" zdotdir
   zdotdir=$(mktemp -d)
-  ln -s "$dir/zsh/zshenv.symlink" "$zdotdir/.zshenv"
-  ln -s "$dir/zsh/zshrc" "$zdotdir/.zshrc"
+  ln -s "$dir/zsh/.zshenv" "$zdotdir/.zshenv"
+  ln -s "$dir/zsh/.zshrc" "$zdotdir/.zshrc"
   echo "$zdotdir"
 }
 
@@ -31,12 +31,12 @@ trap cleanup EXIT
 current="$(cd "$(dirname "$0")/.." && pwd)"
 zdotdirs=()
 
-current_zdotdir=$(setup_zdotdir "$current" "current")
+current_zdotdir=$(setup_zdotdir "$current")
 zdotdirs+=("$current_zdotdir")
 
 if [[ $# -ge 1 ]]; then
   other="$(cd "$1" && pwd)"
-  other_zdotdir=$(setup_zdotdir "$other" "other")
+  other_zdotdir=$(setup_zdotdir "$other")
   zdotdirs+=("$other_zdotdir")
 
   current_label="${current##*/}"
