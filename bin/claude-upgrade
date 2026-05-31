@@ -4,6 +4,8 @@
 
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 
+source "${0:A:h}/../scripts/lib/git-sync.sh"
+
 notify() {
   local title="$1"
   local message="$2"
@@ -92,49 +94,18 @@ sync_repo() {
     fi
   fi
 
-  local default_branch
-  default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-  if [[ -z "$default_branch" ]]; then
-    git remote set-head origin --auto 2>/dev/null || true
-    default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-  fi
-  default_branch="${default_branch:-main}"
-
-  local retries=4 delay=2
-  for ((i=1; i<=retries; i++)); do
-    if gum spin --show-error --title "Fetching origin/$default_branch (attempt $i/$retries)" -- \
-      git fetch origin "$default_branch"; then
-      break
-    fi
-    if ((i < retries)); then
-      gum log --level warn "Fetch failed, retrying in ${delay}s... (attempt $i/$retries)"
-      sleep "$delay"
-      delay=$((delay * 2))
-    else
-      gum log --level error "Failed to fetch after retries"
-      notify "Claude Upgrade" "Failed: network error"
+  local new_rev
+  new_rev=$(git_sync "$CLAUDE_REPO_HOME")
+  case $? in
+    "$GIT_SYNC_UPDATED")
+      gum log --level info "Repository updated to $new_rev"
+      ;;
+    "$GIT_SYNC_CURRENT") ;;
+    *)
+      notify "Claude Upgrade" "Failed: could not sync"
       return 1
-    fi
-  done
-
-  local local_rev remote_rev
-  local_rev=$(git rev-parse HEAD)
-  remote_rev=$(git rev-parse "origin/$default_branch")
-
-  if [[ "$local_rev" == "$remote_rev" ]]; then
-    gum log --level info "Repository already up to date (${local_rev:0:7})"
-    return 0
-  fi
-
-  gum log --level info "Updating repository from ${local_rev:0:7} to ${remote_rev:0:7}..."
-
-  if git pull --ff-only origin "$default_branch"; then
-    gum log --level info "Repository updated to $(git rev-parse --short HEAD)"
-  else
-    gum log --level error "Failed to pull repository"
-    notify "Claude Upgrade" "Failed: could not pull"
-    return 1
-  fi
+      ;;
+  esac
 }
 
 update_marketplaces() {
