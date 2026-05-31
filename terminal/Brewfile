@@ -1,4 +1,5 @@
 cask 'iterm2'
+cask 'font-monaspice-nerd-font'
 brew 'shellspec'
 brew 'yazi'
 brew 'zoxide'
