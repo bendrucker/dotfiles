@@ -8,28 +8,9 @@ set -e
 DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 
 source "${0:A:h}/../scripts/lib/git-sync.sh"
+source "${0:A:h}/../scripts/lib/report-failure.sh"
 
-notify() {
-  local title="$1"
-  local message="$2"
-  local sound="${3:-Basso}"
-
-  [[ "$(uname)" == "Darwin" ]] || return 0
-  osascript -e "display notification \"$message\" with title \"$title\" sound name \"$sound\"" 2>/dev/null || true
-}
-
-
-if [[ -d "$DOTFILES_HOME/.git" ]]; then
-  if { git -C "$DOTFILES_HOME" diff --quiet && git -C "$DOTFILES_HOME" diff --cached --quiet; } 2>/dev/null; then
-    : # clean
-  elif git -C "$DOTFILES_HOME" status &>/dev/null; then
-    # git works but tree is dirty
-    gum log --level error "Local changes in $DOTFILES_HOME - skipping sync"
-    notify "Dotfiles Sync" "Skipped: local changes present"
-    exit 1
-  fi
-fi
-
+if [[ -d "$DOTFILES_HOME/.git" ]] && { ! git -C "$DOTFILES_HOME" diff --quiet 2>/dev/null || ! git -C "$DOTFILES_HOME" diff --cached --quiet 2>/dev/null; }; then
   gum log --level error "Local changes in $DOTFILES_HOME - skipping sync"
   gum log --level error "Run 'git -C $DOTFILES_HOME status' to see changes"
   notify "Dotfiles Sync" "Skipped: local changes present"
