@@ -8,15 +8,7 @@ set -e
 DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 
 source "${0:A:h}/../scripts/lib/git-sync.sh"
-
-notify() {
-  local title="$1"
-  local message="$2"
-  local sound="${3:-Basso}"
-
-  [[ "$(uname)" == "Darwin" ]] || return 0
-  osascript -e "display notification \"$message\" with title \"$title\" sound name \"$sound\"" 2>/dev/null || true
-}
+source "${0:A:h}/../scripts/lib/report-failure.sh"
 
 
 if [[ -d "$DOTFILES_HOME/.git" ]]; then

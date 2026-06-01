@@ -8,43 +8,10 @@ set -o pipefail
 
 DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 
+source "${0:A:h}/../scripts/lib/report-failure.sh"
+
 INSTALL_LOG=$(mktemp)
 trap 'rm -f "$INSTALL_LOG"' EXIT
-
-notify() {
-  [[ "$(uname)" == "Darwin" ]] || return 0
-  osascript -e "display notification \"$2\" with title \"$1\" sound name \"Basso\"" 2>/dev/null || true
-}
-
-create_things_task() {
-  gum log --level info "Creating Things task for install failure"
-
-  local host time revision output
-  host=$(hostname -s)
-  time=$(date "+%Y-%m-%d %H:%M:%S %Z")
-  revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  output=$(tail -n 100 "$INSTALL_LOG" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')
-
-  local notes='- **Host:** '"$host"'
-- **Time:** '"$time"'
-- **Revision:** '"$revision"'
-
-```sh
-brew bundle
-```
-
-## Error Output (last 100 lines)
-```
-'"$output"'
-```'
-
-  local encoded_notes encoded_title
-  encoded_notes=$(echo "$notes" | jq -sRr @uri)
-  encoded_title=$(echo "Dotfiles install failed" | jq -sRr @uri)
-
-  open "things:///add?title=${encoded_title}&notes=${encoded_notes}&when=today"
-  notify "Dotfiles Upgrade" "Install failed - see Things task"
-}
 
 if ! gum spin --show-output --show-error --title "Syncing dotfiles" -- \
   "$DOTFILES_HOME/bin/dotfiles-sync"; then
@@ -55,7 +22,10 @@ fi
 gum log --level info "Running install"
 if ! "$DOTFILES_HOME/scripts/install" 2>&1 | tee "$INSTALL_LOG"; then
   gum log --level error "install failed"
-  create_things_task
+
+  revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  output=$(tail -n 100 "$INSTALL_LOG" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')
+  report_failure "dotfiles-upgrade" "Dotfiles install failed" "brew bundle" "$output" "$revision"
   exit 1
 fi
 
@@ -63,4 +33,5 @@ if ! gum spin --show-output --show-error --title "Running brew cleanup" -- brew 
   gum log --level warn "brew cleanup had issues"
 fi
 
+report_success "dotfiles-upgrade"
 gum log --level info "All upgrades completed successfully"
