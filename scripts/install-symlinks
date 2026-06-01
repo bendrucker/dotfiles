@@ -33,8 +33,10 @@ is_desired() {
   printf '%s\n' "$desired_targets" | grep -qFx "$1"
 }
 
+# Read candidate link paths from stdin (one per line) and remove those that
+# point into DOTFILES_ROOT but are no longer declared.
 remove_stale() {
-  for link in "$@"; do
+  while IFS= read -r link; do
     [ -L "$link" ] || continue
     target="$(readlink "$link" 2>/dev/null)" || continue
     case "$target" in
@@ -48,21 +50,12 @@ remove_stale() {
   done
 }
 
-# Scan directories that could contain managed symlinks
-remove_stale "$HOME"/.[!.]*
-[ -d "$HOME/.ssh" ] && remove_stale "$HOME/.ssh"/*
+# Scan directories that could contain managed symlinks. The HOME glob enumerates
+# dotfiles directly under $HOME (and ~/.ssh); the XDG scan recurses to find nested
+# links. Both feed the same removal rule.
+{
+  printf '%s\n' "$HOME"/.[!.]*
+  [ -d "$HOME/.ssh" ] && printf '%s\n' "$HOME/.ssh"/*
+} | remove_stale
 
-stale_links="${TMPDIR:-/tmp}/install-symlinks.$$"
-find "$XDG_CONFIG_HOME" -type l > "$stale_links" 2>/dev/null || true
-while read -r link; do
-  target="$(readlink "$link" 2>/dev/null)" || continue
-  case "$target" in
-    "$DOTFILES_ROOT"/*) ;;
-    *) continue ;;
-  esac
-  is_desired "$link" || {
-    echo "install-symlinks: removing stale symlink $link -> $target"
-    rm "$link"
-  }
-done < "$stale_links"
-rm -f "$stale_links"
+find "$XDG_CONFIG_HOME" -type l 2>/dev/null | remove_stale
