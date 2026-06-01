@@ -1,2 +1,2 @@
 tap 'cormacrelf/tap'
-brew 'dark-notify'
+brew 'cormacrelf/tap/dark-notify'
