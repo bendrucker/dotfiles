@@ -47,24 +47,5 @@ install_claude_symlinks() {
   done
 }
 
-install_herdr_claude_hook() {
-  local hook_dir="$HOME/.claude/hooks"
-  local hook_path="$hook_dir/herdr-agent-state.sh"
-  local temp_home
-  temp_home="$(mktemp -d)"
-
-  # herdr's installer also adds hook entries to ~/.claude/settings.json,
-  # which the bendrucker/herdr plugin already provides via hooks.json.
-  # Route the installer at a throwaway HOME and copy out only the script.
-  mkdir -p "$temp_home/.claude"
-  HOME="$temp_home" herdr integration install claude >/dev/null
-  mkdir -p "$hook_dir"
-  cp -p "$temp_home/.claude/hooks/herdr-agent-state.sh" "$hook_path"
-  rm -rf "$temp_home"
-
-  echo "  ✓ ~/.claude/hooks/herdr-agent-state.sh"
-}
-
 setup_claude_repo
 install_claude_symlinks
-install_herdr_claude_hook
