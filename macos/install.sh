@@ -11,22 +11,18 @@ do
   bash "$file"
 done
 
-setup_dotfiles_upgrade() {
-  # Remove old sync job (replaced by upgrade job which includes sync)
-  local old_sync_plist="$HOME/Library/LaunchAgents/com.user.dotfiles-sync.plist"
-  launchctl unload "$old_sync_plist" 2>/dev/null || true
-  rm -f "$old_sync_plist"
-
-  local plist_name="com.user.dotfiles-upgrade.plist"
+install_launch_agent() {
+  local plist_name="$1"
+  local description="$2"
   local plist_src="$ZSH/macos/$plist_name"
   local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
 
   if [[ ! -f "$plist_src" ]]; then
-    gum log --level warn "dotfiles-upgrade plist not found, skipping"
+    gum log --level warn "$description plist not found, skipping"
     return
   fi
 
-  gum log --level info "setting up nightly dotfiles upgrade"
+  gum log --level info "setting up $description"
 
   mkdir -p "$HOME/Library/LaunchAgents"
 
@@ -35,10 +31,19 @@ setup_dotfiles_upgrade() {
   cp "$plist_src" "$plist_dst"
 
   if launchctl load "$plist_dst" 2>/dev/null; then
-    gum log --level info "dotfiles-upgrade launchd job installed"
+    gum log --level info "$description launchd agent installed"
   else
-    gum log --level warn "failed to load dotfiles-upgrade launchd job; may need re-login"
+    gum log --level warn "failed to load $description launchd agent; may need re-login"
   fi
+}
+
+setup_dotfiles_upgrade() {
+  # Remove old sync job (replaced by upgrade job which includes sync)
+  local old_sync_plist="$HOME/Library/LaunchAgents/com.user.dotfiles-sync.plist"
+  launchctl unload "$old_sync_plist" 2>/dev/null || true
+  rm -f "$old_sync_plist"
+
+  install_launch_agent com.user.dotfiles-upgrade.plist "nightly dotfiles upgrade"
 }
 
 setup_claude_upgrade() {
@@ -46,57 +51,13 @@ setup_claude_upgrade() {
   local old_plist="$HOME/Library/LaunchAgents/com.user.claude-upgrade.plist"
   launchctl unload "$old_plist" 2>/dev/null || true
 
-  local plist_name="com.user.claude-upgrade.plist"
-  local plist_src="$ZSH/macos/$plist_name"
-  local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
-
-  if [[ ! -f "$plist_src" ]]; then
-    gum log --level warn "Claude upgrade plist not found, skipping"
-    return
-  fi
-
-  gum log --level info "setting up nightly Claude upgrade"
-
-  mkdir -p "$HOME/Library/LaunchAgents"
-
-  cp "$plist_src" "$plist_dst"
-
-  if launchctl load "$plist_dst" 2>/dev/null; then
-    gum log --level info "Claude upgrade launchd job installed"
-  else
-    gum log --level warn "failed to load Claude upgrade launchd job; may need re-login"
-  fi
-}
-
-setup_theme_sync() {
-  local plist_name="com.user.theme-sync.plist"
-  local plist_src="$ZSH/macos/$plist_name"
-  local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
-
-  if [[ ! -f "$plist_src" ]]; then
-    gum log --level warn "theme-sync plist not found, skipping"
-    return
-  fi
-
-  gum log --level info "setting up theme-sync watcher"
-
-  mkdir -p "$HOME/Library/LaunchAgents"
-
-  launchctl unload "$plist_dst" 2>/dev/null || true
-
-  cp "$plist_src" "$plist_dst"
-
-  if launchctl load "$plist_dst" 2>/dev/null; then
-    gum log --level info "theme-sync launchd agent installed"
-  else
-    gum log --level warn "failed to load theme-sync launchd agent; may need re-login"
-  fi
+  install_launch_agent com.user.claude-upgrade.plist "nightly Claude upgrade"
 }
 
 # The theme-sync watcher is core functionality, so it runs in every mode.
 # The plist resolves $HOME/.dotfiles, which works for both symlink and
 # separate-directory installs.
-setup_theme_sync
+install_launch_agent com.user.theme-sync.plist "theme-sync watcher"
 
 # Only setup upgrade if we're in separate-directory mode (not a symlink)
 if [[ ! -L "$HOME/.dotfiles" ]]; then
