@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Nudge running neovim instances to re-read the system appearance. A Signal
+# autocmd on SIGUSR1 in the neovim config re-applies the background (and with it
+# the catppuccin flavor). No-op when no neovim is running.
+set -euo pipefail
+
+pkill -USR1 -x nvim 2>/dev/null || true
