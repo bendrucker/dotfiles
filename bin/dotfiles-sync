@@ -9,6 +9,7 @@ DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 
 source "${0:A:h}/../scripts/lib/git-sync.sh"
 source "${0:A:h}/../scripts/lib/report-failure.sh"
+source "${0:A:h}/../scripts/lib/sync-notify.sh"
 
 if [[ -d "$DOTFILES_HOME/.git" ]] && { ! git -C "$DOTFILES_HOME" diff --quiet 2>/dev/null || ! git -C "$DOTFILES_HOME" diff --cached --quiet 2>/dev/null; }; then
   gum log --level error "Local changes in $DOTFILES_HOME - skipping sync"
@@ -17,13 +18,12 @@ if [[ -d "$DOTFILES_HOME/.git" ]] && { ! git -C "$DOTFILES_HOME" diff --quiet 2>
   exit 1
 fi
 
-new_rev=$(git_sync "$DOTFILES_HOME")
+new_rev=$(git_sync_notify "$DOTFILES_HOME" "Dotfiles Sync")
 case $? in
   "$GIT_SYNC_CURRENT")
     exit 0
     ;;
   "$GIT_SYNC_FAILED")
-    notify "Dotfiles Sync" "Failed: could not sync"
     exit 1
     ;;
 esac
