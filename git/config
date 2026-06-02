@@ -19,7 +19,7 @@
 
 [core]
   excludesfile = ~/.config/git/ignore
-  pager = "diff-so-fancy | less --tabs=4 -RF"
+  pager = "hunk pager"
   compression = 9
 
 [interactive]
@@ -27,6 +27,10 @@
 
 [diff]
   algorithm = "histogram"
+  tool = hunk
+
+[difftool "hunk"]
+  cmd = hunk difftool "$LOCAL" "$REMOTE"
 
 [commit]
   verbose = true
