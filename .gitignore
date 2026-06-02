@@ -1,3 +1,6 @@
 Brewfile.lock.json
 .corporate
 *.local
+__pycache__/
+.venv/
+.pytest_cache/

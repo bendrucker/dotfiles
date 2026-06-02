@@ -1,0 +1,7 @@
+#!/bin/sh
+# TODO: warm-path optimization. `uv run` re-checks the environment against the
+# lockfile on every invocation (~50ms), which is also how a synced lock bump gets
+# installed. Skipping it must not make upgrades depend on a manual bootstrap: exec
+# "${0%/*}/.venv/bin/python" directly, but re-run `uv sync` whenever uv.lock is
+# newer than the venv, so a Renovate bump self-applies on the next invocation.
+exec ~/.local/share/mise/shims/uv run --no-dev --project "${0%/*}" python "$@"

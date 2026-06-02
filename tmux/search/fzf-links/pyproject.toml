@@ -1,0 +1,19 @@
+[project]
+name = "fzflinks"
+version = "0"
+requires-python = ">=3.10"
+dependencies = [
+    "giturlparse>=0.12.0",
+    "pygit2>=1.18.2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3.4"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["."]
+python_files = ["*_test.py"]
