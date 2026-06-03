@@ -52,6 +52,7 @@ cask 'raycast'
 cask 'screens-connect'
 cask 'slack'
 cask 'the-unarchiver'
+cask 'vibe-island'
 cask 'wispr-flow'
 cask 'zoom', args: corporate_cask_args
 
