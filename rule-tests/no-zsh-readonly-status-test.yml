@@ -1,0 +1,16 @@
+id: no-zsh-readonly-status
+valid:
+  # normal, assignable names
+  - state=1
+  - local context state line
+  - exit_status=$?
+  - status_code=1
+  - git status
+  # reading an intentional $status / $? is allowed, only binding is flagged
+  - foo="$status"
+invalid:
+  - status=$?
+  - local rev status
+  - local status=2
+  - typeset status
+  - for status in a b; do echo "$status"; done
