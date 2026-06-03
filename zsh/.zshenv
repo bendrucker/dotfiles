@@ -2,20 +2,12 @@
 
 export DOTFILES_HOME="$HOME/.dotfiles"
 
-# Select dotfiles source:
-#   DOTFILES_USE_DEV=/path - use specified dev directory (for dotfiles test)
-#   ~/.dotfiles-dev-mode   - persistent dev mode (file contains path)
-#   default                - use installed directory
-if [[ -n "$DOTFILES_USE_DEV" ]]; then
-  export ZSH="$DOTFILES_USE_DEV"
-elif [[ -f "$HOME/.dotfiles-dev-mode" ]]; then
-  export ZSH="$(<"$HOME/.dotfiles-dev-mode")"
-else
-  export ZSH="$DOTFILES_HOME"
-fi
-
-# Fallback if selected directory doesn't exist
-[[ ! -d "$ZSH" ]] && export ZSH="$DOTFILES_HOME"
+# Resolve which dotfiles root is active. The module lives next to this file;
+# ${(%):-%N} resolves through the ~/.zshenv symlink to the active root's copy,
+# so it is available before $ZSH is known. dev.zsh reuses the same functions.
+source "${${(%):-%N}:A:h}/active-root.zsh"
+_dotfiles_resolve_root
+export ZSH="$REPLY"
 
 export DOTFILES_TMUX="$ZSH/tmux"
 

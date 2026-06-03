@@ -1,3 +1,2 @@
 brew 'tmux'
 brew 'sesh'
-brew 'morantron/tmux-fingers/tmux-fingers'

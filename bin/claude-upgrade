@@ -4,16 +4,9 @@
 
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 
-notify() {
-  local title="$1"
-  local message="$2"
-
-  if [[ "$(uname)" != "Darwin" ]]; then
-    return
-  fi
-
-  osascript -e "display notification \"$message\" with title \"$title\" sound name \"Basso\"" 2>/dev/null || true
-}
+source "${0:A:h}/../scripts/lib/git-sync.sh"
+source "${0:A:h}/../scripts/lib/report-failure.sh"
+source "${0:A:h}/../scripts/lib/sync-notify.sh"
 
 revert_cosmetic_json_changes() {
   local changed_files
@@ -57,18 +50,6 @@ render_diff() {
 sync_repo() {
   gum log --level info "Syncing Claude repository..."
 
-  if [[ -L "$CLAUDE_REPO_HOME" ]]; then
-    gum log --level error "$CLAUDE_REPO_HOME is a symlink"
-    notify "Claude Upgrade" "Failed: ~/.claude-repo is a symlink"
-    return 1
-  fi
-
-  if [[ ! -d "$CLAUDE_REPO_HOME/.git" ]]; then
-    gum log --level error "$CLAUDE_REPO_HOME is not a git repository"
-    notify "Claude Upgrade" "Failed: not a git repository"
-    return 1
-  fi
-
   cd "$CLAUDE_REPO_HOME" || return 1
 
   revert_cosmetic_json_changes
@@ -92,49 +73,17 @@ sync_repo() {
     fi
   fi
 
-  local default_branch
-  default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-  if [[ -z "$default_branch" ]]; then
-    git remote set-head origin --auto 2>/dev/null || true
-    default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-  fi
-  default_branch="${default_branch:-main}"
-
-  local retries=4 delay=2
-  for ((i=1; i<=retries; i++)); do
-    if gum spin --show-error --title "Fetching origin/$default_branch (attempt $i/$retries)" -- \
-      git fetch origin "$default_branch"; then
-      break
-    fi
-    if ((i < retries)); then
-      gum log --level warn "Fetch failed, retrying in ${delay}s... (attempt $i/$retries)"
-      sleep "$delay"
-      delay=$((delay * 2))
-    else
-      gum log --level error "Failed to fetch after retries"
-      notify "Claude Upgrade" "Failed: network error"
+  local new_rev
+  new_rev=$(git_sync_notify "$CLAUDE_REPO_HOME" "Claude Upgrade")
+  case $? in
+    "$GIT_SYNC_UPDATED")
+      gum log --level info "Repository updated to $new_rev"
+      ;;
+    "$GIT_SYNC_CURRENT") ;;
+    *)
       return 1
-    fi
-  done
-
-  local local_rev remote_rev
-  local_rev=$(git rev-parse HEAD)
-  remote_rev=$(git rev-parse "origin/$default_branch")
-
-  if [[ "$local_rev" == "$remote_rev" ]]; then
-    gum log --level info "Repository already up to date (${local_rev:0:7})"
-    return 0
-  fi
-
-  gum log --level info "Updating repository from ${local_rev:0:7} to ${remote_rev:0:7}..."
-
-  if git pull --ff-only origin "$default_branch"; then
-    gum log --level info "Repository updated to $(git rev-parse --short HEAD)"
-  else
-    gum log --level error "Failed to pull repository"
-    notify "Claude Upgrade" "Failed: could not pull"
-    return 1
-  fi
+      ;;
+  esac
 }
 
 update_marketplaces() {
@@ -194,38 +143,15 @@ update_plugins() {
   fi
 }
 
-create_things_task() {
+report_upgrade_failure() {
   local output="$1"
 
-  gum log --level info "Creating Things task for upgrade failure..."
-
-  local host time revision version
-  host=$(hostname -s)
-  time=$(date "+%Y-%m-%d %H:%M:%S %Z")
+  local revision version
   revision=$(git -C "$CLAUDE_REPO_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
   version=$(claude --version 2>/dev/null || echo "unknown")
 
-  local notes='- **Host:** '"$host"'
-- **Time:** '"$time"'
-- **Revision:** '"$revision"'
-- **Claude:** '"$version"'
-
-```sh
-claude-upgrade
-```
-
-## Error Output
-```
-'"$output"'
-```'
-
-  local encoded_notes encoded_title
-  encoded_notes=$(echo "$notes" | jq -sRr @uri)
-  encoded_title=$(echo "Claude upgrade failed" | jq -sRr @uri)
-
-  open "things:///add?title=${encoded_title}&notes=${encoded_notes}&when=today"
-
-  notify "Claude Upgrade" "Upgrade failed - see Things task"
+  report_failure "claude-upgrade" "Claude upgrade failed" "claude-upgrade" "$output" \
+    "$revision" "- **Claude:** $version"
 }
 
 main() {
@@ -252,10 +178,11 @@ main() {
   } 2>&1 | tee "$output"
 
   if [[ ${pipestatus[1]} -ne 0 ]]; then
-    create_things_task "$(cat "$output")"
+    report_upgrade_failure "$(cat "$output")"
     exit 1
   fi
 
+  report_success "claude-upgrade"
   gum log --level info "All Claude upgrades completed successfully"
 }
 

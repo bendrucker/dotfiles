@@ -91,9 +91,9 @@ _dotfiles_status() {
     fi
   fi
 
-  if [[ -f "$HOME/.dotfiles-dev-mode" ]]; then
+  if [[ -f "$DOTFILES_DEV_FLAG" ]]; then
     echo ""
-    echo "Persistent dev mode: $(<"$HOME/.dotfiles-dev-mode")"
+    echo "Persistent dev mode: $(<"$DOTFILES_DEV_FLAG")"
   fi
 }
 
@@ -111,8 +111,6 @@ _dotfiles_test() {
 }
 
 _dotfiles_dev() {
-  local flag="$HOME/.dotfiles-dev-mode"
-
   case "$1" in
     enable)
       local dev_dir
@@ -120,19 +118,17 @@ _dotfiles_dev() {
         echo "Not inside a dotfiles repository or worktree."
         return 1
       }
-      echo "$dev_dir" > "$flag"
-      "$dev_dir/scripts/install-symlinks" "$dev_dir"
+      _dotfiles_switch_root "$dev_dir"
       echo "Dev mode enabled: $dev_dir"
       echo "Restart shell to apply."
       ;;
     disable)
-      rm -f "$flag"
-      "$DOTFILES_HOME/scripts/install-symlinks" "$DOTFILES_HOME"
+      _dotfiles_switch_root ""
       echo "Dev mode disabled."
       echo "Restart shell to apply."
       ;;
     "")
-      if [[ -f "$flag" ]]; then
+      if [[ -f "$DOTFILES_DEV_FLAG" ]]; then
         _dotfiles_dev disable
       else
         _dotfiles_dev enable
