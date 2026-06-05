@@ -1,7 +1,0 @@
-#!/bin/bash
-
-# Replaces line feeds in input with escaped "\n"
-# http://stackoverflow.com/a/1252191
-# http://unix.stackexchange.com/a/32587
-
-sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g' | tr -d '\012\015'

@@ -1,6 +1,6 @@
 #!/bin/sh
 
-pager=$GHI_PAGER || pager=less
+pager="${PAGER:-less}"
 
 print_status() {
   echo "  100 Continue
