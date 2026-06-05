@@ -20,6 +20,12 @@ repos:
       - id: ast-grep
         files: (Brewfile$|\.(sh|zsh)$)
 
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+      - id: ruff-format
+
   - repo: local
     hooks:
       - id: ast-grep-test

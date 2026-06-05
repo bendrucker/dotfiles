@@ -171,6 +171,15 @@ jobs:
             sys.exit(1)
         print(f'OK: median startup {median:.3f}s')
         "
+  fzf-links:
+    name: fzf-links schemes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v6
+      - name: Test schemes
+        run: uv run --frozen pytest
+        working-directory: tmux/search/fzf-links
   skill-tests:
     strategy:
       matrix:

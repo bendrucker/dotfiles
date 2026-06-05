@@ -31,7 +31,7 @@
       "automerge": false
     },
     {
-      "matchManagers": ["mise"],
+      "matchManagers": ["mise", "pep621"],
       "minimumReleaseAge": "2 weeks"
     }
   ]
