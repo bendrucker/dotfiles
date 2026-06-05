@@ -8,20 +8,20 @@
 #     current  return GIT_SYNC_CURRENT
 #     failed   notify "<title>" "Failed: could not sync", return GIT_SYNC_FAILED
 #   Callers own success messages and post-update side effects. Capture with
-#   command substitution to keep the rev and status: rev=$(git_sync_notify …); status=$?
+#   command substitution to keep the rev and the code: rev=$(git_sync_notify …); rc=$?
 
 git_sync_notify() {
   local repo_dir="$1" title="$2" branch="${3:-}"
 
-  local rev status
+  local rev rc
   rev=$(git_sync "$repo_dir" "$branch")
-  status=$?
+  rc=$?
 
-  if [[ "$status" == "$GIT_SYNC_FAILED" ]]; then
+  if [[ "$rc" == "$GIT_SYNC_FAILED" ]]; then
     notify "$title" "Failed: could not sync"
-  elif [[ "$status" == "$GIT_SYNC_UPDATED" ]]; then
+  elif [[ "$rc" == "$GIT_SYNC_UPDATED" ]]; then
     echo "$rev"
   fi
 
-  return "$status"
+  return "$rc"
 }
