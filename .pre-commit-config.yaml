@@ -18,7 +18,7 @@ repos:
     rev: v0.2.0
     hooks:
       - id: ast-grep
-        files: Brewfile$
+        files: (Brewfile$|\.(sh|zsh)$)
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.8.4
@@ -28,6 +28,12 @@ repos:
 
   - repo: local
     hooks:
+      - id: ast-grep-test
+        name: ast-grep rule tests
+        language: system
+        entry: ast-grep test --skip-snapshot-tests
+        files: ^(rules|rule-tests)/
+        pass_filenames: false
       - id: shellspec
         name: shellspec
         language: system

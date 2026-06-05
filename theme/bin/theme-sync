@@ -10,7 +10,7 @@ for sync in "$bin_dir"/theme-sync-*; do
   [[ -x "$sync" ]] || continue
   if ! "$sync"; then
     status=$?
-    echo "theme-sync: $(basename "$sync") exited $status" >&2
+    gum log --level error "$(basename "$sync") exited $status"
   fi
 done
 exit "$status"

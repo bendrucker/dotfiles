@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+# Usage: install-trust [dotfiles-root]
+#
+# Trust the taps declared in the Brewfiles. The Brewfiles are the single source
+# of truth: trusting a tap here just records the decision already made by
+# committing its `tap` line. The trust file is rebuilt from scratch each run, so
+# a tap removed from the Brewfiles drops out of it too.
+set -e
+
+DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
+: "${XDG_CONFIG_HOME:=$HOME/.config}"
+
+rm -f "$XDG_CONFIG_HOME/homebrew/trust.json"
+
+brew bundle list --file "$DOTFILES_ROOT/Brewfile" --tap | while IFS= read -r tap; do
+  brew trust --tap "$tap"
+done

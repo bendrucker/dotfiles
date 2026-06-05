@@ -17,6 +17,8 @@ DOTFILES_DEV="$HOME/src/dotfiles"
 SCRIPT_DIR="${0:A:h}"
 REPO_ROOT="${SCRIPT_DIR:h}"
 
+source "${0:A:h}/lib/git-sync.sh"
+
 if [[ -d "$REPO_ROOT/.git" ]]; then
   REPO_URL=$(git -C "$REPO_ROOT" remote get-url origin)
 else
@@ -35,23 +37,6 @@ detect_state() {
   else
     echo "unknown"
   fi
-}
-
-# Get the default branch from a remote
-get_default_branch() {
-  local repo_path="$1"
-  local branch
-
-  # Try to get from remote HEAD reference
-  branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-
-  if [[ -z "$branch" ]]; then
-    # Fetch and set remote HEAD
-    git -C "$repo_path" remote set-head origin --auto 2>/dev/null || true
-    branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-  fi
-
-  echo "${branch:-main}"
 }
 
 # Main setup logic
@@ -104,15 +89,15 @@ main() {
       # Ensure remote HEAD is set for default branch detection
       git -C "$DOTFILES_HOME" remote set-head origin --auto 2>/dev/null || true
       local default_branch
-      default_branch=$(get_default_branch "$DOTFILES_HOME")
-
-      gum log --level info "Updating to latest ($default_branch)..."
-      git -C "$DOTFILES_HOME" fetch origin "$default_branch"
+      default_branch=$(git_default_branch "$DOTFILES_HOME")
       git -C "$DOTFILES_HOME" checkout "$default_branch" 2>/dev/null || true
-      git -C "$DOTFILES_HOME" pull --ff-only origin "$default_branch" || {
+
+      gum log --level info "Updating installed dotfiles..."
+      local sync_status=0
+      git_sync "$DOTFILES_HOME" "$default_branch" || sync_status=$?
+      if [[ "$sync_status" -eq "$GIT_SYNC_FAILED" ]]; then
         gum log --level warn "Could not fast-forward - you may have local changes"
-      }
-      gum log --level info "Installed dotfiles updated"
+      fi
       ;;
 
     missing)

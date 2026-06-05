@@ -6,6 +6,7 @@ CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 
 source "${0:A:h}/../scripts/lib/git-sync.sh"
 source "${0:A:h}/../scripts/lib/report-failure.sh"
+source "${0:A:h}/../scripts/lib/sync-notify.sh"
 
 revert_cosmetic_json_changes() {
   local changed_files
@@ -49,18 +50,6 @@ render_diff() {
 sync_repo() {
   gum log --level info "Syncing Claude repository..."
 
-  if [[ -L "$CLAUDE_REPO_HOME" ]]; then
-    gum log --level error "$CLAUDE_REPO_HOME is a symlink"
-    notify "Claude Upgrade" "Failed: ~/.claude-repo is a symlink"
-    return 1
-  fi
-
-  if [[ ! -d "$CLAUDE_REPO_HOME/.git" ]]; then
-    gum log --level error "$CLAUDE_REPO_HOME is not a git repository"
-    notify "Claude Upgrade" "Failed: not a git repository"
-    return 1
-  fi
-
   cd "$CLAUDE_REPO_HOME" || return 1
 
   revert_cosmetic_json_changes
@@ -85,14 +74,13 @@ sync_repo() {
   fi
 
   local new_rev
-  new_rev=$(git_sync "$CLAUDE_REPO_HOME")
+  new_rev=$(git_sync_notify "$CLAUDE_REPO_HOME" "Claude Upgrade")
   case $? in
     "$GIT_SYNC_UPDATED")
       gum log --level info "Repository updated to $new_rev"
       ;;
     "$GIT_SYNC_CURRENT") ;;
     *)
-      notify "Claude Upgrade" "Failed: could not sync"
       return 1
       ;;
   esac

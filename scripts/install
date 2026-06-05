@@ -11,6 +11,9 @@ if [[ -z "${NONINTERACTIVE-}" ]] && [[ ! -t 0 ]]; then
   export NONINTERACTIVE=1
 fi
 
+# Trust declared taps before bundle evaluates their formulae
+./scripts/install-trust
+
 brew bundle
 
 # Expose brew configuration to installers
