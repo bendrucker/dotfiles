@@ -8,7 +8,7 @@ if [[ -n "${NONINTERACTIVE-}" ]]; then
 fi
 
 # Copy SSH daemon configuration to system directory
-sudo cp "$(dirname "$0")"/*.conf /etc/ssh/sshd_config.d/
+sudo cp "$(dirname "$0")"/[0-9]*.conf /etc/ssh/sshd_config.d/
 
 # Reload SSH daemon based on OS
 if [[ "$OSTYPE" == "darwin"* ]]; then
