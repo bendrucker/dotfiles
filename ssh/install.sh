@@ -8,7 +8,7 @@ if [[ -n "${NONINTERACTIVE-}" ]]; then
 fi
 
 # Copy SSH daemon configuration to system directory
-sudo cp "$(dirname "$0")/200-require-key-auth.conf" /etc/ssh/sshd_config.d/
+sudo cp "$(dirname "$0")"/*.conf /etc/ssh/sshd_config.d/
 
 # Reload SSH daemon based on OS
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -17,4 +17,4 @@ else
     sudo systemctl reload sshd
 fi
 
-echo "SSH configuration updated to require public key authentication"
+echo "SSH daemon configuration updated"
