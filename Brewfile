@@ -1,7 +1,12 @@
-# In CI, avoid installing Casks and Mac App Store apps which are slow and depended upon by dotfiles
+# In CI, avoid installing Casks and Mac App Store apps which are slow and depended upon by dotfiles,
+# and skip service management since runners lack a user launchd/systemd session
 if ENV['CI']
   def cask(*args) end
   def mas(*args) end
+
+  def brew(name, options = {})
+    super(name, options.except(:restart_service, :start_service))
+  end
 elsif !$stdin.tty?
   def mas(*args) end
 end
