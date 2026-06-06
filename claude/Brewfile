@@ -1,6 +1,9 @@
+tap 'rjyo/moshi'
+
 cask 'claude'
 cask 'claude-code@latest'
 cask 'claude-devtools'
 cask 'commander'
 brew 'agent-browser'
 brew 'ast-grep'
+brew 'rjyo/moshi/moshi-hook', restart_service: ENV['CI'] ? false : :changed
