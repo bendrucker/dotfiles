@@ -1,4 +1,0 @@
-#!/usr/bin/env sh
-
-npmrc="$HOME/.npmrc"
-[ -f "$npmrc" ] && sed -n -e 's/^.*_authToken=//p' < "$npmrc"
