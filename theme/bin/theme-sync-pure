@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Publish the active catppuccin flavor for the zsh/pure prompt.
+# Pure re-reads its zstyle colors every render; zsh/prompt.zsh's precmd reads
+# this cache file (builtin, no fork) and rewrites those zstyles when the flavor
+# flips. Same launch/render-time cache pattern as theme-sync-fzf — no running
+# process to signal.
+set -euo pipefail
+
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+want="$("$bin_dir/theme-flavor")"
+
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles"
+cache="$cache_dir/theme-flavor"
+
+mkdir -p "$cache_dir"
+if [[ ! -f "$cache" ]] || [[ "$(<"$cache")" != "$want" ]]; then
+  tmp="$cache.tmp.$$"
+  printf '%s\n' "$want" > "$tmp"
+  mv "$tmp" "$cache"
+fi

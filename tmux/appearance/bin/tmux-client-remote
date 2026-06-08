@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Decide whether a tmux client connected remotely (SSH / Mosh / Tailscale SSH)
+# and stamp its session's @client_remote, so appearance/status.conf shows the
+# host badge only for remote clients (not a local terminal on the same machine).
+#
+# tmux exposes no per-client "is remote" format, and formats can't read shell env
+# vars, so we inspect the client process. Primary signal is process ancestry: a
+# remote client descends from sshd or mosh-server. Ancestry is what makes Mosh
+# work — mosh-server drops SSH_* from the session env, so an env-only check would
+# miss it. SSH_* env vars are kept as a fallback.
+#
+# Invoked from a client-attached hook: tmux-client-remote <session> <client_pid>.
+set -uo pipefail
+
+session=${1:?session name required}
+pid=${2:?client pid required}
+
+os="$(uname -s)"
+
+# Walk the parent chain from the client process; true if any ancestor is the
+# sshd/mosh-server that fronts a remote connection.
+ancestor_is_remote() {
+  local p=$1 comm ppid depth=0
+  while [[ -n $p && $p -gt 1 && $depth -lt 25 ]]; do
+    if [[ $os == Linux ]]; then
+      [[ -r /proc/$p/comm ]] || break
+      comm="$(</proc/"$p"/comm)"
+      ppid="$(awk '/^PPid:/{print $2}' "/proc/$p/status" 2>/dev/null)"
+    else
+      read -r ppid comm < <(ps -o ppid=,comm= -p "$p" 2>/dev/null)
+      comm="${comm##*/}"
+    fi
+    case "$comm" in
+      sshd|mosh-server) return 0 ;;
+    esac
+    [[ -n ${ppid:-} ]] || break
+    p=$ppid
+    depth=$((depth + 1))
+  done
+  return 1
+}
+
+# Fallback: SSH_* in the client's environment (plain ssh, Tailscale SSH).
+env_is_remote() {
+  if [[ $os == Linux ]]; then
+    grep -qzE '^(SSH_CONNECTION|SSH_CLIENT|SSH_TTY)=' "/proc/$pid/environ" 2>/dev/null
+  else
+    # Grepping ps output is the point here (we want the pid's environment, not
+    # to find a process by name), so pgrep doesn't apply.
+    # shellcheck disable=SC2009
+    ps eww -p "$pid" 2>/dev/null | grep -qE '(SSH_CONNECTION|SSH_CLIENT|SSH_TTY)='
+  fi
+}
+
+if ancestor_is_remote "$pid" || env_is_remote; then
+  tmux set-option -t "$session" @client_remote 1
+else
+  tmux set-option -t "$session" @client_remote 0
+fi
