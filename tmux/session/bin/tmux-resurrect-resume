@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#
+# @resurrect-hook-post-save-all hook: for each pane that set the @resume-command
+# option, swap that command into the pane's saved restore command (field 11).
+# Panes without it restore fresh.
+
+set -euo pipefail
+
+tab=$'\t'
+
+resurrect_dir=$(tmux show-option -gqv @resurrect-dir)
+resurrect_dir=${resurrect_dir:-${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect}
+
+# Default to the `last` symlink; rewrite its target, not the link itself.
+savefile=${1:-$resurrect_dir/last}
+if [ -L "$savefile" ]; then
+  savefile=$resurrect_dir/$(readlink "$savefile")
+fi
+[ -f "$savefile" ] || exit 0
+
+# session:window.pane -> pane_id for every live pane
+panes=$(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_id}')
+
+tmpfile=$(mktemp "${savefile}.XXXXXX")
+trap 'rm -f "$tmpfile"' EXIT
+
+while IFS= read -r line || [ -n "$line" ]; do
+  case $line in
+    pane"$tab"*) ;;
+    *) printf '%s\n' "$line" >>"$tmpfile"; continue ;;
+  esac
+
+  IFS=$tab read -r f_type f_session f_window f_wactive f_wflags \
+    f_pindex f_title f_dir f_pactive f_pcommand f_cmd <<<"$line"
+
+  key=$f_session:$f_window.$f_pindex
+  pane_id=$(awk -v k="$key" '$1 == k { print $2; exit }' <<<"$panes")
+  if [ -n "$pane_id" ]; then
+    resume=$(tmux show-options -p -t "$pane_id" -qv @resume-command)
+    [ -n "$resume" ] && f_cmd=:$resume
+  fi
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$f_type" "$f_session" "$f_window" "$f_wactive" "$f_wflags" \
+    "$f_pindex" "$f_title" "$f_dir" "$f_pactive" "$f_pcommand" "$f_cmd" >>"$tmpfile"
+done <"$savefile"
+
+mv "$tmpfile" "$savefile"
+trap - EXIT
