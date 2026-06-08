@@ -22,8 +22,9 @@ access via mosh/Blink Shell, and sane copy/paste defaults.
   windows, panes, and more
 - **Session persistence:**
   [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) saves and
-  restores sessions across tmux server restarts (`prefix + Ctrl-s` to save,
-  `prefix + Ctrl-r` to restore)
+  restores sessions across tmux server restarts (`prefix + S` to save,
+  `prefix + Ctrl-r` to restore), including
+  [letting a pane resume its own session](#resuming-sessions)
 - **Catppuccin theme:**
   [catppuccin/tmux](https://github.com/catppuccin/tmux) (mocha) for the status
   bar
@@ -42,6 +43,39 @@ current automatically. To manage manually inside tmux:
 | `prefix + I` | Install new plugins |
 | `prefix + U` | Update all plugins |
 | `prefix + alt + u` | Remove unlisted plugins |
+
+### Resuming sessions
+
+A pane can resume its own session on restore instead of starting fresh. The
+mechanism is one pane-scoped tmux option, `@resume-command`: a pane sets it to
+the command that restores its session, and the `@resurrect-hook-post-save-all`
+hook (`tmux/session/bin/tmux-resurrect-resume`) swaps that command into the
+pane's saved restore command before the save file is finalized. A pane that
+never set the option restores fresh.
+
+This stays program-agnostic: the restore command comes entirely from the pane,
+so the config holds no per-program logic. The one exception is
+`@resurrect-processes` in `session.conf`: resurrect re-runs a restored command
+only if it matches that allowlist, so each binary is listed there (`~claude`).
+
+A session id (the runtime state that makes resume possible) is lost by restore
+time, so resurrect's built-in strategies, which see only the saved command and
+directory, cannot recover it. Capturing it as a pane option at save time is what
+closes that gap.
+
+#### Setting the option
+
+A program sets `@resume-command` from a hook that fires on session start. For
+Claude Code, a `SessionStart` hook (matching the `startup` and `resume` sources,
+so it stays current across resumes) does it in one line, since
+`$CLAUDE_CODE_SESSION_ID` and `$TMUX_PANE` are already in the environment:
+
+```sh
+[ -n "$TMUX_PANE" ] && tmux set-option -p -t "$TMUX_PANE" @resume-command "claude --resume $CLAUDE_CODE_SESSION_ID"
+```
+
+The `$TMUX_PANE` guard makes it a no-op outside tmux. The only contract between
+a program and tmux is the option name; either side can change independently.
 
 ### Copy/paste
 
