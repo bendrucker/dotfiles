@@ -5,11 +5,7 @@
 set -euo pipefail
 
 topic_dir="$(cd "$(dirname "$0")" && pwd)"
-dotfiles_root="$(cd "$topic_dir/.." && pwd)"
 
 config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/hunk"
 mkdir -p "$config_dir"
 cp "$topic_dir/config.toml" "$config_dir/config.toml"
-
-# Reconcile the freshly copied default flavor with the active appearance.
-"$dotfiles_root/theme/bin/theme-sync-hunk"

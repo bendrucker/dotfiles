@@ -30,3 +30,8 @@ for sm_path in ${(f)"$(git submodule foreach --quiet 'echo $sm_path' 2>/dev/null
 done
 
 find . -name install.sh "${excludes[@]}" | while read -r installer; do "${installer}"; done
+
+# Reconcile theme-managed configs to the active flavor. Runs after every
+# installer so each config exists and tmux plugins are present; failures here
+# shouldn't abort an otherwise successful install.
+./theme/bin/theme-sync || gum log --level warn "theme-sync had issues"

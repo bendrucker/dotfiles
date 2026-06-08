@@ -6,7 +6,8 @@
 #   set-head retry and falling back to "main".
 #
 # git_sync <repo_dir> [branch]
-#   Guard the target, fetch with retry, and fast-forward only.
+#   Guard the target (reject symlinks, non-repos, and dirty working trees),
+#   fetch with retry, and fast-forward only.
 #   Returns:
 #     0  updated   (new short rev echoed to stdout)
 #     2  current   (already up to date)
@@ -61,6 +62,12 @@ git_sync() {
 
   if [[ ! -d "$repo_dir/.git" ]]; then
     gum log --level error "$repo_dir is not a git repository"
+    return "$GIT_SYNC_FAILED"
+  fi
+
+  if ! git -C "$repo_dir" diff --quiet 2>/dev/null ||
+     ! git -C "$repo_dir" diff --cached --quiet 2>/dev/null; then
+    gum log --level error "$repo_dir has local changes - skipping sync"
     return "$GIT_SYNC_FAILED"
   fi
 
