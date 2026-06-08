@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# bootstrap installs things.
+# bootstrap does the first-run-only setup (gitconfig, submodules), then hands
+# off to dotf for the shared reconcile: Homebrew packages, default package
+# lists, config symlinks, and every topic installer.
 
 cd "$(dirname "$0")/.." || exit 1
 DOTFILES_ROOT=$(pwd -P)
@@ -12,6 +14,7 @@ for arg in "$@"; do
   esac
 done
 
+# Install Homebrew and gum up front; setup_gitconfig prompts via gum.
 "$DOTFILES_ROOT/scripts/homebrew.sh"
 
 setup_gitconfig () {
@@ -40,18 +43,11 @@ init_submodules () {
   git -C "$DOTFILES_ROOT" submodule update --init --recursive
 }
 
-install_dotfiles () {
-  gum log --level info 'installing dotfiles'
-  "$DOTFILES_ROOT/scripts/install-symlinks" "$DOTFILES_ROOT"
-}
-
 setup_gitconfig
 init_submodules
-install_dotfiles
 
-gum log --level info 'building default packages'
-./bin/build-default-packages
-
+# dotf installs Homebrew packages, builds the default package lists, links
+# configs, and runs every topic installer.
 # shellcheck disable=SC1091
 if ! source ./bin/dotf; then
   gum log --level error 'error installing dependencies'
