@@ -78,3 +78,13 @@ add-zsh-hook precmd _pure_flavor_precmd
 autoload -U promptinit
 promptinit
 prompt pure
+
+# Drop pure's SSH/container user@host block: the host now lives in the tmux
+# status badge (appearance/status.conf) and the user is always us. psvar[13] is
+# pure's username flag, set once in prompt_pure_state_setup during `prompt pure`
+# and never touched again by its precmd, so a one-time clear sticks for the
+# shell's life. Keep it for root, where the red username is a real safety cue.
+# Clearing once here — before pure's precmd populates the render-time psvars —
+# fails open: a future pure that renumbers psvar would just show the block again
+# rather than blanking some other segment.
+(( UID == 0 )) || psvar[13]=
