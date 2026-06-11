@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Apply the active catppuccin flavor to delta by setting `features` in
+# delta-flavor.conf. delta re-reads its git config on every `git diff`, so
+# there's no running process to signal.
+set -euo pipefail
+
+bin_dir="$(cd "$(dirname "$0")" && pwd)"
+flavor="$("$bin_dir/theme-flavor")"
+want="catppuccin-${flavor}"
+
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/git/delta-flavor.conf"
+[[ -f "$conf" ]] || exit 0
+
+current=$(awk -F'= ' '/^[[:space:]]*features = /{print $2; exit}' "$conf")
+[[ "$current" == "$want" ]] && exit 0
+
+# Cross-platform sed -i: write to a temp and move.
+tmp="$conf.tmp.$$"
+sed -e "s|^\([[:space:]]*\)features = .*|\1features = $want|" "$conf" > "$tmp"
+mv "$tmp" "$conf"
