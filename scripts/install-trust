@@ -1,10 +1,15 @@
 #!/usr/bin/env sh
 # Usage: install-trust [dotfiles-root]
 #
-# Trust the taps declared in the Brewfiles. The Brewfiles are the single source
-# of truth: trusting a tap here just records the decision already made by
-# committing its `tap` line. The trust file is rebuilt from scratch each run, so
-# a tap removed from the Brewfiles drops out of it too.
+# Tap and trust the taps declared in the Brewfiles. The Brewfiles are the single
+# source of truth: committing a `tap` line records the decision, and this script
+# enforces it. The trust file is rebuilt from scratch each run, so a tap removed
+# from the Brewfiles drops out of it too.
+#
+# Homebrew 6.0.0 stopped auto-tapping untrusted taps from `brew bundle`
+# (Homebrew/brew#22599), so trusting a tap is no longer enough to let `brew
+# bundle` clone it. Tap each one explicitly so the formulae are on disk before
+# `brew bundle` runs, then trust so `brew bundle` can install from it.
 set -e
 
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
@@ -13,5 +18,6 @@ DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 rm -f "$XDG_CONFIG_HOME/homebrew/trust.json"
 
 brew bundle list --file "$DOTFILES_ROOT/Brewfile" --tap | while IFS= read -r tap; do
+  brew tap "$tap"
   brew trust --tap "$tap"
 done
