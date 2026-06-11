@@ -8,12 +8,18 @@ if [[ -z "$bell_windows" ]]; then
   exit 0
 fi
 
+# Near-fullscreen on a narrow client; an unresolvable client yields an empty
+# width and the predicate safely reports wide
+popup_size="center,60%,60%"
+[[ "$(tmux display -p '#{E:@resp_is_narrow}')" == 1 ]] && popup_size="center,100%,100%"
+
 # fzf placeholders ({1}, {q}, {fzf:prompt}) are not shell variables
 # shellcheck disable=SC2016
 result=$(echo "$bell_windows" \
   | fzf --no-sort --border --prompt 'bell> ' \
-    --tmux center,60%,60% \
+    --tmux "$popup_size" \
     --preview 'tmux capture-pane -t {1} -p | tail -n "$FZF_PREVIEW_LINES"' \
+    --preview-window 'right,50%,<60(up,35%)' \
     --header 'enter: jump · opt-enter: send keys' \
     --bind 'alt-enter:disable-search+clear-query+change-prompt(send> )+change-header(type keys + enter · esc: cancel)+unbind(up,down,alt-enter)' \
     --bind 'enter:transform:
