@@ -1,0 +1,3 @@
+tap 'agavra/tap'
+
+brew 'agavra/tap/tuicr'
