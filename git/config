@@ -19,18 +19,22 @@
 
 [core]
   excludesfile = ~/.config/git/ignore
-  pager = "hunk pager"
+  pager = delta
   compression = 9
 
 [interactive]
-  diffFilter = "diff-so-fancy --patch"
+  diffFilter = delta --color-only
 
 [diff]
   algorithm = "histogram"
-  tool = hunk
 
-[difftool "hunk"]
-  cmd = hunk difftool "$LOCAL" "$REMOTE"
+[delta]
+  navigate = true
+  line-numbers = true
+
+[include]
+  path = ~/.config/git/delta-catppuccin.gitconfig
+  path = ~/.config/git/delta-flavor.conf
 
 [commit]
   verbose = true
