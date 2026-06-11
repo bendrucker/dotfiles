@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# fzf exits 130 on abort, which set -e would turn into a popup error flash
+selection=$(sesh list -i | fzf --no-sort --ansi --border --border-label ' sesh ' --prompt '  ') || exit 0
+[[ -n $selection ]] && exec sesh connect "$selection"
