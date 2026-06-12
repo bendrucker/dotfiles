@@ -46,8 +46,10 @@ GUM
     git -C "$repo" remote set-head origin main
   }
 
+  # Run with `zsh -f` so the script's startup skips ~/.zshenv, which exports
+  # DOTFILES_HOME unconditionally and would otherwise clobber the sandbox path.
   run_sync() {
-    PATH="$stubdir:$PATH" DOTFILES_HOME="$repo" "$dotfiles_sync"
+    PATH="$stubdir:$PATH" DOTFILES_HOME="$repo" zsh -f "$dotfiles_sync"
   }
 
   BeforeEach 'setup'
