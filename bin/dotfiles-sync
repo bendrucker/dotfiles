@@ -11,8 +11,9 @@ source "${0:A:h}/../scripts/lib/git-sync.sh"
 source "${0:A:h}/../scripts/lib/report-failure.sh"
 source "${0:A:h}/../scripts/lib/sync-notify.sh"
 
-new_rev=$(git_sync_notify "$DOTFILES_HOME" "Dotfiles Sync")
-case $? in
+sync_rc=0
+new_rev=$(git_sync_notify "$DOTFILES_HOME" "Dotfiles Sync") || sync_rc=$?
+case $sync_rc in
   "$GIT_SYNC_CURRENT")
     exit 0
     ;;
