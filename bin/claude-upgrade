@@ -73,9 +73,9 @@ sync_repo() {
     fi
   fi
 
-  local new_rev
-  new_rev=$(git_sync_notify "$CLAUDE_REPO_HOME" "Claude Upgrade")
-  case $? in
+  local new_rev sync_rc=0
+  new_rev=$(git_sync_notify "$CLAUDE_REPO_HOME" "Claude Upgrade") || sync_rc=$?
+  case $sync_rc in
     "$GIT_SYNC_UPDATED")
       gum log --level info "Repository updated to $new_rev"
       ;;
