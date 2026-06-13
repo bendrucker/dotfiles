@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Attach this client to a per-client "mirror" of a tmux session.
+#
+# A mirror is a session grouped with the base (see `tmux new-session -t`): it
+# shares the base's entire window set, but tracks its OWN current window. tmux
+# models "current window" per session, not per client, so two clients on one
+# session are forced onto the same window. A grouped session is the only way to
+# give a client an independent window view (the `X` binding in navigation.conf
+# uses the same trick for ad-hoc window browsing).
+#
+# Each source machine gets its own mirror, keyed by SSH origin. The mirror
+# persists on the server after you detach, so reconnecting from the same machine
+# drops you back on the window you left — independent of whatever window your
+# local client (or any other machine) is on.
+#
+# Usage: tmux-sticky-attach [BASE_SESSION]
+#   BASE_SESSION  session to mirror. Defaults to the current session when run
+#                 inside tmux, else the most recently attached session, else a
+#                 fresh "main".
+#   $TMUX_STICKY_KEY  override the per-client key (defaults to the SSH origin).
+
+sep='__'
+
+base="${1:-}"
+
+# Inside tmux with no explicit base: mirror the current session.
+if [[ -z $base && -n ${TMUX:-} ]]; then
+  base=$(tmux display-message -p '#S')
+fi
+
+# Recover the real base if we were handed (or are sitting in) a mirror, so we
+# never nest mirror-of-a-mirror.
+base="${base%%"${sep}"*}"
+
+# No base yet: most recently attached non-mirror session, else create "main".
+if [[ -z $base ]]; then
+  base=$(tmux list-sessions -F '#{session_last_attached} #{session_name}' 2>/dev/null \
+    | sort -rn | awk -v sep="$sep" '$2 !~ sep { print $2; exit }') || true
+fi
+if [[ -z $base ]]; then
+  base=main
+  tmux new-session -d -s "$base"
+fi
+
+# Stable per-client key: explicit override, else the SSH source address (this
+# runs in the attaching shell, which still has SSH_CONNECTION), else "local".
+key="${TMUX_STICKY_KEY:-}"
+if [[ -z $key ]]; then
+  if [[ -n ${SSH_CONNECTION:-} ]]; then
+    key="${SSH_CONNECTION%% *}"   # client IP
+    key="ssh-${key//[.:]/-}"
+  else
+    key=local
+  fi
+fi
+
+mirror="${base}${sep}${key}"
+
+# Create the mirror grouped with the base the first time this client connects.
+if ! tmux has-session -t "=$mirror" 2>/dev/null; then
+  tmux new-session -d -t "$base" -s "$mirror"
+fi
+
+if [[ -n ${TMUX:-} ]]; then
+  exec tmux switch-client -t "=$mirror"
+else
+  exec tmux attach-session -t "=$mirror"
+fi
