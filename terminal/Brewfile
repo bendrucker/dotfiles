@@ -2,6 +2,7 @@ tap 'rjyo/moshi'
 
 cask 'iterm2'
 cask 'font-monaspice-nerd-font'
+brew 'glow'
 brew 'rjyo/moshi/moshi-hook', restart_service: :changed
 brew 'shellspec'
 brew 'yazi'
