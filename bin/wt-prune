@@ -1,0 +1,180 @@
+#!/usr/bin/env zsh
+# wt prune [args]: per-repo worktree prune, summarized to one line.
+#
+# Integration pass: `wt step prune` removes worktrees integrated into the
+# default branch (including squash merges, via patch-id). Forge pass: removes
+# worktrees whose branch was merged on the remote (gh/glab), catching PRs merged
+# remotely even when the local default branch is stale.
+#
+# Age pass (--before [DURATION], default 1mo): removes old, clean worktree
+# directories that aren't integrated anywhere, to clear out stale checkouts. It
+# keeps the branch (so committed work is recoverable) and skips worktrees with
+# uncommitted changes, relying on `wt remove`'s own guards.
+#
+# Prints one summary line ("N worktrees, M branches") or nothing when there's
+# nothing to remove. Honors --dry-run: counts what would be removed without
+# removing. For per-branch detail, run `wt step prune --dry-run` directly.
+
+set -uo pipefail
+
+# Convert a duration like 2w / 30d / 1mo into seconds. Returns nonzero on a
+# spec it doesn't understand so callers can fall back to a default.
+parse_duration () {
+  [[ "$1" =~ '^([0-9]+)(h|d|w|mo|y)$' ]] || return 1
+  integer n=$match[1]
+  case "$match[2]" in
+    h)  print -r -- $(( n * 3600 ));;
+    d)  print -r -- $(( n * 86400 ));;
+    w)  print -r -- $(( n * 604800 ));;
+    mo) print -r -- $(( n * 2592000 ));;
+    y)  print -r -- $(( n * 31536000 ));;
+  esac
+}
+
+main () {
+  # wt subcommands occasionally flush stray bookkeeping to stdout mid-run, which
+  # would corrupt our single summary line (and the `wt all` table). Detach the
+  # body's stdout to stderr and emit the summary on a saved descriptor; $(...)
+  # captures read a command's stdout directly, so they're unaffected.
+  local stdout_fd
+  exec {stdout_fd}>&1
+  exec 1>&2
+
+  local dry_run=0 before_enabled=0
+  integer before_secs=0
+  local -a passthrough
+  integer i=1
+  while (( i <= $# )); do
+    local a="${argv[i]}"
+    case "$a" in
+      --dry-run)
+        dry_run=1
+        passthrough+=("$a")
+        ;;
+      --before)
+        before_enabled=1
+        local nxt="${argv[i+1]:-}"
+        if [[ -n "$nxt" && "$nxt" != -* ]] && before_secs=$(parse_duration "$nxt"); then
+          (( i++ ))
+        else
+          before_secs=$(parse_duration 1mo)
+        fi
+        ;;
+      --before=*)
+        before_enabled=1
+        before_secs=$(parse_duration "${a#*=}") || before_secs=$(parse_duration 1mo)
+        ;;
+      *)
+        passthrough+=("$a")
+        ;;
+    esac
+    (( i++ ))
+  done
+
+  # Count from a dry-run probe. A dry-run always lists the candidates, whether
+  # or not this is a real run. Real-mode JSON reports only what it actually
+  # removed, which is empty when removal is approval-gated or raced by
+  # background cleanup, so counting from it under-counts.
+  local -a probe_args=("${passthrough[@]:#--dry-run}")
+  local probe_json
+  probe_json=$(wt step prune "${probe_args[@]}" --dry-run --format=json 2>/dev/null)
+
+  local -A seen
+  local worktrees=0 branches=0
+  if [[ -n "$probe_json" && "$probe_json" != "[]" ]]; then
+    local kind branch
+    while IFS=$'\t' read -r kind branch; do
+      seen[$branch]=1
+      if [[ "$kind" == worktree ]]; then ((worktrees++)); else ((branches++)); fi
+    done < <(jq -r '.[] | "\(.kind)\t\(.branch)"' <<<"$probe_json")
+  fi
+
+  # Real run: actually remove. --yes skips approval prompts and --foreground
+  # blocks until removal completes, both required under the non-interactive
+  # parallel fan-out and the nightly job.
+  (( dry_run )) || wt step prune "${probe_args[@]}" --yes --foreground </dev/null >/dev/null 2>&1
+
+  # Linked-worktree pass over a single `wt list`: forge-merged removals, plus
+  # the age pass when --before is set.
+  local list_json
+  list_json=$(wt list --format=json 2>/dev/null)
+
+  # Only consult the forge (a network round-trip) when a linked worktree
+  # survives the integration pass. Most repos in a fan-out have only their main
+  # worktree, so this skips a `gh`/`glab` call per such repo across the sweep.
+  local has_linked=false
+  [[ -n "$list_json" && "$list_json" != "[]" ]] \
+    && has_linked=$(jq -r 'any(.[]; .kind == "worktree" and (.is_main | not))' <<<"$list_json")
+
+  if [[ "$has_linked" == true ]]; then
+    local remote_host
+    remote_host=$(git remote get-url origin 2>/dev/null | sed -E 's|^[^@]*@||; s|^https?://||; s|[:/].*||')
+
+    local -a merged_branches
+    if [[ "$remote_host" == *gitlab* ]]; then
+      merged_branches=("${(@f)$(glab mr list --state merged --output json 2>/dev/null | jq -r '.[].source_branch')}")
+    else
+      merged_branches=("${(@f)$(gh pr list --state merged --json headRefName --jq '.[].headRefName' 2>/dev/null)}")
+    fi
+
+    integer now=0
+    (( before_enabled )) && now=$(date +%s)
+    local branch is_main ts clean
+    while IFS=$'\t' read -r branch is_main ts clean; do
+      [[ "$is_main" == true ]] && continue
+      [[ -n "${seen[$branch]:-}" ]] && continue
+
+      # Removals read stdin from /dev/null: the loop's stdin is the jq pipe, and
+      # a `wt remove` that pauses on a prompt would otherwise consume it. We
+      # count only confirmed removals so the summary matches what was removed (a
+      # dry-run counts everything it lists, since it removes nothing).
+
+      # Merged on the remote: safe to drop the worktree and the branch.
+      if (( ${merged_branches[(Ie)$branch]} )); then
+        if (( dry_run )) || wt remove --foreground --force --force-delete "$branch" </dev/null >/dev/null 2>&1; then
+          (( worktrees++ )); seen[$branch]=1
+        fi
+        continue
+      fi
+
+      # Age pass: old and clean. Drop the worktree directory but keep the branch
+      # (plain `wt remove` deletes a branch only when merged), so committed work
+      # survives and a dirty worktree makes `wt remove` fail and get skipped.
+      if (( before_enabled )) && [[ "$clean" == clean ]] && (( now - ts >= before_secs )); then
+        if (( dry_run )) || wt remove --foreground "$branch" </dev/null >/dev/null 2>&1; then
+          (( worktrees++ )); seen[$branch]=1
+        fi
+      fi
+    done < <(jq -r '
+      .[]
+      | select(.kind == "worktree" and (.branch // "") != "")
+      | [ .branch,
+          (.is_main | tostring),
+          (.commit.timestamp | tostring),
+          (if (.working_tree.staged or .working_tree.modified or .working_tree.untracked or .working_tree.renamed or .working_tree.deleted) then "dirty" else "clean" end)
+        ] | @tsv' <<<"$list_json")
+  fi
+
+  (( worktrees == 0 && branches == 0 )) && return
+
+  # Under `wt all`, emit tab-separated counts so the caller can build a table.
+  # Standalone, print a friendly one-line summary.
+  if [[ -n "${WT_ALL:-}" ]]; then
+    print -r -- "$worktrees"$'\t'"$branches" >&$stdout_fd
+    return
+  fi
+
+  local -a parts
+  (( worktrees )) && parts+=("$(plural $worktrees worktree)")
+  (( branches )) && parts+=("$(plural $branches branch)")
+  print -r -- "${(j:, :)parts}" >&$stdout_fd
+}
+
+plural () {
+  local n=$1 noun=$2
+  (( n == 1 )) && print -r -- "$n $noun" && return
+  [[ "$noun" == branch ]] && noun=branches || noun="${noun}s"
+  print -r -- "$n $noun"
+}
+
+main "$@"
