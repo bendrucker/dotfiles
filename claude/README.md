@@ -4,7 +4,7 @@ Shell integration for [Claude Code](https://docs.anthropic.com/en/docs/claude-co
 
 ## Worktree Aliases
 
-Launch Claude in a [Worktrunk](https://worktrunk.dev) worktree. All variants pass `--name` to Claude, set from the branch name.
+Launch Claude in a [Worktrunk](https://worktrunk.dev) worktree. All variants pass `--name` to Claude, set from the branch name, and append a system prompt telling Claude it is in a dedicated worktree it can work in directly.
 
 | Command | Branch | Permission mode |
 |---------|--------|-----------------|
