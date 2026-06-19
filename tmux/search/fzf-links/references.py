@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 from format import AMBER, BLUE, GREEN, LOCAL, ORANGE, colorize
 from git_context import Forge
+from osc8 import url_kind
 from results import Candidate, Link
 
 ISSUE_RE = re.compile(r"(?<![\w/#!])#(?P<num>\d+)\b")
@@ -19,20 +20,34 @@ LOCALHOST_RE = re.compile(
 
 ForgeProvider = Callable[[], Forge | None]
 CommitChecker = Callable[[str], bool]
+LinkResolver = Callable[[str], str | None]
 
 
 class References:
-    def __init__(self, get_forge: ForgeProvider, commit_exists: CommitChecker) -> None:
+    def __init__(
+        self,
+        get_forge: ForgeProvider,
+        commit_exists: CommitChecker,
+        link_target: LinkResolver,
+    ) -> None:
         self._get_forge = get_forge
         self._commit_exists = commit_exists
+        self._link_target = link_target
 
     def issue_pre(self, m: re.Match[str]) -> Candidate | None:
+        url = self._link_target(m.group(0))
         forge = self._get_forge()
-        if not forge:
+        if not forge and not url:
             return None
-        return Candidate(colorize(f"{forge.path}#{m.group('num')}", BLUE), "issue")
+        label = f"{forge.path}#{m.group('num')}" if forge else f"#{m.group('num')}"
+        if url and url_kind(url) == "pr":
+            return Candidate(colorize(label, GREEN), "PR")
+        return Candidate(colorize(label, BLUE), "issue")
 
     def issue_post(self, m: re.Match[str]) -> Link:
+        url = self._link_target(m.group(0))
+        if url:
+            return Link(url)
         forge = self._get_forge()
         assert forge  # issue_pre kept this match, so the forge resolved
         return Link(forge.issue_url(m.group("num")))
@@ -44,6 +59,9 @@ class References:
         return Candidate(colorize(f"{forge.path}!{m.group('num')}", ORANGE), "MR")
 
     def merge_request_post(self, m: re.Match[str]) -> Link:
+        url = self._link_target(m.group(0))
+        if url:
+            return Link(url)
         forge = self._get_forge()
         assert forge
         return Link(forge.merge_request_url(m.group("num")))
@@ -53,20 +71,26 @@ class References:
         return Candidate(colorize(ref, GREEN), "repo#n")
 
     def cross_repo_post(self, m: re.Match[str]) -> Link:
+        url = self._link_target(m.group(0))
+        if url:
+            return Link(url)
         forge = self._get_forge()
         host = forge.host if forge and forge.kind == "gitlab" else "github.com"
         owner, repo, num = m.group("owner"), m.group("repo"), m.group("num")
         return Link(f"https://{host}/{owner}/{repo}/issues/{num}")
 
     def commit_pre(self, m: re.Match[str]) -> Candidate | None:
-        if not self._get_forge():
-            return None
         sha = m.group("sha")
-        if not self._commit_exists(sha):
+        if not self._link_target(m.group(0)) and not (
+            self._get_forge() and self._commit_exists(sha)
+        ):
             return None
         return Candidate(colorize(sha[:10], AMBER), "commit")
 
     def commit_post(self, m: re.Match[str]) -> Link:
+        url = self._link_target(m.group(0))
+        if url:
+            return Link(url)
         forge = self._get_forge()
         assert forge
         return Link(forge.commit_url(m.group("sha")))

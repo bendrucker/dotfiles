@@ -9,12 +9,28 @@ schemes from `schemes.py`. Each module sits beside its `_test.py` sidecar.
 
 | Pattern | Opens |
 |---|---|
-| `#123` | issue/PR on the current repo's forge (GitHub redirects `/issues/N` to `/pull/N` for PRs) |
+| `#123` | issue/PR on the current repo's forge; labeled `[PR]` when the token is a hyperlinked pull request (see below) |
 | `!123` | GitLab merge request |
 | `owner/repo#123` | issue/PR in another repo |
 | `a1b2c3d` | commit page |
 | `ENG-1234` | Linear issue |
 | `localhost:3000` | dev-server URL |
+
+## OSC 8 hyperlink targets
+
+Tools like Claude Code, `gh`, and `delta` print refs as
+[OSC 8 hyperlinks](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda):
+the visible text is `#497` but the escape sequence carries the real target,
+`https://github.com/owner/repo/pull/497`. That URL already encodes the
+issue-vs-PR distinction, with no API call or per-repo cache.
+
+`osc8.py` re-captures the pane with `tmux capture-pane -e` (which preserves the
+escape sequences the plugin's own capture strips), parses it into a visible-text
+→ target-URL index, and the reference handlers prefer that target when a matched
+token was hyperlinked. So `#497` linked to `/pull/497` opens the PR directly and
+shows `[PR]`; an un-hyperlinked `#123` falls back to forge-guessing `/issues/N`
+(GitHub redirects that to `/pull/N` for PRs anyway). Commit and `owner/repo#N`
+matches likewise open their exact target when one is present.
 
 ## How the forge is resolved
 
