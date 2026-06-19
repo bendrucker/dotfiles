@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import git_context
 import options
+import osc8
 from linear import Linear, parse_teams
 from references import (
     COMMIT_RE,
@@ -38,7 +39,9 @@ def _post(handler: PostHandler) -> Callable[[re.Match[str]], dict[str, str]]:
 
 
 def build_schemes() -> list[SchemeEntry]:
-    refs = References(git_context.current_forge, git_context.commit_exists)
+    refs = References(
+        git_context.current_forge, git_context.commit_exists, osc8.target_for
+    )
     linear = Linear(
         options.get("@fzf-links-linear-workspace"),
         parse_teams(options.get("@fzf-links-linear-teams")),
@@ -59,7 +62,7 @@ def build_schemes() -> list[SchemeEntry]:
             "regex": [MERGE_REQUEST_RE],
         },
         {
-            "tags": ("issue",),
+            "tags": ("issue", "PR"),
             "opener": OpenerType.BROWSER,
             "pre_handler": _pre(refs.issue_pre),
             "post_handler": _post(refs.issue_post),

@@ -9,8 +9,16 @@ GITHUB = Forge(host="github.com", path="bendrucker/dotfiles", kind="github")
 GITLAB = Forge(host="gitlab.com", path="group/proj", kind="gitlab")
 
 
-def refs(forge: Forge | None = None, commit=lambda _: False) -> References:
-    return References(get_forge=lambda: forge, commit_exists=commit)
+def refs(
+    forge: Forge | None = None,
+    commit=lambda _: False,
+    links: dict[str, str] | None = None,
+) -> References:
+    return References(
+        get_forge=lambda: forge,
+        commit_exists=commit,
+        link_target=lambda text: (links or {}).get(text),
+    )
 
 
 def find(regex: re.Pattern[str], text: str) -> re.Match[str]:
@@ -43,6 +51,36 @@ def test_issue_kept_in_repo():
 def test_issue_dropped_outside_repo():
     m = find(references.ISSUE_RE, "see #454")
     assert refs(None).issue_pre(m) is None
+
+
+# --- issue/PR resolved from an OSC 8 hyperlink target ---
+
+
+def test_issue_labeled_pr_from_link_target():
+    pr = "https://github.com/bendrucker/dotfiles/pull/497"
+    m = find(references.ISSUE_RE, "shipped #497")
+    r = refs(GITHUB, links={"#497": pr})
+    candidate = r.issue_pre(m)
+    assert candidate is not None and candidate.tag == "PR"
+    assert r.issue_post(m) == Link(pr)
+
+
+def test_issue_uses_exact_link_target_when_an_issue():
+    url = "https://github.com/bendrucker/dotfiles/issues/12"
+    m = find(references.ISSUE_RE, "see #12")
+    r = refs(GITHUB, links={"#12": url})
+    candidate = r.issue_pre(m)
+    assert candidate is not None and candidate.tag == "issue"
+    assert r.issue_post(m) == Link(url)
+
+
+def test_issue_kept_when_hyperlinked_outside_repo():
+    pr = "https://github.com/some/repo/pull/3"
+    m = find(references.ISSUE_RE, "see #3")
+    r = refs(None, links={"#3": pr})
+    candidate = r.issue_pre(m)
+    assert candidate is not None and candidate.tag == "PR"
+    assert r.issue_post(m) == Link(pr)
 
 
 # --- gitlab merge request (!N) ---
@@ -81,6 +119,13 @@ def test_cross_repo_uses_gitlab_host_when_present():
     )
 
 
+def test_cross_repo_prefers_link_target():
+    pr = "https://github.com/alberti42/tmux-fzf-links/pull/12"
+    m = find(references.CROSS_REPO_RE, "fixed alberti42/tmux-fzf-links#12")
+    r = refs(None, links={"alberti42/tmux-fzf-links#12": pr})
+    assert r.cross_repo_post(m) == Link(pr)
+
+
 # --- commit SHA ---
 
 
@@ -96,6 +141,14 @@ def test_commit_validated_against_repo():
 def test_commit_dropped_outside_repo():
     m = find(references.COMMIT_RE, "c91b594c5fa")
     assert refs(None).commit_pre(m) is None
+
+
+def test_commit_kept_when_hyperlinked():
+    url = "https://github.com/some/repo/commit/c91b594c5fa"
+    m = find(references.COMMIT_RE, "c91b594c5fa")
+    r = refs(None, links={"c91b594c5fa": url})
+    assert r.commit_pre(m) is not None
+    assert r.commit_post(m) == Link(url)
 
 
 # --- localhost ---
