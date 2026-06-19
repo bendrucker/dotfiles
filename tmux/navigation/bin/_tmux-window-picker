@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# fzf window switcher rendered as a table. The primary column is the window name,
+# which is meaningful now that auto-naming uses the working directory (see
+# automatic-rename-format in core.conf) while manual names are preserved. A
+# trailing zone of single-cell glyphs flags multi-pane / zoomed / bell windows.
+# Keeping every glyph trailing means an omitted one never shifts the name column.
+
+# Drop the preview on a narrow client, matching the responsive popups.
+preview=1
+[[ "$(tmux display-message -p '#{E:@resp_is_narrow}')" == 1 ]] && preview=0
+
+MULTI='󰕰'   # nf-md-view-grid: window has multiple panes
+ZOOM='󰊓'    # nf-md-fullscreen: window is zoomed
+BELL='󰂞'    # nf-md-bell: bell/alert flag set
+
+current=$(tmux display-message -p '#{session_name}:#{window_index}')
+
+sep=$'\t'
+declare -a target name panes zoomed belled
+while IFS="$sep" read -r s i n p z b; do
+  t="$s:$i"
+  [[ "$t" == "$current" ]] && continue
+  target+=("$t"); name+=("$n"); panes+=("$p"); zoomed+=("$z"); belled+=("$b")
+done < <(tmux list-windows -a \
+  -F "#{session_name}${sep}#{window_index}${sep}#{window_name}${sep}#{window_panes}${sep}#{window_zoomed_flag}${sep}#{window_bell_flag}")
+
+[[ ${#target[@]} -gt 0 ]] || exit 0
+
+w_name=0
+for x in "${name[@]}"; do (( ${#x} > w_name )) && w_name=${#x}; done
+(( w_name < 6 )) && w_name=6   # "window"
+
+rows=""
+for k in "${!target[@]}"; do
+  pane=' '; (( ${panes[$k]} > 1 )) && pane="$MULTI"
+  zoom=' '; [[ "${zoomed[$k]}" == 1 ]] && zoom=$'\033[33m'"$ZOOM"$'\033[0m'
+  bell=' '; [[ "${belled[$k]}" == 1 ]] && bell=$'\033[31m'"$BELL"$'\033[0m'
+  printf -v line '%s%s%-*s  \033[36m%s\033[0m %s%s' \
+    "${target[$k]}" "$sep" "$w_name" "${name[$k]}" "$pane" "$zoom" "$bell"
+  rows+="$line"$'\n'
+done
+
+# Header doubles as a column label and a glyph legend so the table reads itself.
+printf -v header '\033[2m%-*s  󰕰 multiple panes   󰊓 zoomed   󰂞 bell\033[0m' \
+  "$w_name" "window"
+
+opts=(--no-sort --ansi --border --border-label ' windows ' --prompt '  '
+      --delimiter="$sep" --with-nth=2
+      --header "$header" --header-first)
+(( preview )) && opts+=(--preview 'tmux capture-pane -ep -t {1}' --preview-window 'right,55%')
+
+# fzf exits 130 on abort, which set -e would turn into a popup error flash
+selection=$(printf '%s' "$rows" | fzf "${opts[@]}") || exit 0
+chosen=${selection%%"$sep"*}
+[[ -n $chosen ]] || exit 0
+tmux switch-client -t "${chosen%%:*}"
+tmux select-window -t "$chosen"

@@ -22,7 +22,7 @@ Permanent unbinds of tmux defaults (e.g. `unbind C-b` to free the prefix) stay w
 
 ## Plugin variable changes
 
-Plugins (`set -g @<plugin>-<var>`) read their variables at init only. Sourcing `tmux.conf` updates the variable but doesn't rebind anything. Re-run the plugin's loader directly. The entrypoint filename varies by plugin (`tmux-fzf/tmux-fzf.tmux`, `tmux-fuzzback/fuzzback.tmux`), so list it first:
+Plugins (`set -g @<plugin>-<var>`) read their variables at init only. Sourcing `tmux.conf` updates the variable but doesn't rebind anything. Re-run the plugin's loader directly. The entrypoint filename varies by plugin (`tmux-fuzzback/fuzzback.tmux`, `tmux-floax/floax.tmux`), so list it first:
 
 ```sh
 ls $TMUX_PLUGIN_MANAGER_PATH/<plugin>/*.tmux
