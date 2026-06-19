@@ -2,7 +2,7 @@ import functools
 import subprocess
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def get(name: str) -> str:
     try:
         out = subprocess.run(
