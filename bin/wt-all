@@ -1,0 +1,127 @@
+#!/usr/bin/env zsh
+# wt all <cmd>: run a wt command in every repo under the discovery roots.
+#
+# Worktrunk has no machine-wide registry, so we walk a known root and find each
+# repo's main worktree (the parent of a .git directory). Linked worktrees use a
+# .git file, so they're excluded. Pruning the main worktree covers all of a
+# repo's linked worktrees.
+#
+# Roots come from $WT_ALL_ROOT (colon-separated, PATH-style), falling back to
+# $PROJECTS, then ~/src. Repos run concurrently (WT_ALL_JOBS, default 8) since
+# the per-repo forge calls are network-bound.
+#
+# Repos whose command produces no output are skipped in the report, so
+# `wt all prune` shows only repos with something to remove, one line each, then
+# a totals trailer. A wrapped command can opt into a terse summary via $WT_ALL.
+
+set -uo pipefail
+
+# $0 is the function name inside main, so capture the script path up here.
+self="${0:A}"
+
+# Make sibling wt-* subcommands (e.g. wt-prune) resolvable by `wt` even when
+# this script is run by path, before install has put bin/ on PATH.
+export PATH="${self:h}:$PATH"
+
+# Internal per-repo worker, invoked in parallel by xargs.
+if [[ "${1:-}" == --worker ]]; then
+  cmd=("${(@f)$(<"$WT_ALL_DIR/.cmd")}")
+  out=$(wt -C "$2" "${cmd[@]}" 2>/dev/null)
+  rc=$?
+  # Percent-encode '/' so distinct repo paths map to distinct temp files; a
+  # plain '/'->'_' swap collides a nested path with an underscore in a name.
+  key="${2//\%/%25}"; key="${key//\//%2F}"
+  print -r -- "$out" > "$WT_ALL_DIR/$key"
+  (( rc )) && : > "$WT_ALL_DIR/$key.failed"
+  print   # one tick per completion drives the progress counter
+  exit 0
+fi
+
+main () {
+  local roots="${WT_ALL_ROOT:-${PROJECTS:-$HOME/src}}"
+
+  local -a repos
+  local root gitdir
+  for root in ${(s.:.)roots}; do
+    [[ -d "$root" ]] || continue
+    while IFS= read -r gitdir; do
+      repos+=("${gitdir%/.git}")
+    done < <(find "$root" -maxdepth 4 \
+      \( -type d \( -name node_modules -o -name vendor \) -prune \) -o \
+      \( -type d -name .git -prune -print \))
+  done
+
+  local -a wtcmd=("$@")
+  typeset -g dir
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/wt-all.XXXXXX")
+  trap 'rm -rf "${dir:-}"' EXIT
+  print -rl -- "${wtcmd[@]}" > "$dir/.cmd"
+
+  export WT_ALL=1 WT_ALL_DIR="$dir"
+  integer jobs=${WT_ALL_JOBS:-8}
+  integer total=${#repos}
+
+  # Workers run under xargs and each emits one tick on completion. On a TTY we
+  # redraw a single "spinner N/total" line as ticks arrive; otherwise (the
+  # nightly job) we run silently and let the summary speak.
+  if [[ -t 2 ]]; then
+    integer scanned=0
+    local -a frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    printf '%s\0' "${repos[@]}" \
+      | xargs -0 -P "$jobs" -n1 "$self" --worker \
+      | while IFS= read -r _; do
+          (( scanned++ ))
+          printf '\r\033[K%s  %d/%d  wt %s' \
+            "${frames[scanned % ${#frames} + 1]}" "$scanned" "$total" "${wtcmd[*]}" >&2
+        done
+    printf '\r\033[K' >&2
+  else
+    printf '%s\0' "${repos[@]}" | xargs -0 -P "$jobs" -n1 "$self" --worker >/dev/null
+  fi
+
+  local base="${PROJECTS:-$HOME/src}/"
+  integer active=0 worktrees=0 branches=0
+  local -a rows failed
+  local repo key disp out
+  for repo in "${repos[@]}"; do
+    key="${repo//\%/%25}"; key="${key//\//%2F}"
+    disp="${repo#$base}"
+    [[ -e "$dir/$key.failed" ]] && { failed+=("$disp"); continue; }
+    out="$(<"$dir/$key")"
+    [[ -z "$out" ]] && continue
+    (( active++ ))
+    # Each repo's output becomes a row keyed by repo. A wrapped command can emit
+    # tab-separated fields to land in their own columns; `wt prune` emits
+    # "<worktrees>\t<branches>", which we also total below.
+    rows+=("$disp"$'\t'"$out")
+    if [[ "$out" == <->$'\t'<-> ]]; then
+      (( worktrees += ${out%%$'\t'*} ))
+      (( branches  += ${out##*$'\t'} ))
+    fi
+  done
+
+  if (( ${#rows} )); then
+    if [[ "${wtcmd[1]}" == prune ]]; then
+      # Prune emits "<worktrees>\t<branches>"; head it and sort by worktree
+      # count (then branches) so the biggest cleanups sort to the top.
+      {
+        print -r -- "REPO"$'\t'"WORKTREES"$'\t'"BRANCHES"
+        print -rl -- "${rows[@]}" | sort -t $'\t' -k2,2nr -k3,3nr
+      } | column -t -s $'\t'
+    else
+      print -rl -- "${rows[@]}" | column -t -s $'\t'
+    fi
+  fi
+
+  local -a summary=("${#repos} scanned" "$active with output")
+  (( ${#failed} )) && summary+=("${#failed} failed")
+  (( worktrees || branches )) && summary+=("$worktrees worktrees, $branches branches")
+
+  print
+  gum log --level info "${(j: · :)summary}"
+  (( ${#failed} )) && gum log --level warn "failed: ${(j:, :)failed}"
+
+  (( ${#failed} == 0 ))
+}
+
+main "$@"

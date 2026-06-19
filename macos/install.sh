@@ -46,6 +46,10 @@ setup_dotfiles_upgrade() {
   install_launch_agent com.user.dotfiles-upgrade.plist "nightly dotfiles upgrade"
 }
 
+setup_worktree_prune() {
+  install_launch_agent com.user.worktree-prune.plist "nightly worktree prune"
+}
+
 setup_claude_upgrade() {
   # Remove old plist that pointed to ~/.claude-repo/bin/claude-upgrade
   local old_plist="$HOME/Library/LaunchAgents/com.user.claude-upgrade.plist"
@@ -63,4 +67,5 @@ install_launch_agent com.user.theme-sync.plist "theme-sync watcher"
 if [[ ! -L "$HOME/.dotfiles" ]]; then
   setup_dotfiles_upgrade
   setup_claude_upgrade
+  setup_worktree_prune
 fi
