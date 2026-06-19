@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import dataclasses
 import re
 from collections.abc import Callable
