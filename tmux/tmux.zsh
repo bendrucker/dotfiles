@@ -1,8 +1,5 @@
 #!/usr/bin/env zsh
 
-export TMUX_TMPDIR="$HOME/.tmux"
-mkdir -p "$TMUX_TMPDIR"
-
 [[ -n "$TMUX" ]] || return 0
 
 twd() {
