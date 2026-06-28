@@ -1,14 +1,41 @@
+# Fail fast if a formula or cask is declared in more than one Brewfile. The topic
+# Brewfiles are eval'd through these same overrides (see the glob below), so this
+# spans every Brewfile. brew bundle installs in parallel, so duplicates race on
+# the Homebrew lock and abort bootstrap with a cryptic error.
+def assert_unique_package(type, name)
+  @declared_packages ||= {}
+  key = [type, name]
+  if @declared_packages[key]
+    raise "Duplicate #{type} '#{name}' declared in more than one Brewfile. " \
+          'Declare each package in exactly one topic Brewfile.'
+  end
+  @declared_packages[key] = true
+end
+
 # In CI, avoid installing Casks and Mac App Store apps which are slow and depended upon by dotfiles,
 # and skip service management since runners lack a user launchd/systemd session
 if ENV['CI']
-  def cask(*args) end
+  def cask(*args)
+    assert_unique_package('cask', args.first)
+  end
   def mas(*args) end
 
   def brew(name, options = {})
+    assert_unique_package('brew', name)
     super(name, options.except(:restart_service, :start_service))
   end
-elsif !$stdin.tty?
-  def mas(*args) end
+else
+  def brew(name, options = {})
+    assert_unique_package('brew', name)
+    super
+  end
+
+  def cask(name, *args)
+    assert_unique_package('cask', name)
+    super
+  end
+
+  def mas(*args) end unless $stdin.tty?
 end
 
 corporate = Dir.exist?('/Library/Managed Preferences') && !Dir.empty?('/Library/Managed Preferences')
