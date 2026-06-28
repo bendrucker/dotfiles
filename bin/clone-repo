@@ -1,6 +1,18 @@
 #!/usr/bin/env bun
 
 import { $ } from "bun";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { mkdir, rename } from "node:fs/promises";
+
+const CACHE_DIR = join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "clone-repo");
+const CACHE_FILE = join(CACHE_DIR, "owners.json");
+const TTL_MS = 24 * 60 * 60 * 1000;
+
+if (process.argv.includes("--refresh-owners")) {
+  await writeCache(await fetchOwners());
+  process.exit(0);
+}
 
 const input = process.argv[2];
 const completions = process.argv.includes("--completions");
@@ -17,13 +29,20 @@ try {
 }
 
 if (completions) {
-  const repos = await listRepos(org, repo, host);
+  if (!input.includes("/")) {
+    for (const owner of await getOwners()) {
+      console.log(owner);
+    }
+    process.exit(0);
+  }
+  const repos = await listRepos(await resolveOwner(org), repo, host);
   for (const name of repos) {
     console.log(name);
   }
   process.exit(0);
 }
 
+org = await resolveOwner(org);
 const target = `${projects}/${org}/${repo}`;
 await $`mkdir -p ${projects}/${org}`;
 
@@ -32,7 +51,7 @@ switch (host) {
     await $`glab repo clone ${input} ${target}`;
     break;
   default:
-    await $`gh repo clone ${input} ${target}`;
+    await $`gh repo clone ${host ? input : `${org}/${repo}`} ${target}`;
     break;
 }
 
@@ -43,13 +62,70 @@ async function listRepos(org: string, query?: string, host?: string): Promise<st
     case "gitlab.com": {
       const search = query ? `&search=${query}` : "";
       const result = await $`glab api "users/${org}/projects?per_page=20${search}" -q '.[].path_with_namespace'`.text();
-      return result.trim().split("\n").filter(Boolean);
+      return lines(result);
     }
     default: {
       const args = ["search", "repos", "--owner", org, "--json", "fullName", "--jq", ".[].fullName", "--limit", "20"];
       if (query) args.splice(2, 0, query);
       const result = await Bun.spawn(["gh", ...args], { stdout: "pipe" });
-      return (await new Response(result.stdout).text()).trim().split("\n").filter(Boolean);
+      return lines(await new Response(result.stdout).text());
     }
+  }
+}
+
+async function resolveOwner(org: string): Promise<string> {
+  if (org !== "@me") return org;
+  const cached = await readCache();
+  if (cached && cached.length > 0) return cached[0];
+  return (await $`gh api user --jq .login`.text()).trim();
+}
+
+async function getOwners(): Promise<string[]> {
+  const cached = await readCache();
+  if (!cached) {
+    const owners = await fetchOwners();
+    await writeCache(owners);
+    return ["@me", ...owners];
+  }
+  const { mtimeMs } = await Bun.file(CACHE_FILE).stat();
+  if (Date.now() - mtimeMs > TTL_MS) spawnRefresh();
+  return ["@me", ...cached];
+}
+
+function spawnRefresh(): void {
+  const proc = Bun.spawn([process.execPath, import.meta.path, "--refresh-owners"], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  proc.unref();
+}
+
+async function fetchOwners(): Promise<string[]> {
+  const [login, orgs] = await Promise.all([
+    $`gh api user --jq .login`.text(),
+    $`gh api user/orgs --jq '.[].login'`.text(),
+  ]);
+  return [login.trim(), ...lines(orgs)];
+}
+
+function lines(text: string): string[] {
+  return text.trim().split("\n").filter(Boolean);
+}
+
+async function writeCache(owners: string[]): Promise<void> {
+  await mkdir(CACHE_DIR, { recursive: true });
+  const tmp = `${CACHE_FILE}.${process.pid}.tmp`;
+  await Bun.write(tmp, JSON.stringify(owners));
+  await rename(tmp, CACHE_FILE);
+}
+
+async function readCache(): Promise<string[] | null> {
+  const file = Bun.file(CACHE_FILE);
+  if (!(await file.exists())) return null;
+  try {
+    return JSON.parse(await file.text());
+  } catch {
+    return null;
   }
 }

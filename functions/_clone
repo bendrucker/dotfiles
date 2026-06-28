@@ -1,3 +1,10 @@
 #compdef clone
 
-compadd $(clone-repo "$PREFIX" --completions)
+local -a candidates
+candidates=(${(f)"$(clone-repo "$PREFIX" --completions)"})
+
+if [[ "$PREFIX" == */* ]]; then
+  compadd -- $candidates
+else
+  compadd -S / -- $candidates
+fi
