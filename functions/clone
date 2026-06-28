@@ -1,3 +1,12 @@
 #!/usr/bin/env zsh
 
+if [[ -z "$1" ]]; then
+  local out
+  out=$(clone-repo --list | fzf --prompt='clone> ' --print-query \
+        --preview 'gh repo view {1} 2>/dev/null') || return
+  local sel=${out##*$'\n'}
+  [[ -n "$sel" ]] || return
+  set -- "$sel"
+fi
+
 cd "$(clone-repo "$1")"
