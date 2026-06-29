@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Repoint the stable ~/.ssh/agent.sock symlink at the attaching client's
+# forwarded SSH agent. Called by the tmux client-attached hook.
+# Usage: tmux-ssh-agent-link <session-name>
+#
+# tmux's update-environment carries SSH_AUTH_SOCK, so on attach the session
+# env holds the connecting client's forwarded socket. IdentityAgent (ssh/config)
+# follows this symlink, so git on this Mac signs with the connected device's key.
+#
+# Only repoint when the socket path matches a real forwarded agent (tsshd or
+# ssh) and the socket is live. A local or Mosh attach carries the empty launchd agent (or no var
+# at all); ignoring those is the safety that keeps a good link from being
+# clobbered when you also have a device connected.
+
+set -euo pipefail
+
+session="${1:?usage: tmux-ssh-agent-link <session-name>}"
+
+sock=$(tmux show-environment -t "$session" SSH_AUTH_SOCK | sed -n 's/^SSH_AUTH_SOCK=//p')
+
+case "$sock" in
+  */tsshd-*/agent.* | */ssh-*/agent.*)
+    if [[ -S "$sock" ]]; then
+      ln -sfn "$sock" "$HOME/.ssh/agent.sock"
+    fi
+    ;;
+esac
