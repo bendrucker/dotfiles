@@ -1,3 +1,9 @@
+# Use a live forwarded agent (a connected device, via tsshd/ssh) when present;
+# the tmux client-attached hook keeps ~/.ssh/agent.sock pointed at it. Falls
+# back to Secretive (Host * in ~/.ssh/config.local) when no device is connected.
+Match exec "test -S ~/.ssh/agent.sock"
+  IdentityAgent ~/.ssh/agent.sock
+
 Host *
   IgnoreUnknown AddKeysToAgent,UseKeychain
   AddKeysToAgent yes
