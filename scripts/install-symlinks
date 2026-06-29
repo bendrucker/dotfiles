@@ -2,6 +2,9 @@
 # Usage: install-symlinks [dotfiles-root]
 set -e
 
+# shellcheck source=lib/symlinks.sh
+. "$(dirname "$0")/lib/symlinks.sh"
+
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
 
@@ -17,8 +20,7 @@ for conf in "$DOTFILES_ROOT"/*/symlinks.conf; do
       echo "install-symlinks: $conf: source '$src' does not exist" >&2
       exit 1
     fi
-    mkdir -p "$(dirname "$dst")"
-    ln -sfn "$topic_dir/$src" "$dst"
+    symlink_create "$topic_dir/$src" "$dst"
     if [ -z "$desired_targets" ]; then
       desired_targets="$dst"
     else
@@ -28,34 +30,13 @@ $dst"
   done < "$conf"
 done
 
-# Remove stale symlinks pointing into DOTFILES_ROOT that are no longer declared
-is_desired() {
-  printf '%s\n' "$desired_targets" | grep -qFx "$1"
-}
-
-# Read candidate link paths from stdin (one per line) and remove those that
-# point into DOTFILES_ROOT but are no longer declared.
-remove_stale() {
-  while IFS= read -r link; do
-    [ -L "$link" ] || continue
-    target="$(readlink "$link" 2>/dev/null)" || continue
-    case "$target" in
-      "$DOTFILES_ROOT"/*) ;;
-      *) continue ;;
-    esac
-    is_desired "$link" || {
-      echo "install-symlinks: removing stale symlink $link -> $target"
-      rm "$link"
-    }
-  done
-}
-
+# Remove stale symlinks pointing into DOTFILES_ROOT that are no longer declared.
 # Scan directories that could contain managed symlinks. The HOME glob enumerates
 # dotfiles directly under $HOME (and ~/.ssh); the XDG scan recurses to find nested
 # links. Both feed the same removal rule.
 {
   printf '%s\n' "$HOME"/.[!.]*
   [ -d "$HOME/.ssh" ] && printf '%s\n' "$HOME/.ssh"/*
-} | remove_stale
+} | symlink_prune "$DOTFILES_ROOT" "$desired_targets"
 
-find "$XDG_CONFIG_HOME" -type l 2>/dev/null | remove_stale
+find "$XDG_CONFIG_HOME" -type l 2>/dev/null | symlink_prune "$DOTFILES_ROOT" "$desired_targets"

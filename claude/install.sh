@@ -3,6 +3,9 @@ set -e
 
 [[ "$(uname -s)" == "Darwin" ]] || exit 0
 
+# shellcheck source=../scripts/lib/symlinks.sh
+. "$(cd "$(dirname "$0")/.." && pwd)/scripts/lib/symlinks.sh"
+
 CLAUDE_REPO_URL="https://github.com/bendrucker/claude.git"
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 
@@ -32,19 +35,20 @@ install_claude_symlinks() {
 
   mkdir -p "$target_dir"
 
+  local desired=""
   for item in "$source_dir"/*; do
     [[ -e "$item" ]] || continue
     local name
     name="$(basename "$item")"
     local target="$target_dir/$name"
 
-    if [[ -L "$target" ]] && [[ "$(readlink "$target")" == "$item" ]]; then
-      continue
-    fi
-
-    ln -sfn "$item" "$target"
+    symlink_create "$item" "$target"
     echo "  ✓ ~/.claude/$name"
+
+    desired+="${desired:+$'\n'}$target"
   done
+
+  find "$target_dir" -maxdepth 1 -type l | symlink_prune "$CLAUDE_REPO_HOME/user" "$desired"
 }
 
 setup_claude_repo
