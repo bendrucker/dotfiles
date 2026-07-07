@@ -170,8 +170,9 @@ main () {
       # dry-run counts everything it lists, since it removes nothing).
 
       # Merged upstream: the work landed, so drop worktree and branch even when
-      # dirty. The leftovers are cruft.
-      if [[ "$pr_st" == MERGED ]]; then
+      # dirty. The leftovers are cruft. Never the current worktree: you cannot
+      # remove the checkout you are standing in.
+      if [[ "$pr_st" == MERGED && "$is_current" != true ]]; then
         if (( dry_run )) || wt remove --foreground --force --force-delete "$branch" </dev/null >/dev/null 2>&1; then
           (( worktrees++ )); seen[$branch]=1
         fi
