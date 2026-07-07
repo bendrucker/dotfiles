@@ -286,7 +286,7 @@ main () {
       if (( do_remove )); then
         for lbl in "${selected[@]}"; do
           [[ -z "$lbl" ]] && continue
-          if wt remove --foreground --force --force-delete "${handle_of[$lbl]}" </dev/null >/dev/null 2>&1; then
+          if (( dry_run )) || wt remove --foreground --force --force-delete "${handle_of[$lbl]}" </dev/null >/dev/null 2>&1; then
             (( worktrees++ ))
           fi
         done
