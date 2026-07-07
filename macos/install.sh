@@ -16,6 +16,7 @@ install_launch_agent() {
   local description="$2"
   local plist_src="$ZSH/macos/$plist_name"
   local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
+  local label="${plist_name%.plist}"
 
   if [[ ! -f "$plist_src" ]]; then
     gum log --level warn "$description plist not found, skipping"
@@ -26,21 +27,29 @@ install_launch_agent() {
 
   mkdir -p "$HOME/Library/LaunchAgents"
 
-  launchctl unload "$plist_dst" 2>/dev/null || true
+  launchctl bootout "gui/$UID/$label" 2>/dev/null || true
 
   cp "$plist_src" "$plist_dst"
 
-  if launchctl load "$plist_dst" 2>/dev/null; then
+  # bootout of a running service is asynchronous; an immediate bootstrap can
+  # race the teardown and fail, so retry briefly.
+  local _attempt
+  for _attempt in 1 2 3 4 5; do
+    launchctl bootstrap "gui/$UID" "$plist_dst" 2>/dev/null && break
+    sleep 0.5
+  done
+
+  if launchctl print "gui/$UID/$label" >/dev/null 2>&1; then
     gum log --level info "$description launchd agent installed"
   else
-    gum log --level warn "failed to load $description launchd agent; may need re-login"
+    gum log --level error "$description launchd agent failed to load; run: launchctl bootstrap gui/$UID $plist_dst"
   fi
 }
 
 setup_dotfiles_upgrade() {
   # Remove old sync job (replaced by upgrade job which includes sync)
   local old_sync_plist="$HOME/Library/LaunchAgents/com.user.dotfiles-sync.plist"
-  launchctl unload "$old_sync_plist" 2>/dev/null || true
+  launchctl bootout "gui/$UID/com.user.dotfiles-sync" 2>/dev/null || true
   rm -f "$old_sync_plist"
 
   install_launch_agent com.user.dotfiles-upgrade.plist "nightly dotfiles upgrade"
@@ -52,8 +61,7 @@ setup_worktree_prune() {
 
 setup_claude_upgrade() {
   # Remove old plist that pointed to ~/.claude-repo/bin/claude-upgrade
-  local old_plist="$HOME/Library/LaunchAgents/com.user.claude-upgrade.plist"
-  launchctl unload "$old_plist" 2>/dev/null || true
+  launchctl bootout "gui/$UID/com.user.claude-upgrade" 2>/dev/null || true
 
   install_launch_agent com.user.claude-upgrade.plist "nightly Claude upgrade"
 }
