@@ -1,3 +1,4 @@
 #!/usr/bin/env sh
 
-alias https="http --default-scheme=https"
+alias http='xh'
+alias https='xhs'

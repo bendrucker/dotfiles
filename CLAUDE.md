@@ -136,14 +136,13 @@ Based on recent history:
 
 ## Stacked PRs
 
-I use worktrunk for worktree creation and git-town for stack sync and PR management:
+I use worktrunk for worktree creation. Graphite (`gt`) is the preferred stacking tool where the platform supports it (GitHub). On GitLab and anywhere else Graphite isn't available, `wt sync` handles stack rebases:
 
 1. Create base branch: `wt switch --create feature/base`
 2. Work, commit, then stack next branch: `wt switch --create child-name --base=@`
-3. Sync entire stack: `git town sync --stack`
-4. Propose all PRs: `git town propose --stack`
+3. Sync entire stack: `wt sync` (add `--push` to update remotes)
 
-Ship branches oldest-first. After a stack branch merges, `git town sync` rebases remaining branches.
+Ship branches oldest-first. After a stack branch merges, `wt sync` rebases remaining branches.
 
 ## ZSH Startup Performance
 
