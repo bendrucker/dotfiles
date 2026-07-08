@@ -32,7 +32,14 @@ jobs:
       run: sudo apt-get install -y zsh
     - name: Overwrite conflicting formulae
       if: ${{ runner.os == 'macOS' }}
-      run: brew link --overwrite openssl@3 || true
+      # The runner's stale bin/openssl points into the openssl@1.1 keg, and the
+      # cached Homebrew Backup dir holds a same-inode bin/openssl. Both survive
+      # the actions cache, so brew bundle's openssl@3 upgrade fails to back up
+      # and relink the symlink every run. Clear both, then relink openssl@3.
+      run: |
+        rm -f /opt/homebrew/bin/openssl
+        rm -rf ~/Library/Caches/Homebrew/Backup
+        brew link --overwrite openssl@3 || true
     - name: Print Homebrew configuration
       run: brew config
     - name: Cache mise installs
