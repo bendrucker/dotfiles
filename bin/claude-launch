@@ -67,9 +67,11 @@ perm=$(choose_flag "permission-mode" default plan acceptEdits bypassPermissions)
 model=$(choose_flag "model" default opus sonnet haiku)
 
 typeset -a agent_names
-local f
+local f firstline
 for f in ~/.claude/agents/*.md(N); do
-  agent_names+=("${${f:t}:r}")
+  # Only files with YAML frontmatter are agents; skips README and other docs.
+  read -r firstline < "$f"
+  [[ "$firstline" == "---" ]] && agent_names+=("${${f:t}:r}")
 done
 agent=$(choose_flag "agent" "(none)" "${agent_names[@]}")
 
