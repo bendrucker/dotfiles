@@ -10,6 +10,9 @@ DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 source "${0:A:h}/../scripts/lib/git-sync.sh"
 source "${0:A:h}/../scripts/lib/report-failure.sh"
 source "${0:A:h}/../scripts/lib/sync-notify.sh"
+source "${0:A:h}/../scripts/lib/git-diff-review.sh"
+
+git_review_dirty "$DOTFILES_HOME" "Dotfiles Sync" || exit 1
 
 sync_rc=0
 new_rev=$(git_sync_notify "$DOTFILES_HOME" "Dotfiles Sync") || sync_rc=$?

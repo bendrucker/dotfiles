@@ -62,13 +62,13 @@ GUM
     The stderr should include "Already up to date"
   End
 
-  # The other side of the case block: a guard failure (git_sync returns 1) must
-  # surface as a nonzero exit.
+  # A dirty working tree is caught by git_review_dirty before the sync. Without a
+  # TTY (as here) it renders the diff, notifies, and aborts with a nonzero exit.
   It "exits 1 when the working tree is dirty"
     touch "$repo/dirty"
     git -C "$repo" add dirty
     When call run_sync
     The status should equal 1
-    The stderr should include "has local changes"
+    The stderr should include "Local changes present"
   End
 End

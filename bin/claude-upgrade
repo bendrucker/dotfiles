@@ -7,6 +7,7 @@ CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 source "${0:A:h}/../scripts/lib/git-sync.sh"
 source "${0:A:h}/../scripts/lib/report-failure.sh"
 source "${0:A:h}/../scripts/lib/sync-notify.sh"
+source "${0:A:h}/../scripts/lib/git-diff-review.sh"
 
 revert_cosmetic_json_changes() {
   local changed_files
@@ -29,24 +30,6 @@ revert_cosmetic_json_changes() {
   done <<< "$changed_files"
 }
 
-render_diff() {
-  local changed_files
-  changed_files=$(git diff HEAD --name-only 2>/dev/null)
-
-  [[ -z "$changed_files" ]] && return
-
-  local f head_sorted working_sorted
-  while IFS= read -r f; do
-    [[ -f "$f" ]] || continue
-    if [[ "$f" == *.json ]]; then
-      head_sorted=$(git show "HEAD:$f" 2>/dev/null | jq -S . 2>/dev/null) &&
-        working_sorted=$(jq -S . "$f" 2>/dev/null) &&
-        { diff -u --label "a/$f" --label "b/$f" <(echo "$head_sorted") <(echo "$working_sorted") || true; continue; }
-    fi
-    git diff HEAD -- "$f" 2>/dev/null
-  done <<< "$changed_files"
-}
-
 sync_repo() {
   gum log --level info "Syncing Claude repository..."
 
@@ -54,24 +37,7 @@ sync_repo() {
 
   revert_cosmetic_json_changes
 
-  local git_status
-  git_status=$(git status --porcelain 2>/dev/null)
-  if [[ -n "$git_status" ]]; then
-    gum log --level info "Local changes in $CLAUDE_REPO_HOME:"
-    echo "$git_status"
-    gum log --level info "Diff:"
-    render_diff
-
-    if gum confirm "Discard local changes and continue?" --default=no; then
-      gum log --level info "Discarding local changes..."
-      git reset --hard HEAD
-      git clean -fd
-    else
-      gum log --level error "Local changes present - skipping sync"
-      notify "Claude Upgrade" "Skipped: local changes present"
-      return 1
-    fi
-  fi
+  git_review_dirty "$CLAUDE_REPO_HOME" "Claude Upgrade" || return 1
 
   local new_rev sync_rc=0
   new_rev=$(git_sync_notify "$CLAUDE_REPO_HOME" "Claude Upgrade") || sync_rc=$?
