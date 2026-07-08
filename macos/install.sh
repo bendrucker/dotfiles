@@ -43,6 +43,8 @@ install_launch_agent() {
     gum log --level info "$description launchd agent installed"
   else
     gum log --level error "$description launchd agent failed to load; run: launchctl bootstrap gui/$UID $plist_dst"
+    launchd_failed=1
+    return 1
   fi
 }
 
@@ -77,3 +79,7 @@ if [[ ! -L "$HOME/.dotfiles" ]]; then
   setup_claude_upgrade
   setup_worktree_prune
 fi
+
+# Exit nonzero if any agent failed to load, so the failure is not swallowed by
+# a zero exit. install_launch_agent already logs which one and how to recover.
+exit "${launchd_failed:-0}"
