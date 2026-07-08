@@ -27,20 +27,13 @@ cwa pr:123
 
 Dispatch and monitor background agents (`claude --bg` / `claude agents`).
 
-| Command | Action |
-|---------|--------|
-| `ca` | Open the agent view in the current directory |
-| `cbg` | Launch a background agent via the gum picker (`claude-launch`) |
-| `cbl <id>` | Show an agent's recent output (`claude logs`) |
-| `cbk <id>` | Stop an agent (`claude stop`) |
-
-Attach to a running agent with `claude attach <id>`.
+`ca` opens the agent view. From there, logs, stop, and attach are a keypress away. Launch new agents with the `claude-launch` command below.
 
 ### Launcher
 
-`cbg` (`bin/claude-launch`) walks you through a launch:
+`claude-launch` walks you through a launch:
 
-1. Pick a launch directory. Repos are discovered under the curated roots, with the directories of in-flight agents sorted to the top. Pass `--here` to skip the picker and use the current directory.
+1. Pick a launch directory with fzf over zoxide's frecency list, with the directories of in-flight agents sorted to the top. Pass `--here` to skip the picker and use the current directory.
 2. Choose permission mode and model. Each is optional. Skip to take Claude's default.
 3. Write the task in an editor, pre-filled from the pasteboard when it looks like a task or URL.
 
@@ -52,7 +45,4 @@ The agent is dispatched detached and its id is logged. Monitoring and attach hap
 
 ### Curation
 
-| Variable | Effect |
-|----------|--------|
-| `CLAUDE_AGENTS_ROOT` | Colon-separated roots the launcher discovers repos under. Falls back to `$WT_ALL_ROOT`, then `$PROJECTS`, then `~/src`. |
-| `CLAUDE_AGENTS_ADD_DIR` | Colon-separated tool-access directories passed as repeated `--add-dir` to both the launcher's dispatch and the popup. |
+`CLAUDE_AGENTS_ADD_DIR` (colon-separated) passes tool-access directories as repeated `--add-dir` to both the launcher's dispatch and the popup.

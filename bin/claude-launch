@@ -1,13 +1,11 @@
 #!/usr/bin/env zsh
-# claude-launch: gum launcher for background Claude agents (`claude --bg`).
+# claude-launch: launcher for background Claude agents (`claude --bg`).
 #
-# Picks a launch directory from git repos under the curated roots, gathers
-# optional permission-mode and model choices, prompts for the task, and
+# Picks a launch directory from zoxide's frecency list with fzf, gathers
+# optional permission-mode and model choices via gum, prompts for the task, and
 # dispatches a detached background agent. Monitoring and attach live in the
 # built-in view (`claude agents`); this script is launcher-only.
 #
-# Roots come from $CLAUDE_AGENTS_ROOT, falling back through $WT_ALL_ROOT and
-# $PROJECTS to ~/src (colon-separated, PATH-style, same convention as wt-all).
 # $CLAUDE_AGENTS_ADD_DIR (colon-separated) adds tool-access dirs to every
 # dispatch via repeated --add-dir. Pass --here to skip the picker and launch in
 # the current directory.
@@ -23,34 +21,24 @@ pick_repo() {
     return
   fi
 
-  local roots="${CLAUDE_AGENTS_ROOT:-${WT_ALL_ROOT:-${PROJECTS:-$HOME/src}}}"
-
-  # In-flight repos first so they sort to the top of the picker, then every
-  # repo discovered under the roots. ${(u)...} keeps first occurrence, so an
-  # agent's cwd wins its slot over the later discovered duplicate.
-  local -a seeds repos
+  # In-flight agent dirs first, then zoxide's frecency-ranked dirs. ${(u)...}
+  # keeps first occurrence, so an active agent's dir wins its slot and fzf's
+  # --no-sort preserves that order until you type.
+  local -a seeds dirs
   seeds=("${(@f)$(claude agents --json 2>/dev/null | jq -r '.[].cwd // empty' 2>/dev/null)}")
+  dirs=("${(@f)$(zoxide query -l 2>/dev/null)}")
 
-  local root gitdir
-  for root in ${(s.:.)roots}; do
-    [[ -d "$root" ]] || continue
-    while IFS= read -r gitdir; do
-      repos+=("${gitdir%/.git}")
-    done < <(find "$root" -maxdepth 4 \
-      \( -type d \( -name node_modules -o -name vendor \) -prune \) -o \
-      \( -type d -name .git -prune -print \))
-  done
-
-  local -a candidates=("${seeds[@]}" "${repos[@]}")
+  local -a candidates=("${seeds[@]}" "${dirs[@]}")
   candidates=(${(u)candidates})
   candidates=(${candidates:#})
 
   if (( ${#candidates} == 0 )); then
-    gum log --level error "no repos found under $roots" >&2
+    gum log --level error "no directories from zoxide" >&2
     return 1
   fi
 
-  print -rl -- "${candidates[@]}" | gum filter --placeholder "launch dir…"
+  print -rl -- "${candidates[@]}" \
+    | fzf --no-sort --border --border-label ' claude · launch dir ' --prompt '  '
 }
 
 # Selecting the leading default/(none) option, or skipping with Esc, leaves the

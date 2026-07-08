@@ -14,11 +14,6 @@ cwp() {
   wt switch --create --execute="claude --name={{ branch }} --permission-mode=plan --append-system-prompt='$_claude_worktree_prompt'" "$@" -- "$(pbpaste)"
 }
 
-# Background agent view (`claude agents`). `ca` opens the view in the current
-# dir; `cbg` runs the gum launcher (bin/claude-launch) to dispatch a new
-# background agent. Lifecycle passthroughs wrap the hidden subcommands; attach
-# with `claude attach <id>`.
+# Open the background-agent view (`claude agents`). Launch new agents with the
+# claude-launch command; logs, stop, and attach live inside the view.
 alias ca='claude agents'
-alias cbg='claude-launch'
-alias cbl='claude logs'
-alias cbk='claude stop'
