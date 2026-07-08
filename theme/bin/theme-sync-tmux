@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Apply the active catppuccin flavor to a running tmux server.
 # Self-gates: exits 0 without work if the server is already on the right flavor,
-# or if no tmux server is running.
+# or if no tmux server (or no catppuccin plugin) is present.
+#
+# The retheme itself is a single tmux invocation sourcing retheme.conf, so it
+# executes as one contiguous command block in the server and serializes with
+# the client theme hooks (tmux/appearance/appearance.conf) instead of
+# interleaving with them.
 set -euo pipefail
 
 bin_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -10,39 +15,12 @@ flavor="$("$bin_dir/theme-flavor")"
 # No tmux server, nothing to sync. Next `tmux` will pick up the flavor at startup.
 tmux list-sessions >/dev/null 2>&1 || exit 0
 
+# Plugin not installed yet (fresh bootstrap): nothing to retheme.
+plugin_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/plugins/tmux"
+[[ -f "$plugin_dir/catppuccin_tmux.conf" ]] || exit 0
+
 current=$(tmux show -gv @catppuccin_flavor 2>/dev/null || echo "")
 [[ "$current" == "$flavor" ]] && exit 0
 
-plugin_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/plugins/tmux"
-tmux_config="${XDG_CONFIG_HOME:-$HOME/.config}/tmux"
-
-for f in "$plugin_dir/catppuccin_options_tmux.conf" \
-         "$plugin_dir/catppuccin_tmux.conf"; do
-  if [[ ! -f "$f" ]]; then
-    echo "theme-sync-tmux: missing $f" >&2
-    exit 1
-  fi
-done
-
-# Unset @thm_* and @catppuccin_* variables so -ogq (only-if-unset) defaults can re-apply
-while IFS= read -r var; do
-  tmux set -gu "$var"
-done < <(tmux show -g | awk '/^@(thm_|catppuccin_)/{print $1}')
-
-# Unset @_ctp_* variables (not matched by the pattern above)
-tmux set -gu @_ctp_status_bg 2>/dev/null || true
-
-tmux set -g @catppuccin_flavor "$flavor"
-
-# appearance.conf must be sourced before the catppuccin confs, matching startup
-# order in tmux.conf. catppuccin_tmux.conf reads @catppuccin_window_status_style
-# (set to "rounded" by appearance.conf) when it builds the window-status formats.
-# Sourcing appearance.conf afterward leaves the style unset during the rebuild, so
-# the defaults apply and window pills render with square "basic" separators.
-tmux source-file "$tmux_config/appearance/appearance.conf"
-tmux source-file "$plugin_dir/catppuccin_options_tmux.conf"
-tmux source-file "$plugin_dir/catppuccin_tmux.conf"
-tmux source-file "$tmux_config/alerts/alerts.conf"
-
-# Re-evaluate post-TPM status (catppuccin module variables changed)
-tmux source-file "$tmux_config/appearance/status.conf"
+exec tmux set -g @catppuccin_flavor "$flavor" \; \
+  source-file "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/appearance/retheme.conf"
