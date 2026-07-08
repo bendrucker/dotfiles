@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Open the agent view, folding CLAUDE_AGENTS_ADD_DIR (colon-separated) into
+# repeated --add-dir flags so sessions dispatched from the view inherit the
+# curated tool-access dirs. Run by the prefix-a popup (tmux/claude/claude.conf).
+
+args=()
+if [[ -n "${CLAUDE_AGENTS_ADD_DIR:-}" ]]; then
+  IFS=':' read -ra dirs <<< "$CLAUDE_AGENTS_ADD_DIR"
+  for d in "${dirs[@]}"; do
+    [[ -n "$d" ]] && args+=(--add-dir "$d")
+  done
+fi
+
+exec claude agents ${args[@]+"${args[@]}"}

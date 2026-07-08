@@ -1,0 +1,120 @@
+#!/usr/bin/env zsh
+# claude-launch: gum launcher for background Claude agents (`claude --bg`).
+#
+# Picks a launch directory from git repos under the curated roots, gathers
+# optional model/permission/agent choices, prompts for the task, and dispatches
+# a detached background agent. Monitoring and attach live in the built-in view
+# (`claude agents`); this script is launcher-only.
+#
+# Roots come from $CLAUDE_AGENTS_ROOT, falling back through $WT_ALL_ROOT and
+# $PROJECTS to ~/src (colon-separated, PATH-style, same convention as wt-all).
+# $CLAUDE_AGENTS_ADD_DIR (colon-separated) adds tool-access dirs to every
+# dispatch via repeated --add-dir. Pass --here to skip the picker and launch in
+# the current directory.
+
+set -uo pipefail
+
+here=0
+[[ "${1:-}" == --here ]] && here=1
+
+pick_repo() {
+  if (( here )); then
+    print -r -- "$PWD"
+    return
+  fi
+
+  local roots="${CLAUDE_AGENTS_ROOT:-${WT_ALL_ROOT:-${PROJECTS:-$HOME/src}}}"
+
+  # In-flight repos first so they sort to the top of the picker, then every
+  # repo discovered under the roots. ${(u)...} keeps first occurrence, so an
+  # agent's cwd wins its slot over the later discovered duplicate.
+  local -a seeds repos
+  seeds=("${(@f)$(claude agents --json 2>/dev/null | jq -r '.[].cwd // empty' 2>/dev/null)}")
+
+  local root gitdir
+  for root in ${(s.:.)roots}; do
+    [[ -d "$root" ]] || continue
+    while IFS= read -r gitdir; do
+      repos+=("${gitdir%/.git}")
+    done < <(find "$root" -maxdepth 4 \
+      \( -type d \( -name node_modules -o -name vendor \) -prune \) -o \
+      \( -type d -name .git -prune -print \))
+  done
+
+  local -a candidates=("${seeds[@]}" "${repos[@]}")
+  candidates=(${(u)candidates})
+  candidates=(${candidates:#})
+
+  if (( ${#candidates} == 0 )); then
+    gum log --level error "no repos found under $roots" >&2
+    return 1
+  fi
+
+  print -rl -- "${candidates[@]}" | gum filter --placeholder "launch dir…"
+}
+
+# Selecting the leading default/(none) option, or skipping with Esc, leaves the
+# flag off so Claude applies its own default.
+choose_flag() {
+  local header="$1"; shift
+  gum choose --header "$header" "$@"
+}
+
+repo=$(pick_repo) || exit 1
+[[ -n "$repo" ]] || { gum log --level warn "no directory selected"; exit 1; }
+
+perm=$(choose_flag "permission-mode" default plan acceptEdits bypassPermissions)
+model=$(choose_flag "model" default opus sonnet haiku)
+
+typeset -a agent_names
+local f
+for f in ~/.claude/agents/*.md(N); do
+  agent_names+=("${${f:t}:r}")
+done
+agent=$(choose_flag "agent" "(none)" "${agent_names[@]}")
+
+# Pre-fill the editor from the pasteboard when it reads like a task or URL
+# (mirrors cwp), skipping filesystem paths and oversized blobs.
+seed=""
+clip="$(pbpaste 2>/dev/null)"
+if [[ -n "$clip" && ${#clip} -le 4000 && "$clip" != /* \
+   && ( "$clip" == http://* || "$clip" == https://* || "$clip" == *' '* ) ]]; then
+  seed="$clip"
+fi
+
+prompt=$(gum write --placeholder "Task for the agent…" --value "$seed" --width 80 --height 12)
+[[ -n "$prompt" ]] || { gum log --level warn "no prompt entered"; exit 1; }
+
+# Name defaults to a slug of the prompt's first words.
+first="${prompt%%$'\n'*}"
+typeset -a words=(${=first})
+slug="${(j:-:)words[1,6]:l}"
+slug="${slug//[^a-z0-9-]/-}"
+while [[ "$slug" == *--* ]]; do slug="${slug//--/-}"; done
+slug="${slug#-}"; slug="${slug%-}"
+[[ -n "$slug" ]] || slug="agent"
+
+typeset -a cmd=(claude --bg --name "$slug")
+[[ -n "$perm"  && "$perm"  != default  ]] && cmd+=(--permission-mode "$perm")
+[[ -n "$model" && "$model" != default  ]] && cmd+=(--model "$model")
+[[ -n "$agent" && "$agent" != "(none)" ]] && cmd+=(--agent "$agent")
+if [[ -n "${CLAUDE_AGENTS_ADD_DIR:-}" ]]; then
+  local d
+  for d in ${(s.:.)CLAUDE_AGENTS_ADD_DIR}; do
+    cmd+=(--add-dir "$d")
+  done
+fi
+cmd+=("$prompt")
+
+gum log --level info "Launching in $repo"
+out=$( (cd "$repo" && "${cmd[@]}") )
+rc=$?
+print -r -- "$out"
+if (( rc )); then
+  gum log --level error "launch failed"
+  exit $rc
+fi
+
+# First line is "backgrounded · <id> · <name>"; strip ANSI and pull the id.
+id=$(print -r -- "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | awk -F ' · ' 'NR==1 {print $2}')
+[[ -n "$id" ]] && gum log --level info "agent $id · attach with: claude attach $id"

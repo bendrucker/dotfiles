@@ -13,3 +13,12 @@ alias cwa="wt switch --execute=\"claude --name={{ branch }} --permission-mode=au
 cwp() {
   wt switch --create --execute="claude --name={{ branch }} --permission-mode=plan --append-system-prompt='$_claude_worktree_prompt'" "$@" -- "$(pbpaste)"
 }
+
+# Background agent view (`claude agents`). `ca` opens the view in the current
+# dir; `cbg` runs the gum launcher (bin/claude-launch) to dispatch a new
+# background agent. Lifecycle passthroughs wrap the hidden subcommands; attach
+# with `claude attach <id>`.
+alias ca='claude agents'
+alias cbg='claude-launch'
+alias cbl='claude logs'
+alias cbk='claude stop'
