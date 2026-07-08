@@ -1,0 +1,100 @@
+#!/usr/bin/env zsh
+# claude-launch: launcher for background Claude agents (`claude --bg`).
+#
+# Picks a launch directory from zoxide's frecency list with fzf, gathers
+# optional permission-mode and model choices via gum, prompts for the task, and
+# dispatches a detached background agent. Monitoring and attach live in the
+# built-in view (`claude agents`); this script is launcher-only.
+#
+# $CLAUDE_AGENTS_ADD_DIR (colon-separated) adds tool-access dirs to every
+# dispatch via repeated --add-dir. Pass --here to skip the picker and launch in
+# the current directory.
+
+set -uo pipefail
+
+here=0
+[[ "${1:-}" == --here ]] && here=1
+
+pick_repo() {
+  if (( here )); then
+    print -r -- "$PWD"
+    return
+  fi
+
+  # In-flight agent dirs first, then zoxide's frecency-ranked dirs. ${(u)...}
+  # keeps first occurrence, so an active agent's dir wins its slot and fzf's
+  # --no-sort preserves that order until you type.
+  local -a seeds dirs
+  seeds=("${(@f)$(claude agents --json 2>/dev/null | jq -r '.[].cwd // empty' 2>/dev/null)}")
+  dirs=("${(@f)$(zoxide query -l 2>/dev/null)}")
+
+  local -a candidates=("${seeds[@]}" "${dirs[@]}")
+  candidates=(${(u)candidates})
+  candidates=(${candidates:#})
+
+  if (( ${#candidates} == 0 )); then
+    gum log --level error "no directories from zoxide" >&2
+    return 1
+  fi
+
+  print -rl -- "${candidates[@]}" \
+    | fzf --no-sort --border --border-label ' claude · launch dir ' --prompt '  '
+}
+
+# Selecting the leading default/(none) option, or skipping with Esc, leaves the
+# flag off so Claude applies its own default.
+choose_flag() {
+  local header="$1"; shift
+  gum choose --header "$header" "$@"
+}
+
+repo=$(pick_repo) || exit 1
+[[ -n "$repo" ]] || { gum log --level warn "no directory selected"; exit 1; }
+
+perm=$(choose_flag "permission-mode" default plan acceptEdits bypassPermissions)
+model=$(choose_flag "model" default opus sonnet haiku)
+
+# Pre-fill the editor from the pasteboard when it reads like a task or URL
+# (mirrors cwp), skipping filesystem paths and oversized blobs.
+seed=""
+clip="$(pbpaste 2>/dev/null)"
+if [[ -n "$clip" && ${#clip} -le 4000 && "$clip" != /* \
+   && ( "$clip" == http://* || "$clip" == https://* || "$clip" == *' '* ) ]]; then
+  seed="$clip"
+fi
+
+prompt=$(gum write --placeholder "Task for the agent…" --value "$seed" --width 80 --height 12)
+[[ -n "$prompt" ]] || { gum log --level warn "no prompt entered"; exit 1; }
+
+# Name defaults to a slug of the prompt's first words.
+first="${prompt%%$'\n'*}"
+typeset -a words=(${=first})
+slug="${(j:-:)words[1,6]:l}"
+slug="${slug//[^a-z0-9-]/-}"
+while [[ "$slug" == *--* ]]; do slug="${slug//--/-}"; done
+slug="${slug#-}"; slug="${slug%-}"
+[[ -n "$slug" ]] || slug="agent"
+
+typeset -a cmd=(claude --bg --name "$slug")
+[[ -n "$perm"  && "$perm"  != default  ]] && cmd+=(--permission-mode "$perm")
+[[ -n "$model" && "$model" != default  ]] && cmd+=(--model "$model")
+if [[ -n "${CLAUDE_AGENTS_ADD_DIR:-}" ]]; then
+  local d
+  for d in ${(s.:.)CLAUDE_AGENTS_ADD_DIR}; do
+    cmd+=(--add-dir "$d")
+  done
+fi
+cmd+=("$prompt")
+
+gum log --level info "Launching in $repo"
+out=$( (cd "$repo" && "${cmd[@]}") )
+rc=$?
+print -r -- "$out"
+if (( rc )); then
+  gum log --level error "launch failed"
+  exit $rc
+fi
+
+# First line is "backgrounded · <id> · <name>"; strip ANSI and pull the id.
+id=$(print -r -- "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | awk -F ' · ' 'NR==1 {print $2}')
+[[ -n "$id" ]] && gum log --level info "agent $id · attach with: claude attach $id"

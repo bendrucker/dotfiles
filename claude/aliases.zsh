@@ -13,3 +13,7 @@ alias cwa="wt switch --execute=\"claude --name={{ branch }} --permission-mode=au
 cwp() {
   wt switch --create --execute="claude --name={{ branch }} --permission-mode=plan --append-system-prompt='$_claude_worktree_prompt'" "$@" -- "$(pbpaste)"
 }
+
+# Open the background-agent view (`claude agents`). Launch new agents with the
+# claude-launch command; logs, stop, and attach live inside the view.
+alias ca='claude agents'

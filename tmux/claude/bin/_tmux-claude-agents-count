@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Count background agents that finished or are waiting on input
+# (state done/blocked), for the status-right pill. Mirrors _tmux-bell-count:
+# prints a single integer.
+#
+# `claude agents --json` is ~0.35s and status-right redraws every
+# status-interval, so the result is cached with a short mtime TTL and only
+# re-queried once the cache goes stale.
+
+cache="${TMPDIR:-/tmp}/tmux-claude-agents-count"
+ttl=10
+
+if [[ -f "$cache" ]]; then
+  now=$(date +%s)
+  mtime=$(stat -f %m "$cache" 2>/dev/null || echo 0)
+  if (( now - mtime < ttl )); then
+    cat "$cache"
+    exit 0
+  fi
+fi
+
+count=$(claude agents --json 2>/dev/null \
+  | jq '[.[] | select(.state == "done" or .state == "blocked")] | length' 2>/dev/null)
+[[ "$count" =~ ^[0-9]+$ ]] || count=0
+
+# Write via temp + rename so a concurrent redraw never reads a torn count.
+tmp="$cache.$$"
+printf '%s' "$count" > "$tmp" && mv -f "$tmp" "$cache"
+printf '%s\n' "$count"

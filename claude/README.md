@@ -21,4 +21,28 @@ ccw my-feature --base=@ -- 'stack on current branch'
 cwa pr:123
 ```
 
-`cwp` reads the pasteboard and passes it as Claude's initial prompt — paste an issue URL or Linear prompt, then run `cwp <branch>`.
+`cwp` reads the pasteboard and passes it as Claude's initial prompt. Paste an issue URL or Linear prompt, then run `cwp <branch>`.
+
+## Agent View
+
+Dispatch and monitor background agents (`claude --bg` / `claude agents`).
+
+`ca` opens the agent view. From there, logs, stop, and attach are a keypress away. Launch new agents with the `claude-launch` command below.
+
+### Launcher
+
+`claude-launch` walks you through a launch:
+
+1. Pick a launch directory with fzf over zoxide's frecency list, with the directories of in-flight agents sorted to the top. Pass `--here` to skip the picker and use the current directory.
+2. Choose permission mode and model. Each is optional. Skip to take Claude's default.
+3. Write the task in an editor, pre-filled from the pasteboard when it looks like a task or URL.
+
+The agent is dispatched detached and its id is logged. Monitoring and attach happen in the built-in view, so the launcher stops there.
+
+### Tmux Popup and Status Chip
+
+`prefix a` opens the agent view in a popup, near-fullscreen on a narrow client. A 󰚩 pill appears in the status bar while any background agent has finished or is blocked on input, and disappears at zero.
+
+### Curation
+
+`CLAUDE_AGENTS_ADD_DIR` (colon-separated) passes tool-access directories as repeated `--add-dir` to both the launcher's dispatch and the popup.
