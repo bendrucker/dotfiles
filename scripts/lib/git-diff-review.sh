@@ -77,7 +77,10 @@ git_review_open_pr() {
     return 1
   fi
 
-  git -C "$repo_dir" checkout "$base"
+  if ! git -C "$repo_dir" checkout "$base"; then
+    gum log --level error "Failed to return to $base - change is safe on $branch"
+    return 1
+  fi
   gum log --level info "PR opened: $pr_url"
   notify "$title" "Opened PR for local changes"
 }
