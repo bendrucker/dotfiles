@@ -2,9 +2,9 @@
 # claude-launch: gum launcher for background Claude agents (`claude --bg`).
 #
 # Picks a launch directory from git repos under the curated roots, gathers
-# optional model/permission/agent choices, prompts for the task, and dispatches
-# a detached background agent. Monitoring and attach live in the built-in view
-# (`claude agents`); this script is launcher-only.
+# optional permission-mode and model choices, prompts for the task, and
+# dispatches a detached background agent. Monitoring and attach live in the
+# built-in view (`claude agents`); this script is launcher-only.
 #
 # Roots come from $CLAUDE_AGENTS_ROOT, falling back through $WT_ALL_ROOT and
 # $PROJECTS to ~/src (colon-separated, PATH-style, same convention as wt-all).
@@ -66,15 +66,6 @@ repo=$(pick_repo) || exit 1
 perm=$(choose_flag "permission-mode" default plan acceptEdits bypassPermissions)
 model=$(choose_flag "model" default opus sonnet haiku)
 
-typeset -a agent_names
-local f firstline
-for f in ~/.claude/agents/*.md(N); do
-  # Only files with YAML frontmatter are agents; skips README and other docs.
-  read -r firstline < "$f"
-  [[ "$firstline" == "---" ]] && agent_names+=("${${f:t}:r}")
-done
-agent=$(choose_flag "agent" "(none)" "${agent_names[@]}")
-
 # Pre-fill the editor from the pasteboard when it reads like a task or URL
 # (mirrors cwp), skipping filesystem paths and oversized blobs.
 seed=""
@@ -99,7 +90,6 @@ slug="${slug#-}"; slug="${slug%-}"
 typeset -a cmd=(claude --bg --name "$slug")
 [[ -n "$perm"  && "$perm"  != default  ]] && cmd+=(--permission-mode "$perm")
 [[ -n "$model" && "$model" != default  ]] && cmd+=(--model "$model")
-[[ -n "$agent" && "$agent" != "(none)" ]] && cmd+=(--agent "$agent")
 if [[ -n "${CLAUDE_AGENTS_ADD_DIR:-}" ]]; then
   local d
   for d in ${(s.:.)CLAUDE_AGENTS_ADD_DIR}; do

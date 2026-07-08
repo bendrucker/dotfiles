@@ -41,7 +41,7 @@ Attach to a running agent with `claude attach <id>`.
 `cbg` (`bin/claude-launch`) walks you through a launch:
 
 1. Pick a launch directory. Repos are discovered under the curated roots, with the directories of in-flight agents sorted to the top. Pass `--here` to skip the picker and use the current directory.
-2. Choose permission mode, model, and a named subagent. Each is optional. Skip to take Claude's default.
+2. Choose permission mode and model. Each is optional. Skip to take Claude's default.
 3. Write the task in an editor, pre-filled from the pasteboard when it looks like a task or URL.
 
 The agent is dispatched detached and its id is logged. Monitoring and attach happen in the built-in view, so the launcher stops there.
