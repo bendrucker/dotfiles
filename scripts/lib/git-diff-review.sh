@@ -92,9 +92,9 @@ git_review_dirty() {
   fi
 
   gum log --level info "Local changes in $repo_dir:"
-  echo "$tree"
+  echo "$tree" >&2
   gum log --level info "Diff:"
-  render_diff "$repo_dir"
+  render_diff "$repo_dir" >&2
 
   if [[ ! -t 0 ]]; then
     gum log --level error "Local changes present - skipping sync"
