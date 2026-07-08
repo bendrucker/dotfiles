@@ -3,10 +3,12 @@
 # Self-gates: exits 0 without work if the server is already on the right flavor,
 # or if no tmux server (or no catppuccin plugin) is present.
 #
-# The retheme itself is a single tmux invocation sourcing retheme.conf, so it
-# executes as one contiguous command block in the server and serializes with
-# the client theme hooks (tmux/appearance/appearance.conf) instead of
-# interleaving with them.
+# Every retheme trigger funnels through this script (the client theme hooks,
+# the dark-notify watcher, server boot), and a filesystem lock serializes
+# them: tmux interleaves commands from concurrent clients, so unserialized
+# re-themes corrupt the window formats mid-build (the plugin assembles them
+# with a chain of appends) or capture the window-status wrapper into itself,
+# which renders every window tab empty.
 set -euo pipefail
 
 bin_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -15,12 +17,42 @@ flavor="$("$bin_dir/theme-flavor")"
 # No tmux server, nothing to sync. Next `tmux` will pick up the flavor at startup.
 tmux list-sessions >/dev/null 2>&1 || exit 0
 
-# Plugin not installed yet (fresh bootstrap): nothing to retheme.
+# Plugin not installed yet (fresh bootstrap): nothing to retheme. A partial
+# checkout (one conf present, the other missing) would half-apply the theme
+# and then wedge the flavor gate below, so that case stays a loud failure.
 plugin_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/plugins/tmux"
-[[ -f "$plugin_dir/catppuccin_tmux.conf" ]] || exit 0
+plugin_confs=("$plugin_dir/catppuccin_options_tmux.conf" "$plugin_dir/catppuccin_tmux.conf")
+[[ -f "${plugin_confs[0]}" || -f "${plugin_confs[1]}" ]] || exit 0
+for f in "${plugin_confs[@]}"; do
+  if [[ ! -f "$f" ]]; then
+    echo "theme-sync-tmux: missing $f" >&2
+    exit 1
+  fi
+done
 
+# mkdir is the portable atomic lock. A retheme takes well under a second, so
+# a holder that outlives the wait is dead or wedged; steal its lock.
+lock="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/theme-sync-tmux.lock"
+mkdir -p "$(dirname "$lock")"
+acquire() {
+  local _
+  for _ in $(seq 1 100); do
+    mkdir "$lock" 2>/dev/null && return 0
+    sleep 0.1
+  done
+  return 1
+}
+if ! acquire; then
+  rmdir "$lock" 2>/dev/null || true
+  mkdir "$lock" 2>/dev/null || exit 1
+fi
+trap 'rmdir "$lock" 2>/dev/null' EXIT
+
+# Gate under the lock so queued triggers see the winner's flavor and no-op.
+# Read globally on purpose: a stray session-scoped @catppuccin_flavor would
+# shadow a format-based `if -F` gate.
 current=$(tmux show -gv @catppuccin_flavor 2>/dev/null || echo "")
 [[ "$current" == "$flavor" ]] && exit 0
 
-exec tmux set -g @catppuccin_flavor "$flavor" \; \
+tmux set -g @catppuccin_flavor "$flavor" \; \
   source-file "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/appearance/retheme.conf"
