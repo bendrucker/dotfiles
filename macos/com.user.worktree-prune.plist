@@ -10,7 +10,7 @@
         <string>/bin/zsh</string>
         <string>-l</string>
         <string>-c</string>
-        <string>wt all prune --before</string>
+        <string>$HOME/.dotfiles/bin/worktree-prune</string>
     </array>
 
     <key>StartCalendarInterval</key>

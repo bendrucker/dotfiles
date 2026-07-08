@@ -26,11 +26,11 @@ export PATH="${self:h}:$PATH"
 # Internal per-repo worker, invoked in parallel by xargs.
 if [[ "${1:-}" == --worker ]]; then
   cmd=("${(@f)$(<"$WT_ALL_DIR/.cmd")}")
-  out=$(wt -C "$2" "${cmd[@]}" 2>/dev/null)
-  rc=$?
   # Percent-encode '/' so distinct repo paths map to distinct temp files; a
   # plain '/'->'_' swap collides a nested path with an underscore in a name.
   key="${2//\%/%25}"; key="${key//\//%2F}"
+  out=$(wt -C "$2" "${cmd[@]}" 2>"$WT_ALL_DIR/$key.err")
+  rc=$?
   print -r -- "$out" > "$WT_ALL_DIR/$key"
   (( rc )) && : > "$WT_ALL_DIR/$key.failed"
   print   # one tick per completion drives the progress counter
@@ -81,12 +81,17 @@ main () {
 
   local base="${PROJECTS:-$HOME/src}/"
   integer active=0 worktrees=0 branches=0
-  local -a rows failed
+  local -a rows failed failed_errs
   local repo key disp out
   for repo in "${repos[@]}"; do
     key="${repo//\%/%25}"; key="${key//\//%2F}"
     disp="${repo#$base}"
-    [[ -e "$dir/$key.failed" ]] && { failed+=("$disp"); continue; }
+    if [[ -e "$dir/$key.failed" ]]; then
+      failed+=("$disp")
+      [[ -s "$dir/$key.err" ]] \
+        && failed_errs+=("$disp:"$'\n'"$(tail -n 20 "$dir/$key.err" | sed 's/^/  /')")
+      continue
+    fi
     out="$(<"$dir/$key")"
     [[ -z "$out" ]] && continue
     (( active++ ))
@@ -119,7 +124,10 @@ main () {
 
   print
   gum log --level info "${(j: · :)summary}"
-  (( ${#failed} )) && gum log --level warn "failed: ${(j:, :)failed}"
+  if (( ${#failed} )); then
+    gum log --level warn "failed: ${(j:, :)failed}"
+    (( ${#failed_errs} )) && print -rl -- "${failed_errs[@]}"
+  fi
 
   (( ${#failed} == 0 ))
 }

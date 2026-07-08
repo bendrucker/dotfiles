@@ -48,7 +48,9 @@ report_failure() {
 
   local status_file prior
   status_file=$(report_status_file "$job")
-  prior=$(cat "$status_file" 2>/dev/null)
+  # `|| true` keeps a missing latch (first-ever failure) from killing
+  # `set -e` callers before the to-do is filed.
+  prior=$(cat "$status_file" 2>/dev/null || true)
   echo failed >"$status_file"
 
   if [[ "$prior" == "failed" ]]; then
@@ -78,9 +80,11 @@ report_failure() {
 '"$output"'
 ```'
 
+  # printf avoids echo's trailing newline, which lands in the to-do title as
+  # an encoded %0A.
   local encoded_notes encoded_title
-  encoded_notes=$(echo "$notes" | jq -sRr @uri)
-  encoded_title=$(echo "$title" | jq -sRr @uri)
+  encoded_notes=$(printf '%s' "$notes" | jq -sRr @uri)
+  encoded_title=$(printf '%s' "$title" | jq -sRr @uri)
 
   open "things:///add?title=${encoded_title}&notes=${encoded_notes}&when=today"
 
