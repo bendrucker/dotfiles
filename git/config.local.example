@@ -3,3 +3,12 @@
   email = AUTHOREMAIL
 [credential]
   helper = GIT_CREDENTIAL_HELPER
+
+# Per-org identity, selected by remote URL rather than worktree path. When you
+# onboard an org, uncomment and point `path` at a private identity file (e.g.
+# ~/.config/git/identity-anthropic with its own [user] email/signingkey). Two
+# patterns cover the HTTPS and SSH remote forms (SSH uses `github.com:owner`).
+# [includeIf "hasconfig:remote.*.url:https://github.com/anthropic/**"]
+#   path = ~/.config/git/identity-anthropic
+# [includeIf "hasconfig:remote.*.url:git@github.com:anthropic/**"]
+#   path = ~/.config/git/identity-anthropic

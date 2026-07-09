@@ -1,3 +1,5 @@
+worktree-path = "~/src/.worktrees/{{ owner }}/{{ repo }}/{{ branch | sanitize }}"
+
 [[pre-start]]
 claude-trust = "claude-trust-worktree '{{ primary_worktree_path }}' '{{ worktree_path }}'"
 
