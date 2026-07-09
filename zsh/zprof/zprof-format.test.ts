@@ -20,6 +20,10 @@ describe("stripControl", () => {
   test("removes CSI SGR color codes", () => {
     expect(stripControl("\x1b[1;32mgreen\x1b[0m")).toBe("green");
   });
+
+  test("removes non-color CSI (bracketed paste, cursor query)", () => {
+    expect(stripControl("\x1b[?2004ha\x1b[?2004l\x1b[6nb")).toBe("ab");
+  });
 });
 
 describe("parse", () => {

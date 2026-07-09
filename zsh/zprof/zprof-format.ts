@@ -28,10 +28,11 @@ export interface Profile {
   callGraph: string;
 }
 
-// OSC sequences (shell-integration 1337 codes, terminated by BEL or ESC-backslash)
-// and CSI SGR color codes leak into the capture. Strip both so the summary is clean text.
+// Shell-integration OSC 1337 codes (BEL- or ESC-backslash-terminated) plus any CSI
+// sequence an interactive zsh emits (SGR color, bracketed paste `?2004h`, cursor
+// queries `6n`) leak into the capture. Strip both so the summary is clean text.
 const OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
-const SGR = /\x1b\[[0-9;]*m/g;
+const CSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 
 const ROW =
   /^\s*(\d+)\)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)%\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)%\s+(.+)$/;
@@ -40,7 +41,7 @@ const SEPARATOR = /^-{5,}\s*$/;
 const HEADER = /^\s*num\s+calls\b.*\btime\b.*\bself\b.*\bname\s*$/;
 
 export function stripControl(raw: string): string {
-  return raw.replace(OSC, "").replace(SGR, "");
+  return raw.replace(OSC, "").replace(CSI, "");
 }
 
 export function parse(raw: string): Profile {
@@ -52,7 +53,7 @@ export function parse(raw: string): Profile {
   }
 
   // The flat profile is the first contiguous run of rows after the header (and its
-  // `----` underline). A blank line or separator closes it; everything past that is
+  // `----` underline). A blank line or separator closes it. Everything past that is
   // the per-function call graph, kept verbatim for drill-down.
   const rows: Row[] = [];
   let cursor = headerIndex + 1;
