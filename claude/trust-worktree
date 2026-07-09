@@ -19,6 +19,26 @@ if [ ! -f "$config" ]; then
   exit 0
 fi
 
+# Serialize read → check → write behind a portable mkdir mutex (macOS ships no
+# flock). This closes hook-vs-hook races (concurrent worktree creates, nightly
+# upgrade racing a manual create) that would otherwise lose an update by writing
+# back a stale snapshot. It cannot fully close hook-vs-Claude, since Claude Code
+# does not take this lock, but it shrinks that window to a single jq read+write.
+lockdir="${config}.lock"
+
+attempt=0
+until mkdir "$lockdir" 2>/dev/null; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 5 ]; then
+    # Could not acquire the lock. Skip rather than deadlock or clobber. Worst
+    # case is one folder-trust prompt in the new worktree, which is benign.
+    exit 0
+  fi
+  sleep 0.1
+done
+trap 'rmdir "$lockdir" 2>/dev/null' EXIT
+
+# Re-read inside the lock so the check and the write see the same state.
 is_trusted=$(jq -r --arg path "$primary_path" '.projects[$path].hasTrustDialogAccepted // false' "$config")
 
 if [ "$is_trusted" != "true" ]; then
