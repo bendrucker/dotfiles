@@ -10,3 +10,9 @@ zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
 zstyle ':completion:*' insert-tab pending
 
 compdef _dotfiles dotfiles
+
+# loads after `fzf --zsh` (system topic) so atuin keeps ctrl-r;
+# up/down arrows stay on history-substring-search
+if (( $+commands[atuin] )); then
+  eval "$(atuin init zsh --disable-up-arrow)"
+fi
