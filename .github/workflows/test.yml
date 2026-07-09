@@ -161,13 +161,8 @@ jobs:
           echo ''
           cat /tmp/bench.md
           echo ''
-          echo '<details><summary>ZPROF breakdown</summary>'
+          ZPROF=1 zsh -i -c exit 2>&1 | bun "$GITHUB_WORKSPACE/zsh/zprof/zprof-format.ts"
           echo ''
-          echo '```'
-          ZPROF=1 zsh -i -c exit 2>&1
-          echo '```'
-          echo ''
-          echo '</details>'
         } >> "$GITHUB_STEP_SUMMARY"
 
         python3 -c "
@@ -187,6 +182,14 @@ jobs:
       - name: Test schemes
         run: uv run --frozen pytest
         working-directory: tmux/search/fzf-links
+  zprof:
+    name: zprof formatter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun test
+        working-directory: zsh/zprof
   skill-tests:
     strategy:
       matrix:

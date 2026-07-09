@@ -5,10 +5,28 @@
 # Usage:
 #   bench-startup                  # benchmark current worktree
 #   bench-startup /path/to/other   # compare current worktree vs another
+#   bench-startup --profile        # ranked ZPROF self-time table for current worktree
 #
-# Requires: hyperfine
+# Requires: hyperfine (bun for --profile)
 
 set -euo pipefail
+
+current="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [[ "${1:-}" == "--profile" ]]; then
+  if ! command -v bun &>/dev/null; then
+    echo "bun not found. Install with: brew install oven-sh/bun/bun" >&2
+    exit 1
+  fi
+  zdotdir=$(mktemp -d)
+  trap 'rm -rf "$zdotdir"' EXIT
+  ln -s "$current/zsh/.zshenv" "$zdotdir/.zshenv"
+  ln -s "$current/zsh/.zshrc" "$zdotdir/.zshrc"
+  /usr/bin/env ZDOTDIR="$zdotdir" DOTFILES_USE_DEV="$current" ZPROF=1 \
+    /bin/zsh -i -c exit 2>&1 |
+    bun "$current/zsh/zprof/zprof-format.ts" --format terminal
+  exit 0
+fi
 
 if ! command -v hyperfine &>/dev/null; then
   echo "hyperfine not found — install with: brew install hyperfine" >&2
@@ -28,7 +46,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-current="$(cd "$(dirname "$0")/.." && pwd)"
 zdotdirs=()
 
 current_zdotdir=$(setup_zdotdir "$current")
