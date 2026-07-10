@@ -46,3 +46,9 @@ The agent is dispatched detached and its id is logged. Monitoring and attach hap
 ### Curation
 
 `CLAUDE_AGENTS_ADD_DIR` (colon-separated) passes tool-access directories as repeated `--add-dir` to both the launcher's dispatch and the popup.
+
+## Computer Use
+
+Claude Code's built-in `computer-use` MCP drives the macOS GUI with screenshots and mouse/keyboard input. [Peekaboo](https://github.com/steipete/peekaboo) is the accessibility-tree fallback for cases where screenshot perception is brittle or too costly: `peekaboo see` snapshots the AX tree with element IDs, then `peekaboo click`/`type` target those IDs. Call it from any agent via the CLI.
+
+Both need **Screen Recording** and **Accessibility** granted in System Settings > Privacy & Security. They fail silently without them.
