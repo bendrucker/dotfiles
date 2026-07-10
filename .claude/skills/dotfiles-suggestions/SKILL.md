@@ -2,9 +2,7 @@
 name: dotfiles-suggestions
 description: Analyze shell history and installed tools to suggest dotfiles improvements. Use when looking for missing aliases, functions, completions, or topics based on actual usage patterns. Trigger on "what aliases should I add", "what's missing from my dotfiles", "audit my shell setup", "suggest improvements", "what should I add to my dotfiles", or any request to review dotfiles for gaps.
 allowed-tools:
-  - "Bash(${CLAUDE_SKILL_ROOT}/scripts/history-freq.sh:*)"
-  - "Bash(${CLAUDE_SKILL_ROOT}/scripts/history-args.sh:*)"
-  - "Bash(${CLAUDE_SKILL_ROOT}/scripts/history-sequences.sh:*)"
+  - "Bash(${CLAUDE_SKILL_ROOT}/scripts/atuin-query.sh:*)"
 ---
 
 # Suggest Improvements
@@ -24,19 +22,20 @@ Inventory what the dotfiles already provide:
 
 Run all of these in parallel.
 
-## Pre-process History
+## Pre-Process History
 
-Use the scripts in `scripts/` to produce compact frequency tables from `~/.zsh_history`. Each script handles EXTENDED_HISTORY format, `LC_ALL=C` for binary safety, and supports `--recent <duration>` filtering.
+Use `scripts/atuin-query.sh <query-name>` to produce compact frequency tables from atuin's command history. Each query supports `--recent <duration>` (e.g. `6m`, `30d`, `1y`) and `-n <limit>`.
 
-History spans a long time, so raw counts can be misleading — a command used heavily years ago but not recently is not a good alias candidate. Split analysis into **recent** (last 6 months) and **all-time** to distinguish active patterns from stale ones.
+History spans a long time, so raw counts can be misleading. A command used heavily years ago but not recently is not a good alias candidate. Split analysis into **recent** (last 6 months) and **all-time** to distinguish active patterns from stale ones.
 
 Run all of these in parallel:
 
-- **Date range**: `scripts/history-freq.sh --date-range`
-- **Recent frequency**: `scripts/history-freq.sh --recent 6m`
-- **All-time frequency**: `scripts/history-freq.sh`
-- **Argument patterns**: `scripts/history-args.sh --recent 6m`
-- **Multi-command sequences**: `scripts/history-sequences.sh --recent 6m`
+- **Date range**: `scripts/atuin-query.sh date-range`
+- **Recent frequency**: `scripts/atuin-query.sh command-frequency --recent 6m`
+- **All-time frequency**: `scripts/atuin-query.sh command-frequency`
+- **Alias candidates**: `scripts/atuin-query.sh alias-candidates --recent 6m`
+- **Argument patterns**: `scripts/atuin-query.sh arg-patterns --recent 6m`
+- **Multi-command sequences**: `scripts/atuin-query.sh sequences --recent 6m`
 
 Comparing recent vs all-time frequency reveals commands trending up (recent > all-time ratio) vs. fading out (high all-time but absent from recent). Focus suggestions on recently active commands.
 
@@ -80,6 +79,6 @@ No implementation — suggestions only.
 ## Conventions
 
 - Alias naming follows existing patterns: `g`=git, `gb`=git branch, `gc`=git commit
-- History format is `EXTENDED_HISTORY`: `: timestamp:duration;command`
-- Multi-line history entries use backslash continuation
-- Never expose sensitive argument values (tokens, passwords) — frequency analysis naturally avoids this by focusing on command names and flags
+- History is read from atuin's SQLite db, which DuckDB attaches read-only. The wrapper resolves the db path (`ATUIN_HISTORY_DB` or `$XDG_DATA_HOME/atuin/history.db`) since DuckDB cannot expand `~` in `ATTACH`.
+- Imported rows lack context fields (`exit=-1`, `cwd='unknown'`, `duration=0`), so only `command` and `timestamp` are reliable for frequency analysis. Native records added going forward carry real `exit`/`cwd`/`duration`. Context-aware queries (clustering by cwd, filtering by exit) are deferred to [#536](https://github.com/bendrucker/dotfiles/issues/536) pending data accrual.
+- Never expose sensitive argument values (tokens, passwords). Frequency analysis naturally avoids this by focusing on command names and flags.

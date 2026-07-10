@@ -4,28 +4,39 @@
 shellspec_spec_helper_configure() {
   SCRIPTS_DIR="$SHELLSPEC_SPECDIR/.."
 
+  # Build a small sqlite history db (atuin's schema) and point the wrapper at it
+  # via ATUIN_HISTORY_DB, the same override seam the wrapper resolves at runtime.
+  # Timestamps are nanoseconds, matching atuin. "Recent" rows land at now. One
+  # "old" row sits ~400 days back to exercise the --recent cutoff. One row is
+  # soft-deleted (deleted_at set) to confirm it is filtered out.
   setup_fixture() {
     FIXTURE_DIR=$(mktemp -d)
-    HISTFILE="$FIXTURE_DIR/history"
-    cat > "$HISTFILE" << 'FIXTURE'
-: 1700000000:0;git status
-: 1700000100:0;git commit -m 'initial'
-: 1700000200:0;git push --force
-: 1700000300:0;git status
-: 1700000400:0;docker build -t app .
-: 1700000500:0;git log --oneline
-: 1700000600:0;npm test && npm run build
-: 1700000700:0;git add . && git commit -m 'fix'
-: 1700000800:0;cat foo | grep bar
-: 1700000900:0;git status
-: 1700001000:0;c++ -o main main.cpp
-: 1700001100:0;./run.sh
-continuation line without timestamp prefix
-: 1700001200:0;git push
-FIXTURE
+    export ATUIN_HISTORY_DB="$FIXTURE_DIR/history.db"
+
+    local now old
+    now=$(( $(date +%s) * 1000000000 ))
+    old=$(( ($(date +%s) - 400 * 86400) * 1000000000 ))
+
+    duckdb << SQL
+INSTALL sqlite; LOAD sqlite;
+ATTACH '$ATUIN_HISTORY_DB' AS fx (TYPE sqlite);
+CREATE TABLE fx.history (
+  id VARCHAR, timestamp BIGINT, duration BIGINT, exit BIGINT,
+  command VARCHAR, cwd VARCHAR, session VARCHAR, hostname VARCHAR,
+  deleted_at BIGINT, author VARCHAR, intent VARCHAR
+);
+INSERT INTO fx.history (timestamp, command) SELECT $now, 'git push' FROM range(12);
+INSERT INTO fx.history (timestamp, command) SELECT $now, 'docker build -t app .' FROM range(3);
+INSERT INTO fx.history (timestamp, command) VALUES
+  ($now, 'npm test && npm run build'),
+  ($now, 'cat foo | grep bar'),
+  ($old, 'svn commit -m old');
+INSERT INTO fx.history (timestamp, command, deleted_at) VALUES ($now, 'secret token abc', $now);
+SQL
   }
 
   cleanup_fixture() {
     rm -rf "$FIXTURE_DIR"
+    unset ATUIN_HISTORY_DB
   }
 }
