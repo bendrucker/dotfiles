@@ -1,0 +1,9 @@
+## Managed by the dotfiles atuin/ topic. Full option reference:
+## https://docs.atuin.sh/configuration/config/
+
+## Put the selected command on the prompt (enter runs, tab edits).
+enter_accept = true
+
+[sync]
+## Use the sync v2 record store.
+records = true
