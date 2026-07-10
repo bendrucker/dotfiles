@@ -2,7 +2,7 @@
 
 > My dotfiles for configuring macOS
 
-Linux friendly, outside of [`macos/`](macos/) and a [`Brewfile`](Brewfile) for dependency management. I use this repo for both home and work.
+Linux-friendly, outside of [`macos/`](macos/) and a [`Brewfile`](Brewfile) for dependency management. I use this repo for both home and work.
 
 Highlights include:
 
@@ -36,9 +36,8 @@ A file's name determines how and when it loads. These are the conventions a topi
 | `mise.toml` | Pinned language/tool versions, merged into mise's config. |
 | `install.sh` | Non-symlink setup: plugin managers, system config. Run by `scripts/install`. |
 | `.shellspec` | Opts the topic into [integration tests](#topic-integration-tests) that run in CI. |
-| `bin/` | Executables at the repo root, added to `$PATH`. |
 
-The rest of this section documents the machinery behind those conventions.
+Separately, the repo-root [`bin/`](bin/) holds executables that go on `$PATH` (`dotfiles-upgrade`, `bench-startup`, and friends). The rest of this section documents the machinery behind these conventions.
 
 ### Shell startup
 
@@ -61,7 +60,7 @@ zsh startup is a glob-driven loader split across two files, following zsh's own 
    done
    ```
 
-Completions are the expensive part of startup, so they don't run before the first prompt. `.zshrc` registers a one-shot `precmd` hook that sources every `completion.zsh` after the prompt is already interactive, then removes itself:
+Completions are the expensive part of startup. They don't run before the first prompt. `.zshrc` registers a one-shot `precmd` hook that sources every `completion.zsh` after the prompt is already interactive, then removes itself:
 
 ```zsh
 _load_deferred_completions() {
@@ -73,7 +72,7 @@ add-zsh-hook precmd _load_deferred_completions
 
 ### Startup performance is CI-gated
 
-Deferred completions only matter if regressions can't sneak back in, so [CI benchmarks startup](.github/workflows/test.yml) with [hyperfine](https://github.com/sharkdp/hyperfine) and **fails the build if median startup exceeds one second**:
+The deferral only pays off if regressions can't creep back, so [CI benchmarks startup](.github/workflows/test.yml) with [hyperfine](https://github.com/sharkdp/hyperfine) and **fails the build if median startup exceeds one second**:
 
 ```sh
 hyperfine --warmup 3 --runs 10 --shell=none 'zsh -i -c exit'
@@ -92,13 +91,14 @@ The same job dumps a per-file [`zprof`](https://zsh.sourceforge.io/Doc/Release/Z
 
 Config files are linked into place from per-topic [`symlinks.conf`](git/symlinks.conf) files in `source:target` format, one per line. Targets expand `~` and `$XDG_CONFIG_HOME`:
 
-```
+```ini
 # git/symlinks.conf
 config:$XDG_CONFIG_HOME/git/config
+delta-catppuccin.gitconfig:$XDG_CONFIG_HOME/git/delta-catppuccin.gitconfig
 ignore:$XDG_CONFIG_HOME/git/ignore
 ```
 
-[`scripts/install-symlinks`](scripts/install-symlinks) globs every `symlinks.conf`, creates the links, and validates each source exists. It also **prunes**: any symlink under `$HOME` or `~/.config` that points into the dotfiles repo but is no longer declared gets removed. Deleting a line from `symlinks.conf` is enough to clean up the stale link on the next install.
+[`scripts/install-symlinks`](scripts/install-symlinks) globs every `symlinks.conf`, creates the links, and validates each source exists. It also **prunes**: a symlink that points into the dotfiles repo but is no longer declared gets removed. Dropping a line from `symlinks.conf` is enough to unlink the file it used to manage.
 
 ### Homebrew aggregation
 
@@ -112,8 +112,8 @@ end
 
 Passing `binding` means topic Brewfiles inherit the root's overridden `brew`/`cask`/`mas` methods, which layer on a couple of behaviors:
 
-* **Duplicate detection.** `brew bundle` installs in parallel, so a package declared in two Brewfiles races on the Homebrew lock and aborts with a cryptic error. An `assert_unique_package` guard raises a clear error instead.
-* **CI trims GUIs.** When `$CI` is set, `cask` and `mas` become no-ops so runners skip slow app installs.
+* **Duplicate detection.** `brew bundle` installs in parallel. A package declared in two Brewfiles races on the Homebrew lock and aborts with a cryptic error. An `assert_unique_package` guard catches the duplicate first and raises a clear error instead.
+* **CI trims GUIs.** When `$CI` is set, `cask` and `mas` skip their installs so runners don't pull slow GUI apps.
 
 A `~/Brewfile.local` is evaluated last, if present, for machine-specific packages that shouldn't live in the repo.
 
@@ -121,7 +121,7 @@ A `~/Brewfile.local` is evaluated last, if present, for machine-specific package
 
 Each language topic pins its versions in a `mise.toml` and links it into [mise](https://mise.jdx.dev/)'s drop-in config directory through its `symlinks.conf`, namespaced by topic:
 
-```
+```ini
 # go/symlinks.conf
 mise.toml:$XDG_CONFIG_HOME/mise/conf.d/go.toml
 ```
@@ -130,9 +130,9 @@ mise merges everything in `conf.d/` automatically, so each topic owns its own ru
 
 ### Dev mode and testing
 
-Symlinks point at the installed copy in `~/.dotfiles`, not a development checkout, so edits in a clone don't take effect until synced. To test changes immediately, the active root is a layer of indirection resolved on every shell in [`zsh/active-root.zsh`](zsh/active-root.zsh), with this precedence:
+Symlinks point at the installed copy in `~/.dotfiles`. Edits in a development clone don't take effect until synced. To make immediate testing possible, the active root is resolved through a layer of indirection on every shell in [`zsh/active-root.zsh`](zsh/active-root.zsh), with this precedence:
 
-```
+```text
 $DOTFILES_USE_DEV                  (throwaway test subshell)
   > ~/.dotfiles-dev-mode flag file (persistent dev mode)
     > $DOTFILES_HOME               (the installed copy)
@@ -140,21 +140,21 @@ $DOTFILES_USE_DEV                  (throwaway test subshell)
 
 Three commands drive it:
 
-* `dotfiles test` starts a subshell that loads the current checkout, session-only.
+* `dotfiles test` replaces the current shell with one that loads the checkout, session-only.
 * `dotfiles dev enable` persistently repoints every symlink to the checkout and sets the flag. `dotfiles dev disable` restores the installed copy.
 * `dotfiles status` shows which root is active and its revision.
 
-Writing the flag file and re-running `install-symlinks` happen in a single step, so the flag and the on-disk links can never disagree.
+Writing the flag file and re-running `install-symlinks` happen in a single step. The flag and the on-disk links can never disagree.
 
 ### Sync and upgrade
 
-A launchd agent ([`macos/com.user.dotfiles-upgrade.plist`](macos/com.user.dotfiles-upgrade.plist)) runs [`bin/dotfiles-upgrade`](bin/dotfiles-upgrade) nightly. It syncs from the remote, reruns `scripts/install`, and cleans up stale packages. On failure it strips ANSI codes from the log and files a Things task with the error, so a broken upgrade surfaces as a to-do rather than silent drift.
+A launchd agent ([`macos/com.user.dotfiles-upgrade.plist`](macos/com.user.dotfiles-upgrade.plist)) runs [`bin/dotfiles-upgrade`](bin/dotfiles-upgrade) nightly. It syncs from the remote, reruns `scripts/install`, and cleans up stale packages. On failure it strips ANSI codes from the log and files a Things task with the error. A broken upgrade surfaces as a to-do instead of drifting silently.
 
 `dotfiles sync` runs the same pull by hand. It refuses to sync a dirty tree, fast-forwards only, and updates submodules.
 
 ### Topic integration tests
 
-Tests run against the real post-bootstrap state, not a mock. A topic opts in by containing a `.shellspec` file, and [CI discovers them](.github/workflows/test.yml) with a glob:
+Tests run against the real post-bootstrap state. A topic opts in by containing a `.shellspec` file, and [CI discovers them](.github/workflows/test.yml) with a glob:
 
 ```bash
 for spec in */.shellspec; do
@@ -163,18 +163,18 @@ for spec in */.shellspec; do
 done
 ```
 
-Because the bootstrap job runs first, [these specs](git/spec/) verify the installed config through its symlinks, catching breakage that a static check would miss.
+Because bootstrap runs before them, [these specs](git/spec/) verify the installed config through its symlinks, catching breakage that a static check would miss.
 
 ### Bootstrap vs. install
 
-Two entry points split first-run setup from repeatable reconcile:
+Two entry points split one-time setup from the repeatable reconcile step:
 
-* [`scripts/bootstrap`](scripts/bootstrap) is the **one-time** fresh-machine path: install Homebrew, prompt for git identity, init submodules, then hand off to install.
+* [`scripts/bootstrap`](scripts/bootstrap) is the **one-time** fresh-machine path: install Homebrew, prompt for git identity, init submodules, then hand off to `dotf`, which runs install.
 * [`scripts/install`](scripts/install) is the **idempotent** core, safe to rerun nightly: `brew bundle` → install mise runtimes → install symlinks → run each topic's `install.sh` → sync the theme.
 
 The nightly upgrade and the dev-mode relink both lean on `install`, which is why it has to stay safe to run repeatedly.
 
-## Prior Art
+## Prior art
 
 * [holman](https://github.com/holman/dotfiles): Bootstrap/install scripts, initial ZSH config, colorization
 
