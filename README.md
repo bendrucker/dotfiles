@@ -18,11 +18,11 @@ cd ~/.dotfiles
 scripts/bootstrap
 ```
 
-## How it works
+## How It Works
 
 Everything is organized into **topic** directories: [`git/`](git/), [`zsh/`](zsh/), [`tmux/`](tmux/), and so on. A topic is a directory that follows a few naming conventions. Bootstrap and startup glob for those conventions across every topic. Adding a tool means creating a directory and dropping in the right files, with no central list to register in.
 
-### Topic conventions
+### Topic Conventions
 
 A file's name determines how and when it loads:
 
@@ -39,7 +39,7 @@ A file's name determines how and when it loads:
 
 The repo-root [`bin/`](bin/) holds executables that go on `$PATH`, like `dotfiles-upgrade` and `bench-startup`.
 
-### Shell startup
+### Shell Startup
 
 zsh startup is a glob-driven loader split across two files, following zsh's own load order:
 
@@ -70,7 +70,7 @@ _load_deferred_completions() {
 add-zsh-hook precmd _load_deferred_completions
 ```
 
-### Startup budget
+### Startup Budget
 
 [CI benchmarks startup](.github/workflows/test.yml) with [hyperfine](https://github.com/sharkdp/hyperfine) and **fails the build if median startup exceeds one second**:
 
@@ -87,7 +87,7 @@ The same job dumps a per-file [`zprof`](https://zsh.sourceforge.io/Doc/Release/Z
 
 `bin/bench-startup` measures the current worktree, or compares two.
 
-### Declarative symlinks
+### Declarative Symlinks
 
 Config files are linked into place from per-topic [`symlinks.conf`](git/symlinks.conf) files in `source:target` format, one per line. Targets expand `~` and `$XDG_CONFIG_HOME`:
 
@@ -100,7 +100,7 @@ ignore:$XDG_CONFIG_HOME/git/ignore
 
 [`scripts/install-symlinks`](scripts/install-symlinks) globs every `symlinks.conf`, creates the links, and validates each source exists. It also **prunes**: a symlink that points into the dotfiles repo but is no longer declared gets removed. Dropping a line from `symlinks.conf` is enough to unlink the file it used to manage.
 
-### Homebrew aggregation
+### Homebrew Aggregation
 
 The root [`Brewfile`](Brewfile) recursively evaluates every topic `Brewfile`. `brew bundle` from the repo root installs everything:
 
@@ -117,7 +117,7 @@ Passing `binding` means topic Brewfiles inherit the root's overridden `brew`/`ca
 
 A `~/Brewfile.local` is evaluated last, if present, for machine-specific packages that shouldn't live in the repo.
 
-### Language versions with mise
+### Language Versions with mise
 
 Each language topic pins its versions in a `mise.toml` and links it into [mise](https://mise.jdx.dev/)'s drop-in config directory through its `symlinks.conf`, namespaced by topic:
 
@@ -128,7 +128,7 @@ mise.toml:$XDG_CONFIG_HOME/mise/conf.d/go.toml
 
 mise merges everything in `conf.d/` automatically. Each topic owns its runtime versions without a shared config file. Versions are pinned exactly (never `latest`) so [Renovate](https://github.com/renovatebot/renovate) can track and bump them.
 
-### Dev mode and testing
+### Dev Mode and Testing
 
 Symlinks point at the installed copy in `~/.dotfiles`. Edits in a development clone don't take effect until synced. To test edits without syncing, the active root is resolved on every shell in [`zsh/active-root.zsh`](zsh/active-root.zsh), with this precedence:
 
@@ -146,13 +146,13 @@ Three commands drive it:
 
 Writing the flag file and re-running `install-symlinks` happen in one step.
 
-### Sync and upgrade
+### Sync and Upgrade
 
 A launchd agent ([`macos/com.user.dotfiles-upgrade.plist`](macos/com.user.dotfiles-upgrade.plist)) runs [`bin/dotfiles-upgrade`](bin/dotfiles-upgrade) nightly. It syncs from the remote, reruns `scripts/install`, and cleans up stale packages. On failure it files a Things task with the error.
 
 `dotfiles sync` runs the same pull by hand. It refuses to sync a dirty tree, fast-forwards only, and updates submodules.
 
-### Topic integration tests
+### Topic Integration Tests
 
 Tests run against the real post-bootstrap state. A topic opts in by containing a `.shellspec` file, and [CI discovers them](.github/workflows/test.yml) with a glob:
 
@@ -165,7 +165,7 @@ done
 
 Because bootstrap runs before them, [these specs](git/spec/) verify the installed config through its symlinks.
 
-### Bootstrap vs. install
+### Bootstrap vs. Install
 
 Two entry points split one-time setup from the repeatable reconcile step:
 
@@ -174,7 +174,7 @@ Two entry points split one-time setup from the repeatable reconcile step:
 
 The nightly upgrade and the dev-mode relink both call `install`.
 
-## Prior art
+## Prior Art
 
 * [holman](https://github.com/holman/dotfiles): Bootstrap/install scripts, initial ZSH config, colorization
 
