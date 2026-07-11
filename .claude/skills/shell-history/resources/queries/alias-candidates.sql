@@ -4,9 +4,9 @@
 SELECT
   split_part(command, ' ', 1) || ' ' || split_part(command, ' ', 2) AS prefix,
   count(*) AS uses
-FROM atuin.history
-WHERE deleted_at IS NULL AND command != '' AND command LIKE '% %'
-  AND (getvariable('cutoff') IS NULL OR timestamp / 1e9 >= getvariable('cutoff'))
+FROM history
+WHERE command LIKE '% %'
+  AND (getvariable('cutoff') IS NULL OR epoch(ts) >= getvariable('cutoff'))
 GROUP BY 1
 HAVING count(*) >= 10
 ORDER BY uses DESC

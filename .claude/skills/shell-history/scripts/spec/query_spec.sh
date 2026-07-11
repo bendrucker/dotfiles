@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2329
 
-Describe "atuin-query.sh"
+Describe "query.sh"
   Before 'setup_fixture'
   After 'cleanup_fixture'
 
-  QUERY="$SHELLSPEC_SPECDIR/../atuin-query.sh"
+  QUERY="$SHELLSPEC_SPECDIR/../query.sh"
 
   It "reports the top command by frequency"
     When run command env "$QUERY" command-frequency
@@ -41,6 +41,13 @@ Describe "atuin-query.sh"
   It "excludes soft-deleted rows"
     When run command env "$QUERY" command-frequency
     The output should not include "secret"
+  End
+
+  It "writes no .duckdb file (in-memory only)"
+    When run command env "$QUERY" command-frequency
+    The status should be success
+    The path "$ATUIN_HISTORY_DB.duckdb" should not be exist
+    The result of function find_duckdb_artifacts should equal ""
   End
 
   It "exits non-zero with a clear message when the db is missing"
