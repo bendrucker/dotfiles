@@ -1,0 +1,9 @@
+# aw-qt supervises these modules. aw-server-rust (not the Python aw-server) is
+# the autostart server: it writes the buckets/events SQLite db that the
+# activitywatch:activity skill attaches read-only. aw-watcher-window records the
+# focused app + window title. aw-watcher-afk records active vs idle.
+[aw-qt]
+autostart_modules = ["aw-server-rust", "aw-watcher-afk", "aw-watcher-window"]
+
+[aw-qt-testing]
+autostart_modules = ["aw-server-rust", "aw-watcher-afk", "aw-watcher-window"]

@@ -73,6 +73,10 @@ setup_claude_upgrade() {
 # separate-directory installs.
 install_launch_agent com.user.theme-sync.plist "theme-sync watcher"
 
+# aw-qt supervises the ActivityWatch capture stack. This LaunchAgent is the sole
+# autostart, so leave AW's built-in login item disabled to avoid a double launch.
+install_launch_agent com.user.activitywatch.plist "ActivityWatch capture"
+
 # Only setup upgrade if we're in separate-directory mode (not a symlink)
 if [[ ! -L "$HOME/.dotfiles" ]]; then
   setup_dotfiles_upgrade
