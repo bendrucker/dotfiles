@@ -120,13 +120,18 @@ fi
 
 [[ -n "$LIMIT" ]] || LIMIT="$(default_limit "$QUERY")"
 
+# Escape single quotes for safe interpolation into DuckDB's single-quoted SQL
+# string literals (SQL escapes a quote by doubling it).
+DB_SQL="${DB//\'/\'\'}"
+
 # In-memory DuckDB (no path arg): attach the source read-only, build the view
 # layer, bind params, then read the query. Nothing persists to disk.
+# .read paths are single-quoted so a space in the path can't split the command.
 duckdb <<SQL
 INSTALL sqlite; LOAD sqlite;
-ATTACH '$DB' AS atuin (TYPE sqlite, READ_ONLY);
-.read $VIEWS
+ATTACH '$DB_SQL' AS atuin (TYPE sqlite, READ_ONLY);
+.read '$VIEWS'
 SET VARIABLE cutoff = $CUTOFF;
 SET VARIABLE "limit" = $LIMIT;
-.read $QUERY_FILE
+.read '$QUERY_FILE'
 SQL

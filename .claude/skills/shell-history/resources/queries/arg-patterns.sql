@@ -2,10 +2,8 @@
 -- Surfaces verbose repeated flag combinations that could be aliased or wrapped.
 -- Params: cutoff (epoch seconds; NULL for all-time), limit (number of top commands).
 WITH filtered AS (
-  SELECT
-    first_token AS cmd,
-    regexp_replace(command, '^\S+\s*', '') AS args
-  FROM history
+  SELECT command AS cmd, args
+  FROM command_args
   WHERE getvariable('cutoff') IS NULL OR epoch(ts) >= getvariable('cutoff')
 ),
 top_cmds AS (
