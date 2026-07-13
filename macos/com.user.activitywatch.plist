@@ -14,7 +14,13 @@
     <true/>
 
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>PathState</key>
+        <dict>
+            <key>/Applications/ActivityWatch.app/Contents/MacOS/aw-qt</key>
+            <true/>
+        </dict>
+    </dict>
 
     <key>StandardOutPath</key>
     <string>/tmp/activitywatch.log</string>
