@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Count background agents that finished or are waiting on input
-# (state done/blocked), for the status-right pill. Mirrors _tmux-bell-count:
-# prints a single integer.
+# Count background agents that are waiting on your input (state blocked),
+# for the status-right pill. Mirrors _tmux-bell-count: prints a single integer.
+# To also surface auth/failure states later, widen the jq select below to
+# .state | IN("blocked","waiting_for_login","error","crashed","failed").
 #
 # `claude agents --json` is ~0.35s and status-right redraws every
 # status-interval, so the result is cached with a short mtime TTL and only
@@ -15,14 +16,18 @@ ttl=10
 if [[ -f "$cache" ]]; then
   now=$(date +%s)
   mtime=$(stat -f %m "$cache" 2>/dev/null || echo 0)
-  if (( now - mtime < ttl )); then
-    cat "$cache"
+  # Only serve a fresh cache whose contents are an integer. A poisoned empty
+  # cache (e.g. from a failed query) must fall through and re-query rather
+  # than pin the pill to a bad value for the whole TTL.
+  cached=$(cat "$cache")
+  if (( now - mtime < ttl )) && [[ "$cached" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$cached"
     exit 0
   fi
 fi
 
 count=$(claude agents --json 2>/dev/null \
-  | jq '[.[] | select(.state == "done" or .state == "blocked")] | length' 2>/dev/null)
+  | jq '[.[] | select(.state == "blocked")] | length' 2>/dev/null)
 [[ "$count" =~ ^[0-9]+$ ]] || count=0
 
 # Write via temp + rename so a concurrent redraw never reads a torn count.
