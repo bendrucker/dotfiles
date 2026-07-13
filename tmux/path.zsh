@@ -4,6 +4,7 @@
 export TMUX_TMPDIR="$HOME/.tmux"
 [[ -d "$TMUX_TMPDIR" ]] || mkdir -p "$TMUX_TMPDIR"
 
-for d in $ZSH/tmux/*/bin(N); do
-  export PATH="$d:$PATH"
-done
+# One stable directory of symlinks. The tmux server freezes PATH at start and
+# keeps resolving against the bin dirs present then, so tmux/bin-sync aggregates
+# every topic's scripts here to keep newly added topics reachable.
+export PATH="$ZSH/tmux/bin:$PATH"
