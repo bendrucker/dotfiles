@@ -231,3 +231,25 @@ jobs:
             echo "$bad"
             exit 1
           fi
+      - name: Check tmux confs invoke topic-bin scripts by absolute path
+        run: |
+          # tmux/<topic>/bin scripts must be invoked by absolute ~/.config path in confs.
+          # The running server's PATH freezes at start. A topic bin added later is
+          # absent, so a bare script name in a conf resolves to command-not-found (exit 127).
+          bad=""
+          for script in $(find tmux -type f -path 'tmux/*/bin/*' -exec basename {} \;); do
+            # Match the bare name bounded by non-[A-Za-z0-9_-] on both sides and NOT
+            # preceded by '/'. Token boundaries treat '-' as part of the name so
+            # `_tmux-claude-agents` does not match inside `_tmux-claude-agents-count`.
+            # The leading `[^/...]` lets absolute `.../bin/<script>` usages pass. The
+            # trailing filter drops whole-line comments, where a bare name is prose,
+            # not an invocation (tmux only treats a leading `#` as a comment).
+            hits=$(grep -rnE "(^|[^/A-Za-z0-9_-])${script}([^A-Za-z0-9_-]|$)" tmux --include='*.conf' \
+              | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')
+            [ -n "$hits" ] && bad="$bad$hits\n"
+          done
+          if [ -n "$bad" ]; then
+            echo "ERROR: tmux confs must invoke topic-bin scripts by absolute ~/.config path, not bare name."
+            printf "%b" "$bad"
+            exit 1
+          fi
