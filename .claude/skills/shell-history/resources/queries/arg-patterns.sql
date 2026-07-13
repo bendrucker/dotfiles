@@ -2,12 +2,9 @@
 -- Surfaces verbose repeated flag combinations that could be aliased or wrapped.
 -- Params: cutoff (epoch seconds; NULL for all-time), limit (number of top commands).
 WITH filtered AS (
-  SELECT
-    split_part(command, ' ', 1) AS cmd,
-    regexp_replace(command, '^\S+\s*', '') AS args
-  FROM atuin.history
-  WHERE deleted_at IS NULL AND command != ''
-    AND (getvariable('cutoff') IS NULL OR timestamp / 1e9 >= getvariable('cutoff'))
+  SELECT command AS cmd, args
+  FROM command_args
+  WHERE getvariable('cutoff') IS NULL OR epoch(ts) >= getvariable('cutoff')
 ),
 top_cmds AS (
   SELECT cmd, count(*) AS cmd_uses

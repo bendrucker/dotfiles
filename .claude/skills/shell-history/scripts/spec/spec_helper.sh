@@ -4,8 +4,8 @@
 shellspec_spec_helper_configure() {
   SCRIPTS_DIR="$SHELLSPEC_SPECDIR/.."
 
-  # Build a small sqlite history db (atuin's schema) and point the wrapper at it
-  # via ATUIN_HISTORY_DB, the same override seam the wrapper resolves at runtime.
+  # Build a small sqlite history db (atuin's schema) and point the runner at it
+  # via ATUIN_HISTORY_DB, the same override seam the runner resolves at runtime.
   # Timestamps are nanoseconds, matching atuin. "Recent" rows land at now. One
   # "old" row sits ~400 days back to exercise the --recent cutoff. One row is
   # soft-deleted (deleted_at set) to confirm it is filtered out.
@@ -39,4 +39,10 @@ SQL
     rm -rf "$FIXTURE_DIR"
     unset ATUIN_HISTORY_DB
   }
+}
+
+# Any .duckdb files under the fixture dir after a run: proof the runner persisted
+# state. In-memory runs leave none.
+find_duckdb_artifacts() {
+  find "$FIXTURE_DIR" -name '*.duckdb' 2>/dev/null
 }

@@ -2,11 +2,10 @@
 -- Only prefixes used at least 10 times survive the HAVING filter.
 -- Params: cutoff (epoch seconds; NULL for all-time), limit (row cap).
 SELECT
-  split_part(command, ' ', 1) || ' ' || split_part(command, ' ', 2) AS prefix,
+  prefix,
   count(*) AS uses
-FROM atuin.history
-WHERE deleted_at IS NULL AND command != '' AND command LIKE '% %'
-  AND (getvariable('cutoff') IS NULL OR timestamp / 1e9 >= getvariable('cutoff'))
+FROM command_prefix
+WHERE getvariable('cutoff') IS NULL OR epoch(ts) >= getvariable('cutoff')
 GROUP BY 1
 HAVING count(*) >= 10
 ORDER BY uses DESC

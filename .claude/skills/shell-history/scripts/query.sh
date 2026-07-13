@@ -1,23 +1,29 @@
 #!/usr/bin/env bash
-# Run a named DuckDB query from resources/queries/ against atuin's SQLite history.
+# Run a named DuckDB query from resources/queries/ against shell history.
 #
-# atuin stores command history in a SQLite db that DuckDB attaches read-only.
-# The query files are pure, parameterized SQL (getvariable('cutoff'/'limit'));
-# this wrapper supplies the one thing a .sql file can't: the shell-resolved,
-# absolute db path for ATTACH (DuckDB does not expand ~).
+# The source today is atuin, whose command history lives in a SQLite db that
+# DuckDB attaches read-only. Everything runs in an in-memory DuckDB: the runner
+# attaches the source, builds the semantic view layer from resources/views.sql,
+# then reads the named query. No .duckdb file is ever written.
+#
+# The query files are pure, parameterized SQL (getvariable('cutoff'/'limit'))
+# reading FROM the views, never the raw attached table. This wrapper supplies
+# the one thing a .sql file can't: the shell-resolved, absolute db path for
+# ATTACH (DuckDB does not expand ~).
 #
 # Usage:
-#   atuin-query.sh <query-name> [--recent <6m|30d|1y>] [-n <limit>]
+#   query.sh <query-name> [--recent <6m|30d|1y>] [-n <limit>]
 #
-#   atuin-query.sh command-frequency
-#   atuin-query.sh command-frequency --recent 6m
-#   atuin-query.sh alias-candidates --recent 6m
-#   atuin-query.sh arg-patterns --recent 6m -n 15
+#   query.sh command-frequency
+#   query.sh command-frequency --recent 6m
+#   query.sh alias-candidates --recent 6m
+#   query.sh arg-patterns --recent 6m -n 15
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUERY_DIR="$SCRIPT_DIR/../resources/queries"
+VIEWS="$SCRIPT_DIR/../resources/views.sql"
 
 DB="${ATUIN_HISTORY_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/atuin/history.db}"
 
@@ -87,7 +93,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$QUERY" ]]; then
-  echo "Usage: atuin-query.sh <query-name> [--recent <dur>] [-n <limit>]" >&2
+  echo "Usage: query.sh <query-name> [--recent <dur>] [-n <limit>]" >&2
   exit 1
 fi
 
@@ -114,10 +120,18 @@ fi
 
 [[ -n "$LIMIT" ]] || LIMIT="$(default_limit "$QUERY")"
 
+# Escape single quotes for safe interpolation into DuckDB's single-quoted SQL
+# string literals (SQL escapes a quote by doubling it).
+DB_SQL="${DB//\'/\'\'}"
+
+# In-memory DuckDB (no path arg): attach the source read-only, build the view
+# layer, bind params, then read the query. Nothing persists to disk.
+# .read paths are single-quoted so a space in the path can't split the command.
 duckdb <<SQL
 INSTALL sqlite; LOAD sqlite;
-ATTACH '$DB' AS atuin (TYPE sqlite, READ_ONLY);
+ATTACH '$DB_SQL' AS atuin (TYPE sqlite, READ_ONLY);
+.read '$VIEWS'
 SET VARIABLE cutoff = $CUTOFF;
 SET VARIABLE "limit" = $LIMIT;
-.read $QUERY_FILE
+.read '$QUERY_FILE'
 SQL
