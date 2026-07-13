@@ -49,7 +49,7 @@ Always confirm the change registered before handing off:
 
 Create a detached `tmux-lab` session with windows that exercise each visual scenario (auto-named, custom-named, single-pane, multi-pane with same/different worktrees). Apply format overrides as session-scoped options (`tmux set -t tmux-lab ...`) so the user's real sessions stay untouched.
 
-New scripts in the worktree won't be on PATH until installed. Symlink them into `~/.dotfiles/tmux/appearance/bin/` temporarily so tmux's `#(...)` calls can find them.
+A new topic-bin script reaches the server PATH through `tmux/bin/`, the single aggregate directory `tmux/path.zsh` puts on PATH. After adding one, run `tmux/bin-sync` to create its symlink there and commit it. The running server resolves it by bare name once `tmux/bin` is on that server's PATH (true for any server started after this directory existed).
 
 The user attaches from a separate Ghostty window (`tmux attach -t tmux-lab`) to provide visual feedback. Iterate on formats there before applying to real config.
 
