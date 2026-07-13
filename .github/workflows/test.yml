@@ -231,3 +231,13 @@ jobs:
             echo "$bad"
             exit 1
           fi
+      - name: Check tmux/bin aggregate is in sync
+        run: |
+          # tmux/bin holds a symlink to every topic-bin script (see tmux/bin-sync).
+          # Regenerate and fail if the committed tree drifts.
+          tmux/bin-sync
+          if [ -n "$(git status --porcelain tmux/bin)" ]; then
+            echo "ERROR: tmux/bin is out of sync. Run tmux/bin-sync and commit."
+            git status --porcelain tmux/bin
+            exit 1
+          fi

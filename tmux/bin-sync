@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Rebuild tmux/bin/ as relative symlinks to every tmux/<topic>/bin/<script>, the
+# single directory tmux/path.zsh puts on the server PATH. Run after adding,
+# renaming, or removing a topic-bin script. The committed symlinks then travel on
+# `git pull` with no install step.
+
+cd "$(dirname "$0")"
+mkdir -p bin
+
+find bin -type l -delete
+
+for script in */bin/*; do
+  ln -sf "../$script" "bin/$(basename "$script")"
+done
