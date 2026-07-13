@@ -19,7 +19,7 @@ if [[ -f "$cache" ]]; then
   # Only serve a fresh cache whose contents are an integer. A poisoned empty
   # cache (e.g. from a failed query) must fall through and re-query rather
   # than pin the pill to a bad value for the whole TTL.
-  cached=$(cat "$cache")
+  cached=$(<"$cache")
   if (( now - mtime < ttl )) && [[ "$cached" =~ ^[0-9]+$ ]]; then
     printf '%s\n' "$cached"
     exit 0

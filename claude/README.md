@@ -41,7 +41,7 @@ The agent is dispatched detached and its id is logged. Monitoring and attach hap
 
 ### Tmux Popup and Status Chip
 
-`prefix a` opens the agent view in a popup, near-fullscreen on a narrow client. A 󰚩 pill appears in the status bar while a background agent is waiting on your input, and disappears once none are.
+`prefix a` opens the agent view in a popup, near-fullscreen on a narrow client. A 󰚩 pill appears in the status bar while a background agent is waiting on your input, and disappears when none remain.
 
 ### Curation
 
