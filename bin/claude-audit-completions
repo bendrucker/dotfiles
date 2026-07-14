@@ -172,8 +172,8 @@ visible="$(visible_commands)"
 seed_hidden=(attach daemon logs stop rm respawn kill remote-control)
 candidates="$(
   {
-    strings -n 8 "$claude_bin" 2>/dev/null | grep -oE '"claude [a-z][a-z-]+' | sed 's/"claude //'
-    strings -n 4 "$claude_bin" 2>/dev/null | grep -oE '\.command\("[a-z][a-z-]+"' | sed -E 's/\.command\("//; s/"$//'
+    strings -n 8 "$claude_bin" 2>/dev/null | grep -oE '"claude [a-z][a-z-]+' | sed 's/"claude //' || true
+    strings -n 4 "$claude_bin" 2>/dev/null | grep -oE '\.command\("[a-z][a-z-]+"' | sed -E 's/\.command\("//; s/"$//' || true
     printf '%s\n' "${seed_hidden[@]}"
   } | sort -u
 )"
