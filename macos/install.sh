@@ -77,6 +77,10 @@ install_launch_agent com.user.theme-sync.plist "theme-sync watcher"
 # autostart, so leave AW's built-in login item disabled to avoid a double launch.
 install_launch_agent com.user.activitywatch.plist "ActivityWatch capture"
 
+# Hourly ingest of iOS/iPadOS app-focus history from the local Biome store into
+# the ActivityWatch app-support dir. Needs Full Disk Access (see activitywatch/install.sh).
+install_launch_agent com.user.screentime-ingest.plist "Screen Time ingest"
+
 # Only setup upgrade if we're in separate-directory mode (not a symlink)
 if [[ ! -L "$HOME/.dotfiles" ]]; then
   setup_dotfiles_upgrade

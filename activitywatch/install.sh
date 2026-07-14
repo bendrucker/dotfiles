@@ -34,3 +34,11 @@ if [[ -z "${NONINTERACTIVE-}" ]]; then
   gum log --level info "  1. Grant Accessibility to ActivityWatch: System Settings > Privacy & Security > Accessibility (window titles need it)"
   gum log --level info "  2. Launch it once from this terminal so the prompt fires: open -a ActivityWatch"
 fi
+
+# The com.user.screentime-ingest LaunchAgent reads ~/Library/Biome, which is
+# TCC-protected. Grant Full Disk Access to /bin/zsh (the agent's interpreter) so
+# the ingest can decode the synced iOS/iPadOS App.InFocus streams.
+if [[ -z "${NONINTERACTIVE-}" ]]; then
+  gum log --level info "Screen Time ingest one-time setup:"
+  gum log --level info "  Grant Full Disk Access to /bin/zsh: System Settings > Privacy & Security > Full Disk Access (reads ~/Library/Biome)"
+fi

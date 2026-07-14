@@ -24,7 +24,9 @@ repos:
     rev: v0.8.4
     hooks:
       - id: ruff
+        exclude: (^|/)vendor/
       - id: ruff-format
+        exclude: (^|/)vendor/
 
   - repo: local
     hooks:
