@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+#
+# claude-audit-completions: detect drift between the installed `claude` CLI and
+# claude/completion.zsh.
+#
+# Surfaces three kinds of drift:
+#   1. Commands the CLI has that the completion is missing. This includes HIDDEN
+#      commands absent from `claude --help` by design (e.g. `attach`), found by
+#      scraping the binary and confirming each with `claude <cmd> --help`.
+#   2. Top-level flags present in one but not the other.
+#   3. Choice-value drift for flags that enumerate their values.
+#
+# Reports drift without editing. Exits non-zero when any drift is found, so it
+# can gate a regeneration pass. Targets the INSTALLED binary. Docs run ahead of
+# it, so the binary is the source of truth for what completes on this machine.
+
+set -euo pipefail
+
+# --- locate inputs ---------------------------------------------------------
+
+resolve_symlink() {
+  # Portable `readlink -f` (macOS lacks GNU readlink -f).
+  local path="$1" dir
+  while [ -L "$path" ]; do
+    dir="$(cd "$(dirname "$path")" && pwd)"
+    path="$(readlink "$path")"
+    case "$path" in
+      /*) : ;;
+      *) path="$dir/$path" ;;
+    esac
+  done
+  printf '%s\n' "$path"
+}
+
+script_path="$(resolve_symlink "${BASH_SOURCE[0]}")"
+repo_root="$(cd "$(dirname "$script_path")/.." && pwd)"
+completion_file="${CLAUDE_COMPLETION_FILE:-$repo_root/claude/completion.zsh}"
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "claude not found on PATH" >&2
+  exit 2
+fi
+if [ ! -f "$completion_file" ]; then
+  echo "completion file not found: $completion_file" >&2
+  exit 2
+fi
+
+claude_bin="$(resolve_symlink "$(command -v claude)")"
+help_text="$(claude --help 2>&1 || true)"
+
+# Server-style commands that are real but whose `--help` prints no clean
+# `Usage: claude <cmd>` line, so the oracle below cannot confirm them.
+oracle_blind_allowlist=(remote-control)
+
+# --- helpers ---------------------------------------------------------------
+
+# The `Options:` block, with wrapped continuation lines folded so each flag
+# occupies a single line. Used for both flag names and choice extraction.
+options_block() {
+  printf '%s\n' "$help_text" | awk '
+    /^Options:/ { inopt = 1; next }
+    /^Commands:/ { if (cur != "") print cur; inopt = 0; cur = ""; next }
+    inopt && /^  -/ { if (cur != "") print cur; cur = $0; next }
+    inopt && cur != "" { line = $0; sub(/^ +/, " ", line); cur = cur line }
+    END { if (cur != "") print cur }
+  '
+}
+
+# Visible top-level commands from the Commands: section (alias|forms split).
+visible_commands() {
+  printf '%s\n' "$help_text" \
+    | awk '/^Commands:/ { f = 1; next } f && /^  [a-z]/ { print $1 }' \
+    | sed 's/|.*//' \
+    | sort -u
+}
+
+# Is <cmd> a real top-level command? `claude <cmd> --help` prints a
+# `Usage: claude <cmd> ...` line for a real one (or `Usage: claude <target> ...`
+# for an alias like `kill`), and falls back to `Usage: claude [options] ...` for
+# a non-command. Accepting any non-fallback usage line handles aliases.
+is_real_command() {
+  local cmd="$1" first
+  first="$(claude "$cmd" --help 2>&1 | head -1 || true)"
+  [[ "$first" == "Usage: claude "* && "$first" != "Usage: claude [options]"* ]]
+}
+
+# Long flags declared in the completion's top-level main_options array.
+completion_flags() {
+  awk '
+    /local -a main_options=\(/ { f = 1; next }
+    f && /^  \)/ { f = 0 }
+    f { print }
+  ' "$completion_file" \
+    | grep -oE "'--[a-z][a-z-]+" \
+    | tr -d "'" \
+    | sort -u
+}
+
+# Top-level subcommand names declared in the completion's subcommands array.
+completion_commands() {
+  awk '
+    /local -a subcommands=\(/ { f = 1; next }
+    f && /^  \)/ { f = 0 }
+    f { print }
+  ' "$completion_file" \
+    | grep -oE "'[a-z][a-z-]+:" \
+    | tr -d "':" \
+    | sort -u
+}
+
+# From a parenthesized help fragment, echo a value list if it looks like an
+# enum: comma- or space-separated single-word tokens (>=2). Rejects prose
+# asides like "(only works with --print)". Normalizes to sorted space-joined.
+extract_enum() {
+  local cleaned field
+  local -a raw toks
+  cleaned="$(printf '%s' "$1" | sed -E 's/^choices:[[:space:]]*//' | tr -d '"')"
+  # A value list is comma-separated. Prose asides like "(only works with
+  # --print)" have no internal comma, so bail unless one is present.
+  case "$cleaned" in
+    *,*) : ;;
+    *) return 1 ;;
+  esac
+  local IFS=','
+  read -ra raw <<< "$cleaned"
+  toks=()
+  for field in "${raw[@]}"; do
+    field="${field#"${field%%[![:space:]]*}"}"   # trim leading space
+    field="${field%"${field##*[![:space:]]}"}"   # trim trailing space
+    [[ "$field" =~ ^[A-Za-z0-9-]+$ ]] || return 1
+    toks+=("$field")
+  done
+  [ "${#toks[@]}" -ge 2 ] || return 1
+  printf '%s\n' "${toks[@]}" | sort | tr '\n' ' '
+}
+
+# CLI enum for <flag>, or empty if it has no unambiguous value list.
+cli_flag_enum() {
+  local flag="$1" line group
+  # Match the flag only in the option-spec (before the description gap of 3+
+  # spaces), so a flag named in another flag's prose can't select the wrong
+  # line. Keep the full line, since the choice list lives in the description.
+  line="$(options_block | awk -v f="$flag" '
+    { spec = $0; sub(/   +.*/, "", spec); if (index(spec, f)) { print; exit } }')"
+  [ -n "$line" ] || return 0
+  # Try each parenthesized group; first that parses as an enum wins.
+  while IFS= read -r group; do
+    [ -n "$group" ] || continue
+    if enum="$(extract_enum "$group" 2>/dev/null)"; then
+      printf '%s' "$enum"
+      return 0
+    fi
+  done < <(printf '%s\n' "$line" | grep -oE '\([^)]*\)' | sed -E 's/^\(|\)$//g')
+}
+
+# Completion enum for <flag> from its `:(...)` action, normalized like above.
+completion_flag_enum() {
+  local flag="$1" group
+  group="$(grep -oE "'$flag\[[^]]*\][^']*:\([^)]*\)" "$completion_file" \
+    | grep -oE ':\([^)]*\)' | head -1 | sed -E 's/^:\(|\)$//g' || true)"
+  [ -n "$group" ] || return 0
+  printf '%s\n' "$group" | tr -s ' ' '\n' | grep -vx '' | sort | tr '\n' ' '
+}
+
+# --- gather ----------------------------------------------------------------
+
+visible="$(visible_commands)"
+
+# Hidden-command candidates: usage-string scrape + .command() scrape + a seed
+# baseline of the currently-known hidden set (so known commands are re-verified
+# and removals surface). strings on a ~200MB binary takes a few seconds.
+seed_hidden=(attach daemon logs stop rm respawn kill remote-control)
+candidates="$(
+  {
+    strings -n 8 "$claude_bin" 2>/dev/null | grep -oE '"claude [a-z][a-z-]+' | sed 's/"claude //' || true
+    strings -n 4 "$claude_bin" 2>/dev/null | grep -oE '\.command\("[a-z][a-z-]+"' | sed -E 's/\.command\("//; s/"$//' || true
+    printf '%s\n' "${seed_hidden[@]}"
+  } | sort -u
+)"
+
+# Confirmed real top-level commands = visible ∪ (candidates that pass the
+# oracle) ∪ allowlisted oracle-blind commands.
+confirmed="$visible"
+while IFS= read -r cand; do
+  [ -n "$cand" ] || continue
+  printf '%s\n' "$visible" | grep -qxF "$cand" && continue
+  if printf '%s\n' "${oracle_blind_allowlist[@]}" | grep -qxF "$cand"; then
+    confirmed+=$'\n'"$cand"
+  elif is_real_command "$cand"; then
+    confirmed+=$'\n'"$cand"
+  fi
+done <<< "$candidates"
+confirmed="$(printf '%s\n' "$confirmed" | grep -vx '' | sort -u)"
+
+comp_cmds="$(completion_commands)"
+# Take flags from each option-spec only (strip the description at the 3+ space
+# gap), so flags merely named in prose don't inflate the CLI flag set.
+cli_flags="$(options_block | sed -E 's/   +.*//' | grep -oE '\-\-[a-z][a-z-]+' | sort -u)"
+comp_flags="$(completion_flags)"
+
+# --- report ----------------------------------------------------------------
+
+drift=0
+
+# Print a titled section over a newline-separated list. Indents each entry,
+# prints "(none)" when empty, and sets `drift` when non-empty.
+report() {
+  printf '\n%s\n' "$1"
+  if [ -n "$2" ]; then
+    printf '%s\n' "$2" | sed 's/^/  /'
+    drift=1
+  else
+    echo "  (none)"
+  fi
+}
+
+missing_cmds="$(comm -23 <(printf '%s\n' "$confirmed") <(printf '%s\n' "$comp_cmds"))"
+stale_cmds="$(comm -13 <(printf '%s\n' "$confirmed") <(printf '%s\n' "$comp_cmds"))"
+missing_flags="$(comm -23 <(printf '%s\n' "$cli_flags") <(printf '%s\n' "$comp_flags"))"
+stale_flags="$(comm -13 <(printf '%s\n' "$cli_flags") <(printf '%s\n' "$comp_flags"))"
+
+report "Commands in CLI but missing from completion.zsh:" "$missing_cmds"
+report "Commands in completion.zsh but not confirmed in the CLI:" "$stale_cmds"
+report "Flags in CLI but missing from completion.zsh:" "$missing_flags"
+report "Flags in completion.zsh but not in current CLI --help:" "$stale_flags"
+
+printf '\n%s\n' "Choice-value drift:"
+value_drift=0
+while IFS= read -r flag; do
+  [ -n "$flag" ] || continue
+  comp_enum="$(completion_flag_enum "$flag")"
+  [ -n "$comp_enum" ] || continue
+  cli_enum="$(cli_flag_enum "$flag")"
+  [ -n "$cli_enum" ] || continue
+  if [ "$comp_enum" != "$cli_enum" ]; then
+    printf '  %s  cli=(%s) completion=(%s)\n' "$flag" "${cli_enum% }" "${comp_enum% }"
+    value_drift=1
+    drift=1
+  fi
+done <<< "$comp_flags"
+[ "$value_drift" -eq 0 ] && echo "  (none)"
+
+echo
+if [ "$drift" -ne 0 ]; then
+  echo "Drift found. Reconcile $completion_file and re-run."
+  exit 1
+fi
+echo "No drift. completion.zsh matches the installed claude CLI."
