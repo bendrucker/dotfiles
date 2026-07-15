@@ -4,7 +4,11 @@
 export ZSH="$HOME/.dotfiles"
 
 "$ZSH/scripts/homebrew.sh"
-gum spin --show-output --show-error --title "brew update" -- brew update
+if [ -n "$CI" ]; then
+  echo "› skipping brew update (CI)"
+else
+  gum spin --show-output --show-error --title "brew update" -- brew update
+fi
 
 echo "› building default packages"
 "$ZSH/bin/build-default-packages"
