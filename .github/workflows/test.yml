@@ -53,12 +53,27 @@ jobs:
     - name: Cache Homebrew packages
       uses: actions/cache@v6
       with:
-        key: homebrew-v2-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
+        key: homebrew-v3-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
         restore-keys: |
+          homebrew-v3-${{ runner.os }}-
           homebrew-v2-${{ runner.os }}-
         path: |
           ~/Library/Caches/Homebrew
+          /opt/homebrew/Library/Taps
           /home/linuxbrew/.linuxbrew
+    - name: Cache cargo-installed binaries
+      uses: actions/cache@v6
+      with:
+        # No repo file hashes to the crate version, so key on run_id: the
+        # exact key never pre-exists, the cache (a few MB) re-saves every
+        # run, and restore-keys pull the most recent prior save.
+        key: cargo-install-${{ runner.os }}-${{ github.run_id }}
+        restore-keys: |
+          cargo-install-${{ runner.os }}-
+        path: |
+          ~/.cargo/bin
+          ~/.cargo/.crates.toml
+          ~/.cargo/.crates2.json
     - name: Bootstrap
       run: ./scripts/bootstrap
       env:
