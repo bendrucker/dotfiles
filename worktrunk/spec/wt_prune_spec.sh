@@ -144,8 +144,10 @@ GH
 JSON
   }
 
-  run_prune() { ( cd "$repo" && PATH="$stubdir:$PATH" zsh "$wtprune" "$@" ); }
-  run_audit() { ( cd "$repo" && PATH="$stubdir:$PATH" zsh "$wtaudit" ); }
+  # `zsh -f` skips ~/.zshenv, which after bootstrap re-runs `brew shellenv` and
+  # reorders PATH, pushing $stubdir below a real wt/gh and shadowing the stubs.
+  run_prune() { ( cd "$repo" && PATH="$stubdir:$PATH" zsh -f "$wtprune" "$@" ); }
+  run_audit() { ( cd "$repo" && PATH="$stubdir:$PATH" zsh -f "$wtaudit" ); }
 
   It "dry-run prints a reasons table and removes nothing"
     fixture_merged_survivor
