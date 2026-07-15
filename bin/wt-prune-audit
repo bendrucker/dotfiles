@@ -1,0 +1,64 @@
+#!/usr/bin/env zsh
+# wt prune-audit: an independent oracle that catches a prune that silently
+# stopped removing what it should. It re-derives the survivor set from a fresh
+# `wt list` and applies the minimal landed-work invariant, so it fires whatever
+# the cause of the miss (a truncated forge query, a detection regression, a
+# skipped pass). It is deliberately simpler than the pruner and does not share
+# its decision code: it reuses only pr_state, sourced from bin/wt-prune.
+#
+# Prints "<branch>\t<reason>" for each linked, non-current worktree that a
+# healthy prune should already have removed:
+#   - main_state is empty/integrated: `wt list` already knows the work landed
+#     into the default branch, so no forge call is needed.
+#   - otherwise the branch has a MERGED PR that outlived the prune.
+# Prints nothing when there is no drift. Dispatched fleet-wide via
+# `wt all prune-audit`, so a clean repo emits nothing and is skipped.
+
+set -uo pipefail
+
+# Sourcing defines pr_state without running the prune (guarded on
+# ZSH_EVAL_CONTEXT). $0 is this script's path even when invoked by `wt`.
+source "${0:A:h}/wt-prune"
+
+main () {
+  local list_json
+  list_json=$(wt list --format=json 2>/dev/null)
+  [[ -n "$list_json" && "$list_json" != "[]" ]] || return 0
+
+  # Only linked, non-main, non-current worktrees with a branch are candidates.
+  # Skip the forge entirely when none survive, matching the pruner's gating so
+  # most repos in a fan-out cost nothing.
+  local has_candidate
+  has_candidate=$(jq -r 'any(.[];
+    .kind == "worktree" and (.is_main | not) and (.is_current | not) and ((.branch // "") != ""))' <<<"$list_json")
+  [[ "$has_candidate" == true ]] || return 0
+
+  local remote_host
+  remote_host=$(git remote get-url origin 2>/dev/null | sed -E 's|^[^@]*@||; s|^https?://||; s|[:/].*||')
+
+  local branch main_state pr_out pr_st
+  while IFS=$'\t' read -r branch main_state; do
+    # Free signal: `wt list` already resolved this as integrated into the
+    # default branch, so a healthy prune would have removed it.
+    if [[ "$main_state" == empty || "$main_state" == integrated ]]; then
+      print -r -- "$branch"$'\t'"integrated ($main_state)"
+      continue
+    fi
+
+    # Otherwise pay for one forge lookup: a MERGED PR that still has a worktree
+    # is exactly the historical backlog this tripwire guards against.
+    pr_out=$(pr_state "$branch" "$remote_host")
+    IFS=$'\t' read -r pr_st _ <<<"$pr_out"
+    [[ "$pr_st" == MERGED ]] && print -r -- "$branch"$'\t'"merged PR survived"
+  done < <(jq -r '
+    .[]
+    | select(.kind == "worktree" and (.is_main | not) and (.is_current | not) and ((.branch // "") != ""))
+    | [ .branch, (.main_state // "") ] | @tsv' <<<"$list_json")
+
+  # Drift is signalled by the printed violator lines, not by exit status: under
+  # `wt all`, a nonzero return would flag the repo as failed rather than as
+  # merely having output.
+  return 0
+}
+
+[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"

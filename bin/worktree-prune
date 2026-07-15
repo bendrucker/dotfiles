@@ -11,13 +11,15 @@ DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 source "${0:A:h}/../scripts/lib/report-failure.sh"
 
 PRUNE_LOG=$(mktemp)
-trap 'rm -f "$PRUNE_LOG"' EXIT
+AUDIT_LOG=$(mktemp)
+trap 'rm -f "$PRUNE_LOG" "$AUDIT_LOG"' EXIT
+
+revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 gum log --level info "Running worktree prune"
 if ! "$DOTFILES_HOME/bin/wt-all" prune --before 2>&1 | tee "$PRUNE_LOG"; then
   gum log --level error "worktree prune failed"
 
-  revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
   output=$(tail -n 100 "$PRUNE_LOG" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')
   report_failure "worktree-prune" "Nightly worktree prune failed" "wt all prune --before" "$output" "$revision"
   exit 1
@@ -25,3 +27,21 @@ fi
 
 report_success "worktree-prune"
 gum log --level info "Worktree prune completed successfully"
+
+# Drift tripwire: an independent oracle re-derives the survivor set and flags
+# any worktree a healthy prune should already have removed. It stays silent
+# when clean, so any output means the pruner missed something. Latched under
+# its own job name, so drift files a separate to-do from a prune failure and
+# a green prune with silent drift still surfaces.
+gum log --level info "Auditing for prune drift"
+"$DOTFILES_HOME/bin/wt-all" prune-audit 2>/dev/null \
+  | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g' \
+  | grep -v '^[[:space:]]*$' >"$AUDIT_LOG" || true
+
+if [[ -s "$AUDIT_LOG" ]]; then
+  gum log --level warn "prune drift detected"
+  report_failure "wt-prune-drift" "Worktree prune drift detected" "wt all prune-audit" "$(cat "$AUDIT_LOG")" "$revision"
+else
+  report_success "wt-prune-drift"
+  gum log --level info "No prune drift"
+fi

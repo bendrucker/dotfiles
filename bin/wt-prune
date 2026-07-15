@@ -55,6 +55,56 @@ pr_state () {
   fi
 }
 
+# Decide a survivor's fate from its resolved state. Pure: it reads only its
+# arguments, touches no globals, and has no side effects, so the removal
+# rules can be exercised in isolation. This is the source of truth; main acts
+# on the answer but does not re-derive it.
+#
+# Prints "<action>\t<reason>" for defer/keep, and "<action>\t<reason>\t<mode>"
+# for remove, where:
+#   action  remove / defer / keep
+#   reason  a short human string, for the dry-run table (display only, never
+#           matched on: renaming a reason must not change behavior)
+#   mode    delete-branch when the work has landed, keep-branch when the branch
+#           still holds the only copy of committed work. main maps this token
+#           to the `wt remove` flags, so the branch-deletion call lives here.
+#
+#   pr_state       MERGED / CLOSED / OPEN / "" (no PR on the forge)
+#   onremote       "onremote" when the tip is pushed, anything else otherwise
+#   clean          "clean" when the tree has no changes, anything else otherwise
+#   is_current     "true" for the checked-out worktree
+#   before_enabled 1 when the age pass is active
+#   age_exceeded   1 when the worktree is older than the age threshold
+classify_survivor () {
+  local pr_state=$1 onremote=$2 clean=$3 is_current=$4 before_enabled=$5 age_exceeded=$6
+
+  # Never the current worktree: you cannot remove the checkout you stand in.
+  [[ "$is_current" == true ]] && { print -r -- "keep"$'\t'"current worktree"; return }
+
+  # Merged upstream: the work landed, so the leftovers are cruft even when dirty
+  # or ahead. A squash merge leaves local commits, so the forge state is the
+  # only proof it landed, and it outranks a dirty tree. Landed, so drop branch.
+  [[ "$pr_state" == MERGED ]] && { print -r -- "remove"$'\t'"merged"$'\t'"delete-branch"; return }
+
+  # Closed without merging is weaker than merged, so guard it: remove only when
+  # the tip is backed up on a remote (recoverable) and the tree is clean.
+  [[ "$pr_state" == CLOSED && "$onremote" == onremote && "$clean" == clean ]] \
+    && { print -r -- "remove"$'\t'"closed, recoverable"$'\t'"delete-branch"; return }
+
+  # Old and clean with no decisive forge state: drop the stale checkout but keep
+  # the branch, so committed work survives. Applies whatever the PR state.
+  (( before_enabled )) && [[ "$clean" == clean ]] && (( age_exceeded )) \
+    && { print -r -- "remove"$'\t'"aged out"$'\t'"keep-branch"; return }
+
+  # Preserved this run. Label why, for the dry-run reasons table.
+  [[ "$pr_state" == OPEN ]] && { print -r -- "keep"$'\t'"open PR"; return }
+  if [[ "$pr_state" == CLOSED ]]; then
+    [[ "$clean" == clean ]] && { print -r -- "keep"$'\t'"local-only"; return }
+    print -r -- "keep"$'\t'"dirty & closed"; return
+  fi
+  print -r -- "defer"$'\t'"local-only"
+}
+
 main () {
   # wt subcommands occasionally flush stray bookkeeping to stdout mid-run, which
   # would corrupt our single summary line (and the `wt all` table). Detach the
@@ -146,6 +196,9 @@ main () {
   # handle passed to `wt remove` and the raw tab-separated display row.
   local -a rec_handles rec_rows loc_handles loc_rows
 
+  # Standalone dry-run: a row per survivor for the reasons table below.
+  local -a reason_rows
+
   if [[ "$has_linked" == true ]]; then
     local remote_host
     remote_host=$(git remote get-url origin 2>/dev/null | sed -E 's|^[^@]*@||; s|^https?://||; s|[:/].*||')
@@ -158,43 +211,54 @@ main () {
       [[ -n "${seen[$branch]:-}" ]] && continue
 
       # Resolve the exact PR/MR state for this survivor. The integration pass
-      # already cleared branches merged into the local default; a squash-merged
+      # already cleared branches merged into the local default. A squash-merged
       # PR still shows local commits ahead of main, so only the forge state
       # proves it landed. This runs once per survivor, not once per PR ever.
       pr_out=$(pr_state "$branch" "$remote_host")
       IFS=$'\t' read -r pr_st pr_num <<<"$pr_out"
 
+      # The age pass is consulted only under --before. Interactive ignores it
+      # and defers aged candidates to the checklist, so mask before there.
+      integer age_exceeded=0
+      (( before_enabled && now - ts >= before_secs )) && age_exceeded=1
+      integer classify_before=before_enabled
+      (( interactive )) && classify_before=0
+
+      local decision action reason mode
+      decision=$(classify_survivor "$pr_st" "$onremote" "$clean" "$is_current" "$classify_before" "$age_exceeded")
+      IFS=$'\t' read -r action reason mode <<<"$decision"
+
+      local pr_disp="-"
+      [[ -n "$pr_st" ]] && pr_disp="${pr_st}#${pr_num}"
+
+      # Standalone dry-run: record what would happen and why. WT_ALL runs keep
+      # the terse count contract, so they skip the table.
+      if (( dry_run )) && [[ -z "${WT_ALL:-}" ]]; then
+        reason_rows+=("${wtpath:t}"$'\t'"$branch"$'\t'"$pr_disp"$'\t'"$action"$'\t'"$reason")
+      fi
+
       # Removals read stdin from /dev/null: the loop's stdin is the jq pipe, and
       # a `wt remove` that pauses on a prompt would otherwise consume it. We
       # count only confirmed removals so the summary matches what was removed (a
       # dry-run counts everything it lists, since it removes nothing).
-
-      # Merged upstream: the work landed, so drop worktree and branch even when
-      # dirty. The leftovers are cruft. Never the current worktree: you cannot
-      # remove the checkout you are standing in.
-      if [[ "$pr_st" == MERGED && "$is_current" != true ]]; then
-        if (( dry_run )) || wt remove --foreground --force --force-delete "$branch" </dev/null >/dev/null 2>&1; then
+      if [[ "$action" == remove ]]; then
+        # classify_survivor owns the branch-deletion call via its mode token:
+        # keep-branch drops only the directory (committed work survives), any
+        # other mode force-deletes the landed branch too. main does not infer
+        # this from the display reason, so rewording a reason is behavior-safe.
+        local -a rmflags=(--foreground)
+        [[ "$mode" == keep-branch ]] || rmflags+=(--force --force-delete)
+        if (( dry_run )) || wt remove "${rmflags[@]}" "$branch" </dev/null >/dev/null 2>&1; then
           (( worktrees++ )); seen[$branch]=1
         fi
         continue
       fi
 
-      # Closed without merging is weaker than merged, so guard it: remove only
-      # when the tip is on a remote (recoverable), the tree is clean (no
-      # only-local work), and this is not the current worktree.
-      if [[ "$pr_st" == CLOSED && "$onremote" == onremote && "$clean" == clean && "$is_current" != true ]]; then
-        if (( dry_run )) || wt remove --foreground --force --force-delete "$branch" </dev/null >/dev/null 2>&1; then
-          (( worktrees++ )); seen[$branch]=1
-        fi
-        continue
-      fi
-
-      # Interactive: defer the ambiguous remainder to the checklist instead of
-      # the age pass. Never offer the current worktree.
+      # Interactive: defer everything classify did not auto-remove to the
+      # checklist, split by recoverability. Never offer the current worktree.
       if (( interactive )); then
         [[ "$is_current" == true ]] && continue
-        local dir=${wtpath:t} pr_disp="-" remote_disp="LOCAL-ONLY"
-        [[ -n "$pr_st" ]] && pr_disp="${pr_st}#${pr_num}"
+        local dir=${wtpath:t} remote_disp="LOCAL-ONLY"
         [[ "$onremote" == onremote ]] && remote_disp="onremote"
         local row="$dir"$'\t'"$branch"$'\t'"$pr_disp"$'\t'"$remote_disp"$'\t'"$clean"
         if [[ "$onremote" == onremote ]]; then
@@ -203,15 +267,6 @@ main () {
           loc_handles+=("$branch"); loc_rows+=("$row")
         fi
         continue
-      fi
-
-      # Age pass: old and clean. Drop the worktree directory but keep the branch
-      # (plain `wt remove` deletes a branch only when merged), so committed work
-      # survives and a dirty worktree makes `wt remove` fail and get skipped.
-      if (( before_enabled )) && [[ "$clean" == clean ]] && (( now - ts >= before_secs )); then
-        if (( dry_run )) || wt remove --foreground "$branch" </dev/null >/dev/null 2>&1; then
-          (( worktrees++ )); seen[$branch]=1
-        fi
       fi
     done < <(jq -r '
       .[]
@@ -294,6 +349,17 @@ main () {
     fi
   fi
 
+  # Standalone dry-run: print the per-survivor decisions so the forge and age
+  # passes explain themselves (the integration pass is covered by `wt step
+  # prune --dry-run`). This prints even when nothing would be removed, so a
+  # survivor that is kept still shows the reason it was kept.
+  if (( dry_run )) && [[ -z "${WT_ALL:-}" ]] && (( ${#reason_rows} > 0 )); then
+    {
+      print -r -- "DIR"$'\t'"BRANCH"$'\t'"STATE"$'\t'"DECISION"$'\t'"REASON"
+      print -rl -- "${reason_rows[@]}"
+    } | column -t -s $'\t' >&$stdout_fd
+  fi
+
   (( worktrees == 0 && branches == 0 )) && return
 
   # Under `wt all`, emit tab-separated counts so the caller can build a table.
@@ -316,4 +382,7 @@ plural () {
   print -r -- "$n $noun"
 }
 
-main "$@"
+# Run only when executed directly. When sourced (tests, wt-prune-audit),
+# ZSH_EVAL_CONTEXT gains a ":file" suffix, so the functions are defined without
+# running the prune.
+[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"
