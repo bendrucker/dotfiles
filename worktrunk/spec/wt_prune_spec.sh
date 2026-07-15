@@ -19,34 +19,41 @@ run_classify() { zsh -fc 'source "$1"; shift; classify_survivor "$@"' _ "$wtprun
 run_parse()    { zsh -fc 'source "$1"; shift; parse_duration "$@"'    _ "$wtprune" "$@"; }
 
 Describe "classify_survivor decision matrix"
-  # pr_state onremote clean is_current before age  -> action  reason
+  # A remove decision carries a mode (delete-branch / keep-branch) that main
+  # maps to the wt remove flags. keep/defer carry no mode. Branch deletion keys
+  # off the mode token. The reason string stays display-only.
+  # pr_state onremote clean is_current before age  -> action reason  mode
   Parameters
     # Case 1 & 2: merged wins over a dirty tree and local commits ahead. A
-    # squash merge leaves both, so only the MERGED forge state proves it landed.
-    "MERGED"  "local"    "dirty"  "false"  1  1  "remove"  "merged"
-    "MERGED"  "onremote" "clean"  "false"  0  0  "remove"  "merged"
+    # squash merge leaves both, so only the MERGED forge state proves it landed,
+    # and the landed branch is safe to delete.
+    "MERGED"  "local"    "dirty"  "false"  1  1  "remove"  "merged"               "delete-branch"
+    "MERGED"  "onremote" "clean"  "false"  0  0  "remove"  "merged"               "delete-branch"
     # Case 3: closed, backed up on a remote, clean -> recoverable, remove.
-    "CLOSED"  "onremote" "clean"  "false"  0  0  "remove"  "closed, recoverable"
+    "CLOSED"  "onremote" "clean"  "false"  0  0  "remove"  "closed, recoverable"  "delete-branch"
     # Case 4: closed but local-only or dirty -> keep, the work is only here.
-    "CLOSED"  "local"    "clean"  "false"  0  0  "keep"    "local-only"
-    "CLOSED"  "onremote" "dirty"  "false"  0  0  "keep"    "dirty & closed"
+    "CLOSED"  "local"    "clean"  "false"  0  0  "keep"    "local-only"           ""
+    "CLOSED"  "onremote" "dirty"  "false"  0  0  "keep"    "dirty & closed"       ""
     # Case 5: an open PR is preserved.
-    "OPEN"    "onremote" "clean"  "false"  0  0  "keep"    "open PR"
+    "OPEN"    "onremote" "clean"  "false"  0  0  "keep"    "open PR"              ""
     # Case 6: the current worktree is never force-removed, even when merged.
-    "MERGED"  "local"    "dirty"  "true"   0  0  "keep"    "current worktree"
+    "MERGED"  "local"    "dirty"  "true"   0  0  "keep"    "current worktree"     ""
     # Case 7: pushed with no PR and not yet aged -> defer, do not auto-remove.
     # NOPR is the sentinel for an empty pr_state (a survivor with no PR).
-    "NOPR"    "onremote" "clean"  "false"  1  0  "defer"   "local-only"
-    # Age pass: old and clean with no decisive PR state -> remove, keep branch.
-    "NOPR"    "local"    "clean"  "false"  1  1  "remove"  "aged out"
+    "NOPR"    "onremote" "clean"  "false"  1  0  "defer"   "local-only"           ""
+    # Age pass: old and clean with no decisive PR state -> remove but keep the
+    # branch, so committed work survives.
+    "NOPR"    "local"    "clean"  "false"  1  1  "remove"  "aged out"             "keep-branch"
     # Age applies whatever the PR state: an old, clean open-PR checkout ages out.
-    "OPEN"    "onremote" "clean"  "false"  1  1  "remove"  "aged out"
+    "OPEN"    "onremote" "clean"  "false"  1  1  "remove"  "aged out"             "keep-branch"
   End
 
-  Example "$1/$2/$3 current=$4 before=$5 age=$6 -> $7 ($8)"
+  Example "$1/$2/$3 current=$4 before=$5 age=$6 -> $7 ($8${9:+/$9})"
     pr="$1"; [ "$pr" = NOPR ] && pr=""
+    expected="$(printf '%s\t%s' "$7" "$8")"
+    [ -n "${9:-}" ] && expected="$expected$(printf '\t%s' "$9")"
     When call run_classify "$pr" "$2" "$3" "$4" "$5" "$6"
-    The output should equal "$(printf '%s\t%s' "$7" "$8")"
+    The output should equal "$expected"
     The status should be success
   End
 End
@@ -92,11 +99,13 @@ WT
     chmod +x "$stubdir/wt"
 
     # gh stub: `gh pr view <branch> --json state,number --jq …` resolves to the
-    # state under test. pr_state formats it as "STATE\tNUMBER".
+    # state under test. pr_state formats it as "STATE\tNUMBER". An empty state
+    # file mimics a branch with no PR (real gh exits nonzero, printing nothing).
     cat >"$stubdir/gh" <<'GH'
 #!/usr/bin/env bash
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
-  printf '%s\t42\n' "$(cat "$PR_STATE_FILE")"
+  state="$(cat "$PR_STATE_FILE")"
+  [ -n "$state" ] && printf '%s\t42\n' "$state"
 fi
 exit 0
 GH
@@ -156,6 +165,28 @@ JSON
     The status should equal 1
     The stderr should include "requires a terminal"
     The contents of file "$WT_REMOVE_LOG" should equal ""
+  End
+
+  # The main-side half of the mode contract: a real (non-dry) removal must pass
+  # the flags classify_survivor's mode implies, so branch deletion tracks the
+  # decision rather than the wording of the reason.
+  It "force-deletes the branch of a merged worktree"
+    fixture_merged_survivor
+    printf 'MERGED' >"$PR_STATE_FILE"
+    When call run_prune
+    The status should be success
+    The output should include "worktree"
+    The contents of file "$WT_REMOVE_LOG" should include "--force --force-delete feature-x"
+  End
+
+  It "removes an aged-out worktree without deleting its branch"
+    fixture_merged_survivor
+    : >"$PR_STATE_FILE"
+    When call run_prune --before 1mo
+    The status should be success
+    The output should include "worktree"
+    The contents of file "$WT_REMOVE_LOG" should include "--foreground feature-x"
+    The contents of file "$WT_REMOVE_LOG" should not include "force-delete"
   End
 
   It "audit flags a merged survivor the prune left behind"

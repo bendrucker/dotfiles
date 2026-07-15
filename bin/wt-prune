@@ -57,10 +57,17 @@ pr_state () {
 
 # Decide a survivor's fate from its resolved state. Pure: it reads only its
 # arguments, touches no globals, and has no side effects, so the removal
-# invariants can be exercised in isolation. Prints "<action>\t<reason>" where
-# action is remove, defer, or keep. This is the source of truth; main maps the
-# action to a `wt remove` variant or the interactive checklist, it does not
-# re-decide.
+# rules can be exercised in isolation. This is the source of truth; main acts
+# on the answer but does not re-derive it.
+#
+# Prints "<action>\t<reason>" for defer/keep, and "<action>\t<reason>\t<mode>"
+# for remove, where:
+#   action  remove / defer / keep
+#   reason  a short human string, for the dry-run table (display only, never
+#           matched on: renaming a reason must not change behavior)
+#   mode    delete-branch when the work has landed, keep-branch when the branch
+#           still holds the only copy of committed work. main maps this token
+#           to the `wt remove` flags, so the branch-deletion call lives here.
 #
 #   pr_state       MERGED / CLOSED / OPEN / "" (no PR on the forge)
 #   onremote       "onremote" when the tip is pushed, anything else otherwise
@@ -76,18 +83,18 @@ classify_survivor () {
 
   # Merged upstream: the work landed, so the leftovers are cruft even when dirty
   # or ahead. A squash merge leaves local commits, so the forge state is the
-  # only proof it landed, and it outranks a dirty tree.
-  [[ "$pr_state" == MERGED ]] && { print -r -- "remove"$'\t'"merged"; return }
+  # only proof it landed, and it outranks a dirty tree. Landed, so drop branch.
+  [[ "$pr_state" == MERGED ]] && { print -r -- "remove"$'\t'"merged"$'\t'"delete-branch"; return }
 
   # Closed without merging is weaker than merged, so guard it: remove only when
   # the tip is backed up on a remote (recoverable) and the tree is clean.
   [[ "$pr_state" == CLOSED && "$onremote" == onremote && "$clean" == clean ]] \
-    && { print -r -- "remove"$'\t'"closed, recoverable"; return }
+    && { print -r -- "remove"$'\t'"closed, recoverable"$'\t'"delete-branch"; return }
 
-  # Old and clean with no decisive forge state: drop the stale checkout. Keeps
-  # the branch (so committed work survives) and applies whatever the PR state.
+  # Old and clean with no decisive forge state: drop the stale checkout but keep
+  # the branch, so committed work survives. Applies whatever the PR state.
   (( before_enabled )) && [[ "$clean" == clean ]] && (( age_exceeded )) \
-    && { print -r -- "remove"$'\t'"aged out"; return }
+    && { print -r -- "remove"$'\t'"aged out"$'\t'"keep-branch"; return }
 
   # Preserved this run. Label why, for the dry-run reasons table.
   [[ "$pr_state" == OPEN ]] && { print -r -- "keep"$'\t'"open PR"; return }
@@ -217,9 +224,9 @@ main () {
       integer classify_before=before_enabled
       (( interactive )) && classify_before=0
 
-      local decision action reason
+      local decision action reason mode
       decision=$(classify_survivor "$pr_st" "$onremote" "$clean" "$is_current" "$classify_before" "$age_exceeded")
-      IFS=$'\t' read -r action reason <<<"$decision"
+      IFS=$'\t' read -r action reason mode <<<"$decision"
 
       local pr_disp="-"
       [[ -n "$pr_st" ]] && pr_disp="${pr_st}#${pr_num}"
@@ -235,10 +242,12 @@ main () {
       # count only confirmed removals so the summary matches what was removed (a
       # dry-run counts everything it lists, since it removes nothing).
       if [[ "$action" == remove ]]; then
-        # Aged-out drops only the directory and keeps the branch, so committed
-        # work survives. Merged and closed landed, so force-delete the branch.
+        # classify_survivor owns the branch-deletion call via its mode token:
+        # keep-branch drops only the directory (committed work survives), any
+        # other mode force-deletes the landed branch too. main does not infer
+        # this from the display reason, so rewording a reason is behavior-safe.
         local -a rmflags=(--foreground)
-        [[ "$reason" == "aged out" ]] || rmflags+=(--force --force-delete)
+        [[ "$mode" == keep-branch ]] || rmflags+=(--force --force-delete)
         if (( dry_run )) || wt remove "${rmflags[@]}" "$branch" </dev/null >/dev/null 2>&1; then
           (( worktrees++ )); seen[$branch]=1
         fi
