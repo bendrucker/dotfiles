@@ -11,7 +11,7 @@ set -euo pipefail
 # re-queried once the cache goes stale.
 
 cache="${TMPDIR:-/tmp}/tmux-claude-agents-count"
-ttl=10
+ttl=60
 
 if [[ -f "$cache" ]]; then
   now=$(date +%s)
@@ -22,6 +22,18 @@ if [[ -f "$cache" ]]; then
   cached=$(<"$cache")
   if (( now - mtime < ttl )) && [[ "$cached" =~ ^[0-9]+$ ]]; then
     printf '%s\n' "$cached"
+    exit 0
+  fi
+
+  # Load self-guard: when the box is already starved, don't pile a
+  # claude-daemon spawn onto it. Serve the stale cache instead of refreshing.
+  # `claude agents --json` is the expensive fork this avoids. The two sysctl
+  # reads are a few ms each. Skip the refresh when 1-min load > 1.5x cores.
+  cores=$(sysctl -n hw.ncpu 2>/dev/null || echo 0)
+  load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')
+  if [[ -n "$load" ]] && (( cores > 0 )) \
+     && awk -v l="$load" -v c="$cores" 'BEGIN { exit !(l > c * 1.5) }'; then
+    cat "$cache"
     exit 0
   fi
 fi
