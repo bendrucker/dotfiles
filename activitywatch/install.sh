@@ -40,11 +40,12 @@ fi
 # tablet usage land in the same db as the Mac's capture.
 #
 # Pinned to a fork: upstream discovers devices by filtering DevicePeer on
-# platform=2, which drops one of this Mac's iPhones (Apple registers identical
-# hardware under differing platform values). The fork adds --all-devices, which
+# platform=2, which finds the iPhone but not the iPad. Biome files the iPad
+# under platform=1 and reserves platform=7 for rows that carry no data, so no
+# single platform value selects both. The fork adds --all-devices, which
 # enumerates the synced stream directories instead. Repoint at upstream once
 # that lands there.
-AW_IMPORT_SCREENTIME_REF="git+https://github.com/bendrucker/aw-import-screentime@6a8d7dcbe18be271adc6d90ac48f20727a684ba0"
+AW_IMPORT_SCREENTIME_REF="git+https://github.com/bendrucker/aw-import-screentime@7e961063f80f1410b3ac6a2aa28318dee332690b"
 
 if command -v uv >/dev/null 2>&1; then
   uv tool install "$AW_IMPORT_SCREENTIME_REF"
