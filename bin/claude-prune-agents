@@ -40,7 +40,7 @@ split_worktree_path () {
 #
 # Prints "<action>\t<reason>", where action is one of:
 #   stale  every PR is in a terminal state, so the agent is removable
-#   keep   at least one PR is still open
+#   keep   at least one PR is still open, or could not be resolved
 #   skip   no PR was discovered, so there is nothing to judge
 #
 # The reason is a short human string for the table, display only: main never
@@ -48,10 +48,11 @@ split_worktree_path () {
 classify_agent () {
   (( $# == 0 )) && { print -r -- "skip"$'\t'"no PRs"; return }
 
-  local st
-  for st in "$@"; do
-    [[ "$st" == OPEN ]] && { print -r -- "keep"$'\t'"open PR"; return }
-  done
+  [[ " $* " == *" OPEN "* ]] && { print -r -- "keep"$'\t'"open PR"; return }
+
+  # ERROR is a lookup that failed rather than a state the forge reported. The
+  # PR behind it may well be open, so it blocks removal like an open one.
+  [[ " $* " == *" ERROR "* ]] && { print -r -- "keep"$'\t'"PR lookup failed"; return }
 
   # Closed-unmerged does not block: only an open PR means work is still in
   # flight. Both terminal states are named so a mixed set explains itself.
@@ -117,12 +118,21 @@ agent_prs () {
   local num st
 
   if [[ -n "$slug" && -n "$branch" ]]; then
-    while IFS=$'\t' read -r num st; do
-      [[ -z "$num" ]] && continue
-      seen[$slug#$num]=1
-      out+=("$num"$'\t'"$st")
-    done < <(gh pr list --repo "$slug" --head "$branch" --state all \
-      --json number,state --jq '.[] | "\(.number)\t\(.state)"' 2>/dev/null)
+    # Captured rather than piped, so a failed query stays distinguishable from
+    # a branch that genuinely has no PR. Both are empty output, but only the
+    # failure exits nonzero, and treating it as "no PRs" would hide an open PR
+    # and let the agent classify as stale.
+    local listing
+    if listing=$(gh pr list --repo "$slug" --head "$branch" --state all \
+        --json number,state --jq '.[] | "\(.number)\t\(.state)"' 2>/dev/null); then
+      while IFS=$'\t' read -r num st; do
+        [[ -z "$num" ]] && continue
+        seen[$slug#$num]=1
+        out+=("$num"$'\t'"$st")
+      done <<<"$listing"
+    else
+      out+=("-"$'\t'"ERROR")
+    fi
   fi
 
   local refslug refnum
@@ -172,7 +182,11 @@ scan_agents () {
     while IFS=$'\t' read -r num st; do
       [[ -z "$num" ]] && continue
       pr_states+=("$st")
-      pr_disp+=("#$num ${st:l}")
+      if [[ "$st" == ERROR ]]; then
+        pr_disp+=("lookup failed")
+      else
+        pr_disp+=("#$num ${st:l}")
+      fi
     done < <(agent_prs "$slug" "$branch" "$summary")
 
     local action reason
@@ -259,6 +273,14 @@ main () {
   elif (( force )); then
     remove_ids=("${stale_ids[@]}")
   else
+    # Without gum there is no checklist to approve the batch, and silently
+    # removing nothing would read as "nothing was stale". Name the two flags
+    # that work without it instead.
+    if (( ! ${+commands[gum]} )); then
+      print -ru2 -- "claude-prune-agents: gum is required to select interactively; use --force or --dry-run"
+      return 1
+    fi
+
     # Preselect everything: enter accepts the batch, individual rows can be
     # deselected, esc removes nothing.
     local labels_str
@@ -284,7 +306,7 @@ main () {
   done
 
   local -a notes
-  (( kept ))    && notes+=("$kept kept: open PRs")
+  (( kept ))    && notes+=("$kept kept")
   (( skipped )) && notes+=("$skipped skipped: no PRs")
   (( failed ))  && notes+=("$failed failed")
 

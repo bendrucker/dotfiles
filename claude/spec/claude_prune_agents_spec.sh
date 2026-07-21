@@ -26,6 +26,11 @@ Describe "classify_agent decision matrix"
     # Closed-unmerged does not block, so a terminal mix is still removable.
     "MERGED CLOSED"    "stale"  "merged, closed"
     "CLOSED"           "stale"  "closed"
+    # A failed lookup blocks removal: the PR behind it may well be open, so it
+    # must not be classified away by whatever else did resolve.
+    "ERROR"            "keep"   "PR lookup failed"
+    "MERGED ERROR"     "keep"   "PR lookup failed"
+    "OPEN ERROR"       "keep"   "open PR"
     # An unmodeled state can never delete an agent.
     "DRAFTED"          "keep"   "unknown PR state"
   End
@@ -84,6 +89,9 @@ Describe "claude-prune-agents --dry-run (black-box)"
     write_state open0001 "$repo/.worktrees/open-branch"   "shipped it"
     write_state bare0001 ""                               "shipped as PR #77"
     write_state lost0001 ""                               "nothing to see"
+    # flaky-agent's branch query fails while its summary ref still resolves to a
+    # merged PR: classifying from that partial result would remove it.
+    write_state flaky001 "$repo/.worktrees/flaky-branch"  "shipped as PR #77"
 
     cat >"$sandbox/agents.json" <<JSON
 [
@@ -91,6 +99,7 @@ Describe "claude-prune-agents --dry-run (black-box)"
   {"id":"open0001","cwd":"$repo","kind":"background","startedAt":1,"name":"open agent","state":"done"},
   {"id":"bare0001","cwd":"$repo","kind":"background","startedAt":1,"name":"bare ref agent","state":"done"},
   {"id":"lost0001","cwd":"$sandbox/gone","kind":"background","startedAt":1,"name":"lost agent","state":"done"},
+  {"id":"flaky001","cwd":"$repo","kind":"background","startedAt":1,"name":"flaky agent","state":"done"},
   {"id":"working1","cwd":"$repo","kind":"background","startedAt":1,"name":"busy agent","state":"working"},
   {"pid":123,"cwd":"$repo","kind":"interactive","startedAt":1,"name":"live session","status":"idle"}
 ]
@@ -125,6 +134,9 @@ case "$2" in
     case "$*" in
       *merged-branch*) printf '1\tMERGED\n' ;;
       *open-branch*)   printf '2\tOPEN\n' ;;
+      # A transient failure: empty output, but nonzero, as real gh exits on an
+      # auth, rate-limit, or network error.
+      *flaky-branch*)  exit 1 ;;
     esac
     ;;
 esac
@@ -136,12 +148,23 @@ GH
     # accidental call cannot escape to the real binary.
     printf '#!/usr/bin/env bash\nexit 0\n' >"$stubdir/gum"
     chmod +x "$stubdir/gum"
+
+    # A PATH holding only what the script needs, so the no-gum case can drop gum
+    # without a real one further down $PATH shadowing its absence.
+    nogum="$sandbox/nogum"
+    mkdir -p "$nogum"
+    for tool in zsh bash cat jq grep cut column mktemp; do
+      ln -sf "$(command -v "$tool")" "$nogum/$tool"
+    done
+    ln -sf "$stubdir/claude" "$nogum/claude"
+    ln -sf "$stubdir/gh" "$nogum/gh"
   }
   BeforeEach 'setup'
 
   # `zsh -f` skips ~/.zshenv, which after bootstrap re-runs `brew shellenv` and
   # reorders PATH, pushing $stubdir below a real claude/gh and shadowing the stubs.
   run_prune() { PATH="$stubdir:$PATH" zsh -f "$prune" "$@"; }
+  run_prune_nogum() { PATH="$nogum" zsh -f "$prune" "$@"; }
 
   It "classifies each completed agent and removes nothing"
     When call run_prune --dry-run
@@ -154,8 +177,17 @@ GH
     The output should include "#2 open"
     The output should include "keep"
     The output should include "no PRs"
-    The output should include "2 agents removable (1 kept: open PRs, 1 skipped: no PRs)"
+    The output should include "2 agents removable (2 kept, 1 skipped: no PRs)"
     The contents of file "$CLAUDE_RM_LOG" should equal ""
+  End
+
+  # A failed branch query is empty output, same as a branch with no PR. Reading
+  # it as "no PRs" would let the agent's merged summary ref carry it to stale.
+  It "keeps an agent whose branch query failed"
+    When call run_prune --dry-run
+    The status should be success
+    The output should include "lookup failed"
+    The output should not include "flaky001  flaky agent  stale"
   End
 
   It "resolves a bare PR ref against the agent's own repo"
@@ -179,6 +211,16 @@ GH
     The contents of file "$CLAUDE_RM_LOG" should include "rm bare0001"
     The contents of file "$CLAUDE_RM_LOG" should not include "rm open0001"
     The contents of file "$CLAUDE_RM_LOG" should not include "rm lost0001"
+    The contents of file "$CLAUDE_RM_LOG" should not include "rm flaky001"
+  End
+
+  # Without gum there is no checklist to approve the batch, so removing nothing
+  # while reporting success would read as "nothing was stale".
+  It "fails loudly when interactive selection has no gum"
+    When call run_prune_nogum
+    The status should equal 1
+    The stderr should include "gum is required"
+    The contents of file "$CLAUDE_RM_LOG" should equal ""
   End
 
   It "rejects an unknown option"
