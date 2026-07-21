@@ -1,0 +1,305 @@
+#!/usr/bin/env zsh
+#/ Usage: claude-prune-agents [-f|--force] [-n|--dry-run]
+#/ Remove completed background agents whose pull requests have all left the
+#/ open state.
+#/
+#/   -f, --force    remove every stale agent without prompting
+#/   -n, --dry-run  print the decision table, remove nothing
+#
+# Completed agents (`claude agents`) accumulate indefinitely, and most of them
+# shipped a PR that has since merged. An agent is prunable when every PR it
+# produced has left the open state: a single open PR keeps it, and an agent with
+# no discoverable PR is reported but never auto-removed.
+#
+# PRs are discovered two ways, unioned and deduped by <owner>/<repo>#<number>:
+# the branch the agent worked on (resolved from its worktree path, which
+# survives the worktree directory being deleted) and the PR references in the
+# agent's own summary text. Removal is `claude rm`, which owns the worktree and
+# refuses when there are unpushed commits.
+
+set -uo pipefail
+setopt typeset_silent
+
+# Captured at file scope: inside a function $0 is the function name, so --help
+# could not find the usage header to print.
+typeset -g script_path=${0:A}
+
+# Split a worktree path into its parent repo root and branch. Worktrunk uses
+# .worktrees/, the built-in harness uses .claude/worktrees/. Prints
+# "<repo root>\t<branch>", or nothing when the path is not a worktree.
+split_worktree_path () {
+  local path=$1
+  [[ "$path" =~ '^(.+)/(\.worktrees|\.claude/worktrees)/([^/]+)' ]] || return 1
+  print -r -- "$match[1]"$'\t'"$match[3]"
+}
+
+# Decide an agent's fate from the resolved states of its PRs. Pure: it reads
+# only its arguments, touches no globals, and has no side effects, so the
+# removal rules can be exercised in isolation. This is the source of truth;
+# main acts on the answer but does not re-derive it.
+#
+# Prints "<action>\t<reason>", where action is one of:
+#   stale  every PR is in a terminal state, so the agent is removable
+#   keep   at least one PR is still open
+#   skip   no PR was discovered, so there is nothing to judge
+#
+# The reason is a short human string for the table, display only: main never
+# matches on it, so rewording one is behavior-safe.
+classify_agent () {
+  (( $# == 0 )) && { print -r -- "skip"$'\t'"no PRs"; return }
+
+  local st
+  for st in "$@"; do
+    [[ "$st" == OPEN ]] && { print -r -- "keep"$'\t'"open PR"; return }
+  done
+
+  # Closed-unmerged does not block: only an open PR means work is still in
+  # flight. Both terminal states are named so a mixed set explains itself.
+  local -a reasons
+  [[ " $* " == *" MERGED "* ]] && reasons+=(merged)
+  [[ " $* " == *" CLOSED "* ]] && reasons+=(closed)
+
+  # Every state was something this script does not recognize. Keep rather than
+  # remove, so an unmodeled state can never delete an agent.
+  (( ${#reasons} )) || { print -r -- "keep"$'\t'"unknown PR state"; return }
+
+  print -r -- "stale"$'\t'"${(j:, :)reasons}"
+}
+
+format_age () {
+  integer secs=$1
+  (( secs < 3600 )) && { print -r -- "$(( secs / 60 ))m"; return }
+  (( secs < 86400 )) && { print -r -- "$(( secs / 3600 ))h"; return }
+  print -r -- "$(( secs / 86400 ))d"
+}
+
+typeset -gA repo_slugs
+
+# Resolve a repo root to its <owner>/<repo> slug, memoized: the scan hits the
+# same handful of repos repeatedly, and this is a subprocess per call.
+repo_slug () {
+  local root=$1
+  [[ -z "$root" || ! -d "$root" ]] && return 1
+  if [[ -z "${repo_slugs[$root]:-}" ]]; then
+    repo_slugs[$root]=$( (cd "$root" && gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) )
+    [[ -z "${repo_slugs[$root]}" ]] && repo_slugs[$root]="-"
+  fi
+  [[ "${repo_slugs[$root]}" == "-" ]] && return 1
+  print -r -- "${repo_slugs[$root]}"
+}
+
+# Every PR reference in an agent's summary text, as "<owner>/<repo>\t<number>".
+# Full github.com URLs carry their own repo. Bare #<n> refs resolve against the
+# agent's own repo, and are dropped when it has none, since a bare number
+# against the wrong repo would resolve to an unrelated PR.
+summary_pr_refs () {
+  local summary=$1 slug=$2 ref
+  for ref in ${(f)"$(print -r -- "$summary" | grep -oE 'github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+')"}; do
+    [[ -z "$ref" ]] && continue
+    local rest=${ref#github.com/}
+    print -r -- "${rest%%/pull/*}"$'\t'"${rest##*/pull/}"
+  done
+
+  [[ -z "$slug" ]] && return
+  for ref in ${(f)"$(print -r -- "$summary" | grep -oE '#[0-9]+')"}; do
+    [[ -z "$ref" ]] && continue
+    print -r -- "$slug"$'\t'"${ref#\#}"
+  done
+}
+
+# Resolve every PR an agent produced, printing "<number>\t<STATE>" per PR in
+# discovery order. Refs that fail to resolve (issue numbers, another repo's
+# numbering) are dropped rather than treated as blocking.
+agent_prs () {
+  local slug=$1 branch=$2 summary=$3
+  local -A seen
+  local -a out
+  local num st
+
+  if [[ -n "$slug" && -n "$branch" ]]; then
+    while IFS=$'\t' read -r num st; do
+      [[ -z "$num" ]] && continue
+      seen[$slug#$num]=1
+      out+=("$num"$'\t'"$st")
+    done < <(gh pr list --repo "$slug" --head "$branch" --state all \
+      --json number,state --jq '.[] | "\(.number)\t\(.state)"' 2>/dev/null)
+  fi
+
+  local refslug refnum
+  while IFS=$'\t' read -r refslug refnum; do
+    [[ -z "$refnum" || -n "${seen[$refslug#$refnum]:-}" ]] && continue
+    seen[$refslug#$refnum]=1
+    st=$(gh pr view "$refnum" --repo "$refslug" --json state --jq .state 2>/dev/null)
+    [[ -z "$st" ]] && continue
+    out+=("$refnum"$'\t'"$st")
+  done < <(summary_pr_refs "$summary" "$slug")
+
+  (( ${#out} )) && print -rl -- "${out[@]}"
+}
+
+# Classify every candidate agent, one tab-separated row per agent appended to
+# the given file: id, name, age, PR summary, action, reason.
+scan_agents () {
+  local outfile=$1
+  : >"$outfile"
+
+  local id cwd started name
+  while IFS=$'\t' read -r id cwd started name; do
+    [[ -z "$id" ]] && continue
+
+    local statefile=$HOME/.claude/jobs/$id/state.json
+    local worktree_path="" summary=""
+    if [[ -f "$statefile" ]]; then
+      worktree_path=$(jq -r '.worktreePath // ""' "$statefile" 2>/dev/null)
+      summary=$(jq -r '[.detail // "", .output.result // ""] | join(" ")' "$statefile" 2>/dev/null)
+    fi
+
+    # The worktree path is the branch signal, not cwd: a finished agent reports
+    # cwd as the repo root even when it worked in a worktree.
+    local repo_root="" branch="" split
+    if split=$(split_worktree_path "${worktree_path:-$cwd}"); then
+      IFS=$'\t' read -r repo_root branch <<<"$split"
+    else
+      repo_root=$cwd
+    fi
+
+    local slug=""
+    slug=$(repo_slug "$repo_root") || slug=""
+
+    local -a pr_states pr_disp
+    pr_states=() pr_disp=()
+    local num st
+    while IFS=$'\t' read -r num st; do
+      [[ -z "$num" ]] && continue
+      pr_states+=("$st")
+      pr_disp+=("#$num ${st:l}")
+    done < <(agent_prs "$slug" "$branch" "$summary")
+
+    local action reason
+    IFS=$'\t' read -r action reason < <(classify_agent "${pr_states[@]}")
+
+    local disp="-"
+    (( ${#pr_disp} )) && disp="${(j:, :)pr_disp}"
+
+    print -r -- "$id"$'\t'"$name"$'\t'"$(format_age $(( EPOCHSECONDS - started / 1000 )))"$'\t'"$disp"$'\t'"$action"$'\t'"$reason" >>"$outfile"
+  done <<<"$agents_tsv"
+}
+
+main () {
+  local dry_run=0 force=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      -n|--dry-run) dry_run=1 ;;
+      -f|--force)   force=1 ;;
+      -h|--help)    grep '^#/' "$script_path" | cut -c4-; return ;;
+      *) print -ru2 -- "claude-prune-agents: unknown option: $arg"; return 1 ;;
+    esac
+  done
+
+  zmodload zsh/datetime
+
+  local agents_json
+  agents_json=$(claude agents --json --all 2>/dev/null)
+  [[ -z "$agents_json" || "$agents_json" == "[]" ]] && { print -r -- "no agents"; return }
+
+  # Only completed background agents are candidates. Every other state --
+  # working, failed, anything new -- is left alone.
+  local agents_tsv
+  agents_tsv=$(jq -r '
+    .[]
+    | select(.kind == "background" and .state == "done")
+    | [.id, .cwd, (.startedAt | tostring), .name] | @tsv' <<<"$agents_json")
+  [[ -z "$agents_tsv" ]] && { print -r -- "no completed agents"; return }
+
+  integer total=$(print -r -- "$agents_tsv" | grep -c .)
+
+  # An explicit template: macOS mktemp resolves its default from the process's
+  # confstr temp dir, not $TMPDIR, which sandboxed callers may have redirected.
+  local rows_file
+  rows_file=$(mktemp "${TMPDIR:-/tmp}/claude-prune-agents.XXXXXX") || return 1
+  trap "rm -f '$rows_file'" EXIT
+
+  # A handful of gh calls per agent, so show progress. gum spin needs a command
+  # to wrap, and the scan is an in-process function, so spin on the wait.
+  if [[ -t 2 ]] && (( ${+commands[gum]} )); then
+    scan_agents "$rows_file" &
+    local scan_pid=$!
+    gum spin --title "Resolving PRs for $total agents" -- \
+      zsh -c "while kill -0 $scan_pid 2>/dev/null; do sleep 0.2; done"
+    wait $scan_pid
+  else
+    scan_agents "$rows_file"
+  fi
+
+  local -a stale_ids stale_rows all_rows
+  integer kept=0 skipped=0
+  local id name age prs action reason
+  while IFS=$'\t' read -r id name age prs action reason; do
+    [[ -z "$id" ]] && continue
+    all_rows+=("$id"$'\t'"$name"$'\t'"$age"$'\t'"$prs"$'\t'"$action"$'\t'"$reason")
+    case "$action" in
+      stale) stale_ids+=("$id"); stale_rows+=("$id"$'\t'"$name"$'\t'"$age"$'\t'"$prs") ;;
+      keep)  (( kept++ )) ;;
+      skip)  (( skipped++ )) ;;
+    esac
+  done < "$rows_file"
+
+  if (( dry_run )); then
+    {
+      print -r -- "ID"$'\t'"NAME"$'\t'"AGE"$'\t'"PRS"$'\t'"DECISION"$'\t'"REASON"
+      (( ${#all_rows} )) && print -rl -- "${all_rows[@]}"
+    } | column -t -s $'\t'
+  fi
+
+  local -a remove_ids
+  if (( ${#stale_ids} == 0 )); then
+    remove_ids=()
+  elif (( dry_run )); then
+    remove_ids=()
+  elif (( force )); then
+    remove_ids=("${stale_ids[@]}")
+  else
+    # Preselect everything: enter accepts the batch, individual rows can be
+    # deselected, esc removes nothing.
+    local labels_str
+    labels_str=$(printf '%s\n' "${stale_rows[@]}" | column -t -s $'\t')
+    local selected_str
+    selected_str=$(printf '%s\n' "${(@f)labels_str}" \
+      | gum choose --no-limit --selected='*' --header "Select agents to remove")
+    local line
+    for line in "${(@f)selected_str}"; do
+      [[ -z "$line" ]] && continue
+      remove_ids+=("${line%% *}")
+    done
+  fi
+
+  integer removed=0 failed=0
+  for id in "${remove_ids[@]}"; do
+    if claude rm "$id" </dev/null >/dev/null 2>&1; then
+      (( removed++ ))
+    else
+      (( failed++ ))
+      gum log --level warn "claude rm $id failed, likely unpushed commits"
+    fi
+  done
+
+  local -a notes
+  (( kept ))    && notes+=("$kept kept: open PRs")
+  (( skipped )) && notes+=("$skipped skipped: no PRs")
+  (( failed ))  && notes+=("$failed failed")
+
+  local summary="$(plural $removed agent) removed"
+  (( dry_run )) && summary="$(plural ${#stale_ids} agent) removable"
+  (( ${#notes} )) && summary="$summary (${(j:, :)notes})"
+  print -r -- "$summary"
+}
+
+plural () {
+  local n=$1 noun=$2
+  (( n == 1 )) && { print -r -- "$n $noun"; return }
+  print -r -- "$n ${noun}s"
+}
+
+# Run only when executed directly. When sourced (tests), ZSH_EVAL_CONTEXT gains
+# a ":file" suffix, so the functions are defined without running the prune.
+[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"
