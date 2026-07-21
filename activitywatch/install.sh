@@ -34,3 +34,27 @@ if [[ -z "${NONINTERACTIVE-}" ]]; then
   gum log --level info "  1. Grant Accessibility to ActivityWatch: System Settings > Privacy & Security > Accessibility (window titles need it)"
   gum log --level info "  2. Launch it once from this terminal so the prompt fires: open -a ActivityWatch"
 fi
+
+# Screen Time syncs each iOS/iPadOS device's app-focus history to this Mac, and
+# aw-import-screentime decodes it into ActivityWatch's own buckets so phone and
+# tablet usage land in the same db as the Mac's capture.
+#
+# Pinned to a fork: upstream discovers devices by filtering DevicePeer on
+# platform=2, which drops one of this Mac's iPhones (Apple registers identical
+# hardware under differing platform values). The fork adds --all-devices, which
+# enumerates the synced stream directories instead. Repoint at upstream once
+# that lands there.
+AW_IMPORT_SCREENTIME_REF="git+https://github.com/bendrucker/aw-import-screentime@6a8d7dcbe18be271adc6d90ac48f20727a684ba0"
+
+if command -v uv >/dev/null 2>&1; then
+  uv tool install "$AW_IMPORT_SCREENTIME_REF"
+else
+  gum log --level warn "uv not found; skipping aw-import-screentime (run scripts/install after mise install)"
+fi
+
+# The LaunchAgent runs the importer through /bin/zsh, so zsh is the process TCC
+# holds responsible for reading the Biome store.
+if [[ -z "${NONINTERACTIVE-}" ]]; then
+  gum log --level info "Screen Time import one-time setup:"
+  gum log --level info "  Grant Full Disk Access to /bin/zsh: System Settings > Privacy & Security > Full Disk Access (reads ~/Library/Biome)"
+fi
