@@ -692,4 +692,12 @@ _claude_install() {
     '1:target:(stable latest)'
 }
 
+_claude_prune_agents() {
+  _arguments \
+    '(-f --force)'{-f,--force}'[Remove every stale agent without prompting]' \
+    '(-n --dry-run)'{-n,--dry-run}'[Print the decision table without removing]' \
+    '(-h --help)'{-h,--help}'[Display help]'
+}
+
 compdef _claude claude
+compdef _claude_prune_agents claude-prune-agents

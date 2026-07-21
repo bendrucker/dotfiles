@@ -43,6 +43,17 @@ The agent is dispatched detached and its id is logged. Monitoring and attach hap
 
 `prefix a` opens the agent view in a popup, near-fullscreen on a narrow client. A 󰚩 pill appears in the status bar while a background agent is waiting on your input, and disappears when none remain.
 
+### Pruning
+
+`claude-prune-agents` clears completed agents whose work has landed. An agent is
+removable when every PR it produced has left the open state. A single open PR
+keeps it, and an agent with no discoverable PR is reported but never removed.
+
+PRs come from the branch the agent worked on and from the PR references in its
+own summary. The stale set is offered as a preselected checklist, so enter
+accepts the batch and esc removes nothing. `--dry-run` prints the decisions
+without removing, `--force` skips the prompt.
+
 ### Curation
 
 `CLAUDE_AGENTS_ADD_DIR` (colon-separated) passes tool-access directories as repeated `--add-dir` to both the launcher's dispatch and the popup.
