@@ -7,3 +7,9 @@ enter_accept = true
 [sync]
 ## Use the sync v2 record store.
 records = true
+
+[theme]
+## Catppuccin Mocha (Mauve accent), vendored via the catppuccin/ submodule and
+## symlinked into ~/.config/atuin/themes/. Matches the mocha/mauve palette used
+## across the tmux and terminal topics.
+name = "catppuccin-mocha-mauve"
