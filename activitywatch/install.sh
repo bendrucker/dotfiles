@@ -45,7 +45,7 @@ fi
 # single platform value selects both. The fork adds --all-devices, which
 # enumerates the synced stream directories instead. Repoint at upstream once
 # that lands there.
-AW_IMPORT_SCREENTIME_REF="git+https://github.com/bendrucker/aw-import-screentime@7e961063f80f1410b3ac6a2aa28318dee332690b"
+AW_IMPORT_SCREENTIME_REF="git+https://github.com/bendrucker/aw-import-screentime@ea672badfa1ba2c33361a7722105d642b01726fa"
 
 if command -v uv >/dev/null 2>&1; then
   uv tool install "$AW_IMPORT_SCREENTIME_REF"
