@@ -1,0 +1,4 @@
+[tools]
+# herdr's registry shorthand maps to this github backend; use it directly so
+# installs don't depend on a mise new enough to carry the registry entry.
+"github:ogulcancelik/herdr" = "0.7.5"
