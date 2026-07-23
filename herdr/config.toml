@@ -9,8 +9,9 @@ shell_mode = "auto"
 new_cwd = "follow"
 
 [keys]
-# Distinct from tmux's C-s prefix so herdr nests cleanly inside tmux over ssh.
-prefix = "ctrl+b"
+# Match tmux's C-s so muscle memory carries over; when nested, double the
+# prefix (tmux send-prefix) to reach herdr.
+prefix = "ctrl+s"
 
 [theme]
 name = "catppuccin"
