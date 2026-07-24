@@ -1,0 +1,5 @@
+[tools]
+# Homebrew-core lags (shipped 0.7.1, too old for herdr-navigator's 0.7.3+
+# floor), so pin via the github backend instead. herdr's registry shorthand
+# maps to this same source.
+"github:ogulcancelik/herdr" = "0.7.5"
