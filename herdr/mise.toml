@@ -1,5 +1,7 @@
 [tools]
-# Homebrew-core lags (shipped 0.7.1, too old for herdr-navigator's 0.7.3+
-# floor), so pin via the github backend instead. herdr's registry shorthand
-# maps to this same source.
+# Pin via the github backend for a deterministic version. Homebrew-core has
+# herdr but bootstrap doesn't `brew update`, so CI resolved a stale 0.7.1 from
+# the runner's baked-in tap index — below herdr-navigator's 0.7.3+ floor. This
+# pull-from-release pin avoids that and lets Renovate track upgrades. herdr's
+# mise registry shorthand maps to this same source.
 "github:ogulcancelik/herdr" = "0.7.5"
