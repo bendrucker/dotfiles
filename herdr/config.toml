@@ -1,0 +1,45 @@
+# herdr — agent multiplexer. https://herdr.dev/docs/configuration/
+# Dump the full default config with: herdr --default-config
+
+onboarding = false
+
+[terminal]
+default_shell = "zsh"
+shell_mode = "auto"
+new_cwd = "follow"
+
+[keys]
+# Match tmux's C-s so muscle memory carries over; when nested, double the
+# prefix (tmux send-prefix) to reach herdr.
+prefix = "ctrl+s"
+
+[theme]
+name = "catppuccin"
+
+[ui.toast]
+# Surface agent state changes (blocked / working / done) as native toasts.
+delivery = "herdr"
+
+# --- Plugin keybindings ----------------------------------------------------
+# Plugins themselves are installed by install.sh. The command IDs below come
+# from each plugin's herdr-plugin.toml.
+
+# herdr-navigator — fuzzy jump to any workspace, agent, project, or session.
+[[keys.command]]
+key = "prefix+t"
+type = "plugin_action"
+command = "herdr-navigator.open"
+description = "jump to anything"
+
+# herdr-file-viewer — git-aware, read-only file browser (diffs, markdown, code).
+[[keys.command]]
+key = "prefix+f"
+type = "shell"
+command = "herdr plugin action invoke open-file-viewer --plugin herdr-file-viewer"
+description = "file viewer (pane)"
+
+[[keys.command]]
+key = "prefix+shift+f"
+type = "shell"
+command = "herdr plugin action invoke open-file-viewer-tab --plugin herdr-file-viewer"
+description = "file viewer (tab)"
