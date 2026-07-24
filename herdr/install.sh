@@ -38,5 +38,6 @@ for entry in "${plugins[@]}"; do
     continue
   fi
   echo "› herdr plugin install ${repo}"
-  herdr plugin install "${repo}" --yes
+  # Keep a flaky third-party install from aborting the rest under `set -e`.
+  herdr plugin install "${repo}" --yes || echo "✗ ${id} install failed (skipping)" >&2
 done
