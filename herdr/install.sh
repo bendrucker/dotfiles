@@ -26,12 +26,14 @@ plugins=(
   "thanhdat77/herdr-navigator herdr-navigator"
 )
 
-installed="$(herdr plugin list --json 2>/dev/null || herdr plugin list 2>/dev/null || true)"
+installed="$(herdr plugin list --json 2>/dev/null || true)"
 
 for entry in "${plugins[@]}"; do
   repo="${entry%% *}"
   id="${entry##* }"
-  if print -r -- "$installed" | grep -qF -- "$id"; then
+  # Match the JSON-quoted id so one id can't substring-match another
+  # (e.g. herdr-file-viewer inside a herdr-file-viewer-extended).
+  if print -r -- "$installed" | grep -qF -- "\"${id}\""; then
     echo "✓ ${id} already installed"
     continue
   fi
