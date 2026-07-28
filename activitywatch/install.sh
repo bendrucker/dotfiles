@@ -48,7 +48,15 @@ fi
 AW_IMPORT_SCREENTIME_REF="git+https://github.com/bendrucker/aw-import-screentime@ea672badfa1ba2c33361a7722105d642b01726fa"
 
 if command -v uv >/dev/null 2>&1; then
-  uv tool install "$AW_IMPORT_SCREENTIME_REF"
+  # `uv tool install` is a no-op once the tool is present at any version, so on
+  # a machine holding upstream, or an older pin, it would silently leave that in
+  # place and the iPad would go missing again. uv records the resolved commit in
+  # its receipt, so compare against that and reinstall only on a mismatch. That
+  # keeps the nightly upgrade from rebuilding on every run.
+  aw_import_screentime_receipt="${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/aw-import-screentime/uv-receipt.toml"
+  if ! grep -qF "rev=${AW_IMPORT_SCREENTIME_REF##*@}" "$aw_import_screentime_receipt" 2>/dev/null; then
+    uv tool install --force "$AW_IMPORT_SCREENTIME_REF"
+  fi
 else
   gum log --level warn "uv not found; skipping aw-import-screentime (run scripts/install after mise install)"
 fi
