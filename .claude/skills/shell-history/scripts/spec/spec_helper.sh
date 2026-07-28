@@ -20,11 +20,9 @@ shellspec_spec_helper_configure() {
     now=$(( $(date +%s) * 1000000000 ))
     old=$(( ($(date +%s) - 400 * 86400) * 1000000000 ))
 
-    # bash 3.2 stages a here-document through a temp file of its own choosing,
-    # which lands outside the fixture dir and reintroduces the same denial. Write
-    # the script into the fixture dir instead, where the path is already known
-    # good.
-    local sql="$FIXTURE_DIR/fixture.sql"
+    # Piped rather than fed by here-doc, for the same reason as query.sh: bash
+    # 3.2 stages a here-doc through a temp file in the cwd or /var/tmp, so a
+    # read-only cwd breaks an otherwise fine run.
     printf '%s\n' \
       'INSTALL sqlite; LOAD sqlite;' \
       "ATTACH '$ATUIN_HISTORY_DB' AS fx (TYPE sqlite);" \
@@ -39,10 +37,8 @@ shellspec_spec_helper_configure() {
       "  ($now, 'npm test && npm run build')," \
       "  ($now, 'cat foo | grep bar')," \
       "  ($old, 'svn commit -m old');" \
-      "INSERT INTO fx.history (timestamp, command, deleted_at) VALUES ($now, 'secret token abc', $now);" \
-      > "$sql"
-
-    duckdb < "$sql"
+      "INSERT INTO fx.history (timestamp, command, deleted_at) VALUES ($now, 'secret token abc', $now);" |
+      duckdb
   }
 
   cleanup_fixture() {
