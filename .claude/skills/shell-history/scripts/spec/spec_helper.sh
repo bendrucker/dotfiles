@@ -20,22 +20,29 @@ shellspec_spec_helper_configure() {
     now=$(( $(date +%s) * 1000000000 ))
     old=$(( ($(date +%s) - 400 * 86400) * 1000000000 ))
 
-    duckdb << SQL
-INSTALL sqlite; LOAD sqlite;
-ATTACH '$ATUIN_HISTORY_DB' AS fx (TYPE sqlite);
-CREATE TABLE fx.history (
-  id VARCHAR, timestamp BIGINT, duration BIGINT, exit BIGINT,
-  command VARCHAR, cwd VARCHAR, session VARCHAR, hostname VARCHAR,
-  deleted_at BIGINT, author VARCHAR, intent VARCHAR
-);
-INSERT INTO fx.history (timestamp, command) SELECT $now, 'git push' FROM range(12);
-INSERT INTO fx.history (timestamp, command) SELECT $now, 'docker build -t app .' FROM range(3);
-INSERT INTO fx.history (timestamp, command) VALUES
-  ($now, 'npm test && npm run build'),
-  ($now, 'cat foo | grep bar'),
-  ($old, 'svn commit -m old');
-INSERT INTO fx.history (timestamp, command, deleted_at) VALUES ($now, 'secret token abc', $now);
-SQL
+    # bash 3.2 stages a here-document through a temp file of its own choosing,
+    # which lands outside the fixture dir and reintroduces the same denial. Write
+    # the script into the fixture dir instead, where the path is already known
+    # good.
+    local sql="$FIXTURE_DIR/fixture.sql"
+    printf '%s\n' \
+      'INSTALL sqlite; LOAD sqlite;' \
+      "ATTACH '$ATUIN_HISTORY_DB' AS fx (TYPE sqlite);" \
+      'CREATE TABLE fx.history (' \
+      '  id VARCHAR, timestamp BIGINT, duration BIGINT, exit BIGINT,' \
+      '  command VARCHAR, cwd VARCHAR, session VARCHAR, hostname VARCHAR,' \
+      '  deleted_at BIGINT, author VARCHAR, intent VARCHAR' \
+      ');' \
+      "INSERT INTO fx.history (timestamp, command) SELECT $now, 'git push' FROM range(12);" \
+      "INSERT INTO fx.history (timestamp, command) SELECT $now, 'docker build -t app .' FROM range(3);" \
+      'INSERT INTO fx.history (timestamp, command) VALUES' \
+      "  ($now, 'npm test && npm run build')," \
+      "  ($now, 'cat foo | grep bar')," \
+      "  ($old, 'svn commit -m old');" \
+      "INSERT INTO fx.history (timestamp, command, deleted_at) VALUES ($now, 'secret token abc', $now);" \
+      > "$sql"
+
+    duckdb < "$sql"
   }
 
   cleanup_fixture() {
