@@ -91,6 +91,45 @@ Describe "lint-expired"
     The stderr should include "malformed"
   End
 
+  # Range-checking month and day independently would admit this.
+  It "rejects a day that does not exist in that month"
+    fixture '# EXPIRES: 2026-02-31 february has no 31st'
+
+    When call run_lint
+    The status should be failure
+    The stderr should include "malformed"
+  End
+
+  It "rejects February 29 in a common year"
+    fixture '# EXPIRES: 2026-02-29 2026 is not a leap year'
+
+    When call run_lint
+    The status should be failure
+    The stderr should include "malformed"
+  End
+
+  It "accepts February 29 in a leap year"
+    fixture '# EXPIRES: 2028-02-29 2028 is a leap year'
+
+    When call run_lint
+    The status should be success
+  End
+
+  It "accepts the last day of a 30-day month"
+    fixture '# EXPIRES: 2099-04-30 april has 30 days'
+
+    When call run_lint
+    The status should be success
+  End
+
+  It "rejects a 31st in a 30-day month"
+    fixture '# EXPIRES: 2099-04-31 april has no 31st'
+
+    When call run_lint
+    The status should be failure
+    The stderr should include "malformed"
+  End
+
   It "ignores a marker in an untracked file"
     fixture 'echo tracked'
     printf '# EXPIRES: 2020-01-01 untracked\n' > "$sandbox/untracked.sh"

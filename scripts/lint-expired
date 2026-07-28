@@ -42,18 +42,31 @@ while IFS=: read -r file line rest; do
   date_field=$(printf '%s\n' "$rest" |
     sed -n "s/.*${marker}[[:space:]]*\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\).*/\1/p")
 
-  month=""
-  day=""
+  # A typo'd date that silently never fires would defeat the point, so treat an
+  # unparseable marker as a failure rather than skipping it. Checking the month
+  # and day ranges independently would admit dates like 2026-02-31, so the day
+  # is measured against the length of that specific month.
+  day_limit=0
   if [ -n "$date_field" ]; then
-    month=$(echo "$date_field" | cut -d- -f2)
-    day=$(echo "$date_field" | cut -d- -f3)
+    # Zero padding reads as octal in arithmetic, so strip it first.
+    year=$(echo "$date_field" | cut -d- -f1)
+    month=$(echo "$date_field" | cut -d- -f2 | sed 's/^0//')
+    day=$(echo "$date_field" | cut -d- -f3 | sed 's/^0//')
+
+    case "$month" in
+      1 | 3 | 5 | 7 | 8 | 10 | 12) day_limit=31 ;;
+      4 | 6 | 9 | 11) day_limit=30 ;;
+      2)
+        day_limit=28
+        if [ $((year % 4)) -eq 0 ] &&
+          { [ $((year % 100)) -ne 0 ] || [ $((year % 400)) -eq 0 ]; }; then
+          day_limit=29
+        fi
+        ;;
+    esac
   fi
 
-  # A typo'd date that silently never fires would defeat the point, so treat an
-  # unparseable marker as a failure rather than skipping it.
-  if [ -z "$date_field" ] ||
-    [ "$month" -lt 1 ] || [ "$month" -gt 12 ] ||
-    [ "$day" -lt 1 ] || [ "$day" -gt 31 ]; then
+  if [ "$day_limit" -eq 0 ] || [ "$day" -lt 1 ] || [ "$day" -gt "$day_limit" ]; then
     malformed="$malformed  $file:$line
 "
     continue
