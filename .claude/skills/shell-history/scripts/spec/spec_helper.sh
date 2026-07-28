@@ -10,7 +10,10 @@ shellspec_spec_helper_configure() {
   # "old" row sits ~400 days back to exercise the --recent cutoff. One row is
   # soft-deleted (deleted_at set) to confirm it is filtered out.
   setup_fixture() {
-    FIXTURE_DIR=$(mktemp -d)
+    # macOS mktemp ignores $TMPDIR unless given an explicit path template, so a
+    # bare `mktemp -d` lands in the Darwin per-user temp dir. Anchor to
+    # shellspec's own run directory, which does honor $TMPDIR.
+    FIXTURE_DIR=$(mktemp -d "$SHELLSPEC_TMPBASE/fixture.XXXXXX")
     export ATUIN_HISTORY_DB="$FIXTURE_DIR/history.db"
 
     local now old
