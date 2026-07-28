@@ -10,29 +10,35 @@ shellspec_spec_helper_configure() {
   # "old" row sits ~400 days back to exercise the --recent cutoff. One row is
   # soft-deleted (deleted_at set) to confirm it is filtered out.
   setup_fixture() {
-    FIXTURE_DIR=$(mktemp -d)
+    # macOS mktemp ignores $TMPDIR unless given an explicit path template, so a
+    # bare `mktemp -d` lands in the Darwin per-user temp dir. Anchor to
+    # shellspec's own run directory, which does honor $TMPDIR.
+    FIXTURE_DIR=$(mktemp -d "$SHELLSPEC_TMPBASE/fixture.XXXXXX")
     export ATUIN_HISTORY_DB="$FIXTURE_DIR/history.db"
 
     local now old
     now=$(( $(date +%s) * 1000000000 ))
     old=$(( ($(date +%s) - 400 * 86400) * 1000000000 ))
 
-    duckdb << SQL
-INSTALL sqlite; LOAD sqlite;
-ATTACH '$ATUIN_HISTORY_DB' AS fx (TYPE sqlite);
-CREATE TABLE fx.history (
-  id VARCHAR, timestamp BIGINT, duration BIGINT, exit BIGINT,
-  command VARCHAR, cwd VARCHAR, session VARCHAR, hostname VARCHAR,
-  deleted_at BIGINT, author VARCHAR, intent VARCHAR
-);
-INSERT INTO fx.history (timestamp, command) SELECT $now, 'git push' FROM range(12);
-INSERT INTO fx.history (timestamp, command) SELECT $now, 'docker build -t app .' FROM range(3);
-INSERT INTO fx.history (timestamp, command) VALUES
-  ($now, 'npm test && npm run build'),
-  ($now, 'cat foo | grep bar'),
-  ($old, 'svn commit -m old');
-INSERT INTO fx.history (timestamp, command, deleted_at) VALUES ($now, 'secret token abc', $now);
-SQL
+    # Piped rather than fed by here-doc, for the same reason as query.sh: bash
+    # 3.2 stages a here-doc through a temp file in the cwd or /var/tmp, so a
+    # read-only cwd breaks an otherwise fine run.
+    printf '%s\n' \
+      'INSTALL sqlite; LOAD sqlite;' \
+      "ATTACH '$ATUIN_HISTORY_DB' AS fx (TYPE sqlite);" \
+      'CREATE TABLE fx.history (' \
+      '  id VARCHAR, timestamp BIGINT, duration BIGINT, exit BIGINT,' \
+      '  command VARCHAR, cwd VARCHAR, session VARCHAR, hostname VARCHAR,' \
+      '  deleted_at BIGINT, author VARCHAR, intent VARCHAR' \
+      ');' \
+      "INSERT INTO fx.history (timestamp, command) SELECT $now, 'git push' FROM range(12);" \
+      "INSERT INTO fx.history (timestamp, command) SELECT $now, 'docker build -t app .' FROM range(3);" \
+      'INSERT INTO fx.history (timestamp, command) VALUES' \
+      "  ($now, 'npm test && npm run build')," \
+      "  ($now, 'cat foo | grep bar')," \
+      "  ($old, 'svn commit -m old');" \
+      "INSERT INTO fx.history (timestamp, command, deleted_at) VALUES ($now, 'secret token abc', $now);" |
+      duckdb
   }
 
   cleanup_fixture() {

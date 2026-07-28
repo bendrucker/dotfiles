@@ -127,11 +127,13 @@ DB_SQL="${DB//\'/\'\'}"
 # In-memory DuckDB (no path arg): attach the source read-only, build the view
 # layer, bind params, then read the query. Nothing persists to disk.
 # .read paths are single-quoted so a space in the path can't split the command.
-duckdb <<SQL
-INSTALL sqlite; LOAD sqlite;
-ATTACH '$DB_SQL' AS atuin (TYPE sqlite, READ_ONLY);
-.read '$VIEWS'
-SET VARIABLE cutoff = $CUTOFF;
-SET VARIABLE "limit" = $LIMIT;
-.read '$QUERY_FILE'
-SQL
+# Piped rather than fed by here-doc: bash 3.2 stages a here-doc through a temp
+# file in the cwd or /var/tmp, so a read-only cwd breaks an otherwise fine run.
+printf '%s\n' \
+  'INSTALL sqlite; LOAD sqlite;' \
+  "ATTACH '$DB_SQL' AS atuin (TYPE sqlite, READ_ONLY);" \
+  ".read '$VIEWS'" \
+  "SET VARIABLE cutoff = $CUTOFF;" \
+  "SET VARIABLE \"limit\" = $LIMIT;" \
+  ".read '$QUERY_FILE'" |
+  duckdb
