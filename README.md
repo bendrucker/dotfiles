@@ -128,6 +128,14 @@ mise.toml:$XDG_CONFIG_HOME/mise/conf.d/go.toml
 
 mise merges everything in `conf.d/` automatically. Each topic owns its runtime versions without a shared config file. Versions are pinned exactly (never `latest`) so [Renovate](https://github.com/renovatebot/renovate) can track and bump them.
 
+#### Choosing mise or Homebrew for a Tool
+
+Homebrew is the default. It links binaries into `$HOMEBREW_PREFIX/bin`, a path that stays stable across upgrades and is visible to every process, not just shells that ran `mise activate`. `brew bundle` moves each formula to the current release. That suits any tool where the newest version is the right version.
+
+mise handles the case where the version has to vary by directory. It resolves the nearest `mise.toml` walking up from the working directory: a repo pinned to an older Go gets that toolchain, everything else follows the global pin in `conf.d/`. Language runtimes and project-pinned tools like `terraform` need that. A standalone CLI usually doesn't.
+
+Declaring a tool in both places is fine and often useful. mise's activation prepends its install directories ahead of `$HOMEBREW_PREFIX/bin`. The mise version wins wherever a `mise.toml` selects one, and the Homebrew copy covers everywhere else.
+
 ### Dev Mode and Testing
 
 Symlinks point at the installed copy in `~/.dotfiles`. Edits in a development clone don't take effect until synced. To test edits without syncing, the active root is resolved on every shell in [`zsh/active-root.zsh`](zsh/active-root.zsh), with this precedence:
