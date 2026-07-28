@@ -1,6 +1,1 @@
-# herdr-navigator needs herdr 0.7.3+. CI bootstraps with HOMEBREW_NO_AUTO_UPDATE
-# and restores a cached formula index, so a long-lived cache can resolve a
-# version below that floor. The stale-index problem is general to every formula
-# here and gets fixed at the cache, not with a pin: the actions cache was purged
-# so the next run rebuilds from the runner's current index.
 brew 'herdr'
