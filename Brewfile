@@ -71,7 +71,7 @@ cask 'disk-drill'
 cask 'dash'
 cask 'figma'
 cask 'geekbench'
-cask 'ghostty'
+cask 'ghostty@tip'
 cask 'google-chrome', args: corporate_cask_args
 cask 'hazel'
 cask 'jordanbaird-ice'
