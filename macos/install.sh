@@ -50,6 +50,7 @@ install_launch_agent() {
 
 setup_dotfiles_upgrade() {
   # Remove old sync job (replaced by upgrade job which includes sync)
+  # EXPIRES: 2026-10-26 every machine has run the upgrade job at least once
   local old_sync_plist="$HOME/Library/LaunchAgents/com.user.dotfiles-sync.plist"
   launchctl bootout "gui/$UID/com.user.dotfiles-sync" 2>/dev/null || true
   rm -f "$old_sync_plist"
@@ -63,6 +64,7 @@ setup_worktree_prune() {
 
 setup_claude_upgrade() {
   # Remove old plist that pointed to ~/.claude-repo/bin/claude-upgrade
+  # EXPIRES: 2026-10-26 every machine has the relocated claude-upgrade plist
   launchctl bootout "gui/$UID/com.user.claude-upgrade" 2>/dev/null || true
 
   install_launch_agent com.user.claude-upgrade.plist "nightly Claude upgrade"

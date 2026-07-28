@@ -1,0 +1,92 @@
+#!/usr/bin/env sh
+# Usage: lint-expired [dotfiles-root]
+#
+# Fail once a one-off cleanup step has outlived the date its author gave it.
+#
+# Migrations are correct to write and easy to leave behind: removing a
+# superseded launchd plist, dropping a package that moved, working around a bug
+# that has since been fixed. Nothing about the code says when it stopped being
+# necessary, so it accretes. Tagging one with a date in a comment moves that
+# judgement out of memory and into CI, which is the only place it will actually
+# resurface.
+#
+#   # EXPIRES: 2026-10-26 every machine has the upgrade job
+#
+# Reaching the date prompts a review. Delete the code, or push the date out
+# because the reason still holds.
+set -e
+
+DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
+cd "$DOTFILES_ROOT"
+
+# Overridable so the spec can test against fixed dates.
+today="${LINT_EXPIRED_TODAY:-$(date +%Y-%m-%d)}"
+today_num=$(echo "$today" | tr -d -)
+
+marker='EXPIRES:'
+expired=""
+expired_count=0
+malformed=""
+
+matches=$(git grep -n -- "$marker" || true)
+
+# A here-doc rather than a pipe, so the counters survive the loop.
+while IFS=: read -r file line rest; do
+  [ -n "$file" ] || continue
+
+  # This script and its spec both document the marker, so they match themselves.
+  case "$file" in
+    scripts/lint-expired | scripts/spec/lint_expired_spec.sh) continue ;;
+  esac
+
+  date_field=$(printf '%s\n' "$rest" |
+    sed -n "s/.*${marker}[[:space:]]*\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\).*/\1/p")
+
+  month=""
+  day=""
+  if [ -n "$date_field" ]; then
+    month=$(echo "$date_field" | cut -d- -f2)
+    day=$(echo "$date_field" | cut -d- -f3)
+  fi
+
+  # A typo'd date that silently never fires would defeat the point, so treat an
+  # unparseable marker as a failure rather than skipping it.
+  if [ -z "$date_field" ] ||
+    [ "$month" -lt 1 ] || [ "$month" -gt 12 ] ||
+    [ "$day" -lt 1 ] || [ "$day" -gt 31 ]; then
+    malformed="$malformed  $file:$line
+"
+    continue
+  fi
+
+  if [ "$(echo "$date_field" | tr -d -)" -lt "$today_num" ]; then
+    reason=$(printf '%s\n' "$rest" |
+      sed -n "s/.*${marker}[[:space:]]*[0-9-]\{10\}[[:space:]]*//p")
+    expired_count=$((expired_count + 1))
+    expired="$expired  $file:$line  $marker $date_field
+"
+    [ -n "$reason" ] && expired="$expired    $reason
+"
+  fi
+done <<EOF
+$matches
+EOF
+
+status=0
+
+if [ -n "$malformed" ]; then
+  echo "ERROR: malformed $marker marker (expected $marker YYYY-MM-DD reason):" >&2
+  printf '%s' "$malformed" >&2
+  status=1
+fi
+
+if [ -n "$expired" ]; then
+  noun="migrations are"
+  [ "$expired_count" -eq 1 ] && noun="migration is"
+  echo "ERROR: $expired_count $noun past the expiry date." >&2
+  printf '%s' "$expired" >&2
+  echo "  Remove it, or push the date out because the reason still holds." >&2
+  status=1
+fi
+
+exit "$status"
