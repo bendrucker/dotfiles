@@ -15,6 +15,11 @@
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- Unconditional, unlike the PathState guard in com.user.activitywatch.plist.
+         launchd does not expand $HOME in a PathState key and this binary lives
+         under it, so guarding would mean hardcoding one machine's path.
+         macos/install.sh boots the agent out when the binary is absent, leaving
+         only a removal between install runs to respawn until the next one. -->
     <key>KeepAlive</key>
     <true/>
 
