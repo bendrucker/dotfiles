@@ -1,0 +1,90 @@
+#!/usr/bin/env sh
+# Usage: install-cask-variants [dotfiles-root]
+#
+# Homebrew refuses to install a cask that conflicts with an installed one, and
+# every @variant of an app declares conflicts_with against its siblings. So
+# changing which variant the Brewfile declares is a change `brew bundle` cannot
+# carry out on its own, in either direction: it fails until the old variant is
+# gone. Uninstall the variant the Brewfile stopped declaring so bundle can
+# install the one it now does.
+#
+# This is a rule, not a migration, so switching a cask needs no follow-up commit
+# to clean up after it.
+set -e
+
+DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
+
+# shellcheck source=lib/cask-variants.sh
+. "$(dirname "$0")/lib/cask-variants.sh"
+
+[ "$(uname -s)" = "Darwin" ] || exit 0
+command -v brew >/dev/null 2>&1 || exit 0
+
+declared=$(brew bundle list --cask --file "$DOTFILES_ROOT/Brewfile" 2>/dev/null) || declared_failed=1
+installed=$(brew list --cask 2>/dev/null) || installed_failed=1
+
+# Swallowing a failure outright would read as "nothing is superseded" and hand
+# brew bundle a conflict error with none of this context attached. Treating a
+# nonzero status as fatal is just as wrong: brew exits nonzero while still
+# printing a complete list when something incidental fails, such as a cache
+# refresh it could not write. The list is the signal, so the status decides only
+# when there is no list.
+if { [ -n "${declared_failed-}" ] && [ -z "$declared" ]; } ||
+  { [ -n "${installed_failed-}" ] && [ -z "$installed" ]; }; then
+  echo "install-cask-variants: cannot enumerate casks, so a superseded variant would go unnoticed." >&2
+  echo "  brew bundle will fail on the conflict if one is present." >&2
+  exit 1
+fi
+
+superseded=$(cask_variants_superseded "$declared" "$installed")
+
+[ -n "$superseded" ] || exit 0
+
+# jq is installed by the brew bundle that runs after this. A machine with no
+# casks yet has nothing to retire and never reaches this point, so require jq
+# only once there is something to verify, and say so rather than skipping
+# quietly and letting bundle fail on the conflict instead.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "install-cask-variants: these casks are superseded by a variant the Brewfile declares," >&2
+  echo "  but jq is not available to confirm the conflict. brew bundle will fail while they remain:" >&2
+  printf '%s\n' "$superseded" | cut -f1 | sed 's/^/    brew uninstall --cask /' >&2
+  exit 1
+fi
+
+# Confirm every candidate before removing any of them. Interleaving the two
+# would let a metadata failure on the third candidate abort the run with the
+# first two already uninstalled and their replacements not yet installed.
+#
+# The @suffix convention is a strong hint, not proof. Only remove a cask that
+# Homebrew itself reports as conflicting, so an unrelated same-prefix token can
+# never take an app down with it.
+confirmed=$(
+  printf '%s\n' "$superseded" | while IFS="$(printf '\t')" read -r old new; do
+    [ -n "$old" ] || continue
+
+    # Unreadable metadata is a different answer from "they don't conflict", and
+    # collapsing the two would leave the cask in place and hand brew bundle a
+    # conflict error that says nothing about why.
+    if ! info=$(brew info --json=v2 --cask "$new" 2>/dev/null) ||
+      ! conflicts=$(printf '%s\n' "$info" |
+        jq -r '.casks[0].conflicts_with.cask // [] | .[]' 2>/dev/null); then
+      echo "install-cask-variants: cannot read Homebrew metadata for $new, so its conflict with the installed $old is unconfirmed." >&2
+      echo "  brew bundle will fail while $old remains. Run: brew uninstall --cask $old" >&2
+      exit 1
+    fi
+
+    printf '%s\n' "$conflicts" | grep -qxF "$old" || continue
+    printf '%s\t%s\n' "$old" "$new"
+  done
+) || exit 1
+
+# Past this point the machine is already being changed, so a failure part way
+# through is worse than one before it started: brew bundle is what installs the
+# replacements, and aborting would strand whatever was already removed. Carry on
+# and let bundle report anything still conflicting.
+printf '%s\n' "$confirmed" | while IFS="$(printf '\t')" read -r old new; do
+  [ -n "$old" ] || continue
+  echo "install-cask-variants: uninstalling $old, superseded by $new"
+  brew uninstall --cask "$old" ||
+    echo "install-cask-variants: could not uninstall $old, brew bundle will report the conflict" >&2
+done

@@ -14,6 +14,10 @@ fi
 # Trust declared taps before bundle evaluates their formulae
 ./scripts/install-trust
 
+# Retire cask variants the Brewfile stopped declaring, which bundle can't
+# install over (see the script for why)
+./scripts/install-cask-variants
+
 brew bundle
 
 # Expose brew configuration to installers
