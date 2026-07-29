@@ -112,6 +112,7 @@ jobs:
         id
         brew_gid=$(stat -c '%g' /home/linuxbrew/.linuxbrew/bin/brew)
         echo "brew file gid: $brew_gid"
+        sudo apt-get install -y bubblewrap
         bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-uts \
           --ro-bind / / --dev /dev --proc /proc --bind /var/tmp /var/tmp \
           -- sh -c "id; d=\$(mktemp -d /var/tmp/probe.XXXXXX); \
