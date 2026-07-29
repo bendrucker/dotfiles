@@ -87,12 +87,13 @@ jobs:
         HOMEBREW_BUNDLE_FORCE_INSTALL_CLEANUP: '1'
         # Homebrew/brew#22240 made Homebrew build unbottled formulae inside a
         # rootless bwrap sandbox on Linux. Mktemp#run chowns its staging dir to
-        # the brew file's group, that gid is unmapped in the sandbox's user
-        # namespace, and chown(2) answers EINVAL where Mktemp rescues only
-        # EPERM, so every source install dies with "EINVAL @ apply2files".
-        # That PR added the sandbox and does not describe this failure, which
-        # is unreported upstream. Drop this once the Landlock backend (added in
-        # 6.0.13, opt-in behind $HOMEBREW_SANDBOX_LINUX_LANDLOCK) is default.
+        # bin/brew's group, which the image ships as docker, a supplementary
+        # group. bwrap maps only the primary gid, so chown(2) answers EINVAL
+        # where Mktemp rescues only EPERM and every source install dies with
+        # "EINVAL @ apply2files". That PR added the sandbox and does not
+        # describe this failure, which is unreported upstream. Drop this once
+        # the Landlock backend (6.0.13, currently opt-in behind
+        # $HOMEBREW_SANDBOX_LINUX_LANDLOCK) becomes the default.
         HOMEBREW_NO_SANDBOX_LINUX: '1'
         # skip deps installed without homebrew in https://github.com/actions/virtual-environments/blob/main/images/macos/macos-10.15-Readme.md
         HOMEBREW_BUNDLE_BREW_SKIP: >
@@ -106,27 +107,6 @@ jobs:
           python@3.11
           python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    - name: TEMP probe sandbox chown
-      if: ${{ runner.os == 'Linux' }}
-      run: |
-        id
-        brew_gid=$(stat -c '%g' /home/linuxbrew/.linuxbrew/bin/brew)
-        echo "brew file gid: $brew_gid"
-        sudo apt-get install -y bubblewrap
-        # 127 is the docker group, a supplementary group of runner and the gid
-        # the image ships bin/brew with before any cache restore rewrites it.
-        # shellcheck disable=SC2016 # the inner sh -c does the expanding
-        probe='id
-          d=$(mktemp -d /var/tmp/probe.XXXXXX)
-          for g in $(id -g) 127; do
-            chown :$g "$d" && echo "chown to gid $g ok" || echo "chown to gid $g failed"
-          done'
-        echo "--- outside the sandbox"
-        sh -c "$probe"
-        echo "--- inside the sandbox"
-        bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-uts \
-          --ro-bind / / --dev /dev --proc /proc --bind /var/tmp /var/tmp \
-          -- sh -c "$probe" || true
     # actions/checkout writes credentials to ~/.gitconfig, which takes
     # precedence over the XDG path (~/.config/git/config) where
     # install-symlinks places the dotfiles git config.
