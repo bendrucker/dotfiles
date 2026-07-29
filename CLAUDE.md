@@ -32,6 +32,8 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 - **Language versions**: Add `mise.toml` to the relevant topic directory (e.g., `go/mise.toml`)
 - **Build packages**: Use `bin/build-default-packages` script
 
+Homebrew is the default for a new tool. It links into `$HOMEBREW_PREFIX/bin`, a path that survives upgrades and is visible to every process rather than only shells that ran `mise activate`, and `brew bundle` tracks the current release. Use `mise.toml` when the version has to vary by directory, which is what mise resolves per-project: language runtimes and project-pinned tools like `terraform`. Declaring a tool in both is fine. mise's install directories come first on `$PATH`. A mise pin wins where one applies and the Homebrew copy covers everywhere else.
+
 #### Brewfile Aggregation
 
 The root `Brewfile` recursively loads all topic Brewfiles using:
