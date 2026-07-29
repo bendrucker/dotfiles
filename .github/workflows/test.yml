@@ -113,11 +113,20 @@ jobs:
         brew_gid=$(stat -c '%g' /home/linuxbrew/.linuxbrew/bin/brew)
         echo "brew file gid: $brew_gid"
         sudo apt-get install -y bubblewrap
+        # 127 is the docker group, a supplementary group of runner and the gid
+        # the image ships bin/brew with before any cache restore rewrites it.
+        # shellcheck disable=SC2016 # the inner sh -c does the expanding
+        probe='id
+          d=$(mktemp -d /var/tmp/probe.XXXXXX)
+          for g in $(id -g) 127; do
+            chown :$g "$d" && echo "chown to gid $g ok" || echo "chown to gid $g failed"
+          done'
+        echo "--- outside the sandbox"
+        sh -c "$probe"
+        echo "--- inside the sandbox"
         bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-uts \
           --ro-bind / / --dev /dev --proc /proc --bind /var/tmp /var/tmp \
-          -- sh -c "id; d=\$(mktemp -d /var/tmp/probe.XXXXXX); \
-            chown :\$(id -g) \"\$d\" && echo 'chown to egid ok'; \
-            chown :$brew_gid \"\$d\" && echo 'chown to brew gid ok'" || true
+          -- sh -c "$probe" || true
     # actions/checkout writes credentials to ~/.gitconfig, which takes
     # precedence over the XDG path (~/.config/git/config) where
     # install-symlinks places the dotfiles git config.
