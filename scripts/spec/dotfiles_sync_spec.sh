@@ -13,22 +13,27 @@ Describe "dotfiles-sync exit status"
     mkdir -p "$stubdir"
 
     # gum stub: `gum spin … -- cmd` runs cmd; `gum log … msg` echoes msg.
-    cat > "$stubdir/gum" <<'GUM'
-#!/usr/bin/env bash
-case "$1" in
-  spin)
-    shift
-    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
-    [ "$1" = "--" ] && shift
-    exec "$@"
-    ;;
-  log)
-    # Real gum log writes to stderr; match that so command substitution in
-    # callers keeps log lines off the captured stdout rev.
-    printf '%s\n' "${@: -1}" >&2
-    ;;
-esac
-GUM
+    # Written with printf rather than a here-document. bash stages a
+    # here-document through a temp file whose location it picks itself, so
+    # under a sandbox that denies that path it fails with "cannot create temp
+    # file for here document" and the stub never gets written.
+    # shellcheck disable=SC2016 # the stub's own $1 and $@, not this shell's
+    printf '%s\n' \
+      '#!/usr/bin/env bash' \
+      'case "$1" in' \
+      '  spin)' \
+      '    shift' \
+      '    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done' \
+      '    [ "$1" = "--" ] && shift' \
+      '    exec "$@"' \
+      '    ;;' \
+      '  log)' \
+      '    # Real gum log writes to stderr; match that so command substitution' \
+      '    # in callers keeps log lines off the captured stdout rev.' \
+      '    printf "%s\n" "${@: -1}" >&2' \
+      '    ;;' \
+      'esac' \
+      > "$stubdir/gum"
     chmod +x "$stubdir/gum"
 
     # notify shells out to osascript on macOS; stub it so the failure path
