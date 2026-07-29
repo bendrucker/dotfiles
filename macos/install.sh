@@ -11,42 +11,8 @@ do
   bash "$file"
 done
 
-install_launch_agent() {
-  local plist_name="$1"
-  local description="$2"
-  local plist_src="$ZSH/macos/$plist_name"
-  local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
-  local label="${plist_name%.plist}"
-
-  if [[ ! -f "$plist_src" ]]; then
-    gum log --level warn "$description plist not found, skipping"
-    return
-  fi
-
-  gum log --level info "setting up $description"
-
-  mkdir -p "$HOME/Library/LaunchAgents"
-
-  launchctl bootout "gui/$UID/$label" 2>/dev/null || true
-
-  cp "$plist_src" "$plist_dst"
-
-  # bootout of a running service is asynchronous; an immediate bootstrap can
-  # race the teardown and fail, so retry briefly.
-  local _attempt
-  for _attempt in 1 2 3 4 5; do
-    launchctl bootstrap "gui/$UID" "$plist_dst" 2>/dev/null && break
-    sleep 0.5
-  done
-
-  if launchctl print "gui/$UID/$label" >/dev/null 2>&1; then
-    gum log --level info "$description launchd agent installed"
-  else
-    gum log --level error "$description launchd agent failed to load; run: launchctl bootstrap gui/$UID $plist_dst"
-    launchd_failed=1
-    return 1
-  fi
-}
+# shellcheck source=../scripts/lib/launch-agent.sh
+source "$ZSH/scripts/lib/launch-agent.sh"
 
 setup_dotfiles_upgrade() {
   # Remove old sync job (replaced by upgrade job which includes sync)
@@ -79,22 +45,8 @@ install_launch_agent com.user.theme-sync.plist "theme-sync watcher"
 # autostart, so leave AW's built-in login item disabled to avoid a double launch.
 install_launch_agent com.user.activitywatch.plist "ActivityWatch capture"
 
-# Imports iOS/iPadOS Screen Time into ActivityWatch's buckets. It watches Biome
-# for changes rather than polling, so it stays resident. Reading Biome needs
-# Full Disk Access for /bin/zsh (see activitywatch/install.sh).
-#
-# activitywatch/install.sh provides the binary and skips it when uv is missing,
-# and scripts/install runs the topic installers in find order. A KeepAlive agent
-# whose exec target is absent respawns forever, so gate on the binary and let a
-# later run pick it up.
-aw_import_screentime="$HOME/.local/bin/aw-import-screentime"
-if [[ -x "$aw_import_screentime" ]]; then
-  install_launch_agent com.user.aw-import-screentime.plist "Screen Time import"
-else
-  gum log --level warn "aw-import-screentime not installed, skipping Screen Time import agent"
-  launchctl bootout "gui/$UID/com.user.aw-import-screentime" 2>/dev/null || true
-  rm -f "$HOME/Library/LaunchAgents/com.user.aw-import-screentime.plist"
-fi
+# The Screen Time import agent is installed by activitywatch/install.sh, which
+# is where its binary comes from.
 
 # Only setup upgrade if we're in separate-directory mode (not a symlink)
 if [[ ! -L "$HOME/.dotfiles" ]]; then
