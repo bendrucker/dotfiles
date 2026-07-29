@@ -61,9 +61,24 @@ else
   gum log --level warn "uv not found; skipping aw-import-screentime (run scripts/install after mise install)"
 fi
 
+# Gated on the binary because a KeepAlive agent with a missing exec target
+# respawns forever. That gate has to live here, not in macos/install.sh, which
+# may run first.
+# shellcheck source=../macos/lib/launch-agent.sh
+source "$ZSH/macos/lib/launch-agent.sh"
+
+if [[ -x "$HOME/.local/bin/aw-import-screentime" ]]; then
+  install_launch_agent com.user.aw-import-screentime.plist "Screen Time import" || true
+else
+  gum log --level warn "aw-import-screentime not installed, skipping Screen Time import agent"
+  remove_launch_agent com.user.aw-import-screentime.plist
+fi
+
 # The LaunchAgent runs the importer through /bin/zsh, so zsh is the process TCC
 # holds responsible for reading the Biome store.
 if [[ -z "${NONINTERACTIVE-}" ]]; then
   gum log --level info "Screen Time import one-time setup:"
   gum log --level info "  Grant Full Disk Access to /bin/zsh: System Settings > Privacy & Security > Full Disk Access (reads ~/Library/Biome)"
 fi
+
+exit "${launchd_failed:-0}"

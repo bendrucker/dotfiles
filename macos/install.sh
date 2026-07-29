@@ -50,22 +50,8 @@ install_launch_agent com.user.activitywatch.plist "ActivityWatch capture"
 # machine without herdr, so it installs in every mode like the watcher above.
 install_launch_agent com.user.herdr-agent-detection.plist "herdr agent detection watcher"
 
-# Imports iOS/iPadOS Screen Time into ActivityWatch's buckets. It watches Biome
-# for changes rather than polling, so it stays resident. Reading Biome needs
-# Full Disk Access for /bin/zsh (see activitywatch/install.sh).
-#
-# activitywatch/install.sh provides the binary and skips it when uv is missing,
-# and scripts/install runs the topic installers in find order. A KeepAlive agent
-# whose exec target is absent respawns forever, so gate on the binary and let a
-# later run pick it up.
-aw_import_screentime="$HOME/.local/bin/aw-import-screentime"
-if [[ -x "$aw_import_screentime" ]]; then
-  install_launch_agent com.user.aw-import-screentime.plist "Screen Time import"
-else
-  gum log --level warn "aw-import-screentime not installed, skipping Screen Time import agent"
-  launchctl bootout "gui/$UID/com.user.aw-import-screentime" 2>/dev/null || true
-  rm -f "$HOME/Library/LaunchAgents/com.user.aw-import-screentime.plist"
-fi
+# The Screen Time import agent is installed by activitywatch/install.sh, which
+# is where its binary comes from.
 
 # Only setup upgrade if we're in separate-directory mode (not a symlink)
 if [[ ! -L "$HOME/.dotfiles" ]]; then
