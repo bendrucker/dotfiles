@@ -24,80 +24,90 @@ today="${LINT_EXPIRED_TODAY:-$(date +%Y-%m-%d)}"
 today_num=$(echo "$today" | tr -d -)
 
 marker='EXPIRES:'
-expired=""
-expired_count=0
-malformed=""
+tab=$(printf '\t')
 
 matches=$(git grep -n -- "$marker" || true)
 
-# A here-doc rather than a pipe, so the counters survive the loop.
-while IFS=: read -r file line rest; do
-  [ -n "$file" ] || continue
+# Emit one tagged record per finding rather than accumulating into variables,
+# which a pipeline's subshell would discard. A here-document would keep the
+# variables, but bash stages one through a temp file whose location it picks
+# itself, and where that path is denied the read fails while the script carries
+# on to exit 0. A clean report for a repo full of expired markers is the one
+# outcome this check must never produce, so it does not depend on that write.
+classify_matches() {
+  while IFS=: read -r file line rest; do
+    [ -n "$file" ] || continue
 
-  # This script and its spec both document the marker, so they match themselves.
-  case "$file" in
-    scripts/lint-expired | scripts/spec/lint_expired_spec.sh) continue ;;
-  esac
-
-  date_field=$(printf '%s\n' "$rest" |
-    sed -n "s/.*${marker}[[:space:]]*\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\).*/\1/p")
-
-  # A typo'd date that silently never fires would defeat the point, so treat an
-  # unparseable marker as a failure rather than skipping it. Checking the month
-  # and day ranges independently would admit dates like 2026-02-31, so the day
-  # is measured against the length of that specific month.
-  day_limit=0
-  if [ -n "$date_field" ]; then
-    # Zero padding reads as octal in arithmetic, so strip it first.
-    year=$(echo "$date_field" | cut -d- -f1)
-    month=$(echo "$date_field" | cut -d- -f2 | sed 's/^0//')
-    day=$(echo "$date_field" | cut -d- -f3 | sed 's/^0//')
-
-    case "$month" in
-      1 | 3 | 5 | 7 | 8 | 10 | 12) day_limit=31 ;;
-      4 | 6 | 9 | 11) day_limit=30 ;;
-      2)
-        day_limit=28
-        if [ $((year % 4)) -eq 0 ] &&
-          { [ $((year % 100)) -ne 0 ] || [ $((year % 400)) -eq 0 ]; }; then
-          day_limit=29
-        fi
-        ;;
+    # This script and its spec both document the marker, so they match themselves.
+    case "$file" in
+      scripts/lint-expired | scripts/spec/lint_expired_spec.sh) continue ;;
     esac
-  fi
 
-  if [ "$day_limit" -eq 0 ] || [ "$day" -lt 1 ] || [ "$day" -gt "$day_limit" ]; then
-    malformed="$malformed  $file:$line
-"
-    continue
-  fi
+    date_field=$(printf '%s\n' "$rest" |
+      sed -n "s/.*${marker}[[:space:]]*\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\).*/\1/p")
 
-  if [ "$(echo "$date_field" | tr -d -)" -lt "$today_num" ]; then
-    reason=$(printf '%s\n' "$rest" |
-      sed -n "s/.*${marker}[[:space:]]*[0-9-]\{10\}[[:space:]]*//p")
-    expired_count=$((expired_count + 1))
-    expired="$expired  $file:$line  $marker $date_field
-"
-    [ -n "$reason" ] && expired="$expired    $reason
-"
-  fi
-done <<EOF
-$matches
-EOF
+    # A typo'd date that silently never fires would defeat the point, so treat
+    # an unparseable marker as a failure rather than skipping it. Checking the
+    # month and day ranges independently would admit dates like 2026-02-31, so
+    # the day is measured against the length of that specific month.
+    day_limit=0
+    if [ -n "$date_field" ]; then
+      # Zero padding reads as octal in arithmetic, so strip it first.
+      year=$(echo "$date_field" | cut -d- -f1)
+      month=$(echo "$date_field" | cut -d- -f2 | sed 's/^0//')
+      day=$(echo "$date_field" | cut -d- -f3 | sed 's/^0//')
+
+      case "$month" in
+        1 | 3 | 5 | 7 | 8 | 10 | 12) day_limit=31 ;;
+        4 | 6 | 9 | 11) day_limit=30 ;;
+        2)
+          day_limit=28
+          if [ $((year % 4)) -eq 0 ] &&
+            { [ $((year % 100)) -ne 0 ] || [ $((year % 400)) -eq 0 ]; }; then
+            day_limit=29
+          fi
+          ;;
+      esac
+    fi
+
+    if [ "$day_limit" -eq 0 ] || [ "$day" -lt 1 ] || [ "$day" -gt "$day_limit" ]; then
+      printf 'M%s%s:%s\n' "$tab" "$file" "$line"
+      continue
+    fi
+
+    if [ "$(echo "$date_field" | tr -d -)" -lt "$today_num" ]; then
+      reason=$(printf '%s\n' "$rest" |
+        sed -n "s/.*${marker}[[:space:]]*[0-9-]\{10\}[[:space:]]*//p")
+      printf 'E%s%s:%s%s%s%s%s\n' "$tab" "$file" "$line" "$tab" "$date_field" "$tab" "$reason"
+    fi
+  done
+}
+
+records=$(printf '%s\n' "$matches" | classify_matches)
+
+malformed=$(printf '%s\n' "$records" | grep "^M${tab}" | cut -f2- || true)
+expired=$(printf '%s\n' "$records" | grep "^E${tab}" | cut -f2- || true)
 
 status=0
 
 if [ -n "$malformed" ]; then
   echo "ERROR: malformed $marker marker (expected $marker YYYY-MM-DD reason):" >&2
-  printf '%s' "$malformed" >&2
+  printf '%s\n' "$malformed" | sed 's/^/  /' >&2
   status=1
 fi
 
 if [ -n "$expired" ]; then
+  expired_count=$(printf '%s\n' "$expired" | grep -c . || true)
   noun="migrations are"
   [ "$expired_count" -eq 1 ] && noun="migration is"
   echo "ERROR: $expired_count $noun past the expiry date." >&2
-  printf '%s' "$expired" >&2
+  printf '%s\n' "$expired" | while IFS="$tab" read -r location date_field reason; do
+    [ -n "$location" ] || continue
+    echo "  $location  $marker $date_field" >&2
+    if [ -n "$reason" ]; then
+      echo "    $reason" >&2
+    fi
+  done
   echo "  Remove it, or push the date out because the reason still holds." >&2
   status=1
 fi
