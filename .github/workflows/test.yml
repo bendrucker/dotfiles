@@ -10,7 +10,10 @@ jobs:
       matrix:
         include:
           - name: linux
-            os: ubuntu-22.04
+            # Not 22.04: its glibc predates Homebrew's minimum, so brew builds
+            # its own toolchain there, and gcc's post-install declares an
+            # install step the image's pinned brew lacks.
+            os: ubuntu-latest
           - name: macos
             os: macos-15
     name: bootstrap (${{ matrix.name }})
@@ -53,10 +56,11 @@ jobs:
     - name: Cache Homebrew packages
       uses: actions/cache@v6
       with:
-        key: homebrew-v3-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
+        # runner.os does not distinguish Ubuntu releases, and the cached prefix
+        # holds brew itself, so a v3 cache would restore 22.04's brew and glibc.
+        key: homebrew-v4-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
         restore-keys: |
-          homebrew-v3-${{ runner.os }}-
-          homebrew-v2-${{ runner.os }}-
+          homebrew-v4-${{ runner.os }}-
         path: |
           ~/Library/Caches/Homebrew
           /opt/homebrew/Library/Taps
@@ -220,7 +224,9 @@ jobs:
       matrix:
         include:
           - name: linux
-            os: ubuntu-22.04
+            # Not 22.04: its glibc predates Homebrew's minimum, so brew builds
+            # its own toolchain there and these specs need no compiler.
+            os: ubuntu-latest
           - name: macos
             os: macos-15
     name: skill tests (${{ matrix.name }})
