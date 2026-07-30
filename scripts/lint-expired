@@ -28,12 +28,9 @@ tab=$(printf '\t')
 
 matches=$(git grep -n -- "$marker" || true)
 
-# Emit one tagged record per finding rather than accumulating into variables,
-# which a pipeline's subshell would discard. A here-document would keep the
-# variables, but bash stages one through a temp file whose location it picks
-# itself, and where that path is denied the read fails while the script carries
-# on to exit 0. A clean report for a repo full of expired markers is the one
-# outcome this check must never produce, so it does not depend on that write.
+# Records go out through a pipeline rather than a here-document, which bash
+# stages through a temp file it picks itself. A denied write there would leave
+# this check exiting 0 with a clean report.
 classify_matches() {
   while IFS=: read -r file line rest; do
     [ -n "$file" ] || continue
