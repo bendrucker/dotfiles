@@ -10,7 +10,10 @@ jobs:
       matrix:
         include:
           - name: linux
-            os: ubuntu-22.04
+            # Not 22.04: its glibc predates Homebrew's minimum, so brew builds
+            # its own toolchain there, and gcc's post-install declares an
+            # install step the image's pinned brew lacks.
+            os: ubuntu-latest
           - name: macos
             os: macos-15
     name: bootstrap (${{ matrix.name }})
@@ -40,8 +43,6 @@ jobs:
         rm -f /opt/homebrew/bin/openssl
         rm -rf ~/Library/Caches/Homebrew/Backup
         brew link --overwrite openssl@3 || true
-    - name: Print Homebrew configuration
-      run: brew config
     - name: Cache mise installs
       uses: actions/cache@v6
       with:
@@ -53,10 +54,11 @@ jobs:
     - name: Cache Homebrew packages
       uses: actions/cache@v6
       with:
-        key: homebrew-v3-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
+        # runner.os does not distinguish Ubuntu releases, and the cached prefix
+        # holds brew itself, so a v3 cache would restore 22.04's brew and glibc.
+        key: homebrew-v4-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
         restore-keys: |
-          homebrew-v3-${{ runner.os }}-
-          homebrew-v2-${{ runner.os }}-
+          homebrew-v4-${{ runner.os }}-
         path: |
           ~/Library/Caches/Homebrew
           /opt/homebrew/Library/Taps
@@ -74,6 +76,14 @@ jobs:
           ~/.cargo/bin
           ~/.cargo/.crates.toml
           ~/.cargo/.crates2.json
+    # Formulae and casks come from the live API while the image pins brew, so
+    # they use DSL it lacks. Must follow the cache restore, which rewrites
+    # brew's own prefix. Updates brew only: bottles stay pinned by
+    # HOMEBREW_NO_INSTALL_UPGRADE.
+    - name: Update Homebrew
+      run: brew update
+    - name: Print Homebrew configuration
+      run: brew config
     - name: Bootstrap
       run: ./scripts/bootstrap
       env:
@@ -85,15 +95,9 @@ jobs:
         # remove stale packages from cache without prompting for confirmation
         # (plain HOMEBREW_BUNDLE_INSTALL_CLEANUP now requires --force/$HOMEBREW_ASK)
         HOMEBREW_BUNDLE_FORCE_INSTALL_CLEANUP: '1'
-        # Homebrew/brew#22240 made Homebrew build unbottled formulae inside a
-        # rootless bwrap sandbox on Linux. Mktemp#run chowns its staging dir to
-        # bin/brew's group, which the image ships as docker, a supplementary
-        # group. bwrap maps only the primary gid, so chown(2) answers EINVAL
-        # where Mktemp rescues only EPERM and every source install dies with
-        # "EINVAL @ apply2files". That PR added the sandbox and does not
-        # describe this failure, which is unreported upstream. Drop this once
-        # the Landlock backend (6.0.13, currently opt-in behind
-        # $HOMEBREW_SANDBOX_LINUX_LANDLOCK) becomes the default.
+        # Homebrew's Linux bwrap sandbox breaks source installs: it chowns the
+        # build dir to an unmapped supplementary gid and EINVAL is not rescued.
+        # Drop once the Landlock backend (opt-in as of 6.0.13) is the default.
         HOMEBREW_NO_SANDBOX_LINUX: '1'
         # skip deps installed without homebrew in https://github.com/actions/virtual-environments/blob/main/images/macos/macos-10.15-Readme.md
         HOMEBREW_BUNDLE_BREW_SKIP: >
@@ -220,7 +224,9 @@ jobs:
       matrix:
         include:
           - name: linux
-            os: ubuntu-22.04
+            # Not 22.04: its glibc predates Homebrew's minimum, so brew builds
+            # its own toolchain there and these specs need no compiler.
+            os: ubuntu-latest
           - name: macos
             os: macos-15
     name: skill tests (${{ matrix.name }})
