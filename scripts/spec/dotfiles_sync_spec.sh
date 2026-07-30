@@ -13,10 +13,8 @@ Describe "dotfiles-sync exit status"
     mkdir -p "$stubdir"
 
     # gum stub: `gum spin … -- cmd` runs cmd; `gum log … msg` echoes msg.
-    # Written with printf rather than a here-document. bash stages a
-    # here-document through a temp file whose location it picks itself, so
-    # under a sandbox that denies that path it fails with "cannot create temp
-    # file for here document" and the stub never gets written.
+    # printf, not a here-document: bash stages those through a temp file it
+    # picks itself, which a sandbox may deny.
     # shellcheck disable=SC2016 # the stub's own $1 and $@, not this shell's
     printf '%s\n' \
       '#!/usr/bin/env bash' \
