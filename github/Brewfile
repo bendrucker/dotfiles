@@ -1,1 +1,3 @@
 brew 'gh'
+
+cask 'copilot-cli'
