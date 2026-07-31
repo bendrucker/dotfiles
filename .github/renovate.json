@@ -10,14 +10,6 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["neovim/config/init\\.lua$"],
-      "matchStrings": [
-        "\"(?<depName>[^\"]+/[^\"]+)\"[,\\s]*tag\\s*=\\s*\"(?<currentValue>v[^\"]+)\""
-      ],
-      "datasourceTemplate": "github-tags"
-    },
-    {
-      "customType": "regex",
       "fileMatch": ["^github/extensions\\.conf$"],
       "matchStrings": [
         "(?m)^(?<depName>[^\\s#/]+/[^\\s#]+)\\s+(?<currentValue>\\S+)"

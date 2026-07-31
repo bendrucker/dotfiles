@@ -54,6 +54,14 @@ Topic directories can contain `mise.toml` files for language/tool versions. The 
 
 Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`). Renovate tracks `mise.toml` files and auto-merges non-major updates after a 2-week release age delay. Using `"latest"` prevents Renovate from detecting new versions. For tools not available in the mise registry, use the `github:` backend (e.g., `"github:owner/repo" = "1.2.3"`) to install pre-built release binaries.
 
+#### Neovim Plugins
+
+Plugins are declared in `neovim/config/init.lua` with `vim.pack.add` and no `version`, so each tracks its default branch. The pin lives in `neovim/config/nvim-pack-lock.json`. That lockfile is authoritative when present, and `vim.pack` takes every revision from it while ignoring `version`. This is what lets a fresh machine reproduce an existing one.
+
+Updates are manual. Run `:lua vim.pack.update()`, review the confirmation buffer, `:write` to apply, then commit the lockfile diff. Renovate is not a fallback here, because nvim-treesitter publishes no tags on `main` (its tags sit on the diverged `master` branch) and lualine and vim-tmux-navigator publish no version tags at all.
+
+Treesitter parsers are built against a specific nvim-treesitter revision. They break when the plugin moves ahead of them. A `PackChanged` autocommand in `neovim/config/lua/config/treesitter.lua` re-runs `treesitter.update()` on every plugin change, and `neovim/spec/` asserts that each declared language ends up with a parser that attaches a highlighter.
+
 ### Shell Configuration
 
 - **Aliases**: Add to `<topic>/aliases.zsh`
