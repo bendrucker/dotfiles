@@ -107,6 +107,9 @@ main () {
     # line per finding: prefixing only the first leaves the rest looking like
     # they belong to whatever repo `column` happens to align them under.
     for outline in "${(@f)out}"; do
+      # A blank line inside a command's output separates records. Keyed to the
+      # repo it would become a row with no fields.
+      [[ -n "$outline" ]] || continue
       rows+=("$disp"$'\t'"$outline")
     done
     if [[ "$out" == <->$'\t'<-> ]]; then
@@ -143,7 +146,10 @@ main () {
   gum log --level info "${(j: · :)summary}"
   if (( ${#failed} )); then
     gum log --level warn "failed: ${(j:, :)failed}"
-    (( ${#failed_errs} )) && print -rl -- "${failed_errs[@]}"
+    # Diagnostics go to stderr, alongside the gum summary they belong to. On
+    # stdout this free-form text would land in a raw consumer's field parser as
+    # rows that are not rows.
+    (( ${#failed_errs} )) && print -rl -- "${failed_errs[@]}" >&2
   fi
 
   (( ${#failed} == 0 ))

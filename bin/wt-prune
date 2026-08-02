@@ -30,6 +30,9 @@ set -uo pipefail
 # Suppress zsh's default of echoing a parameter when `local`/`typeset` re-declares
 # one that already holds a value (e.g. `branch`, reused across both read loops).
 setopt typeset_silent
+# $EPOCHSECONDS, so the age helper reads the clock without forking `date` once
+# per candidate worktree across the fleet sweep.
+zmodload zsh/datetime
 
 # `wt step prune` refuses to remove a worktree younger than this, because a
 # worktree just branched off main points at main's commit and so reads as
@@ -53,11 +56,16 @@ parse_duration () {
   esac
 }
 
-# Seconds since a worktree was created, on the same clock worktrunk's
-# --min-age guard uses: the birth time of the per-worktree git dir. Returns
-# nonzero when the path is gone or the filesystem reports no birth time, and
-# callers read that as "old enough", matching how worktrunk treats an age it
-# cannot resolve.
+# Seconds since a worktree was created, on the same clock worktrunk's --min-age
+# guard uses: the birth time of the per-worktree git dir, falling back to the
+# mtime of the commondir file inside it. Both steps mirror worktrunk's own
+# worktree_age (src/commands/step/prune.rs), so the two agree about which
+# worktrees are too young to touch. Filesystems that record no birth time
+# report 0, which is why the commondir fallback carries them.
+#
+# Returns nonzero only when the path is gone or neither clock reads, and
+# callers treat that as "old enough", matching worktrunk's handling of an age
+# it cannot resolve.
 #
 # `wt list` carries only the tip commit's timestamp, which is main's tip for a
 # worktree that has no commits of its own. Age derived from it says nothing
@@ -65,13 +73,21 @@ parse_duration () {
 worktree_age_secs () {
   # Not `path`: zsh ties that name to $PATH, so a local declaration of it would
   # empty the command search path for the whole function and lose `git`.
-  local wt_path=$1 gitdir birth
+  local wt_path=$1 gitdir created
   gitdir=$(git -C "$wt_path" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-  # %B is the BSD/macOS birth time; %W is the GNU coreutils spelling, which
-  # reports 0 on filesystems that do not record one.
-  birth=$(stat -f %B "$gitdir" 2>/dev/null) || birth=$(stat -c %W "$gitdir" 2>/dev/null) || return 1
-  [[ "$birth" == <-> ]] && (( birth > 0 )) || return 1
-  print -r -- $(( $(date +%s) - birth ))
+
+  # BSD stat takes the format as an argument to -f. GNU stat spells the same
+  # field %W under -c and reads a -f argument as a filename, so it exits
+  # nonzero and hands off to the next call.
+  created=$(stat -f %B "$gitdir" 2>/dev/null) || created=$(stat -c %W "$gitdir" 2>/dev/null) || created=
+  if [[ "$created" != <-> ]] || (( created == 0 )); then
+    created=$(stat -f %m "$gitdir/commondir" 2>/dev/null) \
+      || created=$(stat -c %Y "$gitdir/commondir" 2>/dev/null) \
+      || return 1
+  fi
+
+  [[ "$created" == <-> ]] && (( created > 0 )) || return 1
+  print -r -- $(( EPOCHSECONDS - created ))
 }
 
 # Resolve the exact PR/MR state for a branch on the forge. Prints
@@ -162,6 +178,18 @@ main () {
       -i|--interactive)
         interactive=1
         ;;
+      # Consumed rather than forwarded: main appends --min-age itself, and
+      # `wt step prune` rejects the flag given twice.
+      --min-age)
+        local mn="${argv[i+1]:-}"
+        if [[ -n "$mn" && "$mn" != -* ]]; then
+          WT_PRUNE_MIN_AGE="$mn"
+          (( i++ ))
+        fi
+        ;;
+      --min-age=*)
+        WT_PRUNE_MIN_AGE="${a#*=}"
+        ;;
       --before)
         before_enabled=1
         local nxt="${argv[i+1]:-}"
@@ -237,8 +265,6 @@ main () {
     local remote_host
     remote_host=$(git remote get-url origin 2>/dev/null | sed -E 's|^[^@]*@||; s|^https?://||; s|[:/].*||')
 
-    integer now=0
-    (( before_enabled )) && now=$(date +%s)
     local branch is_main ts clean onremote is_current wtpath pr_out pr_st pr_num
     while IFS=$'\t' read -r branch is_main ts clean onremote is_current wtpath; do
       [[ "$is_main" == true ]] && continue
@@ -253,8 +279,14 @@ main () {
 
       # The age pass is consulted only under --before. Interactive ignores it
       # and defers aged candidates to the checklist, so mask before there.
+      #
+      # FIXME: ts is the tip commit's timestamp, not the worktree's. A worktree
+      # branched off an old main inherits that tip, so a checkout created
+      # minutes ago can read as older than the threshold and age out the same
+      # night. worktree_age_secs is the right clock here; switching to it
+      # changes what this pass removes, so it is left for its own change.
       integer age_exceeded=0
-      (( before_enabled && now - ts >= before_secs )) && age_exceeded=1
+      (( before_enabled && EPOCHSECONDS - ts >= before_secs )) && age_exceeded=1
       integer classify_before=before_enabled
       (( interactive )) && classify_before=0
 

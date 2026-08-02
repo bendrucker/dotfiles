@@ -33,10 +33,32 @@ set -uo pipefail
 # is this script's path even when invoked by `wt`.
 source "${0:A:h}/wt-prune"
 
-# One nightly run interval on top of the pruner's own guard.
-: ${WT_PRUNE_DRIFT_GRACE:=$(( $(parse_duration "$WT_PRUNE_MIN_AGE") + 86400 ))}
+# Grace, in seconds. $WT_PRUNE_DRIFT_GRACE overrides it and takes the same
+# duration grammar as $WT_PRUNE_MIN_AGE (2h, 1d, 1w, 1mo, 1y); the default is
+# the pruner's guard plus one nightly run interval. Prints nothing and returns
+# nonzero on a spec parse_duration does not understand, because a silently
+# wrong grace either buries real drift or restores the false positives the
+# grace period exists to stop.
+grace_secs () {
+  local secs
+  if [[ -n "${WT_PRUNE_DRIFT_GRACE:-}" ]]; then
+    parse_duration "$WT_PRUNE_DRIFT_GRACE"
+    return
+  fi
+  secs=$(parse_duration "$WT_PRUNE_MIN_AGE") || return 1
+  print -r -- $(( secs + 86400 ))
+}
 
 main () {
+  local grace
+  # A misconfigured duration returns nonzero, which flags the repo as failed
+  # under `wt all` and puts the reason in front of someone. Every other exit
+  # from this script is 0 so that findings, not status, signal drift.
+  if ! grace=$(grace_secs); then
+    print -u2 -- "wt prune-audit: cannot parse WT_PRUNE_MIN_AGE=${WT_PRUNE_MIN_AGE} WT_PRUNE_DRIFT_GRACE=${WT_PRUNE_DRIFT_GRACE:-}"
+    return 1
+  fi
+
   local list_json
   list_json=$(wt list --format=json 2>/dev/null)
   [[ -n "$list_json" && "$list_json" != "[]" ]] || return 0
@@ -60,14 +82,18 @@ main () {
     # filesystem cannot report counts as old enough, so an unreadable clock
     # never hides drift.
     if [[ "$main_state" == empty || "$main_state" == integrated ]]; then
-      age=$(worktree_age_secs "$wtpath") || age=$WT_PRUNE_DRIFT_GRACE
-      (( age >= WT_PRUNE_DRIFT_GRACE )) \
-        && print -r -- "$branch"$'\t'"integrated ($main_state)"$'\t'"$wtpath"
-      continue
+      age=$(worktree_age_secs "$wtpath") || age=$grace
+      if (( age >= grace )); then
+        print -r -- "$branch"$'\t'"integrated ($main_state)"$'\t'"$wtpath"
+        continue
+      fi
+      # Still inside grace on the integration rule. Fall through to the forge:
+      # a merged PR is removed at any age, so grace does not apply to it and a
+      # young merged worktree that survived the prune is still a real miss.
     fi
 
-    # Otherwise pay for one forge lookup: a MERGED PR that still has a worktree
-    # is exactly the historical backlog this tripwire guards against.
+    # One forge lookup: a MERGED PR that still has a worktree is exactly the
+    # historical backlog this tripwire guards against.
     pr_out=$(pr_state "$branch" "$remote_host")
     IFS=$'\t' read -r pr_st _ <<<"$pr_out"
     [[ "$pr_st" == MERGED ]] \

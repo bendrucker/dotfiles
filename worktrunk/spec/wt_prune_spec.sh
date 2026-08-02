@@ -79,10 +79,12 @@ Describe "wt-prune --dry-run and wt-prune-audit (black-box)"
     stubdir="$sandbox/stub"
     export WT_LIST_JSON="$sandbox/list.json"
     export WT_REMOVE_LOG="$sandbox/removed.log"
+    export WT_STEP_LOG="$sandbox/step.log"
     export PR_STATE_FILE="$sandbox/pr_state"
     rm -rf "$sandbox"
     mkdir -p "$stubdir"
     : >"$WT_REMOVE_LOG"
+    : >"$WT_STEP_LOG"
 
     # wt stub: `step prune` probe reports nothing integrated (so the survivor
     # reaches the forge pass); `list` emits the canned fixture; `remove` only
@@ -90,7 +92,7 @@ Describe "wt-prune --dry-run and wt-prune-audit (black-box)"
     cat >"$stubdir/wt" <<'WT'
 #!/usr/bin/env bash
 case "$1" in
-  step)   echo "[]" ;;
+  step)   printf 'step %s\n' "$*" >>"$WT_STEP_LOG"; echo "[]" ;;
   list)   cat "$WT_LIST_JSON" ;;
   remove) printf 'remove %s\n' "$*" >>"$WT_REMOVE_LOG" ;;
 esac
@@ -122,6 +124,13 @@ GH
     git -C "$repo" -c user.email=test@example.com -c user.name=test \
       commit -q --allow-empty -m init
     git -C "$repo" remote add origin "https://github.com/test/repo.git"
+
+    # A real linked worktree, so the age helper resolves a per-worktree git dir
+    # (a .git *file* pointing at .git/worktrees/<name>) rather than the repo's
+    # own .git. Reading the repo's dir instead would date every worktree to the
+    # clone, which the fixture must be able to tell apart.
+    linked="$sandbox/linked"
+    git -C "$repo" worktree add -q -b fresh "$linked" 2>/dev/null
 
     printf 'MERGED' >"$PR_STATE_FILE"
   }
@@ -222,16 +231,16 @@ JSON
       "$(printf 'agent-x\tintegrated (integrated)\t/repo/.worktrees/agent-x')"
   End
 
-  # The regression the grace period exists for. `wt step prune` skips a worktree
-  # for its first day, because one branched off main reads as integrated before
-  # any work lands in it. An oracle blind to that guard reports every worktree
-  # created since the previous run, and the nightly to-do stops carrying signal.
+  # wt step prune skips a worktree for its first day, because one branched off
+  # main reads as integrated before any work lands in it. Without the grace
+  # period the audit reports every worktree created since the previous run.
   # $repo is created fresh in setup, so its git dir dates from moments ago.
   It "audit ignores an integrated worktree still inside the grace period"
+    : >"$PR_STATE_FILE"
     cat >"$WT_LIST_JSON" <<JSON
 [
   {"kind":"worktree","branch":"fresh","is_main":false,"is_current":false,
-   "path":"$repo","main_state":"empty","commit":{"timestamp":0},
+   "path":"$linked","main_state":"empty","commit":{"timestamp":0},
    "working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false},
    "remote":null}
 ]
@@ -241,20 +250,71 @@ JSON
     The output should equal ""
   End
 
-  # Shrinking grace to zero must bring the same worktree back, pinning the skip
-  # above to the age check rather than to the fixture being filtered elsewhere.
+  # Shrinking grace to zero must bring the same worktree back, confirming the
+  # skip above came from the age check.
   It "audit flags that same worktree once the grace period is zero"
     cat >"$WT_LIST_JSON" <<JSON
 [
   {"kind":"worktree","branch":"fresh","is_main":false,"is_current":false,
-   "path":"$repo","main_state":"empty","commit":{"timestamp":0},
+   "path":"$linked","main_state":"empty","commit":{"timestamp":0},
    "working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false},
    "remote":null}
 ]
 JSON
-    When call run_audit_grace 0
+    When call run_audit_grace 0h
     The status should be success
-    The line 1 of output should equal "$(printf 'fresh\tintegrated (empty)\t%s' "$repo")"
+    The line 1 of output should equal "$(printf 'fresh\tintegrated (empty)\t%s' "$linked")"
+  End
+
+  # The coupling the whole design rests on: the audit models a guard the pruner
+  # must actually be applying. Drop the flag and the two disagree silently.
+  It "passes the configured min-age through to wt step prune"
+    fixture_merged_survivor
+    When call run_prune --dry-run
+    The status should be success
+    The output should include "feature-x"
+    The contents of file "$WT_STEP_LOG" should include "--min-age 1d"
+  End
+
+  # An override has to reach the binary too, or the audit's grace is derived
+  # from a value the pruner never saw.
+  It "forwards an overridden min-age exactly once"
+    fixture_merged_survivor
+    When call run_prune --dry-run --min-age 3d
+    The status should be success
+    The output should include "feature-x"
+    The contents of file "$WT_STEP_LOG" should include "--min-age 3d"
+    The contents of file "$WT_STEP_LOG" should not include "--min-age 1d"
+  End
+
+  # Grace defers the integration rule only. A merged PR is removed at any age,
+  # so a young worktree whose PR merged is still a real miss and the forge check
+  # has to run even while the integration rule is inside its grace window.
+  It "still reports a merged PR on a worktree inside the grace period"
+    printf 'MERGED' >"$PR_STATE_FILE"
+    cat >"$WT_LIST_JSON" <<JSON
+[
+  {"kind":"worktree","branch":"fresh","is_main":false,"is_current":false,
+   "path":"$linked","main_state":"integrated","commit":{"timestamp":0},
+   "working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false},
+   "remote":null}
+]
+JSON
+    When call run_audit
+    The status should be success
+    The line 1 of output should equal \
+      "$(printf 'fresh\tmerged PR survived\t%s' "$linked")"
+  End
+
+  # A grace spelling parse_duration cannot read must stop the audit rather than
+  # silently fall back, which would either bury drift or restore the false
+  # positives the grace period exists to remove.
+  It "fails loudly on an unparseable grace duration"
+    fixture_merged_survivor
+    When call run_audit_grace 30min
+    The status should equal 1
+    The stderr should include "cannot parse"
+    The output should equal ""
   End
 
   It "audit stays silent when the survivor's PR is still open"
