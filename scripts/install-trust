@@ -10,14 +10,29 @@
 # (Homebrew/brew#22599), so trusting a tap is no longer enough to let `brew
 # bundle` clone it. Tap each one explicitly so the formulae are on disk before
 # `brew bundle` runs, then trust so `brew bundle` can install from it.
+#
+# Every `brew` call pays ~400ms of Ruby startup, so the steady-state run makes
+# two of them rather than two per tap. `brew tap` on an already-tapped repo does
+# nothing but pay that startup, and Homebrew defines a tap as installed by the
+# presence of its directory (Tap#installed? is `path.directory?`), so a `test -d`
+# answers the same question for free. `brew trust` takes every tap at once.
 set -e
 
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
+: "${HOMEBREW_REPOSITORY:=$(brew --repository)}"
+
+taps=$(brew bundle list --file "$DOTFILES_ROOT/Brewfile" --tap)
+
+for tap in $taps; do
+  # Tap#path is HOMEBREW_TAP_DIRECTORY/<user>/homebrew-<repo>, downcased
+  path=$(printf '%s/homebrew-%s' "${tap%%/*}" "${tap#*/}" | tr '[:upper:]' '[:lower:]')
+  [ -d "$HOMEBREW_REPOSITORY/Library/Taps/$path" ] || brew tap "$tap"
+done
 
 rm -f "$XDG_CONFIG_HOME/homebrew/trust.json"
 
-brew bundle list --file "$DOTFILES_ROOT/Brewfile" --tap | while IFS= read -r tap; do
-  brew tap "$tap"
-  brew trust --tap "$tap"
-done
+[ -n "$taps" ] || exit 0
+
+# shellcheck disable=SC2086 # tap names never contain whitespace
+brew trust --tap $taps
