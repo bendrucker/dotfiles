@@ -165,13 +165,19 @@ Never add employer-specific tooling to a topic directory. Machines legitimately 
 
 ## Stacked PRs
 
-I use worktrunk for worktree creation. Graphite (`gt`) is the preferred stacking tool where the platform supports it (GitHub). On GitLab and anywhere else Graphite isn't available, `wt sync` handles stack rebases:
+Each branch in a stack lives in its own worktrunk worktree. `wt sync` owns the local side and rebases each branch onto its parent in dependency order.
 
 1. Create base branch: `wt switch --create feature/base`
 2. Work, commit, then stack next branch: `wt switch --create child-name --base=@`
-3. Sync entire stack: `wt sync` (add `--push` to update remotes)
+3. Sync entire stack: `wt sync --push`
 
-Ship branches oldest-first. After a stack branch merges, `wt sync` rebases remaining branches.
+Publishing to GitHub runs in three steps. Start with `wt sync --push`, because `gh stack link` pushes without force and would be rejected on a freshly rebased branch. Then open each layer's PR with `/ship` or `pull-request:create`. That gets it a real body and the review passes. Then `gh stack link <bottom> ... <top>` chains the bases and registers the stack on GitHub. `link` opens a PR for any branch still missing one, with an auto-generated title and body, so let it fill gaps rather than lead. It writes no local tracking state, which is why it fits the one-worktree-per-branch layout.
+
+`gh stack merge` lands the stack. With no argument it merges everything atomically. Pass a PR number to stop partway, and GitHub retargets and rebases the layers left open. `gh pr merge` does not work on a stacked PR. The `ghm` alias is off limits once a stack exists. Follow a merge with `wt sync --prune` to drop integrated worktrees.
+
+`link` and `merge` are the only two `gh stack` commands to use here. Everything else (`init`, `add`, `submit`, `push`, `checkout`, `sync`, `rebase`, `modify`, `unstack`, `view`, and the `up`/`down`/`top`/`bottom`/`switch`/`trunk` navigation) reads or writes local tracking state that assumes every layer is checked out in one working tree. `submit` is the trap, since it is the command the tool's own help steers you toward. `gh stack rebase` reports success for a branch checked out in another worktree without doing anything ([gh-stack#35](https://github.com/github/gh-stack/issues/35)).
+
+On GitLab, `glab stack` fills the same role. See the `gitlab:merge-request` skill.
 
 ## ZSH Startup Performance
 
