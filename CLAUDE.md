@@ -46,7 +46,7 @@ end
 
 This means `brew bundle` from the repo root installs everything from all topic Brewfiles. The root Brewfile also conditionally skips casks/MAS in CI and some apps on corporate machines.
 
-The root Brewfile additionally evaluates `~/Brewfile.local` when present. Use it for machine-specific packages (e.g. corporate-mandated tools) so they're managed by `brew bundle` without being flagged by `brew bundle cleanup`.
+The root Brewfile additionally evaluates `~/Brewfile.local` when present. Use it for machine-specific packages (e.g. corporate-mandated tools) so they're managed by `brew bundle` without being flagged by `brew bundle cleanup`. See [Machine-Local Configuration](#machine-local-configuration) for the other `.local` include points.
 
 #### mise Aggregation
 
@@ -120,6 +120,25 @@ Based on recent history:
 - Test bootstrap script after major changes
 - Ensure Linux compatibility outside of `macos/` directory
 - Use GitHub Actions for automated testing
+
+## Machine-Local Configuration
+
+This repo is public and installs identically on every machine. Anything specific to one machine or to an employer lives in an untracked `.local` file that the tracked config includes, and nothing in the repo reveals what those files contain. They exist. Assume a tool that shows up heavily in shell history with no topic directory is declared in one of them.
+
+| Include point | Loaded by | What lives there |
+| --- | --- | --- |
+| `~/.zshenv.local` | `zsh/.zshenv`, last line | Env vars and `$PATH` entries every shell needs, including non-interactive |
+| `~/.localrc`, `~/.zshrc.local` | `zsh/.zshrc`, before topic files | Interactive-only shell config |
+| `~/Brewfile.local` | root `Brewfile`, last line | Employer-mandated and machine-specific packages |
+| `~/.config/git/config.local` | `git/config` `[include]` | Identity, credential helper, per-org `includeIf` identities. Template in `git/config.local.example` |
+| `~/.ssh/config.local` | `ssh/config` `Include` | Work hosts, jump hosts, the Secretive `Host *` fallback |
+| `~/.config/tmux/tmux.conf.local` | `tmux/tmux.conf` `source-file -q` | Per-machine tmux overrides |
+
+The two zsh hooks load at opposite ends. `~/.zshenv.local` comes after every `path.zsh` and can override `$PATH`. `~/.localrc` and `~/.zshrc.local` come before the topic `.zsh` files, so a topic file wins over anything they set.
+
+Expect work tooling to be absent here: corporate cloud and SSO clients, internal CLIs, VPN clients, org-specific credential helpers. `brew bundle` evaluates `~/Brewfile.local`, so those packages install and upgrade normally and `brew bundle cleanup` leaves them alone.
+
+Never add employer-specific tooling to a topic directory. Machines legitimately differ in what they have on `$PATH`. Before proposing a new topic for something seen in shell history, ask whether it belongs in `~/Brewfile.local` instead.
 
 ## Sync and Upgrade System
 
