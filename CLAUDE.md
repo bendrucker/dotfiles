@@ -99,6 +99,18 @@ To add tests to a topic:
 
 Existing examples: `git/spec/`, `neovim/spec/`. Tests run against the installed config (symlinks from `~/.dotfiles`), so they verify the real post-bootstrap state.
 
+#### Stubbing a Command for a zsh Script
+
+A spec that runs a script from `bin/` and replaces one of its dependencies with a stub has to isolate zsh's startup files. Those scripts use a `#!/usr/bin/env zsh` shebang, and zsh sources `~/.zshenv` on every invocation, non-interactive ones included. `zsh/.zshenv` runs `brew shellenv`, which can put `$HOMEBREW_PREFIX/bin` ahead of whatever the spec prepended to `$PATH`, so the real command wins and the stub never runs. Point `ZDOTDIR` at an empty directory for the duration of the call. zsh then finds no `.zshenv` and leaves `$PATH` alone.
+
+```sh
+run_with_stub() {
+  (cd "$dir" && PATH="$stub_bin:$PATH" ZDOTDIR="$empty_dir" "$script" "$@")
+}
+```
+
+The shape of this failure is what makes it worth documenting. It passes on a developer machine, where `HOMEBREW_PREFIX` is already exported and `brew shellenv` emits no `PATH` line, and fails in CI, where it does. Prepending to `$PATH` is enough to stub a command for a bash script, so the habit carries over and breaks silently.
+
 ### Version Updates
 
 Recent patterns show dependency updates via PRs:
