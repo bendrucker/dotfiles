@@ -61,6 +61,11 @@
 [mergetool]
   keepBackup = false
 
+# Stack rebases replay the same conflicts on every restack. Record the
+# resolutions so only genuinely new ones need attention.
+[rerere]
+  enabled = true
+
 [difftool]
   prompt = false
 
