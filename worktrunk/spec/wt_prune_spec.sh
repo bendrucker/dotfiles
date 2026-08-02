@@ -148,6 +148,9 @@ JSON
   # reorders PATH, pushing $stubdir below a real wt/gh and shadowing the stubs.
   run_prune() { ( cd "$repo" && PATH="$stubdir:$PATH" zsh -f "$wtprune" "$@" ); }
   run_audit() { ( cd "$repo" && PATH="$stubdir:$PATH" zsh -f "$wtaudit" ); }
+  run_audit_grace() {
+    ( cd "$repo" && PATH="$stubdir:$PATH" WT_PRUNE_DRIFT_GRACE="$1" zsh -f "$wtaudit" )
+  }
 
   It "dry-run prints a reasons table and removes nothing"
     fixture_merged_survivor
@@ -191,14 +194,19 @@ JSON
     The contents of file "$WT_REMOVE_LOG" should not include "force-delete"
   End
 
+  # A merged PR proves the work landed however new the checkout is, so the forge
+  # rule reports it without consulting the grace period.
   It "audit flags a merged survivor the prune left behind"
     fixture_merged_survivor
     printf 'MERGED' >"$PR_STATE_FILE"
     When call run_audit
     The status should be success
-    The line 1 of output should equal "$(printf 'feature-x\tmerged PR survived')"
+    The line 1 of output should equal \
+      "$(printf 'feature-x\tmerged PR survived\t/repo/.worktrees/feature-x')"
   End
 
+  # This fixture path does not exist, so the age is unresolvable. An unknown age
+  # counts as old enough, keeping a missing clock from masking real drift.
   It "audit flags an integrated survivor without a forge call"
     cat >"$WT_LIST_JSON" <<'JSON'
 [
@@ -210,7 +218,43 @@ JSON
 JSON
     When call run_audit
     The status should be success
-    The line 1 of output should equal "$(printf 'agent-x\tintegrated (integrated)')"
+    The line 1 of output should equal \
+      "$(printf 'agent-x\tintegrated (integrated)\t/repo/.worktrees/agent-x')"
+  End
+
+  # The regression the grace period exists for. `wt step prune` skips a worktree
+  # for its first day, because one branched off main reads as integrated before
+  # any work lands in it. An oracle blind to that guard reports every worktree
+  # created since the previous run, and the nightly to-do stops carrying signal.
+  # $repo is created fresh in setup, so its git dir dates from moments ago.
+  It "audit ignores an integrated worktree still inside the grace period"
+    cat >"$WT_LIST_JSON" <<JSON
+[
+  {"kind":"worktree","branch":"fresh","is_main":false,"is_current":false,
+   "path":"$repo","main_state":"empty","commit":{"timestamp":0},
+   "working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false},
+   "remote":null}
+]
+JSON
+    When call run_audit
+    The status should be success
+    The output should equal ""
+  End
+
+  # Shrinking grace to zero must bring the same worktree back, pinning the skip
+  # above to the age check rather than to the fixture being filtered elsewhere.
+  It "audit flags that same worktree once the grace period is zero"
+    cat >"$WT_LIST_JSON" <<JSON
+[
+  {"kind":"worktree","branch":"fresh","is_main":false,"is_current":false,
+   "path":"$repo","main_state":"empty","commit":{"timestamp":0},
+   "working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false},
+   "remote":null}
+]
+JSON
+    When call run_audit_grace 0
+    The status should be success
+    The line 1 of output should equal "$(printf 'fresh\tintegrated (empty)\t%s' "$repo")"
   End
 
   It "audit stays silent when the survivor's PR is still open"

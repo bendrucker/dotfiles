@@ -8,6 +8,11 @@
 # tree. Resolving per survivor (not a capped bulk list) catches PRs that merged
 # outside the recent window.
 #
+# The integration pass leaves worktrees younger than $WT_PRUNE_MIN_AGE alone,
+# since a worktree branched off main reads as integrated before any work lands
+# in it. The forge pass has no such guard and does not need one: a MERGED PR is
+# proof the work is done however new the checkout is.
+#
 # Age pass (--before [DURATION], default 1mo): removes old, clean worktree
 # directories that aren't integrated anywhere, to clear out stale checkouts. It
 # keeps the branch (so committed work is recoverable) and skips worktrees with
@@ -26,6 +31,14 @@ set -uo pipefail
 # one that already holds a value (e.g. `branch`, reused across both read loops).
 setopt typeset_silent
 
+# `wt step prune` refuses to remove a worktree younger than this, because a
+# worktree just branched off main points at main's commit and so reads as
+# integrated before any work happens in it. Set explicitly rather than left to
+# worktrunk's default: wt-prune-audit sources this file to honor the same
+# deferral, and an oracle that does not model the guard reports every worktree
+# created since the last run as drift.
+: ${WT_PRUNE_MIN_AGE:=1d}
+
 # Convert a duration like 2w / 30d / 1mo into seconds. Returns nonzero on a
 # spec it doesn't understand so callers can fall back to a default.
 parse_duration () {
@@ -38,6 +51,27 @@ parse_duration () {
     mo) print -r -- $(( n * 2592000 ));;
     y)  print -r -- $(( n * 31536000 ));;
   esac
+}
+
+# Seconds since a worktree was created, on the same clock worktrunk's
+# --min-age guard uses: the birth time of the per-worktree git dir. Returns
+# nonzero when the path is gone or the filesystem reports no birth time, and
+# callers read that as "old enough", matching how worktrunk treats an age it
+# cannot resolve.
+#
+# `wt list` carries only the tip commit's timestamp, which is main's tip for a
+# worktree that has no commits of its own. Age derived from it says nothing
+# about when the worktree appeared.
+worktree_age_secs () {
+  # Not `path`: zsh ties that name to $PATH, so a local declaration of it would
+  # empty the command search path for the whole function and lose `git`.
+  local wt_path=$1 gitdir birth
+  gitdir=$(git -C "$wt_path" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  # %B is the BSD/macOS birth time; %W is the GNU coreutils spelling, which
+  # reports 0 on filesystems that do not record one.
+  birth=$(stat -f %B "$gitdir" 2>/dev/null) || birth=$(stat -c %W "$gitdir" 2>/dev/null) || return 1
+  [[ "$birth" == <-> ]] && (( birth > 0 )) || return 1
+  print -r -- $(( $(date +%s) - birth ))
 }
 
 # Resolve the exact PR/MR state for a branch on the forge. Prints
@@ -161,7 +195,7 @@ main () {
   # background cleanup, so counting from it under-counts.
   local -a probe_args=("${passthrough[@]:#--dry-run}")
   local probe_json
-  probe_json=$(wt step prune "${probe_args[@]}" --dry-run --format=json 2>/dev/null)
+  probe_json=$(wt step prune "${probe_args[@]}" --min-age "$WT_PRUNE_MIN_AGE" --dry-run --format=json 2>/dev/null)
 
   local -A seen
   local worktrees=0 branches=0
@@ -176,7 +210,7 @@ main () {
   # Real run: actually remove. --yes skips approval prompts and --foreground
   # blocks until removal completes, both required under the non-interactive
   # parallel fan-out and the nightly job.
-  (( dry_run )) || wt step prune "${probe_args[@]}" --yes --foreground </dev/null >/dev/null 2>&1
+  (( dry_run )) || wt step prune "${probe_args[@]}" --min-age "$WT_PRUNE_MIN_AGE" --yes --foreground </dev/null >/dev/null 2>&1
 
   # Linked-worktree pass over a single `wt list`: exact forge-state removals,
   # plus the age pass (non-interactive) or candidate collection for the
