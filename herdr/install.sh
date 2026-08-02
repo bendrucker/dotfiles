@@ -30,9 +30,12 @@ if [[ -z "$lazy_ref" ]]; then
   exit 1
 fi
 
+# Empty rather than failing when herdr has nothing to say, so a bad response
+# reads as "not installed" instead of aborting the whole dotfiles install.
 lazy_root() {
   herdr plugin list --json 2>/dev/null |
-    jq -r '.result.plugins[]? | select(.plugin_id == "herdr-lazy") | .plugin_root'
+    jq -r '.result.plugins[]? | select(.plugin_id == "herdr-lazy") | .plugin_root' 2>/dev/null ||
+    true
 }
 
 root=$(lazy_root)
@@ -55,4 +58,4 @@ fi
 
 # With this on, a plugin added to the list later installs on the next herdr
 # start instead of waiting for someone to re-run this script.
-"$lazy" auto-sync on
+"$lazy" auto-sync on || echo "✗ could not turn on auto-sync" >&2
