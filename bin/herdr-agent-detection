@@ -77,6 +77,17 @@ overlay_working_rules () {
 
 compose () {
   local agent="$1" base="$2" overlay="$3"
+  local base_text overlay_text
+
+  # Read both before emitting anything, and fail the whole compose if either
+  # read fails. Streaming them straight to stdout would let a base that
+  # disappears or turns unreadable after the caller's existence check produce an
+  # overlay-only manifest: valid TOML, installs cleanly, and silently drops
+  # every upstream rule including the blocked-prompt ones. Composing exists to
+  # keep those, so anything less than both halves is not a manifest to install.
+  base_text=$(cat "$base") || return 1
+  overlay_text=$(cat "$overlay") || return 1
+  [[ -n "$base_text" && -n "$overlay_text" ]] || return 1
 
   print -r -- "$generated_marker: herdr's cached $agent manifest"
   print -r -- "# $(manifest_version "$base"), with herdr/agent-detection/$agent.toml appended. A local"
@@ -84,9 +95,9 @@ compose () {
   print -r -- '# manifest has to be here. Edit the overlay in the dotfiles repo. Edits to this'
   print -r -- '# file are overwritten by the next `herdr-agent-detection sync`.'
   print
-  cat "$base"
+  print -r -- "$base_text"
   print
-  cat "$overlay"
+  print -r -- "$overlay_text"
 }
 
 # Prints a line when herdr's own manifest no longer scores `working` from the
@@ -167,7 +178,10 @@ sync_agent () {
     return 1
   fi
 
-  composed=$(compose "$agent" "$base" "$overlay_dir/$agent.toml")
+  if ! composed=$(compose "$agent" "$base" "$overlay_dir/$agent.toml"); then
+    print -u2 -- "could not read the $agent manifest or overlay; leaving $installed as it is"
+    return 1
+  fi
 
   # herdr ignores an override it cannot parse, which looks from the sidebar
   # exactly like the detection gap the overlay exists to close.

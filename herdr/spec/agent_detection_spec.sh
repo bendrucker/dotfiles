@@ -157,6 +157,13 @@ TOML
 
   # The rule the whole change exists for, tested against the pattern as it is
   # actually written in the overlay rather than a copy that can drift from it.
+  #
+  # Every fixture below carries a leading `|>` that the test strips. Without it
+  # this file would hold spinner lines at column 0, which is exactly what the
+  # rule matches, and reading it in a pane would pin that pane at working while
+  # it sat idle. A test for a screen-scraping rule has to stay off the screen.
+  # Two characters, not one: a bare `|` before an indented fixture reproduces
+  # the `<non-space><space>` opening the rule keys on, and matches again.
   overlay_pattern() {
     sed -n "s/^line_regex = \['\(.*\)'\]\$/\1/p" \
       "$SHELLSPEC_PROJECT_ROOT/agent-detection/claude.toml"
@@ -169,12 +176,13 @@ TOML
       [ -n "$rx" ] || { echo "no line_regex found in the overlay"; return 1; }
       while IFS= read -r line; do
         [ -n "$line" ] || continue
+        line=${line#|>}
         printf '%s\n' "$line" | rg -q "$rx" || { echo "should have matched: $line"; return 1; }
       done <<'LINES'
-✻ Crunching… (18m 20s · ↓ 53.5k tokens)
-✢ Twisting… (56s · ↓ 1.0k tokens)
-✽ Thinking… (1h 2m 3s · ↓ 900 tokens)
-✻ Crunching… (esc to interrupt)
+|>✻ Crunching… (18m 20s · ↓ 53.5k tokens)
+|>✢ Twisting… (56s · ↓ 1.0k tokens)
+|>✽ Thinking… (1h 2m 3s · ↓ 900 tokens)
+|>✻ Crunching… (esc to interrupt)
 LINES
     }
     When call spinner_lines_match
@@ -192,16 +200,17 @@ LINES
       [ -n "$rx" ] || { echo "no line_regex found in the overlay"; return 1; }
       while IFS= read -r line; do
         [ -n "$line" ] || continue
+        line=${line#|>}
         printf '%s\n' "$line" | rg -q "$rx" && { echo "should not have matched: $line"; return 1; }
       done <<'LINES'
-  ✻ Crunching… (18m 20s · ↓ 53.5k tokens)
-❯ ✻ Crunching… (18m 20s · ↓ 53.5k tokens)
-❯ ✻ Crunching… (esc to interrupt)
-- Building… (2m 10s elapsed)
-⏺ Downloading model weights… (4m remaining)
-⏺ Running 4 shell commands…
-✻ Churned for 33m 23s
-  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+|>  ✻ Crunching… (18m 20s · ↓ 53.5k tokens)
+|>❯ ✻ Crunching… (18m 20s · ↓ 53.5k tokens)
+|>❯ ✻ Crunching… (esc to interrupt)
+|>- Building… (2m 10s elapsed)
+|>⏺ Downloading model weights… (4m remaining)
+|>⏺ Running 4 shell commands…
+|>✻ Churned for 33m 23s
+|>  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
 LINES
       return 0
     }
