@@ -1,5 +1,12 @@
+tap 'bendrucker/fonts'
+
 cask 'iterm2'
-cask 'font-monaspice-nerd-font'
+# Monaspice patched from nerd-fonts master. Same family name as
+# font-monaspice-nerd-font, so nothing downstream of the font changes. 3.4.0
+# predates the Codicon brand marks (see terminal/glyphs.conf) and nerd-fonts has
+# cut no release since. Swap back to font-monaspice-nerd-font once one ships
+# containing U+EC82. The tap opens an issue when that happens.
+cask 'font-monaspice-nerd-font-tip'
 brew 'glow'
 brew 'shellspec'
 brew 'yazi'
