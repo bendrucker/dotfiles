@@ -13,6 +13,12 @@ export DOTFILES_TMUX="$ZSH/tmux"
 
 export PROJECTS="$HOME/src"
 
+# Here rather than a topic .zsh file, which only .zshrc sources. A long-lived
+# process started outside an interactive shell (a herdr daemon over mosh, a
+# launchd job) hands its children no EDITOR otherwise, and they fall back to
+# whatever the system ships.
+export EDITOR="nvim"
+
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_DATA_HOME="$HOME/.local/share"
 export XDG_STATE_HOME="$HOME/.local/state"
