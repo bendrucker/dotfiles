@@ -175,6 +175,16 @@ add_orphan() {
   write_plugin_list
 }
 
+# A plugin the marketplace still carries but no longer says where to get. The
+# marketplace has not dropped it, so uninstalling is the wrong answer.
+drop_source() {
+  local name="$1" marketplace="$2"
+  local manifest="$plugins/marketplaces/$marketplace/.claude-plugin/marketplace.json"
+  jq --arg name "$name" \
+    '.plugins |= map(if .name == $name then del(.source) else . end)' \
+    "$manifest" >"$manifest.next" && mv "$manifest.next" "$manifest"
+}
+
 BeforeEach 'setup'
 
 # `zsh -f` skips ~/.zshenv, which after bootstrap re-runs `brew shellenv` and
@@ -236,6 +246,16 @@ Describe "update_plugins"
     When call call_upgrade update_plugins
     The status should be success
     The contents of file "$CLAUDE_PLUGIN_LOG" should not include "ghost@first"
+  End
+
+  # Only a marketplace that stopped listing the plugin is beyond updating. One
+  # that lists it without saying where it comes from still carries it, and
+  # skipping those is how a plugin stops being updated for good.
+  It "keeps updating a plugin listed without a source"
+    drop_source alpha first
+    When call call_upgrade update_plugins
+    The status should be success
+    The contents of file "$CLAUDE_PLUGIN_LOG" should include "update alpha@first"
   End
 
   # The loop's stdin is the inventory. One CLI invocation that reads stdin would
@@ -342,5 +362,35 @@ Describe "claude-plugin-audit"
     The status should be failure
     The output should include "ghost@first"
     The output should include "orphaned"
+  End
+
+  It "does not call a plugin orphaned while its marketplace still lists it"
+    drop_source alpha first
+    When call run_audit
+    The status should be success
+    The output should include "alpha@first"
+    The output should include "unverified"
+    The output should not include "orphaned"
+  End
+
+  # A file the audit cannot read is not a file that changed. Reporting it as
+  # drift files a to-do that no plugin update can ever clear.
+  It "reports an unreadable payload as unverified rather than stale"
+    Skip if "root reads a file whatever its mode says" [ "$(id -u)" = 0 ]
+    chmod 000 "$plugins/cache/third/beta/abc123/README.md"
+    When call run_audit
+    The status should be success
+    The output should include "beta@third"
+    The output should include "could not compare"
+  End
+
+  # macOS diff exits 0 here, having written only to stderr, so a payload with a
+  # path nothing could compare would otherwise be reported as current.
+  It "reports a payload it could not fully read as unverified"
+    ln -sf nowhere "$plugins/cache/third/beta/abc123/README.md"
+    When call run_audit
+    The status should be success
+    The output should include "beta@third"
+    The output should include "could not compare"
   End
 End

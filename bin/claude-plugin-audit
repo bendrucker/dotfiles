@@ -32,6 +32,12 @@ typeset -g script_path=${0:A}
 # the plugin.
 typeset -gra payload_noise=(.in_use .orphaned_at node_modules .git)
 
+# Where compare_payload leaves what diff could not read. Named off the pid
+# rather than mktemp, which ignores TMPDIR on macOS and so fails under a sandbox
+# that only grants it.
+typeset -g diff_errors=${TMPDIR:-/tmp}/claude-plugin-audit.$$.err
+trap 'rm -f "$diff_errors"' EXIT
+
 compare_payload () {
   local payload=$1 source_dir=$2
   local -a excludes
@@ -46,7 +52,11 @@ compare_payload () {
   # drift. A plugin that does ship one stays covered.
   [[ -d "$source_dir/.claude-plugin" ]] || excludes+=(--exclude=.claude-plugin)
 
-  diff -rq $excludes "$payload" "$source_dir" 2>&1
+  # stderr is kept off stdout because a path diff could not read is not a
+  # difference. Folding the two together made an unreadable file report as
+  # drift, which no update can clear.
+  : >"$diff_errors"
+  diff -rq $excludes "$payload" "$source_dir" 2>"$diff_errors"
 }
 
 resolve_ref () {
@@ -88,8 +98,14 @@ audit_plugin () {
 
   source=$(plugin_source "$id") || source_rc=$?
   case $source_rc in
-    3) print -r -- "unknown"$'\t'"marketplace $marketplace has no readable manifest"; return ;;
-    4) print -r -- "orphaned"$'\t'"marketplace $marketplace no longer offers $name"; return ;;
+    "$PLUGIN_SOURCE_UNREADABLE")
+      print -r -- "unknown"$'\t'"marketplace $marketplace does not say where $name comes from"
+      return
+      ;;
+    "$PLUGIN_SOURCE_ABSENT")
+      print -r -- "orphaned"$'\t'"marketplace $marketplace no longer offers $name"
+      return
+      ;;
   esac
 
   if [[ $(print -r -- "$source" | jq -r 'type') == string ]]; then
@@ -102,7 +118,7 @@ audit_plugin () {
 audit_relative_plugin () {
   local marketplace=$1 relative=$2 payload=$3
   local source_dir="$(claude_plugins_dir)/marketplaces/$marketplace/${relative#./}"
-  local differences
+  local differences diff_rc=0
 
   [[ -d "$source_dir" ]] || {
     print -r -- "unknown"$'\t'"marketplace source $relative is missing"
@@ -113,8 +129,16 @@ audit_relative_plugin () {
     return
   fi
 
-  differences=$(compare_payload "$payload" "$source_dir")
-  [[ -z "$differences" ]] && { print -r -- "current"$'\t'; return }
+  differences=$(compare_payload "$payload" "$source_dir") || diff_rc=$?
+
+  # Both signals are needed. diff exits 2 on a path it could not read, but on
+  # macOS a dangling symlink gets it an error on stderr and exit 0, so a status
+  # check alone would call the payload current over a file nothing compared.
+  if (( diff_rc > 1 )) || [[ -s "$diff_errors" ]]; then
+    print -r -- "unknown"$'\t'"could not compare against $relative: $(head -1 "$diff_errors")"
+    return
+  fi
+  (( diff_rc == 0 )) && { print -r -- "current"$'\t'; return }
 
   print -r -- "stale"$'\t'"differs from $relative at $(plural $(print -r -- "$differences" | wc -l | tr -d ' ') path)"
 }
@@ -203,7 +227,14 @@ main () {
   local name location url ref id payload verdict detail current=0
   local marketplaces inventory
 
-  marketplaces=$(marketplace_inventory)
+  # Same reasoning as the plugin inventory below: an unreadable marketplace list
+  # vouches for nothing, and every plugin check downstream reads `vouched` as
+  # proof its tree was fresh.
+  if ! marketplaces=$(marketplace_inventory); then
+    print -u2 -- "claude-plugin-audit: could not enumerate marketplaces"
+    return 2
+  fi
+
   while IFS=$'\t' read -r name location url ref; do
     [[ -n "$name" ]] || continue
     IFS=$'\t' read -r verdict detail <<< "$(audit_marketplace "$location" "$url" "$ref")"
