@@ -1,0 +1,110 @@
+#!/usr/bin/env zsh
+# shellcheck shell=bash
+# wt mr: pick one of your open merge requests, or one waiting on your review,
+# from any project and switch to a worktree for it.
+#
+# The GitLab companion to wt pr. `wt switch --prs` already covers the in-repo
+# case. This starts from the merge request instead, so the project does not have
+# to be the one you are standing in, or cloned at all. clone-repo resolves the
+# checkout and clones it if missing.
+
+set -e
+set -o pipefail
+
+usage() {
+  cat <<'EOF'
+usage: wt mr [--mine|--review] [wt switch options]
+
+Pick from your open merge requests and those waiting on your review, across
+every project, then switch to a worktree for the one you choose.
+
+  --mine    Only merge requests you authored
+  --review  Only merge requests waiting on your review
+
+Remaining options go to `wt switch`, so `wt mr -x claude` opens the worktree and
+launches Claude in it.
+EOF
+}
+
+want_mine=true
+want_review=true
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mine)
+      want_review=false
+      shift
+      ;;
+    --review)
+      want_mine=false
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) break ;;
+  esac
+done
+
+for tool in glab jq fzf clone-repo wt; do
+  if ! command -v "$tool" >/dev/null; then
+    gum log --level error "$tool is required"
+    exit 1
+  fi
+done
+
+# repo_url drops the /-/merge_requests/N suffix rather than rebuilding the URL
+# from a path, so it stays correct on self-hosted GitLab.
+search() {
+  glab api "/merge_requests?state=opened&per_page=50&$1" --output ndjson |
+    jq -c --arg bucket "$2" '{
+      url: .web_url,
+      title,
+      project: (.references.full | split("!")[0]),
+      iid,
+      bucket: $bucket,
+      repo_url: (.web_url | sub("/-/merge_requests/[0-9]+$"; ""))
+    }'
+}
+
+collect() {
+  if [[ "$want_mine" == true ]]; then
+    search "scope=created_by_me" mine
+  fi
+  if [[ "$want_review" == true ]]; then
+    # GitLab has no @me alias for reviewer, unlike scope=created_by_me.
+    search "scope=all&reviewer_username=$(glab api /user | jq -r .username)" review
+  fi
+}
+
+# Authored wins over review-requested when a merge request is both, because
+# unique_by keeps the first and collect emits authored first.
+rows=$(collect | jq -rs '
+  unique_by(.url)
+  | sort_by(.bucket, .project, .iid)
+  | .[]
+  | [.bucket, (.project + "!" + (.iid | tostring)), .title, .url, .repo_url]
+  | @tsv
+')
+
+if [[ -z "$rows" ]]; then
+  gum log --level warn "no open merge requests"
+  exit 1
+fi
+
+selection=$(
+  printf '%s\n' "$rows" |
+    fzf --delimiter='\t' --with-nth=1,2,3 \
+      --prompt='mr> ' \
+      --preview='glab mr view {4}' \
+      --preview-window='right,60%,border-left'
+) || exit 1
+
+url=$(printf '%s' "$selection" | cut -f4)
+repo_url=$(printf '%s' "$selection" | cut -f5)
+
+# Not `path`: zsh ties that name to $PATH, so assigning to it wipes the PATH
+# this script still needs to find wt.
+checkout=$(clone-repo "$repo_url")
+exec wt -C "$checkout" switch "$url" "$@"

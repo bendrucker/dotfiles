@@ -69,7 +69,9 @@ await $`mkdir -p ${projects}/${org}`;
 
 switch (host) {
   case "gitlab.com":
-    await $`glab repo clone ${input} ${target}`;
+    // Not the URL: glab clones an https URL over https, ignoring the git_protocol
+    // it was configured with. A bare path lets it pick the protocol.
+    await $`glab repo clone ${`${org}/${repo}`} ${target}`;
     break;
   default:
     await $`gh repo clone ${host ? input : `${org}/${repo}`} ${target}`;
