@@ -33,14 +33,89 @@ gum log --level info "Worktree prune completed successfully"
 # when clean, so any output means the pruner missed something. Latched under
 # its own job name, so drift files a separate to-do from a prune failure and
 # a green prune with silent drift still surfaces.
+#
+# Raw mode keeps the "<repo>\t<branch>\t<reason>\t<path>" fields intact, so the
+# to-do can name each worktree and build a command that jumps straight to it.
 gum log --level info "Auditing for prune drift"
-"$DOTFILES_HOME/bin/wt-all" prune-audit 2>/dev/null \
+WT_ALL_RAW=1 "$DOTFILES_HOME/bin/wt-all" prune-audit 2>/dev/null \
   | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g' \
   | grep -v '^[[:space:]]*$' >"$AUDIT_LOG" || true
 
 if [[ -s "$AUDIT_LOG" ]]; then
   gum log --level warn "prune drift detected"
-  report_failure "wt-prune-drift" "Worktree prune drift detected" "wt all prune-audit" "$(cat "$AUDIT_LOG")" "$revision"
+
+  # `wt all` reports each repo relative to the discovery root, so rebuild the
+  # absolute path the investigation commands need to cd into.
+  base="${PROJECTS:-$HOME/src}"
+
+  findings=""
+  investigate=""
+  integer leaked=0
+  while IFS=$'\t' read -r repo branch reason wtpath; do
+    [[ -n "$branch" ]] || continue
+    # Assignment rather than (( leaked++ )), whose result is the pre-increment
+    # value: on the first row that is 0, which this script's set -e reads as a
+    # failed command.
+    leaked=$(( leaked + 1 ))
+    repo_path="$repo"
+    [[ "$repo_path" == /* ]] || repo_path="$base/$repo"
+
+    findings+="$repo	$branch	$reason
+"
+    investigate+="# $repo — $branch ($reason)
+cd '$wtpath' && wt list && git log --oneline -5 && git status -sb
+cd '$repo_path'
+wt step prune --dry-run          # does the integration pass still see it?
+wt prune --dry-run --before      # what did wt-prune decide for it, and why?
+gh pr view '$branch' --json state,number,url   # what does the forge say?
+
+"
+  done <"$AUDIT_LOG"
+
+  # The leading blank line separates this from the host/time/revision list the
+  # reporter emits above it, so the first heading renders as one.
+  # Single-quoted on purpose: the backticks are markdown code spans in the
+  # to-do, and nothing here should expand.
+  # shellcheck disable=SC2016
+  explanation='
+## What this means
+
+The prune ran green and then failed its own audit. Every worktree below is
+integrated into its default branch or belongs to a merged PR, and the pruner
+left it in place. No later run picks these up on its own, so the backlog grows
+each night this fires.
+
+The pruner declines to touch a worktree for its first day, and the audit allows
+for that plus one more nightly run before reporting anything. Everything listed
+is past that window, so these are worktrees the pruner should have removed and
+did not.
+
+## What to do
+
+Fix the pruner. Removing these worktrees by hand clears the to-do and leaves
+the regression in place, and it fires again the next time a worktree lands in
+the same shape.
+
+Run the commands below. They open each leaked worktree, then re-run the two
+passes from its repo so you can see which one stopped matching. Common causes
+are `wt step prune` no longer detecting the integration and the forge lookup in
+`bin/wt-prune` returning nothing for the branch.'
+
+  noun="worktrees"
+  (( leaked == 1 )) && noun="worktree"
+
+  # Align the findings into columns. Command substitution strips the trailing
+  # blank line each accumulator picks up from its last append.
+  findings=$(print -r -- "$findings" | grep -v '^[[:space:]]*$' | column -t -s $'\t')
+  investigate=$(print -r -- "$investigate")
+
+  report_failure "wt-prune-drift" \
+    "Worktree prune leaked $leaked $noun" \
+    "$investigate" \
+    "$findings" \
+    "$revision" \
+    "$explanation" \
+    "Leaked worktrees"
 else
   report_success "wt-prune-drift"
   gum log --level info "No prune drift"
