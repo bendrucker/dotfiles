@@ -76,7 +76,13 @@ A payload is only as current as the tree it was compared against, so a plugin th
 
 A comparison that could not be made is not a finding. At 3am an unreachable remote is a flaky network far more often than a real change, so unverified results print but do not fail the audit. An inventory the audit could not read is different: it exits 2 and reports nothing, because calling zero plugins current is the silence the tool exists to break.
 
-The tree comparison is on content rather than the recorded `gitCommitSha`, because a forced refresh (`rm -rf` the payload, then update) restores current content while leaving that field at its old value. A plugin sourced from its own repo has no local copy of that repo to compare against, so it falls back to the recorded commit and inherits the same inaccuracy. Repair one of those with `claude plugin uninstall` and `install` rather than a forced refresh, which would leave it permanently flagged.
+The tree comparison is on content rather than the recorded `gitCommitSha`, because a forced refresh restores current content while leaving that field at its old value. A plugin sourced from its own repo has no local copy of that repo to compare against, so it falls back to the recorded commit and inherits the same inaccuracy.
+
+### Repairing a Flagged Plugin
+
+`claude plugin uninstall <id>` then `claude plugin install <id>`. Deleting the payload and running `claude plugin update` does not work on the plugins most likely to be flagged: a version-keyed plugin reports `already at the latest version` whether or not the payload is even there, so the delete stands and the plugin ends up uninstalled behind a successful-looking update. Reinstalling also rewrites `gitCommitSha`, which a forced refresh leaves stale and permanently flagged for a plugin sourced from its own repo.
+
+Payload directories carry an `.in_use` directory holding one file per session PID. Check those with `kill -0` before removing anything by hand. Deleting a payload out from under a live session breaks its skill loads until restart, which is why the audit only ever reports.
 
 `claude-upgrade` runs the audit after updating and files its findings as a Things to-do on a latch separate from the upgrade's own. Drift outlives the run that should have fixed it, so one stale plugin sharing the upgrade latch would suppress the to-do for a later upgrade failure. The latch also holds a fingerprint of which plugins are flagged, so a plugin that goes stale months later reopens it instead of hiding behind one that has been stale all along.
 
