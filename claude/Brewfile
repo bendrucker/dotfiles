@@ -1,3 +1,4 @@
+tap 'rjyo/moshi'
 tap 'steipete/tap'
 
 cask 'claude'
@@ -6,4 +7,5 @@ cask 'claude-devtools'
 cask 'commander'
 brew 'agent-browser'
 brew 'ast-grep'
+brew 'rjyo/moshi/moshi-hook', start_service: true
 brew 'steipete/tap/peekaboo'
