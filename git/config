@@ -49,7 +49,11 @@
   sort = -version:refname
 
 [pull]
-  ff = only
+  rebase = true
+
+[rebase]
+  autoStash = true
+  updateRefs = true
 
 [apply]
   whitespace = nowarn
