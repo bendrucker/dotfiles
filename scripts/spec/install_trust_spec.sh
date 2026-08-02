@@ -15,6 +15,10 @@ Describe "install-trust"
     : > "$sandbox/trusted"
     printf '%s\n' "$sandbox/repo" > "$sandbox/repository"
 
+    trust_json="$sandbox/config/homebrew/trust.json"
+    # The fallback spec empties this to exercise the brew --repository path.
+    repository="$sandbox/repo"
+
     # Each invocation appends one line, so the specs can count calls as well
     # as check arguments.
     printf '%s\n' \
@@ -37,19 +41,20 @@ Describe "install-trust"
       mkdir -p "$sandbox/repo/Library/Taps/${tap%%/*}/homebrew-${tap#*/}"
     done
   }
-  trust_file() { echo "$sandbox/config/homebrew/trust.json"; }
+  shallow() { mkdir -p "$sandbox/repo/Library/Taps/${1%%/*}/homebrew-${1#*/}/.git" && : > "$sandbox/repo/Library/Taps/${1%%/*}/homebrew-${1#*/}/.git/shallow"; }
+  stale_trust() { printf '{"trustedtaps":["gone/away"]}\n' > "$trust_json"; }
   tapped() { cat "$sandbox/tapped"; }
   trusted() { cat "$sandbox/trusted"; }
 
   run_script() {
     PATH="$sandbox/bin:$PATH" \
-      HOMEBREW_REPOSITORY="$sandbox/repo" \
+      HOMEBREW_REPOSITORY="$repository" \
       XDG_CONFIG_HOME="$sandbox/config" \
       "$script" "$sandbox"
   }
 
-  # The whole point of the directory check: a warm machine makes no `brew tap`
-  # calls at all, only the bundle list and one batched trust.
+  # The steady-state run: no `brew tap` calls at all, only the bundle list and
+  # one batched trust.
   It "does not tap a repository that is already on disk"
     declared oven-sh/bun schpet/tap
     installed oven-sh/bun schpet/tap
@@ -87,32 +92,45 @@ Describe "install-trust"
   End
 
   It "rebuilds the trust file from scratch so a dropped tap drops out"
-    printf '{"trustedtaps":["gone/away"]}\n' > "$(trust_file)"
+    stale_trust
     declared oven-sh/bun
     installed oven-sh/bun
 
     When call run_script
     The status should be success
-    The path "$sandbox/config/homebrew/trust.json" should not be exist
+    The path "$trust_json" should not be exist
     The result of function trusted should equal "--tap oven-sh/bun"
   End
 
   # `brew trust` with no targets prints the trusted list instead of writing it.
   It "clears the trust file without calling trust when nothing is declared"
-    printf '{"trustedtaps":["gone/away"]}\n' > "$(trust_file)"
+    stale_trust
 
     When call run_script
     The status should be success
-    The path "$sandbox/config/homebrew/trust.json" should not be exist
+    The path "$trust_json" should not be exist
     The result of function trusted should equal ""
   End
 
   It "falls back to asking brew for the repository path"
     declared oven-sh/bun
     installed oven-sh/bun
+    repository=""
 
-    When call env PATH="$sandbox/bin:$PATH" XDG_CONFIG_HOME="$sandbox/config" HOMEBREW_REPOSITORY= "$script" "$sandbox"
+    When call run_script
     The status should be success
     The result of function tapped should equal ""
+  End
+
+  # `brew tap` is only a no-op on a tap that is installed and not shallow. On a
+  # shallow one it is what runs `git fetch --unshallow`.
+  It "taps a repository whose clone on disk is shallow"
+    declared oven-sh/bun
+    installed oven-sh/bun
+    shallow oven-sh/bun
+
+    When call run_script
+    The status should be success
+    The result of function tapped should equal "oven-sh/bun"
   End
 End

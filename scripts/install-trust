@@ -12,22 +12,33 @@
 # `brew bundle` runs, then trust so `brew bundle` can install from it.
 #
 # Every `brew` call pays ~400ms of Ruby startup, so the steady-state run makes
-# two of them rather than two per tap. `brew tap` on an already-tapped repo does
-# nothing but pay that startup, and Homebrew defines a tap as installed by the
-# presence of its directory (Tap#installed? is `path.directory?`), so a `test -d`
-# answers the same question for free. `brew trust` takes every tap at once.
+# two of them rather than two per tap. The conditions under which `brew tap`
+# would do nothing are two file tests Homebrew itself uses: Tap#installed? is
+# `path.directory?` and Tap#shallow? is `.git/shallow`. Meeting both is what
+# makes Tap#install raise TapAlreadyTappedError, which `brew tap` swallows.
+# A shallow tap still needs the call, because that is what unshallows it.
+# `brew trust` takes every tap at once.
 set -e
 
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
-: "${HOMEBREW_REPOSITORY:=$(brew --repository)}"
+
+# Not a ${:=} default, which would swallow a failing brew and leave the path
+# empty, silently re-tapping everything on every run.
+if [ -z "${HOMEBREW_REPOSITORY-}" ]; then
+  HOMEBREW_REPOSITORY=$(brew --repository)
+fi
 
 taps=$(brew bundle list --file "$DOTFILES_ROOT/Brewfile" --tap)
 
 for tap in $taps; do
   # Tap#path is HOMEBREW_TAP_DIRECTORY/<user>/homebrew-<repo>, downcased
-  path=$(printf '%s/homebrew-%s' "${tap%%/*}" "${tap#*/}" | tr '[:upper:]' '[:lower:]')
-  [ -d "$HOMEBREW_REPOSITORY/Library/Taps/$path" ] || brew tap "$tap"
+  name=$(printf '%s/homebrew-%s' "${tap%%/*}" "${tap#*/}" | tr '[:upper:]' '[:lower:]')
+  path="$HOMEBREW_REPOSITORY/Library/Taps/$name"
+
+  if [ ! -d "$path" ] || [ -f "$path/.git/shallow" ]; then
+    brew tap "$tap"
+  fi
 done
 
 rm -f "$XDG_CONFIG_HOME/homebrew/trust.json"
