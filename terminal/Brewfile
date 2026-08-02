@@ -6,7 +6,12 @@ cask 'iterm2'
 # predates the Codicon brand marks (see terminal/glyphs.conf) and nerd-fonts has
 # cut no release since. Swap back to font-monaspice-nerd-font once one ships
 # containing U+EC82. The tap opens an issue when that happens.
-cask 'font-monaspice-nerd-font-tip'
+#
+# The @tip suffix is what makes that swap automatic in both directions:
+# install-cask-variants matches variants by stripping at the @, so it retires
+# whichever sibling the Brewfile stopped declaring. A -tip suffix would not
+# match, and bundle would fail on the cask's conflicts_with instead.
+cask 'font-monaspice-nerd-font@tip'
 brew 'glow'
 brew 'shellspec'
 brew 'yazi'

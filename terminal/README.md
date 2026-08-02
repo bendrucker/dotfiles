@@ -96,7 +96,7 @@ to `~/.config/ghostty/config` by `install.sh`.
 
 ## Fonts
 
-Ghostty renders `MonaspiceNe NFM`, installed by `font-monaspice-nerd-font-tip`
+Ghostty renders `MonaspiceNe NFM`, installed by `font-monaspice-nerd-font@tip`
 from the [`bendrucker/fonts`](https://github.com/bendrucker/homebrew-fonts) tap.
 That tap patches Monaspace from nerd-fonts `master` instead of a release,
 because 3.4.0 shipped in April 2025, predates the Codicon brand marks for
