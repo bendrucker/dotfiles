@@ -60,3 +60,11 @@ key = "prefix+shift+f"
 type = "shell"
 command = "herdr plugin action invoke open-file-viewer-tab --plugin herdr-file-viewer"
 description = "file viewer (tab)"
+
+# reviewr's auto-open is off (reviewr.toml), so this is the only way in.
+# herdr's resize mode already holds prefix+r.
+[[keys.command]]
+key = "prefix+d"
+type = "shell"
+command = "herdr plugin action invoke toggle --plugin persiyanov.reviewr"
+description = "reviewr diff (toggle)"
