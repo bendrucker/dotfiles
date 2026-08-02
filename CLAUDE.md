@@ -74,6 +74,8 @@ Treesitter parsers are built against a specific nvim-treesitter revision. They b
 Most tool configs live under `~/.config/<tool>/` (XDG Base Directory). Symlinks are declared in per-topic `symlinks.conf` files and installed by `scripts/install-symlinks`. Topics with non-symlink setup logic (plugin managers, system config) use `install.sh`.
 
 - Symlinks point to `~/.dotfiles` (the installed copy), **not** the development working tree. Edits in a dev checkout won't take effect until synced unless dev mode is enabled.
+- A `source` may be a directory, linking the whole tree in one entry. This is what to use when a tool owns a directory of same-shaped files and you want a new file to go live without another install run. The catch is a tool that writes its own state in there, which lands in the repo too. A `.gitignore` inside the tree narrows what gets tracked. `herdr/plugins/config` mirrors `$XDG_CONFIG_HOME/herdr/plugins/config`, tracks each plugin's `config.toml`, and ignores the rest.
+- A real directory sitting at a link target aborts the install with the path named. Move its contents into the repo, remove it, re-run.
 
 ### Dev Mode
 

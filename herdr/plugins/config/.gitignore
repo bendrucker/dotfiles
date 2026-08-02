@@ -1,0 +1,8 @@
+# $XDG_CONFIG_HOME/herdr/plugins/config links to this whole tree, so a plugin
+# writing beside its config writes here. Track the config file herdr looks for
+# and leave every plugin's own state (update checks, pinned entries, caches)
+# untracked.
+*
+!*/
+!*/config.toml
+!.gitignore

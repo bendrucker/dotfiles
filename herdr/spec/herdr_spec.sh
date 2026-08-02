@@ -4,6 +4,7 @@
 Describe "herdr"
   config="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml"
   list="$SHELLSPEC_PROJECT_ROOT/plugins.list"
+  plugin_config="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config"
 
   It "symlinks the config into place"
     When call test -L "$config"
@@ -12,6 +13,18 @@ Describe "herdr"
 
   It "config is readable and non-empty"
     When call test -s "$config"
+    The status should be success
+  End
+
+  It "symlinks the whole plugin config tree"
+    # A directory link, so a new plugin's config goes live by existing in the
+    # repo rather than by another install run.
+    When call test -L "$plugin_config"
+    The status should be success
+  End
+
+  It "reaches a plugin's config through that link"
+    When call test -s "$plugin_config/persiyanov.reviewr/config.toml"
     The status should be success
   End
 

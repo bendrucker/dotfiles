@@ -1,4 +1,4 @@
-# reviewr's own config. herdr's config.toml never reaches it.
+# Settings in herdr's own config.toml never reach a plugin.
 # https://github.com/persiyanov/herdr-reviewr#configuration
 
 # A vertical split leaves both panes unreadable on a phone. prefix+d opens it
