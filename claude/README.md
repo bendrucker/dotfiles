@@ -72,7 +72,9 @@ A plugin no longer offered by its marketplace is left alone. Nothing can update 
 
 The marketplace clones are checked too. Every other comparison reads them as ground truth, and `claude plugin marketplace update` warns rather than fails, so a clone that quietly stopped advancing would match a stale install and hide the drift from both sides. A marketplace served as a tarball has no clone to check and is reported as unverified.
 
-A comparison that could not be made is not a finding. At 3am an unreachable remote is a flaky network far more often than a real change, so unverified results print but do not fail the audit.
+A payload is only as current as the tree it was compared against, so a plugin that matches a marketplace the audit could not vouch for is reported as unverified rather than current. Without that, one unchecked marketplace would hide every install it serves.
+
+A comparison that could not be made is not a finding. At 3am an unreachable remote is a flaky network far more often than a real change, so unverified results print but do not fail the audit. An inventory the audit could not read is different: it exits 2 and reports nothing, because calling zero plugins current is the silence the tool exists to break.
 
 The tree comparison is on content rather than the recorded `gitCommitSha`, because a forced refresh (`rm -rf` the payload, then update) restores current content while leaving that field at its old value. A plugin sourced from its own repo has no local copy of that repo to compare against, so it falls back to the recorded commit and inherits the same inaccuracy. Repair one of those with `claude plugin uninstall` and `install` rather than a forced refresh, which would leave it permanently flagged.
 

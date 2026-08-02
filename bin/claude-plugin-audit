@@ -123,7 +123,15 @@ audit_external_plugin () {
   local source=$1 payload=$2
   local url ref expected actual
 
-  url=$(print -r -- "$source" | jq -r '.url // ("https://github.com/" + .repo) // empty')
+  if [[ -z "$payload" || ! -d "$payload" ]]; then
+    print -r -- "stale"$'\t'"no payload installed"
+    return
+  fi
+
+  # `.repo // empty` inside the concatenation, because jq treats null as the
+  # identity for +: a source carrying neither field would otherwise build the
+  # string "https://github.com/" and send the audit off to fetch it.
+  url=$(print -r -- "$source" | jq -r '.url // ("https://github.com/" + (.repo // empty)) // empty')
   [[ -n "$url" ]] || { print -r -- "unknown"$'\t'"source names no repository"; return }
 
   ref=$(print -r -- "$source" | jq -r '.sha // .ref // "HEAD"')
@@ -147,6 +155,7 @@ audit_marketplace () {
   local location=$1 url=$2 ref=$3
   local head expected
 
+  [[ -n "$url" ]] || { print -r -- "unknown"$'\t'"source names no repository"; return }
   [[ -d "$location/.git" ]] || {
     print -r -- "unknown"$'\t'"not a git clone, so freshness is unverifiable"
     return
@@ -170,7 +179,7 @@ marketplace_inventory () {
     to_entries[]
     | [ .key,
         (.value.installLocation // ""),
-        (.value.source.url // ("https://github.com/" + (.value.source.repo // ""))),
+        (.value.source.url // ("https://github.com/" + (.value.source.repo // empty)) // ""),
         (.value.source.ref // "HEAD") ]
     | @tsv
   ' "$(claude_plugins_dir)/known_marketplaces.json" 2>/dev/null
@@ -190,19 +199,37 @@ main () {
   (( $# )) && { print -u2 -- "claude-plugin-audit: unknown option $1"; return 1 }
 
   local -a drifted unverified
+  local -A vouched
   local name location url ref id payload verdict detail current=0
+  local marketplaces inventory
 
+  marketplaces=$(marketplace_inventory)
   while IFS=$'\t' read -r name location url ref; do
     [[ -n "$name" ]] || continue
     IFS=$'\t' read -r verdict detail <<< "$(audit_marketplace "$location" "$url" "$ref")"
+    [[ "$verdict" == current ]] && vouched[$name]=1
     record_verdict "marketplace/$name" "$verdict" "$detail"
-  done < <(marketplace_inventory)
+  done <<< "$marketplaces"
+
+  # An inventory that could not be read is not an empty one, and reporting
+  # "everything current" over it would be the silence this tool exists to break.
+  if ! inventory=$(plugin_inventory); then
+    print -u2 -- "claude-plugin-audit: could not enumerate installed plugins"
+    return 2
+  fi
 
   while IFS=$'\t' read -r id payload; do
     [[ -n "$id" ]] || continue
     IFS=$'\t' read -r verdict detail <<< "$(audit_plugin "$id" "$payload")"
+    # A payload is only as current as the tree it was compared against. A match
+    # with a marketplace the audit could not vouch for proves nothing, and
+    # calling it current is how a stale clone hides every stale install under it.
+    if [[ "$verdict" == current && -z "${vouched[${id##*@}]:-}" ]]; then
+      verdict=unknown
+      detail="matches marketplace ${id##*@}, which is itself unverified"
+    fi
     record_verdict "$id" "$verdict" "$detail"
-  done < <(plugin_inventory)
+  done <<< "$inventory"
 
   (( ${#unverified} )) && {
     print -rl -- $unverified | sort | column -t -s $'\t'

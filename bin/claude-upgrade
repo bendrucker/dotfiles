@@ -68,6 +68,15 @@ update_marketplaces() {
 update_plugins() {
   gum log --level info "Updating plugins..."
 
+  local inventory
+  # An inventory that could not be read is not an empty one. Treating it as
+  # empty would update nothing and report success, which is the failure this
+  # job exists to make loud.
+  if ! inventory=$(plugin_inventory); then
+    gum log --level warn "Could not enumerate installed plugins"
+    return 1
+  fi
+
   local failed=0 plugin payload source_rc
   while IFS=$'\t' read -r plugin payload; do
     [[ -n "$plugin" ]] || continue
@@ -77,11 +86,15 @@ update_plugins() {
     # A marketplace that no longer offers the plugin has nothing to update it
     # to, so `claude plugin update` can only ever fail. claude-plugin-audit
     # reports these. Counting them here would make every run fail.
-    (( source_rc == 4 )) && continue
+    (( source_rc == PLUGIN_SOURCE_ABSENT )) && continue
 
     if [[ -z "$payload" || ! -d "$payload" ]]; then
+      # Installing an id the marketplace cannot vouch for is a guess that fails
+      # every night. The audit names it instead.
+      (( source_rc != 0 )) && continue
+
       gum log --level info "Installing $plugin (not yet installed)..."
-      if ! claude plugin install "$plugin"; then
+      if ! claude plugin install "$plugin" </dev/null; then
         gum log --level warn "Failed to install $plugin"
         (( ++failed ))
       fi
@@ -89,11 +102,14 @@ update_plugins() {
     fi
 
     gum log --level info "Updating $plugin..."
-    if ! claude plugin update "$plugin"; then
+    # </dev/null keeps the CLI from reading the loop's stdin, which is the
+    # inventory: one prompt-happy invocation would swallow the rest of it and
+    # leave every plugin after this one silently unattempted.
+    if ! claude plugin update "$plugin" </dev/null; then
       gum log --level warn "Failed to update $plugin"
       (( ++failed ))
     fi
-  done < <(plugin_inventory)
+  done <<< "$inventory"
 
   if ((failed > 0)); then
     gum log --level warn "$failed plugin(s) failed to update"
@@ -109,48 +125,62 @@ audit_plugins() {
   gum log --level info "Auditing plugin payloads..."
 
   local output rc=0
-  output=$("$bin_dir/claude-plugin-audit" 2>&1) || rc=$?
+  output=$("$bin_dir/claude-plugin-audit" </dev/null 2>&1) || rc=$?
   print -r -- "$output"
 
-  if ((rc != 0)); then
-    report_drift "$output"
-  else
-    report_success "claude-plugin-drift"
-  fi
+  case $rc in
+    0) report_success "claude-plugin-drift" ;;
+    1) report_drift "$output" ;;
+    # The audit could not run at all: missing, not executable, or unable to read
+    # the inventory. Filing that as drift would name plugins it never checked
+    # and would leave the upgrade reporting success over a check that never ran.
+    *)
+      gum log --level warn "Plugin audit did not run"
+      return 1
+      ;;
+  esac
 }
 
-upgrade_metadata() {
-  local revision version
-  revision=$(git -C "$CLAUDE_REPO_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  version=$(claude --version 2>/dev/null || echo "unknown")
-  print -r -- "$revision"$'\t'"- **Claude:** $version"
+upgrade_revision() {
+  git -C "$CLAUDE_REPO_HOME" rev-parse --short HEAD 2>/dev/null || print -r -- "unknown"
+}
+
+upgrade_meta() {
+  print -r -- "- **Claude:** $(claude --version </dev/null 2>/dev/null || print -r -- unknown)"
+}
+
+# Reduce a job's output to what is wrong with it, so the latch reopens when that
+# changes. Everything after the first two fields is detail that moves on its own.
+failure_fingerprint() {
+  awk "$1" | sort | shasum | cut -c1-12
 }
 
 report_upgrade_failure() {
   local output="$1"
 
-  local revision meta
-  IFS=$'\t' read -r revision meta <<< "$(upgrade_metadata)"
+  # Keyed on which steps warned, so a sync that keeps failing stays quiet while
+  # a plugin failing on top of it reopens the latch.
+  local fingerprint
+  fingerprint=$(print -r -- "$output" |
+    failure_fingerprint '/^(WARN|ERRO)/ { print $2, $3, $4 }')
 
   report_failure "claude-upgrade" "Claude upgrade failed" "claude-upgrade" "$output" \
-    "$revision" "$meta"
+    "$(upgrade_revision)" "$(upgrade_meta)" "Error Output" "$fingerprint"
 }
 
 report_drift() {
   local output="$1"
 
-  local revision meta
-  IFS=$'\t' read -r revision meta <<< "$(upgrade_metadata)"
-
   # The subject and verdict of each finding, without the detail, so drift that
   # deepens on a plugin already named stays quiet while a newly affected plugin
-  # reopens the latch.
+  # reopens the latch. Unverified rows are left out: they are the flaky-network
+  # bucket, and hashing them would reopen the latch on any 3am blip.
   local fingerprint
   fingerprint=$(print -r -- "$output" |
-    awk '$2 ~ /^(stale|orphaned|unverified)$/ { print $1, $2 }' | sort | shasum | cut -c1-12)
+    failure_fingerprint '$2 ~ /^(stale|orphaned)$/ { print $1, $2 }')
 
   report_failure "claude-plugin-drift" "Claude plugins are stale" "claude-plugin-audit" \
-    "$output" "$revision" "$meta" "Stale Plugins" "$fingerprint"
+    "$output" "$(upgrade_revision)" "$(upgrade_meta)" "Stale Plugins" "$fingerprint"
 }
 
 main() {
@@ -172,8 +202,11 @@ main() {
     update_marketplaces
 
     local plugins_rc=0
-    update_plugins || plugins_rc=$?
-    audit_plugins
+    update_plugins || plugins_rc=1
+    # The audit runs whatever the update pass did, since a failed update is the
+    # case most likely to have left something stale. Its own findings go to a
+    # separate latch, so only a broken audit reaches this status.
+    audit_plugins || plugins_rc=1
     exit $plugins_rc
   } 2>&1 | tee "$output"
 

@@ -69,6 +69,7 @@ setup() {
 
   cat >"$stubdir/claude" <<'CLAUDE'
 #!/usr/bin/env bash
+[ -n "$CLAUDE_DRAINS_STDIN" ] && cat >/dev/null
 case "$2" in
   list)   cat "$HOME/plugin-list.json" ;;
   update)
@@ -80,6 +81,7 @@ esac
 exit 0
 CLAUDE
   chmod +x "$stubdir/claude"
+  export CLAUDE_DRAINS_STDIN=""
 
   # Only ls-remote and rev-parse are stubbed; the audit uses git for nothing else.
   cat >"$stubdir/git" <<'GIT'
@@ -137,10 +139,8 @@ write_settings() {
     >"$HOME/.claude/settings.json"
 }
 
-# first is a git clone, so its freshness is checkable. third is materialized
-# from a tarball and has no clone to read.
 write_known_marketplaces() {
-  mkdir -p "$plugins/marketplaces/first/.git"
+  mkdir -p "$plugins/marketplaces/first/.git" "$plugins/marketplaces/third/.git"
   jq -n --arg plugins "$plugins" '
     ["first", "third"]
     | map({
@@ -237,13 +237,35 @@ Describe "update_plugins"
     The status should be success
     The contents of file "$CLAUDE_PLUGIN_LOG" should not include "ghost@first"
   End
+
+  # The loop's stdin is the inventory. One CLI invocation that reads stdin would
+  # swallow the rest of it and leave every plugin after it unattempted, with
+  # nothing in the exit status to say so.
+  It "updates every plugin even when the CLI reads stdin"
+    export CLAUDE_DRAINS_STDIN=1
+    When call call_upgrade update_plugins
+    The status should be success
+    The contents of file "$CLAUDE_PLUGIN_LOG" should include "update alpha@first"
+    The contents of file "$CLAUDE_PLUGIN_LOG" should include "update gamma@first"
+  End
+
+  # An inventory that could not be read is not an empty one: updating nothing
+  # and reporting success is the failure this job exists to make loud.
+  It "fails when the inventory cannot be read"
+    printf 'not json\n' >"$HOME/.claude/settings.json"
+    When call call_upgrade update_plugins
+    The status should be failure
+    The contents of file "$CLAUDE_PLUGIN_LOG" should equal ""
+    # jq's own complaint reaches the captured log, so the to-do names the cause.
+    The stderr should be defined
+  End
 End
 
 Describe "claude-plugin-audit"
   It "passes when every payload matches its marketplace"
     When call run_audit
     The status should be success
-    The output should include "5 checks current"
+    The output should include "6 checks current"
   End
 
   # The marketplace clones are what every payload is compared against, and
@@ -259,10 +281,31 @@ Describe "claude-plugin-audit"
   # A comparison that could not be made is a flaky network far more often than
   # a real change, so failing on one would file a to-do the next run clears.
   It "reports what it cannot verify without failing"
+    rm -rf "$plugins/marketplaces/first/.git"
     When call run_audit
     The status should be success
-    The output should include "marketplace/third"
+    The output should include "marketplace/first"
     The output should include "unverified"
+  End
+
+  # A stale clone matches every stale payload under it, so calling those current
+  # is how one unchecked marketplace hides every install it serves.
+  It "does not call a payload current against a marketplace it cannot vouch for"
+    rm -rf "$plugins/marketplaces/first/.git"
+    When call run_audit
+    The status should be success
+    The output should include "alpha@first"
+    The output should include "itself unverified"
+  End
+
+  # An inventory that could not be read is not an empty one. Reporting
+  # everything current over it is the silence this tool exists to break.
+  It "refuses to report on an inventory it could not read"
+    printf 'not json\n' >"$HOME/.claude/settings.json"
+    When call run_audit
+    The status should equal 2
+    The stderr should include "could not enumerate"
+    The output should not include "current"
   End
 
   It "flags a payload that lost a file"
