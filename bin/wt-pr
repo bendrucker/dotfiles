@@ -95,5 +95,7 @@ repo=$(printf '%s' "$selection" | cut -f2)
 repo=${repo%%\#*}
 url=$(printf '%s' "$selection" | cut -f4)
 
-path=$(clone-repo "$repo")
-exec wt -C "$path" switch "$url" "$@"
+# Not `path`: zsh ties that name to $PATH, so assigning to it wipes the PATH
+# this script still needs to find wt.
+checkout=$(clone-repo "$repo")
+exec wt -C "$checkout" switch "$url" "$@"
