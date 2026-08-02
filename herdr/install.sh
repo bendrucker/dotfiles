@@ -59,3 +59,8 @@ fi
 # With this on, a plugin added to the list later installs on the next herdr
 # start instead of waiting for someone to re-run this script.
 "$lazy" auto-sync on || echo "✗ could not turn on auto-sync" >&2
+
+# Detection rules herdr's own agent manifests are missing, composed onto
+# whatever it last fetched. See herdr/agent-detection.
+"$PWD/../bin/herdr-agent-detection" sync ||
+  echo "✗ could not install herdr agent detection overlays" >&2

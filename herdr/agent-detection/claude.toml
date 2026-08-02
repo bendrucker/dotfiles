@@ -1,0 +1,33 @@
+# Detection rules herdr's own `claude` manifest is missing.
+# `bin/herdr-agent-detection` appends this file to whatever manifest herdr last
+# fetched and installs the result. Nothing upstream is copied in here.
+#
+# herdr scores `working` for Claude Code off the terminal title, whose first
+# character is a braille spinner frame. Claude Code writes that title only while
+# it streams a response. Through every tool call the title is
+# `<summary> · <session id>` with no prefix, so the highest matching rule becomes
+# `live_prompt_box` and the pane reads idle while the agent is mid-turn. On a
+# live session that showed up as state flipping to idle every few seconds for
+# stretches of one to four seconds.
+#
+# The spinner line on screen carries the state the title drops, and carries it
+# for the whole turn.
+#
+# This rule is redundant once herdr scores `working` from something other than
+# the title. `herdr-agent-detection check` compares the set below against the
+# manifest and reports when it moves, which is the signal to look.
+# base-working-rules: btw_overlay_working osc_title_working
+
+[[rules]]
+id = "local_spinner_line_working"
+state = "working"
+# Above `live_prompt_box` (950), so the input box stops reading as idle mid-turn.
+# Below every blocked rule (975 and up), so a permission prompt still wins.
+priority = 960
+# The spinner sits around 7 non-empty lines above the bottom, once the footer,
+# rules, and input box are counted.
+region = "bottom_non_empty_lines(10)"
+visible_working = true
+# Matches `✻ Crunching… (18m 20s · ↓ 53.5k tokens)` and the older
+# `(esc to interrupt)` form of the same line.
+line_regex = ['^\s*\S .*…\s*\((?:\d+[hms]|esc to interrupt)']
