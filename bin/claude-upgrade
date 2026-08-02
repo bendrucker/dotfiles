@@ -4,6 +4,11 @@
 
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 
+# Captured at file scope: inside a function $0 is the function name, so the
+# audit could not be found from there.
+typeset -g bin_dir=${0:A:h}
+
+source "${0:A:h}/../scripts/lib/claude-plugins.sh"
 source "${0:A:h}/../scripts/lib/git-sync.sh"
 source "${0:A:h}/../scripts/lib/report-failure.sh"
 source "${0:A:h}/../scripts/lib/sync-notify.sh"
@@ -57,67 +62,88 @@ update_marketplaces() {
   claude plugin marketplace update || gum log --level warn "marketplace update had issues, continuing"
 }
 
+# Update every plugin installed at user scope, enabled or not. `claude plugin
+# enable` does not update, so a disabled plugin skipped here comes back stale
+# whenever it is re-enabled.
 update_plugins() {
   gum log --level info "Updating plugins..."
 
-  local marketplace_file="$CLAUDE_REPO_HOME/.claude-plugin/marketplace.json"
-  local marketplace_name
-  marketplace_name=$(jq -r '.name' "$marketplace_file")
+  local failed=0 plugin payload source_rc
+  while IFS=$'\t' read -r plugin payload; do
+    [[ -n "$plugin" ]] || continue
 
-  local settings_file="$HOME/.claude/settings.json"
-  if [[ ! -f "$settings_file" ]]; then
-    gum log --level warn "settings.json not found at $settings_file"
-    return 0
-  fi
+    source_rc=0
+    plugin_source "$plugin" >/dev/null || source_rc=$?
+    # A marketplace that no longer offers the plugin has nothing to update it
+    # to, so `claude plugin update` can only ever fail. claude-plugin-audit
+    # reports these. Counting them here would make every run fail.
+    (( source_rc == 4 )) && continue
 
-  local plugins
-  plugins=$(jq -r --arg m "$marketplace_name" \
-    '.enabledPlugins // {} | keys[] | select(endswith("@" + $m))' \
-    "$settings_file" 2>/dev/null)
-
-  if [[ -z "$plugins" ]]; then
-    gum log --level info "No first-party plugins found"
-    return 0
-  fi
-
-  local installed_json
-  installed_json=$(claude plugin list --json 2>/dev/null || echo '[]')
-
-  local failed=0
-  while IFS= read -r plugin; do
-    local is_installed
-    is_installed=$(echo "$installed_json" | jq -r --arg p "$plugin" 'any(.id == $p)')
-    if [[ "$is_installed" != "true" ]]; then
+    if [[ -z "$payload" || ! -d "$payload" ]]; then
       gum log --level info "Installing $plugin (not yet installed)..."
-      if claude plugin install "$plugin"; then
-        continue
-      else
+      if ! claude plugin install "$plugin"; then
         gum log --level warn "Failed to install $plugin"
-        ((failed++))
-        continue
+        (( ++failed ))
       fi
+      continue
     fi
+
     gum log --level info "Updating $plugin..."
     if ! claude plugin update "$plugin"; then
       gum log --level warn "Failed to update $plugin"
-      ((failed++))
+      (( ++failed ))
     fi
-  done <<< "$plugins"
+  done < <(plugin_inventory)
 
   if ((failed > 0)); then
     gum log --level warn "$failed plugin(s) failed to update"
+    return 1
   fi
+}
+
+# Check what the update pass actually produced, and report drift on a latch of
+# its own. Drift outlives the run that should have fixed it, so sharing the
+# claude-upgrade latch would let one persistent stale plugin suppress the to-do
+# for a later upgrade failure.
+audit_plugins() {
+  gum log --level info "Auditing plugin payloads..."
+
+  local output rc=0
+  output=$("$bin_dir/claude-plugin-audit" 2>&1) || rc=$?
+  print -r -- "$output"
+
+  if ((rc != 0)); then
+    report_drift "$output"
+  else
+    report_success "claude-plugin-drift"
+  fi
+}
+
+upgrade_metadata() {
+  local revision version
+  revision=$(git -C "$CLAUDE_REPO_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  version=$(claude --version 2>/dev/null || echo "unknown")
+  print -r -- "$revision"$'\t'"- **Claude:** $version"
 }
 
 report_upgrade_failure() {
   local output="$1"
 
-  local revision version
-  revision=$(git -C "$CLAUDE_REPO_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  version=$(claude --version 2>/dev/null || echo "unknown")
+  local revision meta
+  IFS=$'\t' read -r revision meta <<< "$(upgrade_metadata)"
 
   report_failure "claude-upgrade" "Claude upgrade failed" "claude-upgrade" "$output" \
-    "$revision" "- **Claude:** $version"
+    "$revision" "$meta"
+}
+
+report_drift() {
+  local output="$1"
+
+  local revision meta
+  IFS=$'\t' read -r revision meta <<< "$(upgrade_metadata)"
+
+  report_failure "claude-plugin-drift" "Claude plugins are stale" "claude-plugin-audit" \
+    "$output" "$revision" "$meta" "Stale Plugins"
 }
 
 main() {
@@ -137,7 +163,11 @@ main() {
     # sync_repo keeps its PR push on the SSH pushurl.
     git_https_env
     update_marketplaces
-    update_plugins
+
+    local plugins_rc=0
+    update_plugins || plugins_rc=$?
+    audit_plugins
+    exit $plugins_rc
   } 2>&1 | tee "$output"
 
   if [[ ${pipestatus[1]} -ne 0 ]]; then
@@ -149,4 +179,6 @@ main() {
   gum log --level info "All Claude upgrades completed successfully"
 }
 
-main
+# Run only when executed directly. When sourced (tests), ZSH_EVAL_CONTEXT gains
+# a ":file" suffix, so the functions are defined without running the upgrade.
+[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"

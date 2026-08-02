@@ -1,0 +1,178 @@
+#!/usr/bin/env zsh
+#/ Usage: claude-plugin-audit
+#/ Report installed Claude Code plugins whose payload no longer matches what
+#/ their marketplace offers. Exits non-zero when anything is stale.
+#
+# `claude plugin update` reports success in cases where it changed nothing: a
+# plugin that declares a fixed `version` string is "already at the latest
+# version" however far its source has moved, and an id the updater never
+# enumerated is never attempted at all. Neither case is distinguishable from a
+# real update by its exit status, so the updater's own success is not evidence
+# that an install is current. This checks the outcome instead.
+#
+# The check is a content comparison rather than a reading of the recorded
+# gitCommitSha, because a forced refresh (rm -rf the payload, reinstall)
+# restores current content while leaving that field at its old value.
+
+set -uo pipefail
+setopt typeset_silent
+
+source "${0:A:h}/../scripts/lib/claude-plugins.sh"
+
+# Captured at file scope: inside a function $0 is the function name, so --help
+# could not find the usage header to print.
+typeset -g script_path=${0:A}
+
+# Neither side of the comparison owns these. .in_use and .orphaned_at are
+# runtime markers Claude Code writes into a payload, node_modules is an
+# install-time artifact, and .git belongs to a marketplace whose whole repo is
+# the plugin.
+typeset -gra payload_noise=(.in_use .orphaned_at node_modules .git)
+
+compare_payload () {
+  local payload=$1 source_dir=$2
+  local -a excludes
+  local marker
+
+  for marker in $payload_noise; do
+    excludes+=(--exclude="$marker")
+  done
+
+  # Claude Code synthesizes .claude-plugin/plugin.json for a plugin that ships
+  # none, so on those the directory exists only on the payload side and is not
+  # drift. A plugin that does ship one stays covered.
+  [[ -d "$source_dir/.claude-plugin" ]] || excludes+=(--exclude=.claude-plugin)
+
+  diff -rq $excludes "$payload" "$source_dir" 2>&1
+}
+
+resolve_ref () {
+  local url=$1 ref=$2 refs peeled
+
+  [[ "$ref" =~ '^[0-9a-f]{40}$' ]] && { print -r -- "$ref"; return }
+
+  refs=$(git ls-remote "$url" "$ref" 2>/dev/null) || return 1
+  [[ -n "$refs" ]] || return 1
+
+  # An annotated tag resolves to a tag object; its peeled ^{} line carries the
+  # commit the install would actually hold.
+  peeled=$(print -r -- "$refs" | awk '$2 ~ /\^\{\}$/ { print $1; exit }')
+  [[ -n "$peeled" ]] && { print -r -- "$peeled"; return }
+
+  print -r -- "$refs" | awk 'NR == 1 { print $1 }'
+}
+
+recorded_commit () {
+  local payload=$1
+  jq -r --arg payload "$payload" '
+    (if type == "array" then (.[] | select(.key == "plugins") | .value) else .plugins end)
+    | to_entries[] | .value[]
+    | select(.installPath == $payload) | .gitCommitSha // empty
+  ' "$(claude_plugins_dir)/installed_plugins.json" 2>/dev/null | head -1
+}
+
+# Compare a plugin's installed payload against the source its marketplace
+# currently offers. Prints "<verdict>\t<detail>", where verdict is one of:
+#   current   the payload matches
+#   stale     the payload differs, or was never installed
+#   orphaned  the marketplace no longer offers the plugin, so nothing can update
+#             it and the fix is to uninstall
+#   unknown   the comparison could not be made
+audit_plugin () {
+  local id=$1 payload=$2
+  local marketplace=${id##*@} name=${id%@*}
+  local source source_rc=0
+
+  source=$(plugin_source "$id") || source_rc=$?
+  case $source_rc in
+    3) print -r -- "unknown"$'\t'"marketplace $marketplace has no readable manifest"; return ;;
+    4) print -r -- "orphaned"$'\t'"marketplace $marketplace no longer offers $name"; return ;;
+  esac
+
+  if [[ $(print -r -- "$source" | jq -r 'type') == string ]]; then
+    audit_relative_plugin "$marketplace" "$(print -r -- "$source" | jq -r '.')" "$payload"
+  else
+    audit_external_plugin "$source" "$payload"
+  fi
+}
+
+audit_relative_plugin () {
+  local marketplace=$1 relative=$2 payload=$3
+  local source_dir="$(claude_plugins_dir)/marketplaces/$marketplace/${relative#./}"
+  local differences
+
+  [[ -d "$source_dir" ]] || {
+    print -r -- "unknown"$'\t'"marketplace source $relative is missing"
+    return
+  }
+  if [[ -z "$payload" || ! -d "$payload" ]]; then
+    print -r -- "stale"$'\t'"no payload installed"
+    return
+  fi
+
+  differences=$(compare_payload "$payload" "$source_dir")
+  [[ -z "$differences" ]] && { print -r -- "current"$'\t'; return }
+
+  print -r -- "stale"$'\t'"differs from $relative at $(plural $(print -r -- "$differences" | wc -l | tr -d ' ') path)"
+}
+
+audit_external_plugin () {
+  local source=$1 payload=$2
+  local url ref expected actual
+
+  url=$(print -r -- "$source" | jq -r '.url // ("https://github.com/" + .repo) // empty')
+  [[ -n "$url" ]] || { print -r -- "unknown"$'\t'"source names no repository"; return }
+
+  ref=$(print -r -- "$source" | jq -r '.sha // .ref // "HEAD"')
+  expected=$(resolve_ref "$url" "$ref") || {
+    print -r -- "unknown"$'\t'"$url has no $ref"
+    return
+  }
+
+  actual=$(recorded_commit "$payload")
+  [[ -n "$actual" ]] || { print -r -- "stale"$'\t'"no commit recorded for the install"; return }
+  [[ "$actual" == "$expected" ]] && { print -r -- "current"$'\t'; return }
+
+  print -r -- "stale"$'\t'"installed ${actual[1,12]}, $url $ref is ${expected[1,12]}"
+}
+
+plural () {
+  local n=$1 noun=$2
+  (( n == 1 )) && { print -r -- "$n $noun"; return }
+  print -r -- "$n ${noun}s"
+}
+
+main () {
+  [[ "${1:-}" == -h || "${1:-}" == --help ]] && {
+    grep '^#/' "$script_path" | cut -c4-
+    return 0
+  }
+  (( $# )) && { print -u2 -- "claude-plugin-audit: unknown option $1"; return 1 }
+
+  local -a findings
+  local id payload verdict detail current=0
+
+  while IFS=$'\t' read -r id payload; do
+    [[ -n "$id" ]] || continue
+    IFS=$'\t' read -r verdict detail <<< "$(audit_plugin "$id" "$payload")"
+    if [[ "$verdict" == current ]]; then
+      (( ++current ))
+      continue
+    fi
+    findings+=("$id"$'\t'"$verdict"$'\t'"$detail")
+  done < <(plugin_inventory)
+
+  (( ${#findings} )) || {
+    print -r -- "$(plural $current plugin) current"
+    return 0
+  }
+
+  print -rl -- $findings | sort | column -t -s $'\t'
+  print -r -- ""
+  print -r -- "$(plural ${#findings} plugin) need attention ($current current)"
+  return 1
+}
+
+# Run only when executed directly. When sourced (tests), ZSH_EVAL_CONTEXT gains
+# a ":file" suffix, so the functions are defined without running the audit.
+[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"
