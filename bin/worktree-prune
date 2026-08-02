@@ -12,7 +12,9 @@ source "${0:A:h}/../scripts/lib/report-failure.sh"
 
 PRUNE_LOG=$(mktemp)
 AUDIT_LOG=$(mktemp)
-trap 'rm -f "$PRUNE_LOG" "$AUDIT_LOG"' EXIT
+AUDIT_ERR=$(mktemp)
+AUDIT_RAW=$(mktemp)
+trap 'rm -f "$PRUNE_LOG" "$AUDIT_LOG" "$AUDIT_ERR" "$AUDIT_RAW"' EXIT
 
 revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
@@ -33,14 +35,130 @@ gum log --level info "Worktree prune completed successfully"
 # when clean, so any output means the pruner missed something. Latched under
 # its own job name, so drift files a separate to-do from a prune failure and
 # a green prune with silent drift still surfaces.
+#
+# Raw mode keeps the "<repo>\t<branch>\t<reason>\t<path>" fields intact, so the
+# to-do can name each worktree and build a command that jumps straight to it.
 gum log --level info "Auditing for prune drift"
-"$DOTFILES_HOME/bin/wt-all" prune-audit 2>/dev/null \
-  | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g' \
+# Captured in two steps rather than one pipeline: `|| true` resets $pipestatus,
+# so the audit's own exit status has to be taken before anything else runs.
+audit_rc=0
+WT_ALL_RAW=1 "$DOTFILES_HOME/bin/wt-all" prune-audit \
+  >"$AUDIT_RAW" 2>"$AUDIT_ERR" || audit_rc=$?
+sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g' <"$AUDIT_RAW" \
   | grep -v '^[[:space:]]*$' >"$AUDIT_LOG" || true
+
+# A nonzero status means repos failed the audit outright, so their worktrees
+# were never examined. Reported on its own, because "the oracle could not look"
+# reads identically to "the oracle found nothing" once it reaches the latch.
+if (( audit_rc != 0 )); then
+  gum log --level error "prune audit failed"
+  report_failure "wt-prune-audit-failed" \
+    "Worktree prune audit could not run" \
+    "wt all prune-audit" \
+    "$(tail -n 100 "$AUDIT_ERR" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')" \
+    "$revision" \
+    '
+The drift tripwire itself failed in one or more repos. Until it runs clean it
+cannot report a leak, so a silent prune regression would go unnoticed.'
+else
+  report_success "wt-prune-audit-failed"
+fi
 
 if [[ -s "$AUDIT_LOG" ]]; then
   gum log --level warn "prune drift detected"
-  report_failure "wt-prune-drift" "Worktree prune drift detected" "wt all prune-audit" "$(cat "$AUDIT_LOG")" "$revision"
+
+  # `wt all` reports each repo relative to the discovery root, so rebuild the
+  # absolute path the investigation commands need to cd into.
+  base="${PROJECTS:-$HOME/src}"
+
+  # The guard the nightly run applies, so the commands in the to-do reproduce
+  # what actually happened rather than worktrunk's default.
+  min_age="${WT_PRUNE_MIN_AGE:-1d}"
+
+  finding_rows=()
+  investigate=""
+  while IFS=$'\t' read -r repo branch reason wtpath; do
+    [[ -n "$branch" ]] || continue
+    repo_path="$repo"
+    [[ "$repo_path" == /* ]] || repo_path="$base/$repo"
+
+    finding_rows+=("$repo"$'\t'"$branch"$'\t'"$reason")
+    investigate+="## $repo: $branch ($reason)
+cd '$wtpath' && wt list && git log --oneline -5 && git status -sb
+
+cd '$repo_path'
+# Does the integration pass still see it?
+wt step prune --dry-run --min-age '$min_age'
+# What did wt-prune decide for it, and why?
+wt prune --dry-run --before
+# What does the forge say?
+gh pr view '$branch' --json state,number,url
+# Does the oracle still flag it?
+wt prune-audit
+
+"
+  done <"$AUDIT_LOG"
+
+  # The leading blank line separates this from the host/time/revision list the
+  # reporter emits above it, so the first heading renders as one.
+  # Single-quoted on purpose: the backticks are markdown code spans in the
+  # to-do, and nothing here should expand.
+  # shellcheck disable=SC2016
+  explanation='
+## What this means
+
+The prune ran green and then failed its own audit. Every worktree below is
+integrated into its default branch or belongs to a merged PR, and the pruner
+left it in place. No later run picks these up on its own, so the backlog grows
+each night this fires.
+
+The pruner declines to touch a worktree for its first day, and the audit allows
+for that plus one more nightly run before reporting anything. Everything listed
+is past that window, so these are worktrees the pruner should have removed and
+did not.
+
+## What to do
+
+Fix the pruner. Removing these worktrees by hand clears the to-do and leaves
+the regression in place, and it fires again the next time a worktree lands in
+the same shape.
+
+Run the commands below. They open each leaked worktree, then re-run the two
+passes from its repo so you can see which one stopped matching. Common causes
+are `wt step prune` no longer detecting the integration and the forge lookup in
+`bin/wt-prune` returning nothing for the branch.'
+
+  leaked=${#finding_rows}
+  if (( leaked == 0 )); then
+    # The audit wrote something no field parser recognized. Filing a "leaked 0"
+    # to-do would latch the job and suppress the next real drift, so surface the
+    # unparsed text itself and leave the drift latch alone.
+    gum log --level error "prune audit output could not be parsed"
+    report_failure "wt-prune-audit-failed" \
+      "Worktree prune audit output could not be parsed" \
+      "WT_ALL_RAW=1 wt all prune-audit" \
+      "$(cat "$AUDIT_LOG")" \
+      "$revision" \
+      '
+The audit produced output, but no line of it parsed as a finding. The tripwire
+cannot report a leak until the format matches what the nightly job reads.'
+  else
+    noun="worktrees"
+    (( leaked == 1 )) && noun="worktree"
+
+    # Command substitution strips the trailing blank line the block accumulator
+    # picks up from its last append.
+    findings=$(print -rl -- "${finding_rows[@]}" | column -t -s $'\t')
+    investigate=$(print -r -- "$investigate")
+
+    report_failure "wt-prune-drift" \
+      "Worktree prune leaked $leaked $noun" \
+      "$investigate" \
+      "$findings" \
+      "$revision" \
+      "$explanation" \
+      "Leaked worktrees"
+  fi
 else
   report_success "wt-prune-drift"
   gum log --level info "No prune drift"

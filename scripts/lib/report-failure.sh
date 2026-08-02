@@ -4,7 +4,7 @@
 # notify <title> <message> [sound]
 #   Darwin-guarded osascript notification (default sound: Basso).
 #
-# report_failure <job> <title> <command> <output> <revision> [extra_meta]
+# report_failure <job> <title> <command> <output> <revision> [extra_meta] [output_heading]
 #   File a Things to-do describing the failure and notify, but only on the
 #   transition into a failed state. A per-job latch under
 #   ${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/<job>.status records ok
@@ -12,7 +12,9 @@
 #   to-dos. report_success resets it so the next break files a fresh one.
 #   <command> is the shell snippet shown in the to-do for reproduction;
 #   <output> is the captured log; <extra_meta> is optional extra metadata
-#   markdown appended to the host/time/revision header.
+#   markdown appended to the host/time/revision header; <output_heading> names
+#   the section holding <output>, for a job whose output is a finding list
+#   rather than an error (default: "Error Output").
 #
 # report_success <job>
 #   Clear the latch.
@@ -45,6 +47,7 @@ report_failure() {
   local output="$4"
   local revision="$5"
   local extra_meta="$6"
+  local output_heading="${7:-Error Output}"
 
   local status_file prior
   status_file=$(report_status_file "$job")
@@ -75,7 +78,7 @@ report_failure() {
 '"$command"'
 ```
 
-## Error Output
+## '"$output_heading"'
 ```
 '"$output"'
 ```'

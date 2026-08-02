@@ -13,6 +13,9 @@
 # Repos whose command produces no output are skipped in the report, so
 # `wt all prune` shows only repos with something to remove, one line each, then
 # a totals trailer. A wrapped command can opt into a terse summary via $WT_ALL.
+#
+# Output is an aligned table by default. Set $WT_ALL_RAW to get the underlying
+# "<repo>\t<line>" rows instead, for a caller that parses the fields.
 
 set -uo pipefail
 
@@ -82,7 +85,9 @@ main () {
   local base="${PROJECTS:-$HOME/src}/"
   integer active=0 worktrees=0 branches=0
   local -a rows failed failed_errs
-  local repo key disp out
+  # outline is declared here rather than in the loop: re-declaring a parameter
+  # that already holds a value makes zsh echo it, which would land in the table.
+  local repo key disp out outline
   for repo in "${repos[@]}"; do
     key="${repo//\%/%25}"; key="${key//\//%2F}"
     disp="${repo#$base}"
@@ -95,10 +100,18 @@ main () {
     out="$(<"$dir/$key")"
     [[ -z "$out" ]] && continue
     (( active++ ))
-    # Each repo's output becomes a row keyed by repo. A wrapped command can emit
-    # tab-separated fields to land in their own columns; `wt prune` emits
-    # "<worktrees>\t<branches>", which we also total below.
-    rows+=("$disp"$'\t'"$out")
+    # Each line of a repo's output becomes a row keyed by that repo. A wrapped
+    # command can emit tab-separated fields to land in their own columns; `wt
+    # prune` emits "<worktrees>\t<branches>", which we also total below.
+    # Keying every line matters for commands like prune-audit that report one
+    # line per finding: prefixing only the first leaves the rest looking like
+    # they belong to whatever repo `column` happens to align them under.
+    for outline in "${(@f)out}"; do
+      # A blank line inside a command's output separates records. Keyed to the
+      # repo it would become a row with no fields.
+      [[ -n "$outline" ]] || continue
+      rows+=("$disp"$'\t'"$outline")
+    done
     if [[ "$out" == <->$'\t'<-> ]]; then
       (( worktrees += ${out%%$'\t'*} ))
       (( branches  += ${out##*$'\t'} ))
@@ -106,7 +119,12 @@ main () {
   done
 
   if (( ${#rows} )); then
-    if [[ "${wtcmd[1]}" == prune ]]; then
+    if [[ -n "${WT_ALL_RAW:-}" ]]; then
+      # Tab-separated rows, no header and no alignment padding, for callers that
+      # parse the fields rather than read them. `column -t` collapses the tabs,
+      # so the aligned table cannot be split back into fields.
+      print -rl -- "${rows[@]}"
+    elif [[ "${wtcmd[1]}" == prune ]]; then
       # Prune emits "<worktrees>\t<branches>"; head it and sort by worktree
       # count (then branches) so the biggest cleanups sort to the top.
       {
@@ -122,11 +140,16 @@ main () {
   (( ${#failed} )) && summary+=("${#failed} failed")
   (( worktrees || branches )) && summary+=("$worktrees worktrees, $branches branches")
 
-  print
+  # The spacer separates the table from the summary for a reader. Raw output is
+  # parsed field by field, so it gets rows and nothing else.
+  [[ -n "${WT_ALL_RAW:-}" ]] || print
   gum log --level info "${(j: · :)summary}"
   if (( ${#failed} )); then
     gum log --level warn "failed: ${(j:, :)failed}"
-    (( ${#failed_errs} )) && print -rl -- "${failed_errs[@]}"
+    # Diagnostics go to stderr, alongside the gum summary they belong to. On
+    # stdout this free-form text would land in a raw consumer's field parser as
+    # rows that are not rows.
+    (( ${#failed_errs} )) && print -rl -- "${failed_errs[@]}" >&2
   fi
 
   (( ${#failed} == 0 ))
