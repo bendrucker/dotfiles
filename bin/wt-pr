@@ -1,0 +1,99 @@
+#!/usr/bin/env zsh
+# shellcheck shell=bash
+# wt pr: pick one of your open pull requests, or one waiting on your review,
+# from any repo and switch to a worktree for it.
+#
+# `wt switch --prs` already covers the in-repo case. This starts from the pull
+# request instead, so the repo does not have to be the one you are standing in,
+# or cloned at all. clone-repo resolves the checkout and clones it if missing.
+
+set -e
+set -o pipefail
+
+usage() {
+  cat <<'EOF'
+usage: wt pr [--mine|--review] [wt switch options]
+
+Pick from your open pull requests and those waiting on your review, across every
+repo, then switch to a worktree for the one you choose.
+
+  --mine    Only pull requests you authored
+  --review  Only pull requests waiting on your review
+
+Remaining options go to `wt switch`, so `wt pr -x claude` opens the worktree and
+launches Claude in it.
+EOF
+}
+
+want_mine=true
+want_review=true
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mine)
+      want_review=false
+      shift
+      ;;
+    --review)
+      want_mine=false
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) break ;;
+  esac
+done
+
+for tool in gh jq fzf clone-repo wt; do
+  if ! command -v "$tool" >/dev/null; then
+    gum log --level error "$tool is required"
+    exit 1
+  fi
+done
+
+search() {
+  gh search prs --state=open "$1=@me" --limit 50 \
+    --json number,title,repository,url \
+    --jq ".[] | {url, title, repo: .repository.nameWithOwner, number, bucket: \"$2\"}"
+}
+
+collect() {
+  if [[ "$want_mine" == true ]]; then
+    search --author mine
+  fi
+  if [[ "$want_review" == true ]]; then
+    search --review-requested review
+  fi
+}
+
+# Authored wins over review-requested when a pull request is both, because
+# unique_by keeps the first and collect emits authored first.
+rows=$(collect | jq -rs '
+  unique_by(.url)
+  | sort_by(.bucket, .repo, .number)
+  | .[]
+  | [.bucket, (.repo + "#" + (.number | tostring)), .title, .url]
+  | @tsv
+')
+
+if [[ -z "$rows" ]]; then
+  gum log --level warn "no open pull requests"
+  exit 1
+fi
+
+selection=$(
+  printf '%s\n' "$rows" |
+    fzf --delimiter='\t' --with-nth=1,2,3 \
+      --prompt='pr> ' \
+      --preview='gh pr view {4}' \
+      --preview-window='right,60%,border-left'
+) || exit 1
+
+repo=$(printf '%s' "$selection" | cut -f2)
+repo=${repo%%\#*}
+url=$(printf '%s' "$selection" | cut -f4)
+
+path=$(clone-repo "$repo")
+exec wt -C "$path" switch "$url" "$@"
