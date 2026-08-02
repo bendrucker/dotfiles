@@ -1,1 +1,2 @@
 --shell bash
+--require spec_helper

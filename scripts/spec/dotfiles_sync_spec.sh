@@ -12,32 +12,8 @@ Describe "dotfiles-sync exit status"
     rm -rf "$sandbox"
     mkdir -p "$stubdir"
 
-    # gum stub: `gum spin … -- cmd` runs cmd; `gum log … msg` echoes msg.
-    # printf, not a here-document: bash stages those through a temp file it
-    # picks itself, which a sandbox may deny.
-    # shellcheck disable=SC2016 # the stub's own $1 and $@, not this shell's
-    printf '%s\n' \
-      '#!/usr/bin/env bash' \
-      'case "$1" in' \
-      '  spin)' \
-      '    shift' \
-      '    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done' \
-      '    [ "$1" = "--" ] && shift' \
-      '    exec "$@"' \
-      '    ;;' \
-      '  log)' \
-      '    # Real gum log writes to stderr; match that so command substitution' \
-      '    # in callers keeps log lines off the captured stdout rev.' \
-      '    printf "%s\n" "${@: -1}" >&2' \
-      '    ;;' \
-      'esac' \
-      > "$stubdir/gum"
-    chmod +x "$stubdir/gum"
-
-    # notify shells out to osascript on macOS; stub it so the failure path
-    # stays silent and side-effect-free during the test.
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$stubdir/osascript"
-    chmod +x "$stubdir/osascript"
+    stub_gum "$stubdir"
+    stub_osascript "$stubdir"
 
     # Bare origin with one commit on main; clone so HEAD == origin/main.
     git init -q --bare -b main "$origin"

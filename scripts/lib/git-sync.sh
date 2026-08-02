@@ -5,9 +5,24 @@
 #   Echo the remote default branch, resolving origin/HEAD with a
 #   set-head retry and falling back to "main".
 #
+# git_https_remote <repo_dir> [remote]
+#   Point a github.com SSH remote at its anonymous HTTPS equivalent for fetch,
+#   keeping the SSH URL as the pushurl. SSH needs a key from the agent, and
+#   Secretive refuses to sign while the Mac is locked, so a 3am launchd fetch
+#   dies on "agent refused operation". The synced repos are public, so HTTPS
+#   reads need no credentials, while pushes stay on the transport that already
+#   has them. Other hosts and URL forms are left alone.
+#
+# git_https_env
+#   Export the same rewrite as an insteadOf rule, for child processes cloning
+#   github.com remotes this repo does not own. Appends to any GIT_CONFIG_COUNT
+#   already in the environment rather than replacing it, so a machine-local
+#   entry survives. The rule outranks a pushurl, so scope it to the commands
+#   that need it rather than exporting it for a whole script.
+#
 # git_sync <repo_dir> [branch]
 #   Guard the target (reject symlinks, non-repos, and dirty working trees),
-#   fetch with retry, and fast-forward only.
+#   move origin's fetch URL to HTTPS, fetch with retry, and fast-forward only.
 #   Returns:
 #     0  updated   (new short rev echoed to stdout)
 #     2  current   (already up to date)
@@ -29,6 +44,44 @@ git_default_branch() {
   fi
 
   echo "${branch:-main}"
+}
+
+GIT_HTTPS_SSH_PREFIXES=("git@github.com:" "ssh://git@github.com/")
+
+git_https_remote() {
+  local repo_dir="$1"
+  local remote="${2:-origin}"
+
+  # `git remote get-url` resolves insteadOf rules, so it reports HTTPS while
+  # .git/config still holds the SSH URL, and the rewrite below never fires.
+  local url
+  url=$(git -C "$repo_dir" config --get "remote.$remote.url" 2>/dev/null) || return 0
+
+  local prefix repo_path=""
+  for prefix in "${GIT_HTTPS_SSH_PREFIXES[@]}"; do
+    if [[ "$url" == "$prefix"* ]]; then
+      repo_path="${url#"$prefix"}"
+      break
+    fi
+  done
+  [[ -n "$repo_path" ]] || return 0
+
+  gum log --level info "Fetching $remote over HTTPS, pushing over SSH"
+  git -C "$repo_dir" config --get "remote.$remote.pushurl" >/dev/null 2>&1 ||
+    git -C "$repo_dir" remote set-url --push "$remote" "$url"
+  git -C "$repo_dir" remote set-url "$remote" "https://github.com/$repo_path"
+}
+
+git_https_env() {
+  local i="${GIT_CONFIG_COUNT:-0}" prefix
+
+  for prefix in "${GIT_HTTPS_SSH_PREFIXES[@]}"; do
+    export "GIT_CONFIG_KEY_$i=url.https://github.com/.insteadOf"
+    export "GIT_CONFIG_VALUE_$i=$prefix"
+    i=$((i + 1))
+  done
+
+  export GIT_CONFIG_COUNT=$i
 }
 
 git_sync_fetch() {
@@ -70,6 +123,8 @@ git_sync() {
     gum log --level error "$repo_dir has local changes - skipping sync"
     return "$GIT_SYNC_FAILED"
   fi
+
+  git_https_remote "$repo_dir"
 
   [[ -n "$branch" ]] || branch=$(git_default_branch "$repo_dir")
 
