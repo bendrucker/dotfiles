@@ -1,43 +1,58 @@
 #!/usr/bin/env zsh
 #
-# Install herdr plugins.
+# Converge herdr's plugins onto plugins.list.
 #
-# herdr has no declarative manifest for installed plugins, so this script
-# installs the relevant set idempotently — anything already present is skipped.
-# Keybindings for these live in config.toml. Each entry is "owner/repo <id>",
-# where <id> is the plugin id from that repo's herdr-plugin.toml.
-#
-#   worktrunk         git worktree management via worktrunk
-#   persiyanov.reviewr  code-review + diff sidebar for agents
-#   herdr-file-viewer   git-aware read-only file viewer
-#   herdr-navigator     fuzzy workspace / agent / session jumper
+# herdr has no declarative manifest of its own, so herdr-lazy supplies one and
+# installs the rest from it. That leaves herdr-lazy the one plugin this script
+# still has to install by hand. Keybindings for all of them live in config.toml.
 
 set -e
+
+cd "${0:A:h}"
 
 if ! command -v herdr >/dev/null 2>&1; then
   echo "herdr not found; skipping plugin install" >&2
   exit 0
 fi
 
-plugins=(
-  "devashish2203/herdr-worktrunk worktrunk"
-  "persiyanov/herdr-reviewr persiyanov.reviewr"
-  "smarzban/herdr-file-viewer herdr-file-viewer"
-  "thanhdat77/herdr-navigator herdr-navigator"
-)
+# Read the list from this repo rather than herdr's plugin config dir, so the
+# declaration is the one under version control. herdr-lazy writes plugins.lock
+# alongside it, which .gitignore drops.
+export HERDR_LAZY_LIST="$PWD/plugins.list"
 
-installed="$(herdr plugin list --json 2>/dev/null || true)"
+lazy_repo=natori-hrj/herdr-lazy
 
-for entry in "${plugins[@]}"; do
-  repo="${entry%% *}"
-  id="${entry##* }"
-  # Match the JSON-quoted id so one id can't substring-match another
-  # (e.g. herdr-file-viewer inside a herdr-file-viewer-extended).
-  if print -r -- "$installed" | grep -qF -- "\"${id}\""; then
-    echo "✓ ${id} already installed"
-    continue
-  fi
-  echo "› herdr plugin install ${repo}"
-  # Keep a flaky third-party install from aborting the rest under `set -e`.
-  herdr plugin install "${repo}" --yes || echo "✗ ${id} install failed (skipping)" >&2
-done
+# Take the bootstrap ref from the list itself. A second copy of the SHA here
+# would disagree with it the first time Renovate bumps one of them.
+lazy_ref=$(sed -n "s|^${lazy_repo}@||p" plugins.list | head -1)
+if [[ -z "$lazy_ref" ]]; then
+  echo "plugins.list: ${lazy_repo} is missing or unpinned; nothing to bootstrap from" >&2
+  exit 1
+fi
+
+lazy_root() {
+  herdr plugin list --json 2>/dev/null |
+    jq -r '.result.plugins[]? | select(.plugin_id == "herdr-lazy") | .plugin_root'
+}
+
+root=$(lazy_root)
+if [[ -z "$root" ]]; then
+  echo "› herdr plugin install ${lazy_repo}@${lazy_ref}"
+  # Keep a flaky third-party build from aborting the rest under `set -e`.
+  herdr plugin install "$lazy_repo" --ref "$lazy_ref" --yes || true
+  root=$(lazy_root)
+fi
+
+# herdr-lazy is not on PATH: its directory name carries an install-specific
+# hash, so the path has to come back from herdr.
+lazy="$root/target/release/herdr-lazy"
+if [[ -z "$root" || ! -x "$lazy" ]]; then
+  echo "✗ ${lazy_repo} is not installed; leaving herdr plugins as they are" >&2
+  exit 0
+fi
+
+"$lazy" sync || echo "✗ herdr-lazy sync did not finish; some plugins may be missing" >&2
+
+# With this on, a plugin added to the list later installs on the next herdr
+# start instead of waiting for someone to re-run this script.
+"$lazy" auto-sync on
