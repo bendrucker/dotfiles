@@ -10,12 +10,24 @@ DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 
 source "${0:A:h}/../scripts/lib/report-failure.sh"
 
+SYNC_LOG=$(mktemp)
 INSTALL_LOG=$(mktemp)
-trap 'rm -f "$INSTALL_LOG"' EXIT
+trap 'rm -f "$SYNC_LOG" "$INSTALL_LOG"' EXIT
+
+report_log_failure() {
+  local title="$1" command="$2" log="$3"
+
+  local revision output
+  revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  output=$(tail -n 100 "$log" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')
+  report_failure "dotfiles-upgrade" "$title" "$command" "$output" "$revision"
+}
 
 if ! gum spin --show-output --show-error --title "Syncing dotfiles" -- \
-  "$DOTFILES_HOME/bin/dotfiles-sync"; then
+  "$DOTFILES_HOME/bin/dotfiles-sync" 2>&1 | tee "$SYNC_LOG"; then
   gum log --level error "sync failed"
+
+  report_log_failure "Dotfiles sync failed" "dotfiles-sync" "$SYNC_LOG"
   exit 1
 fi
 
@@ -23,9 +35,7 @@ gum log --level info "Running install"
 if ! "$DOTFILES_HOME/scripts/install" 2>&1 | tee "$INSTALL_LOG"; then
   gum log --level error "install failed"
 
-  revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  output=$(tail -n 100 "$INSTALL_LOG" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')
-  report_failure "dotfiles-upgrade" "Dotfiles install failed" "brew bundle" "$output" "$revision"
+  report_log_failure "Dotfiles install failed" "brew bundle" "$INSTALL_LOG"
   exit 1
 fi
 
