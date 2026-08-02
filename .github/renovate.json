@@ -15,6 +15,17 @@
         "(?m)^(?<depName>[^\\s#/]+/[^\\s#]+)\\s+(?<currentValue>\\S+)"
       ],
       "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "herdr plugins, pinned to commits so herdr-lazy's own update path stays out of the way. git-refs needs a branch to take digests from, and all seven repos default to main.",
+      "customType": "regex",
+      "fileMatch": ["^herdr/plugins\\.list$"],
+      "matchStrings": [
+        "(?m)^(?<depName>[^\\s#/]+/[^\\s#@]+)@(?<currentDigest>[0-9a-f]{40})\\s*$"
+      ],
+      "datasourceTemplate": "git-refs",
+      "packageNameTemplate": "https://github.com/{{{depName}}}",
+      "currentValueTemplate": "main"
     }
   ],
   "packageRules": [

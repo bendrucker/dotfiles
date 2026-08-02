@@ -1,0 +1,6 @@
+# herdr-lazy writes the lock beside plugins.list, which puts it in this repo.
+# Every entry in the list is pinned to a commit, so the list already is the lock.
+# Committing it would only add a file that goes stale on every Renovate bump,
+# since Renovate moves the list and nothing regenerates the lock. `sync`
+# enforces the list's pins either way.
+plugins.lock
