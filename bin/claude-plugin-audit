@@ -1,0 +1,296 @@
+#!/usr/bin/env zsh
+#/ Usage: claude-plugin-audit
+#/ Report installed Claude Code plugins whose payload no longer matches what
+#/ their marketplace offers. Exits non-zero when anything is stale.
+#
+# `claude plugin update` reports success in cases where it changed nothing: a
+# plugin that declares a fixed `version` string is "already at the latest
+# version" however far its source has moved, and an id the updater never
+# enumerated is never attempted at all. Neither case is distinguishable from a
+# real update by its exit status, so the updater's own success is not evidence
+# that an install is current. This checks the outcome instead.
+#
+# Where the marketplace carries the plugin in its own tree, the check compares
+# content rather than reading the recorded gitCommitSha, because a forced
+# refresh (rm -rf the payload, reinstall) restores current content while leaving
+# that field at its old value. A plugin sourced from its own repo has no local
+# copy of that repo to compare against, so it falls back to the recorded commit
+# and inherits that field's inaccuracy.
+
+set -uo pipefail
+setopt typeset_silent
+
+source "${0:A:h}/../scripts/lib/claude-plugins.sh"
+
+# Captured at file scope: inside a function $0 is the function name, so --help
+# could not find the usage header to print.
+typeset -g script_path=${0:A}
+
+# Neither side of the comparison owns these. .in_use and .orphaned_at are
+# runtime markers Claude Code writes into a payload, node_modules is an
+# install-time artifact, and .git belongs to a marketplace whose whole repo is
+# the plugin.
+typeset -gra payload_noise=(.in_use .orphaned_at node_modules .git)
+
+# Where compare_payload leaves what diff could not read. Named off the pid
+# rather than mktemp, which ignores TMPDIR on macOS and so fails under a sandbox
+# that only grants it.
+typeset -g diff_errors=${TMPDIR:-/tmp}/claude-plugin-audit.$$.err
+trap 'rm -f "$diff_errors"' EXIT
+
+compare_payload () {
+  local payload=$1 source_dir=$2
+  local -a excludes
+  local marker
+
+  for marker in $payload_noise; do
+    excludes+=(--exclude="$marker")
+  done
+
+  # Claude Code synthesizes .claude-plugin/plugin.json for a plugin that ships
+  # none, so on those the directory exists only on the payload side and is not
+  # drift. A plugin that does ship one stays covered.
+  [[ -d "$source_dir/.claude-plugin" ]] || excludes+=(--exclude=.claude-plugin)
+
+  # stderr is kept off stdout because a path diff could not read is not a
+  # difference. Folding the two together made an unreadable file report as
+  # drift, which no update can clear.
+  : >"$diff_errors"
+  diff -rq $excludes "$payload" "$source_dir" 2>"$diff_errors"
+}
+
+resolve_ref () {
+  local url=$1 ref=$2 refs peeled
+
+  [[ "$ref" =~ '^[0-9a-f]{40}$' ]] && { print -r -- "$ref"; return }
+
+  refs=$(git ls-remote "$url" "$ref" 2>/dev/null) || return 1
+  [[ -n "$refs" ]] || return 1
+
+  # An annotated tag resolves to a tag object; its peeled ^{} line carries the
+  # commit the install would actually hold.
+  peeled=$(print -r -- "$refs" | awk '$2 ~ /\^\{\}$/ { print $1; exit }')
+  [[ -n "$peeled" ]] && { print -r -- "$peeled"; return }
+
+  print -r -- "$refs" | awk 'NR == 1 { print $1 }'
+}
+
+recorded_commit () {
+  local payload=$1
+  jq -r --arg payload "$payload" '
+    (if type == "array" then (.[] | select(.key == "plugins") | .value) else .plugins end)
+    | to_entries[] | .value[]
+    | select(.installPath == $payload) | .gitCommitSha // empty
+  ' "$(claude_plugins_dir)/installed_plugins.json" 2>/dev/null | head -1
+}
+
+# Compare a plugin's installed payload against the source its marketplace
+# currently offers. Prints "<verdict>\t<detail>", where verdict is one of:
+#   current   the payload matches
+#   stale     the payload differs, or was never installed
+#   orphaned  the marketplace no longer offers the plugin, so nothing can update
+#             it and the fix is to uninstall
+#   unknown   the comparison could not be made
+audit_plugin () {
+  local id=$1 payload=$2
+  local marketplace=${id##*@} name=${id%@*}
+  local source source_rc=0
+
+  source=$(plugin_source "$id") || source_rc=$?
+  case $source_rc in
+    "$PLUGIN_SOURCE_UNREADABLE")
+      print -r -- "unknown"$'\t'"marketplace $marketplace does not say where $name comes from"
+      return
+      ;;
+    "$PLUGIN_SOURCE_ABSENT")
+      print -r -- "orphaned"$'\t'"marketplace $marketplace no longer offers $name"
+      return
+      ;;
+  esac
+
+  if [[ $(print -r -- "$source" | jq -r 'type') == string ]]; then
+    audit_relative_plugin "$marketplace" "$(print -r -- "$source" | jq -r '.')" "$payload"
+  else
+    audit_external_plugin "$source" "$payload"
+  fi
+}
+
+audit_relative_plugin () {
+  local marketplace=$1 relative=$2 payload=$3
+  local source_dir="$(claude_plugins_dir)/marketplaces/$marketplace/${relative#./}"
+  local differences diff_rc=0
+
+  [[ -d "$source_dir" ]] || {
+    print -r -- "unknown"$'\t'"marketplace source $relative is missing"
+    return
+  }
+  if [[ -z "$payload" || ! -d "$payload" ]]; then
+    print -r -- "stale"$'\t'"no payload installed"
+    return
+  fi
+
+  differences=$(compare_payload "$payload" "$source_dir") || diff_rc=$?
+
+  # Both signals are needed. diff exits 2 on a path it could not read, but on
+  # macOS a dangling symlink gets it an error on stderr and exit 0, so a status
+  # check alone would call the payload current over a file nothing compared.
+  if (( diff_rc > 1 )) || [[ -s "$diff_errors" ]]; then
+    print -r -- "unknown"$'\t'"could not compare against $relative: $(head -1 "$diff_errors")"
+    return
+  fi
+  (( diff_rc == 0 )) && { print -r -- "current"$'\t'; return }
+
+  print -r -- "stale"$'\t'"differs from $relative at $(plural $(print -r -- "$differences" | wc -l | tr -d ' ') path)"
+}
+
+audit_external_plugin () {
+  local source=$1 payload=$2
+  local url ref expected actual
+
+  if [[ -z "$payload" || ! -d "$payload" ]]; then
+    print -r -- "stale"$'\t'"no payload installed"
+    return
+  fi
+
+  # `.repo // empty` inside the concatenation, because jq treats null as the
+  # identity for +: a source carrying neither field would otherwise build the
+  # string "https://github.com/" and send the audit off to fetch it.
+  url=$(print -r -- "$source" | jq -r '.url // ("https://github.com/" + (.repo // empty)) // empty')
+  [[ -n "$url" ]] || { print -r -- "unknown"$'\t'"source names no repository"; return }
+
+  ref=$(print -r -- "$source" | jq -r '.sha // .ref // "HEAD"')
+  expected=$(resolve_ref "$url" "$ref") || {
+    print -r -- "unknown"$'\t'"$url has no $ref"
+    return
+  }
+
+  actual=$(recorded_commit "$payload")
+  [[ -n "$actual" ]] || { print -r -- "stale"$'\t'"no commit recorded for the install"; return }
+  [[ "$actual" == "$expected" ]] && { print -r -- "current"$'\t'; return }
+
+  print -r -- "stale"$'\t'"installed ${actual[1,12]}, $url $ref is ${expected[1,12]}"
+}
+
+# Compare a marketplace clone against the ref its source pins. Every other
+# check reads these clones as ground truth, and `claude plugin marketplace
+# update` warns rather than fails, so a clone that quietly stopped advancing
+# would match a stale install and hide the drift from both sides.
+audit_marketplace () {
+  local location=$1 url=$2 ref=$3
+  local head expected
+
+  [[ -n "$url" ]] || { print -r -- "unknown"$'\t'"source names no repository"; return }
+  [[ -d "$location/.git" ]] || {
+    print -r -- "unknown"$'\t'"not a git clone, so freshness is unverifiable"
+    return
+  }
+
+  head=$(git -C "$location" rev-parse HEAD 2>/dev/null) || {
+    print -r -- "unknown"$'\t'"clone has no HEAD"
+    return
+  }
+  expected=$(resolve_ref "$url" "$ref") || {
+    print -r -- "unknown"$'\t'"$url has no $ref"
+    return
+  }
+
+  [[ "$head" == "$expected" ]] && { print -r -- "current"$'\t'; return }
+  print -r -- "stale"$'\t'"cloned at ${head[1,12]}, $url $ref is ${expected[1,12]}"
+}
+
+marketplace_inventory () {
+  jq -r '
+    to_entries[]
+    | [ .key,
+        (.value.installLocation // ""),
+        (.value.source.url // ("https://github.com/" + (.value.source.repo // empty)) // ""),
+        (.value.source.ref // "HEAD") ]
+    | @tsv
+  ' "$(claude_plugins_dir)/known_marketplaces.json" 2>/dev/null
+}
+
+plural () {
+  local n=$1 noun=$2
+  (( n == 1 )) && { print -r -- "$n $noun"; return }
+  print -r -- "$n ${noun}s"
+}
+
+main () {
+  [[ "${1:-}" == -h || "${1:-}" == --help ]] && {
+    grep '^#/' "$script_path" | cut -c4-
+    return 0
+  }
+  (( $# )) && { print -u2 -- "claude-plugin-audit: unknown option $1"; return 1 }
+
+  local -a drifted unverified
+  local -A vouched
+  local name location url ref id payload verdict detail current=0
+  local marketplaces inventory
+
+  # Same reasoning as the plugin inventory below: an unreadable marketplace list
+  # vouches for nothing, and every plugin check downstream reads `vouched` as
+  # proof its tree was fresh.
+  if ! marketplaces=$(marketplace_inventory); then
+    print -u2 -- "claude-plugin-audit: could not enumerate marketplaces"
+    return 2
+  fi
+
+  while IFS=$'\t' read -r name location url ref; do
+    [[ -n "$name" ]] || continue
+    IFS=$'\t' read -r verdict detail <<< "$(audit_marketplace "$location" "$url" "$ref")"
+    [[ "$verdict" == current ]] && vouched[$name]=1
+    record_verdict "marketplace/$name" "$verdict" "$detail"
+  done <<< "$marketplaces"
+
+  # An inventory that could not be read is not an empty one, and reporting
+  # "everything current" over it would be the silence this tool exists to break.
+  if ! inventory=$(plugin_inventory); then
+    print -u2 -- "claude-plugin-audit: could not enumerate installed plugins"
+    return 2
+  fi
+
+  while IFS=$'\t' read -r id payload; do
+    [[ -n "$id" ]] || continue
+    IFS=$'\t' read -r verdict detail <<< "$(audit_plugin "$id" "$payload")"
+    # A payload is only as current as the tree it was compared against. A match
+    # with a marketplace the audit could not vouch for proves nothing, and
+    # calling it current is how a stale clone hides every stale install under it.
+    if [[ "$verdict" == current && -z "${vouched[${id##*@}]:-}" ]]; then
+      verdict=unknown
+      detail="matches marketplace ${id##*@}, which is itself unverified"
+    fi
+    record_verdict "$id" "$verdict" "$detail"
+  done <<< "$inventory"
+
+  (( ${#unverified} )) && {
+    print -rl -- $unverified | sort | column -t -s $'\t'
+    print -r -- ""
+  }
+
+  (( ${#drifted} )) || {
+    print -r -- "$(plural $current check) current"
+    return 0
+  }
+
+  print -rl -- $drifted | sort | column -t -s $'\t'
+  print -r -- ""
+  print -r -- "$(plural ${#drifted} finding) to act on ($current current)"
+  return 1
+}
+
+# Sort a verdict into the two piles main reports on. A comparison that could not
+# be made is not evidence of drift: at 3am an ls-remote loses to a flaky network
+# far more often than to a real change, and failing on one would file a to-do
+# that the next run clears. It still prints, so a standing one is visible.
+record_verdict () {
+  local subject=$1 verdict=$2 detail=$3
+  case $verdict in
+    current)  (( ++current )) ;;
+    unknown)  unverified+=("$subject"$'\t'"unverified"$'\t'"$detail") ;;
+    *)        drifted+=("$subject"$'\t'"$verdict"$'\t'"$detail") ;;
+  esac
+}
+
+# Run only when executed directly. When sourced (tests), ZSH_EVAL_CONTEXT gains
+# a ":file" suffix, so the functions are defined without running the audit.
+[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"

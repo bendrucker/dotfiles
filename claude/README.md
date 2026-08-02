@@ -58,6 +58,34 @@ without removing, `--force` skips the prompt.
 
 `CLAUDE_AGENTS_ADD_DIR` (colon-separated) passes tool-access directories as repeated `--add-dir` to both the launcher's dispatch and the popup.
 
+## Plugins
+
+`claude-upgrade` runs nightly. It syncs the Claude config repo, refreshes every marketplace, then updates every plugin installed at user scope, disabled ones included. `claude plugin enable` does not update, so a plugin skipped while disabled would come back stale months later.
+
+A plugin no longer offered by its marketplace is left alone. Nothing can update it, so the fix is to uninstall it, and the audit says so.
+
+### Auditing
+
+`claude plugin update` exiting 0 is not evidence that anything changed. A plugin that declares a fixed `version` string reports "already at the latest version" however far its source has moved, and an id the updater never enumerated is never attempted at all. Both leave a stale install behind a successful run.
+
+`claude-plugin-audit` checks the result instead. For a plugin that the marketplace carries in its own tree, it compares the installed payload against that tree, ignoring the runtime markers and installed dependencies that only ever exist on the payload side. For a plugin living in its own repo, it compares the recorded commit against the sha the marketplace pins, or against what the remote points at when the marketplace pins nothing. It exits non-zero, listing what needs attention, and is worth running by hand for an on-demand answer.
+
+The marketplace clones are checked too. Every other comparison reads them as ground truth, and `claude plugin marketplace update` warns rather than fails, so a clone that quietly stopped advancing would match a stale install and hide the drift from both sides. A marketplace served as a tarball has no clone to check and is reported as unverified.
+
+A payload is only as current as the tree it was compared against, so a plugin that matches a marketplace the audit could not vouch for is reported as unverified rather than current. Without that, one unchecked marketplace would hide every install it serves.
+
+A comparison that could not be made is not a finding. At 3am an unreachable remote is a flaky network far more often than a real change, so unverified results print but do not fail the audit. An inventory the audit could not read is different: it exits 2 and reports nothing, because calling zero plugins current is the silence the tool exists to break.
+
+The tree comparison is on content rather than the recorded `gitCommitSha`, because a forced refresh restores current content while leaving that field at its old value. A plugin sourced from its own repo has no local copy of that repo to compare against, so it falls back to the recorded commit and inherits the same inaccuracy.
+
+### Repairing a Flagged Plugin
+
+`claude plugin uninstall <id>` then `claude plugin install <id>`. Deleting the payload and running `claude plugin update` does not work on the plugins most likely to be flagged: a version-keyed plugin reports `already at the latest version` whether or not the payload is even there, so the delete stands and the plugin ends up uninstalled behind a successful-looking update. Reinstalling also rewrites `gitCommitSha`, which a forced refresh leaves stale and permanently flagged for a plugin sourced from its own repo.
+
+Payload directories carry an `.in_use` directory holding one file per session PID. Check those with `kill -0` before removing anything by hand. Deleting a payload out from under a live session breaks its skill loads until restart, which is why the audit only ever reports.
+
+`claude-upgrade` runs the audit after updating and files its findings as a Things to-do on a latch separate from the upgrade's own. Drift outlives the run that should have fixed it, so one stale plugin sharing the upgrade latch would suppress the to-do for a later upgrade failure. The latch also holds a fingerprint of which plugins are flagged, so a plugin that goes stale months later reopens it instead of hiding behind one that has been stale all along.
+
 ## Computer Use
 
 Claude Code's built-in `computer-use` MCP drives the macOS GUI with screenshots and mouse/keyboard input. [Peekaboo](https://github.com/steipete/peekaboo) is the accessibility-tree fallback for cases where screenshot perception is brittle or too costly: `peekaboo see` snapshots the AX tree with element IDs, then `peekaboo click`/`type` target those IDs. Call it from any agent via the CLI.

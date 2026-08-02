@@ -4,7 +4,7 @@
 # notify <title> <message> [sound]
 #   Darwin-guarded osascript notification (default sound: Basso).
 #
-# report_failure <job> <title> <command> <output> <revision> [extra_meta] [output_heading]
+# report_failure <job> <title> <command> <output> <revision> [extra_meta] [output_heading] [fingerprint]
 #   File a Things to-do describing the failure and notify, but only on the
 #   transition into a failed state. A per-job latch under
 #   ${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/<job>.status records ok
@@ -15,6 +15,12 @@
 #   markdown appended to the host/time/revision header; <output_heading> names
 #   the section holding <output>, for a job whose output is a finding list
 #   rather than an error (default: "Error Output").
+#
+#   <fingerprint> is an optional summary of what is wrong, stored in the latch.
+#   A job that reports a set of findings rather than one failure needs it: with
+#   a plain latch, the first standing finding suppresses every finding that
+#   appears after it, however long it stands. When the fingerprint changes the
+#   latch reopens and a fresh to-do names the new set.
 #
 # report_success <job>
 #   Clear the latch.
@@ -48,15 +54,17 @@ report_failure() {
   local revision="$5"
   local extra_meta="$6"
   local output_heading="${7:-Error Output}"
+  local fingerprint="${8:-}"
 
-  local status_file prior
+  local status_file prior latch="failed"
+  [[ -n "$fingerprint" ]] && latch="failed $fingerprint"
   status_file=$(report_status_file "$job")
   # `|| true` keeps a missing latch (first-ever failure) from killing
   # `set -e` callers before the to-do is filed.
   prior=$(cat "$status_file" 2>/dev/null || true)
-  echo failed >"$status_file"
+  echo "$latch" >"$status_file"
 
-  if [[ "$prior" == "failed" ]]; then
+  if [[ "$prior" == "$latch" ]]; then
     gum log --level info "$job still failing - to-do already filed, staying quiet"
     return 0
   fi
