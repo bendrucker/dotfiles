@@ -60,36 +60,23 @@ without removing, `--force` skips the prompt.
 
 ## Plugins
 
-`claude-upgrade` runs nightly. It syncs the Claude config repo, refreshes every
-marketplace, then updates every plugin installed at user scope, disabled ones
-included. `claude plugin enable` does not update, so a plugin skipped while
-disabled would come back stale months later.
+`claude-upgrade` runs nightly. It syncs the Claude config repo, refreshes every marketplace, then updates every plugin installed at user scope, disabled ones included. `claude plugin enable` does not update, so a plugin skipped while disabled would come back stale months later.
 
-An installed plugin its marketplace no longer offers is left alone. Nothing can
-update it, so the fix is to uninstall it, and the audit says so.
+A plugin no longer offered by its marketplace is left alone. Nothing can update it, so the fix is to uninstall it, and the audit says so.
 
 ### Auditing
 
-`claude plugin update` exiting 0 is not evidence that anything changed. A plugin
-declaring a fixed `version` string reports "already at the latest version"
-however far its source has moved, and an id the updater never enumerated is
-never attempted at all. Both leave a stale install behind a successful run.
+`claude plugin update` exiting 0 is not evidence that anything changed. A plugin that declares a fixed `version` string reports "already at the latest version" however far its source has moved, and an id the updater never enumerated is never attempted at all. Both leave a stale install behind a successful run.
 
-`claude-plugin-audit` checks the result instead. For a plugin the marketplace
-carries in its own tree, it compares the installed payload against that tree,
-ignoring the runtime markers and installed dependencies that only ever exist on
-the payload side. For a plugin living in its own repo, it compares the recorded
-commit against what the remote points at. It exits non-zero listing what needs
-attention, and is worth running by hand for an on-demand answer.
+`claude-plugin-audit` checks the result instead. For a plugin that the marketplace carries in its own tree, it compares the installed payload against that tree, ignoring the runtime markers and installed dependencies that only ever exist on the payload side. For a plugin living in its own repo, it compares the recorded commit against the sha the marketplace pins, or against what the remote points at when the marketplace pins nothing. It exits non-zero, listing what needs attention, and is worth running by hand for an on-demand answer.
 
-The comparison is on content rather than the recorded `gitCommitSha`, because a
-forced refresh (`rm -rf` the payload, then update) restores current content
-while leaving that field at its old value.
+The marketplace clones are checked too. Every other comparison reads them as ground truth, and `claude plugin marketplace update` warns rather than fails, so a clone that quietly stopped advancing would match a stale install and hide the drift from both sides. A marketplace served as a tarball has no clone to check and is reported as unverified.
 
-`claude-upgrade` runs the audit after updating and files its findings as a
-Things to-do on a latch separate from the upgrade's own. Drift outlives the run
-that should have fixed it, so one stale plugin sharing the upgrade latch would
-suppress the to-do for a later upgrade failure.
+A comparison that could not be made is not a finding. At 3am an unreachable remote is a flaky network far more often than a real change, so unverified results print but do not fail the audit.
+
+The tree comparison is on content rather than the recorded `gitCommitSha`, because a forced refresh (`rm -rf` the payload, then update) restores current content while leaving that field at its old value. A plugin sourced from its own repo has no local copy of that repo to compare against, so it falls back to the recorded commit and inherits the same inaccuracy. Repair one of those with `claude plugin uninstall` and `install` rather than a forced refresh, which would leave it permanently flagged.
+
+`claude-upgrade` runs the audit after updating and files its findings as a Things to-do on a latch separate from the upgrade's own. Drift outlives the run that should have fixed it, so one stale plugin sharing the upgrade latch would suppress the to-do for a later upgrade failure. The latch also holds a fingerprint of which plugins are flagged, so a plugin that goes stale months later reopens it instead of hiding behind one that has been stale all along.
 
 ## Computer Use
 

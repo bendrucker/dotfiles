@@ -142,8 +142,15 @@ report_drift() {
   local revision meta
   IFS=$'\t' read -r revision meta <<< "$(upgrade_metadata)"
 
+  # The subject and verdict of each finding, without the detail, so drift that
+  # deepens on a plugin already named stays quiet while a newly affected plugin
+  # reopens the latch.
+  local fingerprint
+  fingerprint=$(print -r -- "$output" |
+    awk '$2 ~ /^(stale|orphaned|unverified)$/ { print $1, $2 }' | sort | shasum | cut -c1-12)
+
   report_failure "claude-plugin-drift" "Claude plugins are stale" "claude-plugin-audit" \
-    "$output" "$revision" "$meta" "Stale Plugins"
+    "$output" "$revision" "$meta" "Stale Plugins" "$fingerprint"
 }
 
 main() {

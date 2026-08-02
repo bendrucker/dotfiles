@@ -10,9 +10,12 @@
 # real update by its exit status, so the updater's own success is not evidence
 # that an install is current. This checks the outcome instead.
 #
-# The check is a content comparison rather than a reading of the recorded
-# gitCommitSha, because a forced refresh (rm -rf the payload, reinstall)
-# restores current content while leaving that field at its old value.
+# Where the marketplace carries the plugin in its own tree, the check compares
+# content rather than reading the recorded gitCommitSha, because a forced
+# refresh (rm -rf the payload, reinstall) restores current content while leaving
+# that field at its old value. A plugin sourced from its own repo has no local
+# copy of that repo to compare against, so it falls back to the recorded commit
+# and inherits that field's inaccuracy.
 
 set -uo pipefail
 setopt typeset_silent
@@ -136,6 +139,43 @@ audit_external_plugin () {
   print -r -- "stale"$'\t'"installed ${actual[1,12]}, $url $ref is ${expected[1,12]}"
 }
 
+# Compare a marketplace clone against the ref its source pins. Every other
+# check reads these clones as ground truth, and `claude plugin marketplace
+# update` warns rather than fails, so a clone that quietly stopped advancing
+# would match a stale install and hide the drift from both sides.
+audit_marketplace () {
+  local location=$1 url=$2 ref=$3
+  local head expected
+
+  [[ -d "$location/.git" ]] || {
+    print -r -- "unknown"$'\t'"not a git clone, so freshness is unverifiable"
+    return
+  }
+
+  head=$(git -C "$location" rev-parse HEAD 2>/dev/null) || {
+    print -r -- "unknown"$'\t'"clone has no HEAD"
+    return
+  }
+  expected=$(resolve_ref "$url" "$ref") || {
+    print -r -- "unknown"$'\t'"$url has no $ref"
+    return
+  }
+
+  [[ "$head" == "$expected" ]] && { print -r -- "current"$'\t'; return }
+  print -r -- "stale"$'\t'"cloned at ${head[1,12]}, $url $ref is ${expected[1,12]}"
+}
+
+marketplace_inventory () {
+  jq -r '
+    to_entries[]
+    | [ .key,
+        (.value.installLocation // ""),
+        (.value.source.url // ("https://github.com/" + (.value.source.repo // ""))),
+        (.value.source.ref // "HEAD") ]
+    | @tsv
+  ' "$(claude_plugins_dir)/known_marketplaces.json" 2>/dev/null
+}
+
 plural () {
   local n=$1 noun=$2
   (( n == 1 )) && { print -r -- "$n $noun"; return }
@@ -149,28 +189,48 @@ main () {
   }
   (( $# )) && { print -u2 -- "claude-plugin-audit: unknown option $1"; return 1 }
 
-  local -a findings
-  local id payload verdict detail current=0
+  local -a drifted unverified
+  local name location url ref id payload verdict detail current=0
+
+  while IFS=$'\t' read -r name location url ref; do
+    [[ -n "$name" ]] || continue
+    IFS=$'\t' read -r verdict detail <<< "$(audit_marketplace "$location" "$url" "$ref")"
+    record_verdict "marketplace/$name" "$verdict" "$detail"
+  done < <(marketplace_inventory)
 
   while IFS=$'\t' read -r id payload; do
     [[ -n "$id" ]] || continue
     IFS=$'\t' read -r verdict detail <<< "$(audit_plugin "$id" "$payload")"
-    if [[ "$verdict" == current ]]; then
-      (( ++current ))
-      continue
-    fi
-    findings+=("$id"$'\t'"$verdict"$'\t'"$detail")
+    record_verdict "$id" "$verdict" "$detail"
   done < <(plugin_inventory)
 
-  (( ${#findings} )) || {
-    print -r -- "$(plural $current plugin) current"
+  (( ${#unverified} )) && {
+    print -rl -- $unverified | sort | column -t -s $'\t'
+    print -r -- ""
+  }
+
+  (( ${#drifted} )) || {
+    print -r -- "$(plural $current check) current"
     return 0
   }
 
-  print -rl -- $findings | sort | column -t -s $'\t'
+  print -rl -- $drifted | sort | column -t -s $'\t'
   print -r -- ""
-  print -r -- "$(plural ${#findings} plugin) need attention ($current current)"
+  print -r -- "$(plural ${#drifted} finding) to act on ($current current)"
   return 1
+}
+
+# Sort a verdict into the two piles main reports on. A comparison that could not
+# be made is not evidence of drift: at 3am an ls-remote loses to a flaky network
+# far more often than to a real change, and failing on one would file a to-do
+# that the next run clears. It still prints, so a standing one is visible.
+record_verdict () {
+  local subject=$1 verdict=$2 detail=$3
+  case $verdict in
+    current)  (( ++current )) ;;
+    unknown)  unverified+=("$subject"$'\t'"unverified"$'\t'"$detail") ;;
+    *)        drifted+=("$subject"$'\t'"$verdict"$'\t'"$detail") ;;
+  esac
 }
 
 # Run only when executed directly. When sourced (tests), ZSH_EVAL_CONTEXT gains

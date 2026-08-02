@@ -8,9 +8,11 @@
 #
 # plugin_inventory
 #   Print "<id>\t<installPath>" for every user-scope plugin, one per line.
-#   The rows are the union of what `claude plugin list` reports and the
-#   enabledPlugins keys in settings.json, so a plugin enabled but never
-#   installed still appears, with an empty installPath.
+#   The rows are the union of what `claude plugin list` reports and the plugins
+#   settings.json enables, so a plugin enabled but never installed still
+#   appears, with an empty installPath. A plugin enabled by a project or a
+#   settings.local.json is out of scope: `claude plugin update` works at user
+#   scope, so those are not this job's to update.
 #
 # plugin_source <id>
 #   Print the plugin's `source` value, as JSON, from its marketplace manifest.
@@ -32,7 +34,7 @@ plugin_inventory() {
 
   rows=$(jq -rn --argjson list "$list" --argjson settings "$settings" '
       [ $list[] | select(.scope == "user") | [.id, .installPath // ""] ]
-    + [ ($settings.enabledPlugins // {}) | keys[] | [., ""] ]
+    + [ ($settings.enabledPlugins // {}) | to_entries[] | select(.value) | [.key, ""] ]
     | .[] | @tsv
   ' 2>/dev/null) || return 1
 

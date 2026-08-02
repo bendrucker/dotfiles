@@ -56,14 +56,15 @@ setup() {
   printf 'gamma\n' >"$plugins/marketplaces/first/plugins/gamma/README.md"
   cp -R "$plugins/marketplaces/first/plugins/gamma/." "$plugins/cache/first/gamma/1.0.0/"
 
-  # delta lives in its own repo rather than in the marketplace tree, so it is
-  # checked against the commit that repo currently points at.
+  # delta lives in its own repo, so it is checked against the commit that repo
+  # currently points at.
   write_plugin delta third "$plugins/cache/third/delta/1.0.0" \
     '{"source":"github","repo":"example/delta"}'
 
   write_marketplace first alpha gamma
   write_marketplace third beta delta
   write_settings alpha@first beta@third gamma@first delta@third
+  write_known_marketplaces
   write_plugin_list
 
   cat >"$stubdir/claude" <<'CLAUDE'
@@ -80,14 +81,18 @@ exit 0
 CLAUDE
   chmod +x "$stubdir/claude"
 
-  # Only ls-remote is stubbed; the audit uses git for nothing else.
+  # Only ls-remote and rev-parse are stubbed; the audit uses git for nothing else.
   cat >"$stubdir/git" <<'GIT'
 #!/usr/bin/env bash
-[ "$1" = "ls-remote" ] && printf '%s\trefs/heads/main\n' "$REMOTE_SHA"
+case "$1" in
+  ls-remote) printf '%s\trefs/heads/main\n' "$REMOTE_SHA" ;;
+  -C)        [ "$3" = "rev-parse" ] && printf '%s\n' "$CLONE_SHA" ;;
+esac
 exit 0
 GIT
   chmod +x "$stubdir/git"
   export REMOTE_SHA="$recorded_sha"
+  export CLONE_SHA="$recorded_sha"
 
   printf '#!/usr/bin/env bash\nexit 0\n' >"$stubdir/gum"
   chmod +x "$stubdir/gum"
@@ -95,7 +100,7 @@ GIT
 
 # Record a plugin's install metadata. Extra arguments are either further
 # installPaths (duplicate records) or, when JSON, the plugin's marketplace
-# source; a source implies the install is tracked by commit rather than content.
+# source. A source implies the install is tracked by commit.
 write_plugin() {
   local name="$1" marketplace="$2" path="$3"
   shift 3
@@ -128,7 +133,25 @@ write_settings() {
   local id keys=""
   for id in "$@"; do keys="$keys\"$id\":true,"; done
   mkdir -p "$HOME/.claude"
-  printf '{"enabledPlugins":{%s}}\n' "${keys%,}" >"$HOME/.claude/settings.json"
+  printf '{"enabledPlugins":{%s,"disabled@first":false}}\n' "${keys%,}" \
+    >"$HOME/.claude/settings.json"
+}
+
+# first is a git clone, so its freshness is checkable. third is materialized
+# from a tarball and has no clone to read.
+write_known_marketplaces() {
+  mkdir -p "$plugins/marketplaces/first/.git"
+  jq -n --arg plugins "$plugins" '
+    ["first", "third"]
+    | map({
+        key: .,
+        value: {
+          source: {source: "github", repo: ("example/" + .)},
+          installLocation: ($plugins + "/marketplaces/" + .)
+        }
+      })
+    | from_entries
+  ' >"$plugins/known_marketplaces.json"
 }
 
 # Render the fixture rows into what `claude plugin list --json` reports and what
@@ -176,6 +199,14 @@ Describe "plugin enumeration"
     The output should equal "alpha@first,beta@third,delta@third,gamma@first"
   End
 
+  # settings.json records a plugin turned off as a false value rather than
+  # dropping the key, so reading the keys alone would install it.
+  It "leaves out a plugin settings.json turned off"
+    When call inventory_ids
+    The status should be success
+    The output should not include "disabled@first"
+  End
+
   It "points a duplicated plugin at the payload that exists"
     When call call_upgrade plugin_inventory
     The status should be success
@@ -212,7 +243,26 @@ Describe "claude-plugin-audit"
   It "passes when every payload matches its marketplace"
     When call run_audit
     The status should be success
-    The output should include "4 plugins current"
+    The output should include "5 checks current"
+  End
+
+  # The marketplace clones are what every payload is compared against, and
+  # `claude plugin marketplace update` only warns when it fails.
+  It "flags a marketplace clone behind its source"
+    export CLONE_SHA="3333333333333333333333333333333333333333"
+    When call run_audit
+    The status should be failure
+    The output should include "marketplace/first"
+    The output should include "stale"
+  End
+
+  # A comparison that could not be made is a flaky network far more often than
+  # a real change, so failing on one would file a to-do the next run clears.
+  It "reports what it cannot verify without failing"
+    When call run_audit
+    The status should be success
+    The output should include "marketplace/third"
+    The output should include "unverified"
   End
 
   It "flags a payload that lost a file"
