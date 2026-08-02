@@ -262,6 +262,9 @@ jobs:
             echo "$bad"
             exit 1
           fi
+      - name: Check private-use glyphs are declared
+        run: bin/glyph-scan
+
       - name: Check for expired migrations
         run: scripts/lint-expired
 

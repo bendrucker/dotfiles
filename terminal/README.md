@@ -93,3 +93,35 @@ at the end of the config (before TPM runs).
 
 Theme configuration for the Ghostty terminal emulator. The config is symlinked
 to `~/.config/ghostty/config` by `install.sh`.
+
+## Fonts
+
+Ghostty renders `MonaspiceNe NFM`, installed by `font-monaspice-nerd-font@tip`
+from the [`bendrucker/fonts`](https://github.com/bendrucker/homebrew-fonts) tap.
+That tap patches Monaspace from nerd-fonts `master` instead of a release,
+because 3.4.0 shipped in April 2025, predates the Codicon brand marks for
+Claude, OpenAI, and Cursor, and is still the newest release. The family name
+matches upstream's cask, so swapping back to `font-monaspice-nerd-font` when
+3.5.0 lands changes nothing else.
+
+### Client Coverage
+
+tmux and herdr emit bytes. The attached *client* picks the font. One session can
+be attached from Ghostty on the Mac and Rootshell on an iPad at the same time,
+so a glyph cannot be varied per client. The usable set is the intersection of
+every client's coverage. That is why the font goes onto every client, rather
+than holding the glyphs back to what a stock release covers.
+
+Rootshell and Moshi both import a TTF/OTF. Open the tap's latest release on the
+device and import the four `.otf` assets. They are uploaded individually so a
+single file can be tapped from Safari without unzipping. Release notes list the
+codepoints each build gained, so a re-import only matters when one of them turns
+up in `glyphs.conf`.
+
+### `glyphs.conf`
+
+`glyphs.conf` declares every private-use glyph this repo renders, with the Nerd
+Fonts name it comes from. `glyph-scan` fails when a tracked file uses a glyph
+that is not declared, and `glyph-scan --font` fails when the installed font is
+missing one that is. CI runs the first. `spec/glyphs_spec.sh` runs both, skipping
+the second where the cask was not installed.
