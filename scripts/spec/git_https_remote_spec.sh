@@ -1,40 +1,41 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2329
 
+# shellcheck source=../lib/git-sync.sh
+Include "$SHELLSPEC_PROJECT_ROOT/lib/git-sync.sh"
+
+setup() {
+  sandbox="$SHELLSPEC_TMPBASE/git-https"
+  repo="$sandbox/repo"
+  stubdir="$sandbox/stub"
+  rm -rf "$sandbox"
+  mkdir -p "$stubdir"
+  stub_gum "$stubdir"
+  git init -q -b main "$repo"
+}
+
+BeforeEach 'setup'
+
+fetch_url() { git -C "$repo" config --get remote.origin.url; }
+push_url() { git -C "$repo" config --get "remote.origin.pushurl"; }
+
 Describe "git_https_remote"
-  setup() {
-    sandbox="$SHELLSPEC_TMPBASE/git-https-remote"
-    repo="$sandbox/repo"
-    stubdir="$sandbox/stub"
-    rm -rf "$sandbox"
-    mkdir -p "$stubdir"
-
-    # The real gum log writes to stderr. Nothing here asserts on it.
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$stubdir/gum"
-    chmod +x "$stubdir/gum"
-
-    git init -q -b main "$repo"
-  }
-
-  BeforeEach 'setup'
-
-  # shellcheck source=../lib/git-sync.sh
-  Include "$SHELLSPEC_PROJECT_ROOT/lib/git-sync.sh"
-
   rewrite() {
     git -C "$repo" remote add origin "$1"
     PATH="$stubdir:$PATH" git_https_remote "$repo"
-    git -C "$repo" remote get-url origin
+    fetch_url
   }
 
   It "rewrites an scp-style github remote"
     When call rewrite "git@github.com:bendrucker/claude.git"
     The output should equal "https://github.com/bendrucker/claude.git"
+    The stderr should include "pushing over SSH"
   End
 
   It "rewrites an ssh:// github remote"
     When call rewrite "ssh://git@github.com/bendrucker/claude.git"
     The output should equal "https://github.com/bendrucker/claude.git"
+    The stderr should include "pushing over SSH"
   End
 
   It "leaves an https github remote alone"
@@ -53,20 +54,34 @@ Describe "git_https_remote"
     When call git_https_remote "$repo"
     The status should be success
   End
+
+  # Only the fetch URL moves. Pushing over anonymous HTTPS would need
+  # credentials the SSH remote already had.
+  It "keeps the SSH url for pushes"
+    When call rewrite "git@github.com:bendrucker/claude.git"
+    The output should equal "https://github.com/bendrucker/claude.git"
+    The result of function push_url should equal "git@github.com:bendrucker/claude.git"
+  End
+
+  It "does not clobber a pushurl that is already set"
+    git -C "$repo" remote add origin "git@github.com:bendrucker/claude.git"
+    git -C "$repo" remote set-url --push origin "git@github.com:someone/fork.git"
+    When call env PATH="$stubdir:$PATH" git_https_remote "$repo"
+    The result of function push_url should equal "git@github.com:someone/fork.git"
+  End
+
+  # Regression: `git remote get-url` resolves insteadOf rules, so reading the
+  # remote through it reports HTTPS while .git/config still holds SSH, and the
+  # rewrite silently never happens.
+  It "still rewrites when an insteadOf rule already maps the url"
+    git_https_env
+    When call rewrite "git@github.com:bendrucker/claude.git"
+    The output should equal "https://github.com/bendrucker/claude.git"
+    The stderr should include "pushing over SSH"
+  End
 End
 
 Describe "git_https_env"
-  # shellcheck source=../lib/git-sync.sh
-  Include "$SHELLSPEC_PROJECT_ROOT/lib/git-sync.sh"
-
-  setup() {
-    repo="$SHELLSPEC_TMPBASE/git-https-env"
-    rm -rf "$repo"
-    git init -q -b main "$repo"
-  }
-
-  BeforeEach 'setup'
-
   resolved_url() {
     git -C "$repo" remote add origin "$1"
     git_https_env

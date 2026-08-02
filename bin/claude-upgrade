@@ -121,11 +121,6 @@ report_upgrade_failure() {
 }
 
 main() {
-  # Claude Code clones marketplaces and plugins from `git@github.com:` and
-  # re-clones them on every update, so those remotes are not ours to rewrite.
-  # git_sync moves $CLAUDE_REPO_HOME itself.
-  git_https_env
-
   local output
   output=$(mktemp)
   # shellcheck disable=SC2064
@@ -136,6 +131,11 @@ main() {
       exit 1
     fi
 
+    # Claude Code clones marketplaces and plugins from `git@github.com:` and
+    # re-clones them on every update, so those remotes are not ours to rewrite.
+    # git_sync moves $CLAUDE_REPO_HOME itself, and leaving these exports out of
+    # sync_repo keeps its PR push on the SSH pushurl.
+    git_https_env
     update_marketplaces
     update_plugins
   } 2>&1 | tee "$output"

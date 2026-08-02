@@ -162,9 +162,11 @@ Never add employer-specific tooling to a topic directory. Machines legitimately 
 
 ### GitHub Transport
 
-The nightly jobs run at 3am against a locked Mac, where Secretive refuses to sign and any SSH fetch dies on `agent refused operation`. Every repo these jobs sync is public, so `git_sync` calls `git_https_remote` to move a `github.com` origin to anonymous HTTPS before fetching. The rewrite is persistent and idempotent, so a clone that arrives over SSH heals on its next sync.
+The nightly jobs run at 3am against a locked Mac, where Secretive refuses to sign and any SSH fetch dies on `agent refused operation`. Every repo these jobs sync is public, so `git_sync` calls `git_https_remote` to move a `github.com` origin to anonymous HTTPS before fetching. Only the fetch URL moves, because the SSH URL stays behind as the remote's `pushurl` and pushes keep the credentials they already had. The rewrite is persistent and idempotent. A clone that arrives over SSH heals on its next sync.
 
-`claude-upgrade` also calls `git_https_env`, which exports the same rewrite as an `insteadOf` rule. That covers the marketplace and plugin clones Claude Code makes for itself, which it creates with `git@github.com:` URLs and re-clones on every update.
+`claude-upgrade` also calls `git_https_env`, which exports the same rewrite as an `insteadOf` rule. That covers the marketplace and plugin clones Claude Code makes for itself, which it creates with `git@github.com:` URLs and re-clones on every update. An `insteadOf` rule outranks a `pushurl`, so the exports are scoped to the plugin steps rather than the whole script.
+
+Read the remote with `git config --get remote.<name>.url`, never `git remote get-url`. The latter resolves `insteadOf` rules, so it reports HTTPS while `.git/config` still holds the SSH URL, and a rewrite keyed on it silently never fires.
 
 ### Manual Commands
 
