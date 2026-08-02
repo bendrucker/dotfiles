@@ -1,0 +1,14 @@
+# Settings in herdr's own config.toml never reach a plugin.
+# https://github.com/persiyanov/herdr-reviewr#configuration
+
+# A vertical split leaves both panes unreadable on a phone. prefix+d opens it
+# on demand instead.
+auto_open = false
+
+# Reviewing is a branch-at-a-time activity here, not a working-tree one.
+default_scope = "branch"
+
+# Beside the diff, the file list costs 32% of the width. Under it, 25% of the
+# height. Width is what a phone has none of, and a desktop split can spare the
+# rows. `p` cycles it for the session.
+navigator_position = "bottom"

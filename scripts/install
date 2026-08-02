@@ -25,6 +25,20 @@ eval "$(brew shellenv)"
 
 source mise/install.sh
 
+# herdr's plugin config directory became a link into this repo, and
+# install-symlinks refuses to replace a real directory with one. This has to run
+# ahead of that rather than from herdr/install.sh, which runs after. It moves the
+# old directory aside rather than into the repo, so a config that was never
+# committed can't land as an untracked file that a later sync refuses to
+# overwrite.
+# EXPIRES: 2027-02-02 every machine has the linked herdr plugin config tree
+herdr_plugin_config="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config"
+if [[ -d $herdr_plugin_config && ! -L $herdr_plugin_config ]]; then
+  rm -rf $herdr_plugin_config.pre-link
+  mv $herdr_plugin_config $herdr_plugin_config.pre-link
+  gum log --level warn "moved $herdr_plugin_config to .pre-link; anything you configured by hand is in there"
+fi
+
 ./scripts/install-symlinks
 
 # Build exclusions for mise and any git submodules

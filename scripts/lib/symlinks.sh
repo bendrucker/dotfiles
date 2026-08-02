@@ -6,7 +6,14 @@
 # symlink_create <src> <dst>
 #   Create dst as a symlink to src, making parent directories as needed.
 #   Silent and idempotent. Source-existence validation belongs in the caller.
+#   A real directory at dst is fatal: `ln -sfn` would put the link inside it
+#   rather than replace it, and the caller's contents are worth a look before
+#   anything removes them.
 symlink_create() {
+  if [ -d "$2" ] && [ ! -L "$2" ]; then
+    echo "symlink_create: $2 is a directory; move its contents into $1 and remove it" >&2
+    return 1
+  fi
   mkdir -p "$(dirname "$2")"
   ln -sfn "$1" "$2"
 }
