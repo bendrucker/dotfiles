@@ -34,3 +34,51 @@ if [[ -z "${NONINTERACTIVE-}" ]]; then
   gum log --level info "  1. Grant Accessibility to ActivityWatch: System Settings > Privacy & Security > Accessibility (window titles need it)"
   gum log --level info "  2. Launch it once from this terminal so the prompt fires: open -a ActivityWatch"
 fi
+
+# Screen Time syncs each iOS/iPadOS device's app-focus history to this Mac, and
+# aw-import-screentime decodes it into ActivityWatch's own buckets so phone and
+# tablet usage land in the same db as the Mac's capture.
+#
+# Pinned to a fork: upstream discovers devices by filtering DevicePeer on
+# platform=2, which finds the iPhone but not the iPad. Biome files the iPad
+# under platform=1 and reserves platform=7 for rows that carry no data, so no
+# single platform value selects both. The fork adds --all-devices, which
+# enumerates the synced stream directories instead. Repoint at upstream once
+# that lands there.
+AW_IMPORT_SCREENTIME_REF="git+https://github.com/bendrucker/aw-import-screentime@ea672badfa1ba2c33361a7722105d642b01726fa"
+
+if command -v uv >/dev/null 2>&1; then
+  # `uv tool install` is a no-op once the tool is present at any version, so on
+  # a machine holding upstream, or an older pin, it would silently leave that in
+  # place and the iPad would go missing again. uv records the resolved commit in
+  # its receipt, so compare against that and reinstall only on a mismatch. That
+  # keeps the nightly upgrade from rebuilding on every run.
+  aw_import_screentime_receipt="${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/aw-import-screentime/uv-receipt.toml"
+  if ! grep -qF "rev=${AW_IMPORT_SCREENTIME_REF##*@}" "$aw_import_screentime_receipt" 2>/dev/null; then
+    uv tool install --force "$AW_IMPORT_SCREENTIME_REF"
+  fi
+else
+  gum log --level warn "uv not found; skipping aw-import-screentime (run scripts/install after mise install)"
+fi
+
+# Gated on the binary because a KeepAlive agent with a missing exec target
+# respawns forever. That gate has to live here, not in macos/install.sh, which
+# may run first.
+# shellcheck source=../scripts/lib/launch-agent.sh
+source "$ZSH/scripts/lib/launch-agent.sh"
+
+if [[ -x "$HOME/.local/bin/aw-import-screentime" ]]; then
+  install_launch_agent com.user.aw-import-screentime.plist "Screen Time import" || true
+else
+  gum log --level warn "aw-import-screentime not installed, skipping Screen Time import agent"
+  remove_launch_agent com.user.aw-import-screentime.plist
+fi
+
+# The LaunchAgent runs the importer through /bin/zsh, so zsh is the process TCC
+# holds responsible for reading the Biome store.
+if [[ -z "${NONINTERACTIVE-}" ]]; then
+  gum log --level info "Screen Time import one-time setup:"
+  gum log --level info "  Grant Full Disk Access to /bin/zsh: System Settings > Privacy & Security > Full Disk Access (reads ~/Library/Biome)"
+fi
+
+exit "${launchd_failed:-0}"

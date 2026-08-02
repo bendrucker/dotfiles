@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.aw-import-screentime</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>exec "$HOME/.local/bin/aw-import-screentime" watch</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Unconditional, unlike the PathState guard in com.user.activitywatch.plist.
+         launchd does not expand $HOME in a PathState key and this binary lives
+         under it, so guarding would mean hardcoding one machine's path.
+         macos/install.sh boots the agent out when the binary is absent, leaving
+         only a removal between install runs to respawn until the next one. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/aw-import-screentime.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/aw-import-screentime.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
