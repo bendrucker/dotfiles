@@ -60,3 +60,26 @@ key = "prefix+shift+f"
 type = "shell"
 command = "herdr plugin action invoke open-file-viewer-tab --plugin herdr-file-viewer"
 description = "file viewer (tab)"
+
+# herdr-worktrunk — worktree switch/create/remove through worktrunk, so the
+# lifecycle hooks that `wt` already runs fire on a worktree made from herdr.
+# prefix+shift+g is herdr's built-in "new worktree"; a custom binding on the same
+# key takes precedence, which is how the built-in gets replaced rather than
+# shadowed. The plugin's own id is `worktrunk`, not the repo name.
+[[keys.command]]
+key = "prefix+shift+g"
+type = "plugin_action"
+command = "worktrunk.open"
+description = "Worktree: switch / create from default branch"
+
+[[keys.command]]
+key = "prefix+shift+c"
+type = "plugin_action"
+command = "worktrunk.open-current"
+description = "Worktree: switch / create from current branch"
+
+[[keys.command]]
+key = "prefix+shift+d"
+type = "plugin_action"
+command = "worktrunk.remove"
+description = "Worktree: remove"
