@@ -160,6 +160,12 @@ Never add employer-specific tooling to a topic directory. Machines legitimately 
 - Syncs dotfiles, runs `scripts/install`, cleans up stale packages
 - Creates a Things task on failure with error output
 
+### GitHub Transport
+
+The nightly jobs run at 3am against a locked Mac, where Secretive refuses to sign and any SSH fetch dies on `agent refused operation`. Every repo these jobs sync is public, so `git_sync` calls `git_https_remote` to move a `github.com` origin to anonymous HTTPS before fetching. The rewrite is persistent and idempotent, so a clone that arrives over SSH heals on its next sync.
+
+`claude-upgrade` also calls `git_https_env`, which exports the same rewrite as an `insteadOf` rule. That covers the marketplace and plugin clones Claude Code makes for itself, which it creates with `git@github.com:` URLs and re-clones on every update.
+
 ### Manual Commands
 
 - `dotfiles sync` — Pull latest from remote

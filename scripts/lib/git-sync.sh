@@ -5,9 +5,22 @@
 #   Echo the remote default branch, resolving origin/HEAD with a
 #   set-head retry and falling back to "main".
 #
+# git_https_remote <repo_dir> [remote]
+#   Rewrite a github.com SSH remote to its anonymous HTTPS equivalent, in
+#   place. SSH needs a key from the agent, and Secretive refuses to sign while
+#   the Mac is locked, so a 3am launchd fetch dies on "agent refused
+#   operation". The synced repos are public, so HTTPS reads need no
+#   credentials at all. Other hosts and URL forms are left alone.
+#
+# git_https_env
+#   Export the same rewrite as an insteadOf rule, for child processes cloning
+#   github.com remotes this repo does not own. Appends to any GIT_CONFIG_COUNT
+#   already in the environment rather than replacing it, so a machine-local
+#   entry survives.
+#
 # git_sync <repo_dir> [branch]
 #   Guard the target (reject symlinks, non-repos, and dirty working trees),
-#   fetch with retry, and fast-forward only.
+#   move origin to HTTPS, fetch with retry, and fast-forward only.
 #   Returns:
 #     0  updated   (new short rev echoed to stdout)
 #     2  current   (already up to date)
@@ -29,6 +42,34 @@ git_default_branch() {
   fi
 
   echo "${branch:-main}"
+}
+
+git_https_remote() {
+  local repo_dir="$1"
+  local remote="${2:-origin}"
+
+  local url
+  url=$(git -C "$repo_dir" remote get-url "$remote" 2>/dev/null) || return 0
+
+  local repo_path
+  case "$url" in
+    git@github.com:*) repo_path="${url#git@github.com:}" ;;
+    ssh://git@github.com/*) repo_path="${url#ssh://git@github.com/}" ;;
+    *) return 0 ;;
+  esac
+
+  gum log --level info "Moving $remote from SSH to HTTPS"
+  git -C "$repo_dir" remote set-url "$remote" "https://github.com/$repo_path"
+}
+
+git_https_env() {
+  local i="${GIT_CONFIG_COUNT:-0}"
+
+  export "GIT_CONFIG_KEY_$i=url.https://github.com/.insteadOf"
+  export "GIT_CONFIG_VALUE_$i=git@github.com:"
+  export "GIT_CONFIG_KEY_$((i + 1))=url.https://github.com/.insteadOf"
+  export "GIT_CONFIG_VALUE_$((i + 1))=ssh://git@github.com/"
+  export GIT_CONFIG_COUNT=$((i + 2))
 }
 
 git_sync_fetch() {
@@ -64,6 +105,8 @@ git_sync() {
     gum log --level error "$repo_dir is not a git repository"
     return "$GIT_SYNC_FAILED"
   fi
+
+  git_https_remote "$repo_dir"
 
   if ! git -C "$repo_dir" diff --quiet 2>/dev/null ||
      ! git -C "$repo_dir" diff --cached --quiet 2>/dev/null; then

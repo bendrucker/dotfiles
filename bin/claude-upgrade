@@ -121,13 +121,10 @@ report_upgrade_failure() {
 }
 
 main() {
-  # Force HTTPS for github.com: SSH agents (Secretive, 1Password, etc.)
-  # can't sign while the Mac is locked, breaking unattended runs.
-  export GIT_CONFIG_COUNT=2
-  export GIT_CONFIG_KEY_0='url.https://github.com/.insteadOf'
-  export GIT_CONFIG_VALUE_0='git@github.com:'
-  export GIT_CONFIG_KEY_1='url.https://github.com/.insteadOf'
-  export GIT_CONFIG_VALUE_1='ssh://git@github.com/'
+  # Claude Code clones marketplaces and plugins from `git@github.com:` and
+  # re-clones them on every update, so those remotes are not ours to rewrite.
+  # git_sync moves $CLAUDE_REPO_HOME itself.
+  git_https_env
 
   local output
   output=$(mktemp)
