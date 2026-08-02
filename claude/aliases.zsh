@@ -8,7 +8,7 @@ _claude_worktree_prompt='This is a dedicated git worktree that Worktrunk (the wt
 # Aliases (not functions) so zsh defers completion to `wt switch` for branch names.
 alias cw="wt switch --execute=\"claude --name={{ branch }} --append-system-prompt='$_claude_worktree_prompt'\""
 alias ccw='cw --create'
-alias cwa="wt switch --execute=\"claude --name={{ branch }} --permission-mode=auto --append-system-prompt='$_claude_worktree_prompt'\""
+alias cwa='cw'
 
 cwp() {
   wt switch --create --execute="claude --name={{ branch }} --permission-mode=plan --append-system-prompt='$_claude_worktree_prompt'" "$@" -- "$(pbpaste)"
