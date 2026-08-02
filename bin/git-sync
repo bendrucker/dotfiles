@@ -1,0 +1,170 @@
+#!/usr/bin/env zsh
+# shellcheck shell=bash
+# Reconcile the current branch with its upstream.
+# Fast-forwards without asking when that is unambiguous, prompts otherwise.
+
+set -e
+set -o pipefail
+
+usage() {
+  cat <<'EOF'
+usage: git sync [--push]
+
+Fetch, then reconcile the current branch with its upstream.
+
+Fast-forwards silently when the branch is only behind and the tree is clean.
+Prompts when the tree is dirty, the branch has diverged, or there is no upstream.
+
+  --push  push without asking when the branch is ahead
+
+Any other argument is handed to git push unchanged.
+EOF
+}
+
+push_without_asking=false
+push_args=()
+for arg in "$@"; do
+  case "$arg" in
+    --push) push_without_asking=true ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) push_args+=("$arg") ;;
+  esac
+done
+
+# gp expands to `git sync --push`, so `gp -f` and `gp origin main` land here.
+# Those reflexes ask for git push, so hand the arguments straight over.
+if ((${#push_args[@]} > 0)); then
+  exec git push "${push_args[@]}"
+fi
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  gum log --level error "not a git repository"
+  exit 1
+fi
+
+if ! branch=$(git symbolic-ref --quiet --short HEAD); then
+  gum log --level error "detached HEAD, check out a branch first"
+  exit 1
+fi
+
+tree_is_dirty() {
+  ! git diff --quiet ||
+    ! git diff --cached --quiet ||
+    [[ -n "$(git ls-files --others --exclude-standard)" ]]
+}
+
+if ! upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null); then
+  gum log --level warn "$branch has no upstream"
+  if ! gum confirm "Push $branch and set its upstream?"; then
+    exit 1
+  fi
+  # push.autoSetupRemote makes a bare push set the upstream.
+  git push
+  exit 0
+fi
+
+if ! gum spin --show-error --title "Fetching $upstream" -- git fetch --prune; then
+  gum log --level error "fetch failed"
+  exit 1
+fi
+
+# --prune deletes the tracking ref when the branch is gone from the remote,
+# which is where a merged-and-deleted branch lands.
+if ! git rev-parse --verify --quiet "$upstream" >/dev/null; then
+  gum log --level error "$upstream is gone from the remote"
+  gum log --level error "switch away from $branch, or repoint it with git branch -u"
+  exit 1
+fi
+
+read -r behind ahead < <(git rev-list --left-right --count "$upstream...HEAD")
+
+if ((behind == 0 && ahead == 0)); then
+  gum log --level info "$branch is up to date with $upstream"
+  exit 0
+fi
+
+if ((behind > 0 && ahead == 0)); then
+  if ! tree_is_dirty; then
+    git merge --ff-only "$upstream"
+    gum log --level info "Fast-forwarded $branch $behind commit(s) to $upstream"
+    exit 0
+  fi
+
+  gum log --level warn "$branch is $behind behind $upstream with local changes"
+  if ! gum confirm "Stash, fast-forward, then restore?"; then
+    exit 1
+  fi
+
+  stash_before=$(git rev-parse --quiet --verify refs/stash || true)
+  git stash push --include-untracked --message "git sync: $branch"
+  stash_after=$(git rev-parse --quiet --verify refs/stash || true)
+
+  # A push that stashes nothing still exits 0, which happens when the only
+  # dirtiness is inside a submodule working tree. Popping then discards
+  # whatever unrelated entry was already on top of the stack.
+  if [[ "$stash_after" == "$stash_before" ]]; then
+    gum log --level warn "nothing was stashed, leaving your tree and the stash alone"
+    git merge --ff-only "$upstream"
+    exit 0
+  fi
+
+  if ! git merge --ff-only "$upstream"; then
+    gum log --level error "fast-forward failed, your changes are stashed as $stash_after"
+    exit 1
+  fi
+
+  if ! git stash pop; then
+    gum log --level error "restoring your changes hit a conflict, they are safe in stash@{0}"
+    exit 1
+  fi
+  exit 0
+fi
+
+if ((ahead > 0 && behind == 0)); then
+  gum log --level info "$branch is $ahead ahead of $upstream"
+  if [[ "$push_without_asking" != true ]] && ! gum confirm "Push $ahead commit(s)?"; then
+    exit 1
+  fi
+  git push
+  exit 0
+fi
+
+gum log --level warn "$branch has diverged from $upstream: $ahead ahead, $behind behind"
+git --no-pager log --oneline --left-right "$upstream...HEAD" >&2
+
+if tree_is_dirty; then
+  gum log --level error "commit or stash your changes before reconciling a diverged branch"
+  exit 1
+fi
+
+choices=("Rebase $ahead commit(s) onto $upstream")
+# Reaching --push means gp, a reflex for a command that has never discarded
+# anything. Reset stays behind a deliberate bare `git sync`.
+if [[ "$push_without_asking" != true ]]; then
+  choices+=("Reset hard to $upstream, discarding $ahead commit(s)")
+fi
+choices+=("Abort")
+
+choice=$(gum choose --header "Diverged from $upstream. What now?" "${choices[@]}") || choice="Abort"
+
+case "$choice" in
+  Rebase*)
+    if ! git rebase "$upstream"; then
+      gum log --level error "rebase stopped, resolve then run git rebase --continue"
+      exit 1
+    fi
+    if [[ "$push_without_asking" == true ]]; then
+      git push
+    fi
+    ;;
+  Reset*)
+    gum confirm --default=false "Discard $ahead commit(s) on $branch?" || exit 1
+    git reset --hard "$upstream"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
