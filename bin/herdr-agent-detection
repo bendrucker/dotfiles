@@ -48,20 +48,31 @@ manifest_version () {
   yq -p toml -r '.version // "unknown"' "$1" 2>/dev/null || print -r -- unknown
 }
 
-# The ids of every rule in a manifest that can score `working`.
-manifest_working_rules () {
-  yq -p toml -r '[.rules[] | select(.state == "working") | .id] | sort | join(" ")' "$1" 2>/dev/null
-}
-
-# The same set as the overlay recorded when it was written. Sorted to match the
-# manifest side, so someone updating the line by hand does not leave a set that
-# reads as permanently drifted for being in a different order.
-overlay_working_rules () {
+# Both sides of the drift comparison sort here rather than one sorting in yq
+# and one in zsh. yq orders by codepoint and zsh by the locale's collation, and
+# the two disagree the moment an id carries an uppercase letter.
+sorted_words () {
   local -a ids
-  ids=(${=$(sed -n 's/^# base-working-rules: *//p' "$1" | head -1)})
+  ids=(${=1})
   # Unquoted: quoting joins the array before (o) sees it, and sorting one
   # element is a no-op. Nothing here can word-split or glob.
   print -r -- ${(o)ids}
+}
+
+# The ids of every rule in a manifest that can score `working`. Returns nonzero
+# when the manifest cannot be read, which callers must keep distinct from a
+# manifest that genuinely lists none: treating a parse failure as an empty set
+# reports it as herdr having dropped every working rule.
+manifest_working_rules () {
+  local ids
+  ids=$(yq -p toml -r '[.rules[] | select(.state == "working") | .id] | join(" ")' "$1" 2>/dev/null) || return 1
+  [[ "$ids" == "null" ]] && return 1
+  sorted_words "$ids"
+}
+
+# The same set as the overlay recorded when it was written.
+overlay_working_rules () {
+  sorted_words "$(sed -n 's/^# base-working-rules: *//p' "$1" | head -1)"
 }
 
 compose () {
@@ -80,12 +91,15 @@ compose () {
 
 # Prints a line when herdr's own manifest no longer scores `working` from the
 # rules the overlay was written against, and nothing when it still does.
+# Returns nonzero when the manifest could not be read at all, which is a broken
+# install rather than a herdr that changed its mind, and reads identically if
+# they are allowed to share a code path.
 working_rule_drift () {
   local agent="$1" base="$2" overlay="$3"
   local recorded current
 
+  current=$(manifest_working_rules "$base") || return 1
   recorded=$(overlay_working_rules "$overlay")
-  current=$(manifest_working_rules "$base")
   [[ "$recorded" == "$current" ]] && return 0
 
   print -r -- "$agent: overlay was written against [$recorded], manifest $(manifest_version "$base") scores working from [$current]"
@@ -103,21 +117,35 @@ title. If it does, delete the overlay: pane state comes back from upstream for
 free. If it does not, update the `# base-working-rules:` line in the overlay to
 the new set. Either way the to-do clears on the next install.'
 
-report_drift () {
-  local findings="$1" revision
+broken_explanation='`herdr-agent-detection sync` could not install an overlay, so herdr is reading
+whatever it composed last, however old that is. Nothing else reports this:
+`install.sh` prints the failure and carries on so one broken overlay cannot
+abort the dotfiles install.
+
+## What to do
+
+Run the command above. It names the agent and the reason. The usual causes are
+a cached manifest herdr wrote in a shape yq cannot read, and an unwritable
+`~/.config/herdr/agent-detection`.'
+
+# Two to-dos on two latches rather than one on either. A compose failure and a
+# herdr that changed its rules want different things done about them, and a
+# shared latch would let whichever fired first suppress the other.
+report_job () {
+  local job="$1" title="$2" explanation="$3" findings="$4" revision
 
   if [[ -z "$findings" ]]; then
-    report_success herdr-agent-detection
+    report_success "$job"
     return 0
   fi
 
   revision=$(git -C "$dotfiles" rev-parse --short HEAD 2>/dev/null || print -r -- unknown)
-  report_failure herdr-agent-detection \
-    "herdr changed how it detects a working agent" \
+  report_failure "$job" \
+    "$title" \
     "herdr-agent-detection check" \
     "$findings" \
     "$revision" \
-    "$drift_explanation" \
+    "$explanation" \
     "Findings"
 }
 
@@ -129,6 +157,14 @@ sync_agent () {
   if [[ ! -s "$base" ]]; then
     print -u2 -- "herdr has no cached $agent manifest; leaving $installed as it is"
     return 0
+  fi
+
+  # `remove_orphans` will not delete a file this script did not write, so
+  # neither should this overwrite one. A hand-written override is someone's
+  # deliberate work, and silently replacing it is the same data loss either way.
+  if [[ -f "$installed" ]] && ! is_generated "$installed"; then
+    print -u2 -- "$installed was not written by this script; leaving it alone"
+    return 1
   fi
 
   composed=$(compose "$agent" "$base" "$overlay_dir/$agent.toml")
@@ -148,6 +184,10 @@ sync_agent () {
   installed_any=1
 }
 
+is_generated () {
+  [[ "$(head -1 "$1")" == "$generated_marker"* ]]
+}
+
 # A deleted overlay has to take its installed file with it, or herdr keeps
 # reading a frozen copy of the manifest it fetched the day the overlay went in.
 # Only files this script wrote are eligible: anything hand-written under
@@ -158,7 +198,7 @@ remove_orphans () {
   for installed in "$install_dir"/*.toml(N); do
     agent="${installed:t:r}"
     [[ -f "$overlay_dir/$agent.toml" ]] && continue
-    [[ "$(head -1 "$installed")" == "$generated_marker"* ]] || continue
+    is_generated "$installed" || continue
 
     rm -f "$installed" || return 1
     print -r -- "› herdr agent-detection: removed $agent, its overlay is gone"
@@ -176,7 +216,10 @@ check_agent () {
     return 1
   fi
 
-  drift=$(working_rule_drift "$agent" "$base" "$overlay_dir/$agent.toml")
+  if ! drift=$(working_rule_drift "$agent" "$base" "$overlay_dir/$agent.toml"); then
+    print -r -- "$agent: cached manifest could not be read, so drift cannot be judged"
+    return 1
+  fi
   [[ -n "$drift" ]] && print -r -- "$drift"
 
   if [[ ! -f "$installed" ]]; then
@@ -202,31 +245,48 @@ case "${1:-sync}" in
     fi
 
     installed_any=0
-    failed=0
     evaluated=0
-    findings=()
+    drifts=()
+    breaks=()
 
     for overlay in $overlays; do
       agent="${overlay:t:r}"
-      sync_agent "$agent" || failed=1
+      sync_agent "$agent" ||
+        breaks+=("$agent: could not compose or install, see the run output")
 
       [[ -s "$cache_dir/$agent.toml" ]] || continue
-      evaluated=1
-      drift=$(working_rule_drift "$agent" "$cache_dir/$agent.toml" "$overlay")
-      [[ -n "$drift" ]] && findings+=("$drift")
+      if drift=$(working_rule_drift "$agent" "$cache_dir/$agent.toml" "$overlay"); then
+        # Only a comparison that actually happened counts. Clearing the drift
+        # latch on a run that could not judge any would retire a standing to-do
+        # without anyone having looked at it.
+        evaluated=1
+        [[ -n "$drift" ]] && drifts+=("$drift")
+      else
+        breaks+=("$agent: cached manifest could not be read, so drift cannot be judged")
+      fi
     done
 
-    remove_orphans || failed=1
+    remove_orphans || breaks+=("could not remove a generated file whose overlay is gone")
 
     (( installed_any )) &&
       { herdr server reload-agent-manifests >/dev/null 2>&1 ||
         print -u2 -- "could not reload herdr agent manifests; they load on its next start" }
 
     # Nothing to compose from is not the same as nothing to report, and
-    # clearing the latch on it would swallow the next real drift.
-    (( evaluated )) && report_drift "${(F)findings}"
+    # clearing the drift latch on it would swallow the next real drift.
+    (( evaluated )) &&
+      report_job herdr-agent-detection \
+        "herdr changed how it detects a working agent" \
+        "$drift_explanation" "${(F)drifts}"
 
-    exit $failed
+    # Unconditional, because a run that composed nothing is exactly the run this
+    # to-do exists to surface. `install.sh` only prints the failure.
+    report_job herdr-agent-detection-broken \
+      "herdr agent detection overlays did not install" \
+      "$broken_explanation" "${(F)breaks}"
+
+    (( ${#breaks} == 0 )) && exit 0
+    exit 1
     ;;
 
   check)

@@ -15,8 +15,15 @@ Describe "herdr-agent-detection"
 
     # `sync` reloads herdr after it writes, and gives up on a machine with no
     # herdr at all. Neither belongs in a test of what it writes.
-    printf '#!/bin/sh\nexit 0\n' >"$root/stub/herdr"
-    chmod +x "$root/stub/herdr"
+    #
+    # `open`, `gum`, and `osascript` are here for a different reason. A drifting
+    # run files a Things to-do, and on the Mac this suite also runs on that is a
+    # real to-do in the real Things. The drift path is one edited fixture away at
+    # all times, so the stubs are not optional.
+    for cmd in herdr open gum osascript; do
+      printf '#!/bin/sh\nexit 0\n' >"$root/stub/$cmd"
+      chmod +x "$root/stub/$cmd"
+    done
   }
 
   cleanup() {
@@ -133,6 +140,72 @@ TOML
       test -e "$override_dir/codex.toml"
     }
     When call hand_written
+    The status should be success
+  End
+
+  It "refuses to overwrite a claude override it did not generate"
+    protects_hand_written() {
+      write_base
+      printf '%s\n' 'id = "claude"' >"$installed"
+      run_script sync >/dev/null 2>&1
+      cat "$installed"
+    }
+    When call protects_hand_written
+    The status should be success
+    The output should equal 'id = "claude"'
+  End
+
+  # The rule the whole change exists for, tested against the pattern as it is
+  # actually written in the overlay rather than a copy that can drift from it.
+  overlay_pattern() {
+    sed -n "s/^line_regex = \['\(.*\)'\]\$/\1/p" \
+      "$SHELLSPEC_PROJECT_ROOT/agent-detection/claude.toml"
+  }
+
+  It "matches every form of the live spinner line"
+    spinner_lines_match() {
+      local rx line
+      rx=$(overlay_pattern)
+      [ -n "$rx" ] || { echo "no line_regex found in the overlay"; return 1; }
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        printf '%s\n' "$line" | rg -q "$rx" || { echo "should have matched: $line"; return 1; }
+      done <<'LINES'
+✻ Crunching… (18m 20s · ↓ 53.5k tokens)
+✢ Twisting… (56s · ↓ 1.0k tokens)
+✽ Thinking… (1h 2m 3s · ↓ 900 tokens)
+✻ Crunching… (esc to interrupt)
+LINES
+    }
+    When call spinner_lines_match
+    The status should be success
+  End
+
+  # A pane pinned at working while idle is worse than the flapping being fixed,
+  # so these are the cases that matter most. Each is a real line seen in a
+  # Claude Code pane, or the spinner quoted in prose the way this repo's own
+  # commit message quotes it.
+  It "does not match transcript text that merely looks like a spinner"
+    lookalikes_reject() {
+      local rx line
+      rx=$(overlay_pattern)
+      [ -n "$rx" ] || { echo "no line_regex found in the overlay"; return 1; }
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        printf '%s\n' "$line" | rg -q "$rx" && { echo "should not have matched: $line"; return 1; }
+      done <<'LINES'
+  ✻ Crunching… (18m 20s · ↓ 53.5k tokens)
+❯ ✻ Crunching… (18m 20s · ↓ 53.5k tokens)
+❯ ✻ Crunching… (esc to interrupt)
+- Building… (2m 10s elapsed)
+⏺ Downloading model weights… (4m remaining)
+⏺ Running 4 shell commands…
+✻ Churned for 33m 23s
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+LINES
+      return 0
+    }
+    When call lookalikes_reject
     The status should be success
   End
 End

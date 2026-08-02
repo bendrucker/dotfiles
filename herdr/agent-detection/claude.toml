@@ -22,12 +22,42 @@
 id = "local_spinner_line_working"
 state = "working"
 # Above `live_prompt_box` (950), so the input box stops reading as idle mid-turn.
-# Below every blocked rule (975 and up), so a permission prompt still wins.
+#
+# It does not sit below the blocked rules: `bash_permission_prompt` (850),
+# `generic_permission_prompt` (840), and `legacy_no_prompt_blocker` (300) all
+# rank under this. That ordering is upstream's, and `live_prompt_box` at 950
+# outranks them too. What keeps a permission prompt visible is the `not` block
+# below, copied from `live_prompt_box`: the idle rule stands down on a prompt
+# screen so the blocked rules can win, and this rule has to stand down with it.
+# Otherwise a stray match here would report `working` at the one moment the
+# agent is waiting on input.
 priority = 960
-# The spinner sits around 7 non-empty lines above the bottom, once the footer,
-# rules, and input box are counted.
-region = "bottom_non_empty_lines(10)"
+# Counted from the bottom, the spinner sits above the input box, its two rules,
+# and the footer. The footer is not a fixed height: Claude Code draws a row per
+# running subagent, which measured 7 non-empty lines to the spinner with none
+# running and 9 with two. A tight region silently stops matching exactly when a
+# pane is busiest, so this leaves room for the footer to grow rather than
+# fitting today's.
+region = "bottom_non_empty_lines(20)"
 visible_working = true
 # Matches `✻ Crunching… (18m 20s · ↓ 53.5k tokens)` and the older
-# `(esc to interrupt)` form of the same line.
-line_regex = ['^\s*\S .*…\s*\((?:\d+[hms]|esc to interrupt)']
+# `(esc to interrupt)` form.
+#
+# A region this deep holds ordinary transcript text, so the pattern carries the
+# precision instead. Anchored at column 0, where Claude Code draws its own
+# chrome and never indented response prose. `❯` is excluded so a spinner line
+# pasted into the input box does not match itself. The parenthetical has to
+# close at end of line and hold either `esc to interrupt` or a duration
+# followed by the `·` separator, which is what separates a live spinner from
+# prose like `- Building… (2m 10s elapsed)`.
+#
+# A pane pinned at `working` while idle is worse than the flapping this fixes,
+# which is why every one of those narrowings is here.
+line_regex = ['^[^❯\s] [^(]*…\s*\((?:\d+[hms][^)]*·|esc to interrupt)[^)]*\)\s*$']
+not = [
+  { contains = ["enter to select"] },
+  { contains = ["esc to cancel"] },
+  { contains = ["tab/arrow keys"] },
+  { contains = ["arrow keys to navigate"] },
+  { contains = ["↑/↓ to navigate"] },
+]
