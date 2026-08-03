@@ -103,6 +103,45 @@ TOML
     The output should include "can no longer be recomposed"
   End
 
+  # Answers as herdr's own manifest status would. The default stub prints
+  # nothing, which stands in for a server that is not running, and the script
+  # has to treat that as no answer rather than a bad one.
+  stub_herdr_serving() {
+    cat >"$root/stub/herdr" <<SH
+#!/bin/sh
+if [ "\$1" = "server" ] && [ "\$2" = "agent-manifests" ]; then
+  printf '{"result":{"manifests":[{"agent":"claude","source":"%s"}]}}\n' "$1"
+fi
+exit 0
+SH
+    chmod +x "$root/stub/herdr"
+  }
+
+  # Installing to a path herdr no longer reads composes, validates, and writes
+  # without complaint. Only herdr can say whether the file landed anywhere.
+  It "fails when herdr reports it is reading a different manifest"
+    not_served() {
+      write_base
+      run_script sync >/dev/null || return
+      stub_herdr_serving /somewhere/else.toml
+      run_script sync 2>&1
+    }
+    When call not_served
+    The status should be failure
+    The output should include "herdr is reading /somewhere/else.toml"
+  End
+
+  It "passes when herdr reports it is reading what was installed"
+    served() {
+      write_base
+      run_script sync >/dev/null || return
+      stub_herdr_serving "$installed"
+      run_script sync 2>&1
+    }
+    When call served
+    The status should be success
+  End
+
   It "reports an install left behind by a newer manifest"
     stale() {
       write_base
