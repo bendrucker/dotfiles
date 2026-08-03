@@ -306,6 +306,11 @@ case "${1:-sync}" in
       exit 0
     fi
 
+    # launchd watches this directory to rerun sync the moment herdr fetches a
+    # manifest, and it can only watch a path that exists. herdr creates it on
+    # its first run, which may come after this one on a new machine.
+    mkdir -p "$cache_dir"
+
     installed_any=0
     evaluated=0
     drifts=()

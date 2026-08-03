@@ -29,7 +29,9 @@ install_launch_agent() {
 
   launchctl bootout "gui/$UID/$label" 2>/dev/null || true
 
-  cp "$plist_src" "$plist_dst"
+  # launchd expands nothing outside ProgramArguments, which the shell handles,
+  # so keys it reads itself (WatchPaths) carry __HOME__ and get it here.
+  sed "s|__HOME__|$HOME|g" "$plist_src" >"$plist_dst"
 
   # bootout of a running service is asynchronous; an immediate bootstrap can
   # race the teardown and fail, so retry briefly.
@@ -78,6 +80,11 @@ install_launch_agent com.user.theme-sync.plist "theme-sync watcher"
 # aw-qt supervises the ActivityWatch capture stack. This LaunchAgent is the sole
 # autostart, so leave AW's built-in login item disabled to avoid a double launch.
 install_launch_agent com.user.activitywatch.plist "ActivityWatch capture"
+
+# Recompose the agent detection overrides when herdr fetches a manifest, rather
+# than leaving a new one shadowed until the nightly install. The job no-ops on a
+# machine without herdr, so it installs in every mode like the watcher above.
+install_launch_agent com.user.herdr-agent-detection.plist "herdr agent detection watcher"
 
 # Only setup upgrade if we're in separate-directory mode (not a symlink)
 if [[ ! -L "$HOME/.dotfiles" ]]; then
