@@ -166,7 +166,17 @@ sync_agent () {
   local composed
 
   if [[ ! -s "$base" ]]; then
-    print -u2 -- "herdr has no cached $agent manifest; leaving $installed as it is"
+    # Nothing cached and nothing installed is a machine that has not run herdr
+    # yet, and the first run fixes it. Nothing cached with a generated file
+    # already in place is the opposite: herdr is reading a composed manifest
+    # that can no longer be rebuilt, from a cache path this script only knows
+    # by convention. Every other path here would leave that quiet, so it has to
+    # be a failure, or the to-do that exists to report it clears as success.
+    if [[ -f "$installed" ]] && is_generated "$installed"; then
+      print -u2 -- "herdr has no cached $agent manifest, so $installed can no longer be recomposed"
+      return 1
+    fi
+    print -u2 -- "herdr has no cached $agent manifest; nothing to compose"
     return 0
   fi
 
