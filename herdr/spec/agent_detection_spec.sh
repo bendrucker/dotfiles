@@ -88,6 +88,21 @@ TOML
     The status should be success
   End
 
+  # The other direction of the same situation: something is installed, so herdr
+  # is serving a composed manifest, and the cache it was composed from is gone.
+  # Silence here would leave that file frozen for good.
+  It "fails when a cache it already composed from has gone missing"
+    lost_base() {
+      write_base
+      run_script sync >/dev/null || return
+      rm -f "$base"
+      run_script sync 2>&1
+    }
+    When call lost_base
+    The status should be failure
+    The output should include "can no longer be recomposed"
+  End
+
   It "reports an install left behind by a newer manifest"
     stale() {
       write_base
