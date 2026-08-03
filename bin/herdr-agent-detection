@@ -44,6 +44,14 @@ if ! command -v yq >/dev/null 2>&1; then
   exit 1
 fi
 
+# jq reads herdr's own report of which manifest it ended up using. Missing, that
+# check cannot run, and a check that cannot run has to be loud for the same
+# reason as the one above rather than pass by default.
+if ! command -v jq >/dev/null 2>&1; then
+  print -u2 -- "jq not found; cannot read herdr's agent manifest status"
+  exit 1
+fi
+
 manifest_version () {
   yq -p toml -r '.version // "unknown"' "$1" 2>/dev/null || print -r -- unknown
 }
@@ -114,6 +122,29 @@ working_rule_drift () {
   [[ "$recorded" == "$current" ]] && return 0
 
   print -r -- "$agent: overlay was written against [$recorded], manifest $(manifest_version "$base") scores working from [$current]"
+}
+
+# Composing onto herdr's cache covers one of the two paths this script knows
+# only by convention. This covers the other: the directory it installs into.
+# A file written where herdr no longer looks composes, validates, and installs
+# without complaint, and herdr goes on reading the manifest it fetched, so the
+# detection gap comes back looking like herdr never had the rule.
+#
+# Prints a line when herdr reports it is reading something else, nothing when it
+# reports ours, and returns nonzero when herdr cannot be asked at all. The
+# server is not running during every install, and no answer must not read as a
+# bad one.
+override_not_served () {
+  local agent="$1"
+  local installed="$install_dir/$agent.toml"
+  local serving
+
+  serving=$(herdr server agent-manifests --json 2>/dev/null |
+    jq -er --arg agent "$agent" \
+      '.result.manifests[] | select(.agent == $agent) | .source' 2>/dev/null) || return 1
+
+  [[ "$serving" == "$installed" ]] && return 0
+  print -r -- "$agent: herdr is reading $serving, not $installed"
 }
 
 drift_explanation='The overlays under `herdr/agent-detection` carry detection rules herdr'\''s own
@@ -233,7 +264,7 @@ remove_orphans () {
 check_agent () {
   local agent="$1"
   local base="$cache_dir/$agent.toml" installed="$install_dir/$agent.toml"
-  local drift
+  local drift unserved
 
   if [[ ! -s "$base" ]]; then
     print -r -- "$agent: herdr has no cached manifest to compose from"
@@ -254,6 +285,13 @@ check_agent () {
   if [[ "$(compose "$agent" "$base" "$overlay_dir/$agent.toml")" != "$(<"$installed")" ]]; then
     print -r -- "$agent: $installed is behind manifest $(manifest_version "$base") or the overlay"
     return 1
+  fi
+
+  if unserved=$(override_not_served "$agent"); then
+    if [[ -n "$unserved" ]]; then
+      print -r -- "$unserved"
+      return 1
+    fi
   fi
 
   [[ -z "$drift" ]]
@@ -295,6 +333,19 @@ case "${1:-sync}" in
     (( installed_any )) &&
       { herdr server reload-agent-manifests >/dev/null 2>&1 ||
         print -u2 -- "could not reload herdr agent manifests; they load on its next start" }
+
+    # After the reload, so this reads what herdr settled on rather than what it
+    # was holding before this run.
+    for overlay in $overlays; do
+      agent="${overlay:t:r}"
+      [[ -f "$install_dir/$agent.toml" ]] || continue
+      if unserved=$(override_not_served "$agent"); then
+        if [[ -n "$unserved" ]]; then
+          print -u2 -- "$unserved"
+          breaks+=("$unserved")
+        fi
+      fi
+    done
 
     # Nothing to compose from is not the same as nothing to report, and
     # clearing the drift latch on it would swallow the next real drift.
