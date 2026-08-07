@@ -68,3 +68,6 @@ key = "prefix+d"
 type = "shell"
 command = "herdr plugin action invoke toggle --plugin persiyanov.reviewr"
 description = "reviewr diff (toggle)"
+
+[ui]
+agent_panel_sort = "priority"
