@@ -4,15 +4,25 @@
 onboarding = false
 
 [update]
-# The version is pinned in mise.toml and bumped by Renovate, so a background
-# check can only ever nag about a version this machine won't install.
-# manifest_check stays on: that's the agent-detection manifest, not the binary.
+# herdr installs via Homebrew (herdr/Brewfile), upgraded by the nightly
+# dotfiles-upgrade run of brew. Declaring stable here (rather than the
+# `herdr channel set preview` run once by hand) makes the tracked config
+# authoritative and keeps `herdr update` from fighting the brew-managed
+# binary. version_check stays off since brew already owns upgrades and a
+# background nag can't act on itself. manifest_check stays on since that's
+# the agent-detection manifest, not the binary.
+channel = "stable"
 version_check = false
 
 [keys]
 # Match tmux's C-s so muscle memory carries over; when nested, double the
 # prefix (tmux send-prefix) to reach herdr.
 prefix = "ctrl+s"
+
+# Native worktree creation lands in ~/.herdr/worktrees, outside the worktrunk
+# layout (~/src/.worktrees/{owner}/{repo}/{branch}). Unbound in favor of the
+# worktrunk plugin bindings below.
+new_worktree = ""
 
 [theme]
 # ghostty already flips Mocha/Latte with the system appearance and reports the
@@ -69,5 +79,25 @@ type = "shell"
 command = "herdr plugin action invoke toggle --plugin persiyanov.reviewr"
 description = "reviewr diff (toggle)"
 
+# worktrunk — routes worktree creation through wt instead of herdr's native
+# flow (see new_worktree above). prefix+shift+g reuses the native flow's key
+# so muscle memory carries. prefix+ctrl+g is the stacking entry point.
+[[keys.command]]
+key = "prefix+shift+g"
+type = "plugin_action"
+command = "worktrunk.open"
+description = "worktree: switch / create (default branch)"
+
+[[keys.command]]
+key = "prefix+ctrl+g"
+type = "plugin_action"
+command = "worktrunk.open-current"
+description = "worktree: switch / create (current branch)"
+
 [ui]
 agent_panel_sort = "priority"
+
+[experimental]
+# herdr server restarts (done for config/plugin changes) currently lose pane
+# screen history. This preserves it across restarts.
+pane_history = true
