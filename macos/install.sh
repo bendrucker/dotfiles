@@ -11,44 +11,8 @@ do
   bash "$file"
 done
 
-install_launch_agent() {
-  local plist_name="$1"
-  local description="$2"
-  local plist_src="$ZSH/macos/$plist_name"
-  local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
-  local label="${plist_name%.plist}"
-
-  if [[ ! -f "$plist_src" ]]; then
-    gum log --level warn "$description plist not found, skipping"
-    return
-  fi
-
-  gum log --level info "setting up $description"
-
-  mkdir -p "$HOME/Library/LaunchAgents"
-
-  launchctl bootout "gui/$UID/$label" 2>/dev/null || true
-
-  # launchd expands nothing outside ProgramArguments, which the shell handles,
-  # so keys it reads itself (WatchPaths) carry __HOME__ and get it here.
-  sed "s|__HOME__|$HOME|g" "$plist_src" >"$plist_dst"
-
-  # bootout of a running service is asynchronous; an immediate bootstrap can
-  # race the teardown and fail, so retry briefly.
-  local _attempt
-  for _attempt in 1 2 3 4 5; do
-    launchctl bootstrap "gui/$UID" "$plist_dst" 2>/dev/null && break
-    sleep 0.5
-  done
-
-  if launchctl print "gui/$UID/$label" >/dev/null 2>&1; then
-    gum log --level info "$description launchd agent installed"
-  else
-    gum log --level error "$description launchd agent failed to load; run: launchctl bootstrap gui/$UID $plist_dst"
-    launchd_failed=1
-    return 1
-  fi
-}
+# shellcheck source=lib/launch-agent.sh
+source "$ZSH/macos/lib/launch-agent.sh"
 
 setup_dotfiles_upgrade() {
   # Remove old sync job (replaced by upgrade job which includes sync)
