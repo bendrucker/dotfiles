@@ -185,9 +185,8 @@ drop_source() {
     "$manifest" >"$manifest.next" && mv "$manifest.next" "$manifest"
 }
 
-# A marketplace Claude Code materialized from GCS rather than cloning. It has no
-# .git, and records the commit it was built from in .gcs-sha, written without a
-# trailing newline.
+# A marketplace Claude Code materialized from GCS. It has no .git, and records
+# the commit it was built from in .gcs-sha, written without a trailing newline.
 materialize_marketplace() {
   local marketplace="$1" sha="$2"
   rm -rf "$plugins/marketplaces/$marketplace/.git"
