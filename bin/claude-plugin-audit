@@ -28,9 +28,9 @@ typeset -g script_path=${0:A}
 
 # Neither side of the comparison owns these. .in_use and .orphaned_at are
 # runtime markers Claude Code writes into a payload, node_modules is an
-# install-time artifact, and .git belongs to a marketplace whose whole repo is
-# the plugin.
-typeset -gra payload_noise=(.in_use .orphaned_at node_modules .git)
+# install-time artifact, and .git and .gcs-sha are the provenance markers of a
+# marketplace whose whole tree is the plugin.
+typeset -gra payload_noise=(.in_use .orphaned_at node_modules .git .gcs-sha)
 
 # Where compare_payload leaves what diff could not read. Named off the pid
 # rather than mktemp, which ignores TMPDIR on macOS and so fails under a sandbox
@@ -171,31 +171,50 @@ audit_external_plugin () {
   print -r -- "stale"$'\t'"installed ${actual[1,12]}, $url $ref is ${expected[1,12]}"
 }
 
-# Compare a marketplace clone against the ref its source pins. Every other
-# check reads these clones as ground truth, and `claude plugin marketplace
-# update` warns rather than fails, so a clone that quietly stopped advancing
-# would match a stale install and hide the drift from both sides.
+# Compare a marketplace tree against the ref its source pins. Every other check
+# reads these trees as ground truth, and `claude plugin marketplace update`
+# warns rather than fails, so a tree that quietly stopped advancing would match
+# a stale install and hide the drift from both sides.
+#
+# Claude Code no longer clones every marketplace. Some it materializes from GCS,
+# recording the commit it built the tree from in a .gcs-sha file at the root
+# instead of a .git directory. Either marker answers the same question.
 audit_marketplace () {
   local location=$1 url=$2 ref=$3
-  local head expected
+  local held expected origin
 
   [[ -n "$url" ]] || { print -r -- "unknown"$'\t'"source names no repository"; return }
-  [[ -d "$location/.git" ]] || {
-    print -r -- "unknown"$'\t'"not a git clone, so freshness is unverifiable"
-    return
-  }
 
-  head=$(git -C "$location" rev-parse HEAD 2>/dev/null) || {
-    print -r -- "unknown"$'\t'"clone has no HEAD"
+  if [[ -d "$location/.git" ]]; then
+    origin=cloned
+    held=$(git -C "$location" rev-parse HEAD 2>/dev/null) || {
+      print -r -- "unknown"$'\t'"clone has no HEAD"
+      return
+    }
+  elif [[ -f "$location/.gcs-sha" ]]; then
+    origin=materialized
+    # Written without a trailing newline, so $(<) reads it whole, and the trim
+    # covers a copy that picked one up. stderr is dropped because a file the
+    # audit cannot read leaves $held empty, which the shape check below already
+    # reports. Anything that is not a commit is unverifiable rather than stale:
+    # a truncated or half-written marker says nothing about the tree.
+    { held=${$(<"$location/.gcs-sha")//[[:space:]]/} } 2>/dev/null
+    [[ "$held" =~ '^[0-9a-f]{40}$' ]] || {
+      print -r -- "unknown"$'\t'"records no readable source commit"
+      return
+    }
+  else
+    print -r -- "unknown"$'\t'"neither a git clone nor GCS-materialized, so freshness is unverifiable"
     return
-  }
+  fi
+
   expected=$(resolve_ref "$url" "$ref") || {
     print -r -- "unknown"$'\t'"$url has no $ref"
     return
   }
 
-  [[ "$head" == "$expected" ]] && { print -r -- "current"$'\t'; return }
-  print -r -- "stale"$'\t'"cloned at ${head[1,12]}, $url $ref is ${expected[1,12]}"
+  [[ "$held" == "$expected" ]] && { print -r -- "current"$'\t'; return }
+  print -r -- "stale"$'\t'"$origin at ${held[1,12]}, $url $ref is ${expected[1,12]}"
 }
 
 marketplace_inventory () {

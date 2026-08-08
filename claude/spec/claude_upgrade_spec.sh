@@ -185,6 +185,27 @@ drop_source() {
     "$manifest" >"$manifest.next" && mv "$manifest.next" "$manifest"
 }
 
+# A marketplace Claude Code materialized from GCS. It has no .git, and records
+# the commit it was built from in .gcs-sha, written without a trailing newline.
+materialize_marketplace() {
+  local marketplace="$1" sha="$2"
+  rm -rf "$plugins/marketplaces/$marketplace/.git"
+  printf '%s' "$sha" >"$plugins/marketplaces/$marketplace/.gcs-sha"
+}
+
+# A single-plugin marketplace, whose whole tree is the payload. The install gets
+# the tree without the provenance marker, which belongs to the marketplace.
+root_source() {
+  local name="$1" marketplace="$2" payload="$3"
+  local manifest="$plugins/marketplaces/$marketplace/.claude-plugin/marketplace.json"
+  jq --arg name "$name" \
+    '.plugins |= map(if .name == $name then .source = "." else . end)' \
+    "$manifest" >"$manifest.next" && mv "$manifest.next" "$manifest"
+  rm -rf "$payload"
+  cp -R "$plugins/marketplaces/$marketplace" "$payload"
+  rm -f "$payload/.gcs-sha" "$payload/.git"
+}
+
 BeforeEach 'setup'
 
 # `zsh -f` skips ~/.zshenv, which after bootstrap re-runs `brew shellenv` and
@@ -298,14 +319,55 @@ Describe "claude-plugin-audit"
     The output should include "stale"
   End
 
+  # Claude Code materializes some marketplaces from GCS, leaving the source
+  # commit in .gcs-sha. Treating those as unverifiable demoted every plugin
+  # served by the official marketplace along with it.
+  It "vouches for a GCS marketplace whose recorded sha matches its source"
+    materialize_marketplace first "$recorded_sha"
+    When call run_audit
+    The status should be success
+    The output should include "6 checks current"
+  End
+
+  It "flags a GCS marketplace behind its source"
+    materialize_marketplace first "3333333333333333333333333333333333333333"
+    When call run_audit
+    The status should be failure
+    The output should include "marketplace/first"
+    The output should include "stale"
+    The output should include "333333333333"
+  End
+
+  # .gcs-sha belongs to the marketplace, not to the payload installed from it,
+  # so on a marketplace whose whole tree is the plugin it sits on one side of
+  # the comparison only. Left in, it reports a current payload as stale nightly.
+  It "does not count a marketplace's own .gcs-sha as payload drift"
+    materialize_marketplace first "$recorded_sha"
+    root_source alpha first "$plugins/cache/first/alpha/1.0.0"
+    When call run_audit
+    The status should be success
+    The output should include "6 checks current"
+  End
+
+  # A marker that is not a commit says nothing about the tree, so it belongs
+  # with the unverifiable results rather than being reported as drift.
+  It "reports a GCS marketplace with an unusable .gcs-sha as unverified"
+    materialize_marketplace first "not-a-commit"
+    When call run_audit
+    The status should be success
+    The output should include "marketplace/first"
+    The output should include "no readable source commit"
+  End
+
   # A comparison that could not be made is a flaky network far more often than
   # a real change, so failing on one would file a to-do the next run clears.
-  It "reports what it cannot verify without failing"
+  It "reports a marketplace carrying neither marker as unverified without failing"
     rm -rf "$plugins/marketplaces/first/.git"
     When call run_audit
     The status should be success
     The output should include "marketplace/first"
     The output should include "unverified"
+    The output should include "neither a git clone"
   End
 
   # A stale clone matches every stale payload under it, so calling those current
