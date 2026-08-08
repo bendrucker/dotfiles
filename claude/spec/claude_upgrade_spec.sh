@@ -185,6 +185,15 @@ drop_source() {
     "$manifest" >"$manifest.next" && mv "$manifest.next" "$manifest"
 }
 
+# A marketplace Claude Code materialized from GCS rather than cloning. It has no
+# .git, and records the commit it was built from in .gcs-sha, written without a
+# trailing newline.
+materialize_marketplace() {
+  local marketplace="$1" sha="$2"
+  rm -rf "$plugins/marketplaces/$marketplace/.git"
+  printf '%s' "$sha" >"$plugins/marketplaces/$marketplace/.gcs-sha"
+}
+
 BeforeEach 'setup'
 
 # `zsh -f` skips ~/.zshenv, which after bootstrap re-runs `brew shellenv` and
@@ -298,14 +307,34 @@ Describe "claude-plugin-audit"
     The output should include "stale"
   End
 
+  # Claude Code materializes some marketplaces from GCS instead of cloning them,
+  # leaving the source commit in .gcs-sha. Treating those as unverifiable
+  # demoted every plugin served by the official marketplace along with it.
+  It "vouches for a GCS marketplace whose recorded sha matches its source"
+    materialize_marketplace first "$recorded_sha"
+    When call run_audit
+    The status should be success
+    The output should include "6 checks current"
+  End
+
+  It "flags a GCS marketplace behind its source"
+    materialize_marketplace first "3333333333333333333333333333333333333333"
+    When call run_audit
+    The status should be failure
+    The output should include "marketplace/first"
+    The output should include "stale"
+    The output should include "333333333333"
+  End
+
   # A comparison that could not be made is a flaky network far more often than
   # a real change, so failing on one would file a to-do the next run clears.
-  It "reports what it cannot verify without failing"
+  It "reports a marketplace carrying neither marker as unverified without failing"
     rm -rf "$plugins/marketplaces/first/.git"
     When call run_audit
     The status should be success
     The output should include "marketplace/first"
     The output should include "unverified"
+    The output should include "neither a git clone"
   End
 
   # A stale clone matches every stale payload under it, so calling those current
