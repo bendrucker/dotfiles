@@ -8,4 +8,6 @@ cask 'commander'
 brew 'agent-browser'
 brew 'ast-grep'
 brew 'rjyo/moshi/moshi-hook', start_service: true
-brew 'steipete/tap/peekaboo'
+if OS.mac?
+  brew 'steipete/tap/peekaboo'
+end
