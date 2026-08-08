@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2329,SC2016
+
+Describe "herdr-agent-detection"
+  script="$SHELLSPEC_PROJECT_ROOT/../bin/herdr-agent-detection"
+
+  setup() {
+    root=$(mktemp -d)
+    export XDG_STATE_HOME="$root/state"
+    export XDG_CONFIG_HOME="$root/config"
+    base="$XDG_STATE_HOME/herdr/agent-detection/remote/claude.toml"
+    override_dir="$XDG_CONFIG_HOME/herdr/agent-detection"
+    installed="$override_dir/claude.toml"
+    mkdir -p "${base%/*}" "$override_dir" "$root/stub" "$root/empty"
+
+    # `sync` reloads herdr after it writes, and gives up on a machine with no
+    # herdr at all. Neither belongs in a test of what it writes.
+    #
+    # `open`, `gum`, and `osascript` are here for a different reason. A drifting
+    # run files a Things to-do, and on the Mac this suite also runs on that is a
+    # real to-do in the real Things. The drift path is one edited fixture away at
+    # all times, so the stubs are not optional.
+    for cmd in herdr open gum osascript; do
+      printf '#!/bin/sh\nexit 0\n' >"$root/stub/$cmd"
+      chmod +x "$root/stub/$cmd"
+    done
+  }
+
+  cleanup() {
+    rm -rf "$root"
+  }
+
+  BeforeEach 'setup'
+  AfterEach 'cleanup'
+
+  # The script is zsh, so ~/.zshenv runs and brew shellenv in it can put the
+  # real herdr back ahead of the stub. An empty ZDOTDIR leaves $PATH alone.
+  run_script() {
+    PATH="$root/stub:$PATH" ZDOTDIR="$root/empty" "$script" "$@"
+  }
+
+  # Stands in for herdr's own manifest, carrying the working rules the shipped
+  # overlay records and the idle rule it outranks.
+  write_base() {
+    cat >"$base" <<'TOML'
+id = "claude"
+version = "2026.01.01.1"
+min_engine_version = 2
+
+[[rules]]
+id = "osc_title_working"
+state = "working"
+priority = 1100
+region = "osc_title"
+
+[[rules]]
+id = "btw_overlay_working"
+state = "working"
+priority = 975
+region = "bottom_non_empty_lines(5)"
+
+[[rules]]
+id = "live_prompt_box"
+state = "idle"
+priority = 950
+region = "prompt_box_body"
+TOML
+  }
+
+  It "installs the cached manifest with the overlay appended"
+    composed() {
+      write_base
+      run_script sync >/dev/null || return
+      cat "$installed"
+    }
+    When call composed
+    The status should be success
+    The output should include 'id = "live_prompt_box"'
+    The output should include 'id = "local_spinner_line_working"'
+  End
+
+  It "installs nothing when herdr has cached no manifest"
+    without_base() {
+      run_script sync 2>/dev/null || return
+      test ! -e "$installed"
+    }
+    When call without_base
+    The status should be success
+  End
+
+  # The other direction of the same situation: something is installed, so herdr
+  # is serving a composed manifest, and the cache it was composed from is gone.
+  # Silence here would leave that file frozen for good.
+  It "fails when a cache it already composed from has gone missing"
+    lost_base() {
+      write_base
+      run_script sync >/dev/null || return
+      rm -f "$base"
+      run_script sync 2>&1
+    }
+    When call lost_base
+    The status should be failure
+    The output should include "can no longer be recomposed"
+  End
+
+  # Answers as herdr's own manifest status would. The default stub prints
+  # nothing, which stands in for a server that is not running, and the script
+  # has to treat that as no answer rather than a bad one.
+  stub_herdr_serving() {
+    cat >"$root/stub/herdr" <<SH
+#!/bin/sh
+if [ "\$1" = "server" ] && [ "\$2" = "agent-manifests" ]; then
+  printf '{"result":{"manifests":[{"agent":"claude","source":"%s"}]}}\n' "$1"
+fi
+exit 0
+SH
+    chmod +x "$root/stub/herdr"
+  }
+
+  # Installing to a path herdr no longer reads composes, validates, and writes
+  # without complaint. Only herdr can say whether the file landed anywhere.
+  It "fails when herdr reports it is reading a different manifest"
+    not_served() {
+      write_base
+      run_script sync >/dev/null || return
+      stub_herdr_serving /somewhere/else.toml
+      run_script sync 2>&1
+    }
+    When call not_served
+    The status should be failure
+    The output should include "herdr is reading /somewhere/else.toml"
+  End
+
+  It "passes when herdr reports it is reading what was installed"
+    served() {
+      write_base
+      run_script sync >/dev/null || return
+      stub_herdr_serving "$installed"
+      run_script sync 2>&1
+    }
+    When call served
+    The status should be success
+  End
+
+  It "reports an install left behind by a newer manifest"
+    stale() {
+      write_base
+      run_script sync >/dev/null
+      sed 's/2026.01.01.1/2026.02.02.1/' "$base" >"$base.new" && mv "$base.new" "$base"
+      run_script check
+    }
+    When call stale
+    The status should be failure
+    The output should include "is behind manifest 2026.02.02.1"
+  End
+
+  It "reports a manifest that changed which of its rules score working"
+    drifted() {
+      write_base
+      run_script sync >/dev/null
+      cat >>"$base" <<'TOML'
+
+[[rules]]
+id = "screen_spinner_working"
+state = "working"
+priority = 960
+region = "bottom_non_empty_lines(10)"
+TOML
+      run_script check
+    }
+    When call drifted
+    The status should be failure
+    The output should include "scores working from"
+    The output should include "screen_spinner_working"
+  End
+
+  It "takes back a file it generated once its overlay is gone"
+    orphan() {
+      write_base
+      printf '%s\n' "# Generated by bin/herdr-agent-detection: codex" \
+        >"$override_dir/codex.toml"
+      run_script sync >/dev/null || return
+      test ! -e "$override_dir/codex.toml"
+    }
+    When call orphan
+    The status should be success
+  End
+
+  It "leaves an override it did not generate alone"
+    hand_written() {
+      write_base
+      printf '%s\n' 'id = "codex"' >"$override_dir/codex.toml"
+      run_script sync >/dev/null || return
+      test -e "$override_dir/codex.toml"
+    }
+    When call hand_written
+    The status should be success
+  End
+
+  It "refuses to overwrite a claude override it did not generate"
+    protects_hand_written() {
+      write_base
+      printf '%s\n' 'id = "claude"' >"$installed"
+      run_script sync >/dev/null 2>&1
+      cat "$installed"
+    }
+    When call protects_hand_written
+    The status should be success
+    The output should equal 'id = "claude"'
+  End
+
+  # The rule the whole change exists for, tested against the pattern as it is
+  # actually written in the overlay rather than a copy that can drift from it.
+  #
+  # Every fixture below carries a leading `|>` that the test strips. Without it
+  # this file would hold spinner lines at column 0, which is exactly what the
+  # rule matches, and reading it in a pane would pin that pane at working while
+  # it sat idle. A test for a screen-scraping rule has to stay off the screen.
+  # Two characters, not one: a bare `|` before an indented fixture reproduces
+  # the `<non-space><space>` opening the rule keys on, and matches again.
+  overlay_pattern() {
+    sed -n "s/^line_regex = \['\(.*\)'\]\$/\1/p" \
+      "$SHELLSPEC_PROJECT_ROOT/agent-detection/claude.toml"
+  }
+
+  It "matches every form of the live spinner line"
+    spinner_lines_match() {
+      local rx line
+      rx=$(overlay_pattern)
+      [ -n "$rx" ] || { echo "no line_regex found in the overlay"; return 1; }
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        line=${line#|>}
+        printf '%s\n' "$line" | rg -q "$rx" || { echo "should have matched: $line"; return 1; }
+      done <<'LINES'
+|>✻ Crunching… (18m 20s · ↓ 53.5k tokens)
+|>✢ Twisting… (56s · ↓ 1.0k tokens)
+|>✽ Thinking… (1h 2m 3s · ↓ 900 tokens)
+|>✻ Crunching… (esc to interrupt)
+LINES
+    }
+    When call spinner_lines_match
+    The status should be success
+  End
+
+  # A pane pinned at working while idle is worse than the flapping being fixed,
+  # so these are the cases that matter most. Each is a real line seen in a
+  # Claude Code pane, or the spinner quoted in prose the way this repo's own
+  # commit message quotes it.
+  It "does not match transcript text that merely looks like a spinner"
+    lookalikes_reject() {
+      local rx line
+      rx=$(overlay_pattern)
+      [ -n "$rx" ] || { echo "no line_regex found in the overlay"; return 1; }
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        line=${line#|>}
+        printf '%s\n' "$line" | rg -q "$rx" && { echo "should not have matched: $line"; return 1; }
+      done <<'LINES'
+|>  ✻ Crunching… (18m 20s · ↓ 53.5k tokens)
+|>❯ ✻ Crunching… (18m 20s · ↓ 53.5k tokens)
+|>❯ ✻ Crunching… (esc to interrupt)
+|>- Building… (2m 10s elapsed)
+|>⏺ Downloading model weights… (4m remaining)
+|>⏺ Running 4 shell commands…
+|>✻ Churned for 33m 23s
+|>  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+LINES
+      return 0
+    }
+    When call lookalikes_reject
+    The status should be success
+  End
+End

@@ -15,6 +15,15 @@ Describe "neovim"
     The status should be success
   End
 
+  It "resolves the configured statusline theme"
+    check_statusline() {
+      nvim --headless -c 'luafile spec/support/statusline_check.lua' 2>&1
+    }
+    When call check_statusline
+    The status should be success
+    The output should include "resolves"
+  End
+
   It "installs a working parser for every declared treesitter language"
     check_treesitter() {
       nvim --headless -c 'luafile spec/support/treesitter_check.lua' 2>&1

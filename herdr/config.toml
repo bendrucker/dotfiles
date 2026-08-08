@@ -94,6 +94,9 @@ type = "plugin_action"
 command = "worktrunk.open-current"
 description = "worktree: switch / create (current branch)"
 
+[ui]
+agent_panel_sort = "priority"
+
 [experimental]
 # herdr server restarts (done for config/plugin changes) currently lose pane
 # screen history. This preserves it across restarts.

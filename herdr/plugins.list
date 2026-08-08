@@ -1,9 +1,9 @@
 # herdr plugins, installed by herdr-lazy. Commits are managed by Renovate
 # (.github/renovate.json customManagers).
-AltanS/collie@0cbf5834f4d9a97d1fb5032bba1b69ca23c77d60
+AltanS/collie@f7b692b00a4c81d5c3a63766d6c0f15ac56836da
 devashish2203/herdr-worktrunk@a3107ca566bafcd463bc138007a0c01051970784
-natori-hrj/herdr-lazy@3e39db61e7d9c4ed985850b6359362854afe8d44
+natori-hrj/herdr-lazy@9004bf6519aac5d55b7551e9824e9d5498b4c537
 ogulcancelik/herdr-browser@be6888b71cf4eb5939ee79a746bd1a1c22ade046
 persiyanov/herdr-reviewr@42ccaaa72176937181c82a91484f97466fb5ed59
-smarzban/herdr-file-viewer@fa1946a04dd58ba9b3db2eda0125b6055fb604da
-thanhdat77/herdr-navigator@745019ebdc38f9752629c93d2ca56d1ce638cf98
+smarzban/herdr-file-viewer@71d4c1c3706e7958c714789b035a99d949620a9e
+thanhdat77/herdr-navigator@8e90917a1a635682e435aa4627c59b3e6f7942b6

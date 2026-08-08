@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.herdr-agent-detection</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-l</string>
+        <string>-c</string>
+        <string>$HOME/.dotfiles/bin/herdr-agent-detection sync</string>
+    </array>
+
+    <!--
+      herdr fetches manifests on its own schedule, and a local override replaces
+      whatever it fetched. Left to the nightly install, a manifest published at
+      noon would be shadowed until 3am, and the day herdr publishes one is
+      disproportionately the day Claude Code changed its UI, which is when the
+      shadowed rules matter most.
+
+      launchd does not expand anything here, so install.sh substitutes __HOME__.
+      Both entries are deliberate: a manifest arriving by atomic rename changes
+      the directory, and one written in place changes only the file.
+    -->
+    <key>WatchPaths</key>
+    <array>
+        <string>__HOME__/.local/state/herdr/agent-detection/remote</string>
+        <string>__HOME__/.local/state/herdr/agent-detection/remote/claude.toml</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/herdr-agent-detection.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/herdr-agent-detection.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
