@@ -98,7 +98,7 @@ install_launch_agent() {
   printf '%s\n' "$rendered" >"$plist_dst"
 
   if [[ "$plan" == defer ]]; then
-    gum log --level warn "$description launchd agent is the job running this install, so it keeps its old config; it picks the new one up at next login, or now via: launchctl bootout gui/$UID/$label && launchctl bootstrap gui/$UID $plist_dst"
+    gum log --level warn "$description launchd agent is the job running this install, so it keeps its old config. It picks the new one up at next login, or now via: launchctl bootout gui/$UID/$label && launchctl bootstrap gui/$UID $plist_dst"
     return
   fi
 
@@ -113,7 +113,7 @@ install_launch_agent() {
   if launchctl print "gui/$UID/$label" >/dev/null 2>&1; then
     gum log --level info "$description launchd agent installed"
   else
-    gum log --level error "$description launchd agent failed to load; run: launchctl bootstrap gui/$UID $plist_dst"
+    gum log --level error "$description launchd agent failed to load. Run: launchctl bootstrap gui/$UID $plist_dst"
     # shellcheck disable=SC2034 # macos/install.sh exits on this
     launchd_failed=1
     return 1
