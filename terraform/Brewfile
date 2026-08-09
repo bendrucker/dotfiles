@@ -11,3 +11,6 @@ brew 'tfschema'
 
 tap 'pulumi/tap'
 brew 'pulumi'
+
+tap 'hashicorp/tap'
+brew 'hashicorp/tap/hcp'
