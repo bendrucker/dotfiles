@@ -90,6 +90,21 @@ worktree_age_secs () {
   print -r -- $(( EPOCHSECONDS - created ))
 }
 
+# The repo's default branch, empty when even worktrunk cannot name one.
+#
+# No pass here can remove a linked worktree holding it: `wt step prune` skips
+# the default branch, it has no PR of its own, and `wt remove` refuses it
+# outright, since removing the checkout deletes the branch and force-delete is
+# the only override. The pruner and the audit both gate on this name to stay
+# out of a removal that cannot succeed.
+#
+# Asking worktrunk rather than reading git config is what makes the two agree:
+# the same resolution guards `wt remove`, and it detects and caches on a miss
+# instead of reporting nothing in a clone that has never been pruned.
+default_branch () {
+  wt config state default-branch get 2>/dev/null
+}
+
 # Resolve the exact PR/MR state for a branch on the forge. Prints
 # "STATE\tNUMBER" (e.g. "MERGED\t142"), or nothing when no PR exists. gh is the
 # tested path; glab mirrors it (newest MR wins) but is untested.
@@ -262,13 +277,22 @@ main () {
   local -a reason_rows
 
   if [[ "$has_linked" == true ]]; then
-    local remote_host
+    local remote_host default_br
     remote_host=$(git remote get-url origin 2>/dev/null | sed -E 's|^[^@]*@||; s|^https?://||; s|[:/].*||')
+    default_br=$(default_branch)
 
     local branch is_main ts clean onremote is_current wtpath pr_out pr_st pr_num
     while IFS=$'\t' read -r branch is_main ts clean onremote is_current wtpath; do
       [[ "$is_main" == true ]] && continue
       [[ -n "${seen[$branch]:-}" ]] && continue
+
+      # Recorded before the forge lookup, which has no PR to find for the
+      # default branch anyway.
+      if [[ -n "$default_br" && "$branch" == "$default_br" ]]; then
+        (( dry_run )) && [[ -z "${WT_ALL:-}" ]] \
+          && reason_rows+=("${wtpath:t}"$'\t'"$branch"$'\t'"-"$'\t'"keep"$'\t'"default branch")
+        continue
+      fi
 
       # Resolve the exact PR/MR state for this survivor. The integration pass
       # already cleared branches merged into the local default. A squash-merged

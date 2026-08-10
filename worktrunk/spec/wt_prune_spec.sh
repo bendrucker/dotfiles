@@ -86,15 +86,18 @@ Describe "wt-prune --dry-run and wt-prune-audit (black-box)"
     : >"$WT_REMOVE_LOG"
     : >"$WT_STEP_LOG"
 
-    # wt stub: `step prune` probe reports nothing integrated (so the survivor
-    # reaches the forge pass); `list` emits the canned fixture; `remove` only
-    # logs, so a dry-run that wrongly removed would leave a trace here.
+    # wt stub: `step prune` probe reports nothing integrated, so the survivor
+    # reaches the forge pass. `remove` only logs, so a dry-run that wrongly
+    # removed would leave a trace here. `config state default-branch get` names
+    # the branch wt would refuse to remove, which both scripts read to identify
+    # an unprunable worktree.
     cat >"$stubdir/wt" <<'WT'
 #!/usr/bin/env bash
 case "$1" in
   step)   printf 'step %s\n' "$*" >>"$WT_STEP_LOG"; echo "[]" ;;
   list)   cat "$WT_LIST_JSON" ;;
   remove) printf 'remove %s\n' "$*" >>"$WT_REMOVE_LOG" ;;
+  config) echo main ;;
 esac
 exit 0
 WT
@@ -314,6 +317,50 @@ JSON
     When call run_audit_grace 30min
     The status should equal 1
     The stderr should include "cannot parse"
+    The output should equal ""
+  End
+
+  # A repo whose main worktree sits on a topic branch leaves the default branch
+  # checked out in a linked worktree. `wt step prune` skips that branch, it has
+  # no PR, and `wt remove` refuses it, so the age pass used to retry a removal
+  # that always fails while the audit filed a to-do for it every night.
+  fixture_default_branch_worktree() {
+    cat >"$WT_LIST_JSON" <<JSON
+[
+  {"kind":"worktree","branch":"topic","is_main":true,"is_current":true,
+   "path":"/repo","main_state":"is_main","commit":{"timestamp":0},
+   "working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false},
+   "remote":{"ahead":0,"behind":0}},
+  {"kind":"worktree","branch":"main","is_main":false,"is_current":false,
+   "path":"$linked","main_state":"integrated","commit":{"timestamp":1000},
+   "working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false},
+   "remote":{"ahead":0,"behind":0}}
+]
+JSON
+  }
+
+  It "never attempts to remove a default-branch worktree that aged out"
+    fixture_default_branch_worktree
+    : >"$PR_STATE_FILE"
+    When call run_prune --before 1mo
+    The status should be success
+    The contents of file "$WT_REMOVE_LOG" should equal ""
+  End
+
+  It "dry-run explains the default-branch worktree as kept"
+    fixture_default_branch_worktree
+    : >"$PR_STATE_FILE"
+    When call run_prune --dry-run --before 1mo
+    The status should be success
+    The output should include "default branch"
+    The output should include "keep"
+  End
+
+  It "audit ignores a default-branch worktree at any age"
+    fixture_default_branch_worktree
+    : >"$PR_STATE_FILE"
+    When call run_audit_grace 0h
+    The status should be success
     The output should equal ""
   End
 
