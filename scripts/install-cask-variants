@@ -42,6 +42,12 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+cask_conflicts() {
+  cask_conflicts_info=$(brew info --json=v2 --cask "$1" 2>/dev/null) || return 1
+  printf '%s\n' "$cask_conflicts_info" |
+    jq -r '.casks[0].conflicts_with.cask // [] | .[]' 2>/dev/null
+}
+
 # Confirm every candidate before removing any, so a metadata failure part way
 # through cannot leave earlier casks uninstalled with nothing reinstalled.
 #
@@ -54,15 +60,22 @@ confirmed=$(
     # Unreadable metadata is a different answer from "they don't conflict", and
     # collapsing the two would leave the cask in place and hand brew bundle a
     # conflict error that says nothing about why.
-    if ! info=$(brew info --json=v2 --cask "$new" 2>/dev/null) ||
-      ! conflicts=$(printf '%s\n' "$info" |
-        jq -r '.casks[0].conflicts_with.cask // [] | .[]' 2>/dev/null); then
+    if ! conflicts=$(cask_conflicts "$new"); then
       echo "install-cask-variants: cannot read Homebrew metadata for $new, so its conflict with the installed $old is unconfirmed." >&2
       echo "  brew bundle will fail while $old remains. Run: brew uninstall --cask $old" >&2
       exit 1
     fi
 
-    printf '%s\n' "$conflicts" | grep -qxF "$old" || continue
+    # Only the side that knows its sibling exists declares the conflict. A
+    # personal tap's @variant names the upstream cask it stands in for, and
+    # upstream names nothing, so retiring that variant means reading the
+    # variant's own metadata. Unreadable there is not fatal: the declared cask
+    # answered, so the pair is merely unconfirmed rather than unknown.
+    if ! printf '%s\n' "$conflicts" | grep -qxF "$old"; then
+      reverse=$(cask_conflicts "$old") || continue
+      printf '%s\n' "$reverse" | grep -qxF "$new" || continue
+    fi
+
     printf '%s\t%s\n' "$old" "$new"
   done
 ) || exit 1
