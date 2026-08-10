@@ -96,11 +96,9 @@ to `~/.config/ghostty/config` by `install.sh`.
 
 ## Fonts
 
-Ghostty renders `MonaspiceNe NFM`, installed by `font-monaspice-nerd-font`.
-Nerd Fonts 3.5.0 carries the Codicon brand marks for Claude, OpenAI, and Cursor,
-so the stock cask covers everything `glyphs.conf` declares. The
-[`bendrucker/fonts`](https://github.com/bendrucker/homebrew-fonts) tap bridged
-the gap while 3.4.0 was the newest release and is now archived.
+Ghostty renders `MonaspiceNe NFM`, installed by `font-monaspice-nerd-font`. The
+cask covers everything `glyphs.conf` declares, including the Codicon brand marks
+for Claude, OpenAI, and Cursor.
 
 ### Client Coverage
 
@@ -108,7 +106,7 @@ tmux and herdr emit bytes. The attached *client* picks the font. One session can
 be attached from Ghostty on the Mac and Rootshell on an iPad at the same time,
 so a glyph cannot be varied per client. The usable set is the intersection of
 every client's coverage. That is why the font goes onto every client, rather
-than holding the glyphs back to what a stock release covers.
+than holding the glyphs back to whatever the thinnest one already has.
 
 Rootshell and Moshi both import a TTF/OTF. Upstream publishes Monaspace only as
 a 269 MB `.zip` or an 18 MB `.tar.xz`, and iOS unpacks neither, so the four
