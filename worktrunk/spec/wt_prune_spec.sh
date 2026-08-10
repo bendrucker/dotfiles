@@ -86,11 +86,11 @@ Describe "wt-prune --dry-run and wt-prune-audit (black-box)"
     : >"$WT_REMOVE_LOG"
     : >"$WT_STEP_LOG"
 
-    # wt stub: `step prune` probe reports nothing integrated (so the survivor
-    # reaches the forge pass); `list` emits the canned fixture; `remove` only
-    # logs, so a dry-run that wrongly removed would leave a trace here;
-    # `config state default-branch get` names the branch wt would refuse to
-    # remove, which both scripts read to identify an unprunable worktree.
+    # wt stub: `step prune` probe reports nothing integrated, so the survivor
+    # reaches the forge pass. `remove` only logs, so a dry-run that wrongly
+    # removed would leave a trace here. `config state default-branch get` names
+    # the branch wt would refuse to remove, which both scripts read to identify
+    # an unprunable worktree.
     cat >"$stubdir/wt" <<'WT'
 #!/usr/bin/env bash
 case "$1" in
