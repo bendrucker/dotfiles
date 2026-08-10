@@ -96,13 +96,11 @@ to `~/.config/ghostty/config` by `install.sh`.
 
 ## Fonts
 
-Ghostty renders `MonaspiceNe NFM`, installed by `font-monaspice-nerd-font@tip`
-from the [`bendrucker/fonts`](https://github.com/bendrucker/homebrew-fonts) tap.
-That tap patches Monaspace from nerd-fonts `master` instead of a release,
-because 3.4.0 shipped in April 2025, predates the Codicon brand marks for
-Claude, OpenAI, and Cursor, and is still the newest release. The family name
-matches upstream's cask, so swapping back to `font-monaspice-nerd-font` when
-3.5.0 lands changes nothing else.
+Ghostty renders `MonaspiceNe NFM`, installed by `font-monaspice-nerd-font`.
+Nerd Fonts 3.5.0 carries the Codicon brand marks for Claude, OpenAI, and Cursor,
+so the stock cask covers everything `glyphs.conf` declares. The
+[`bendrucker/fonts`](https://github.com/bendrucker/homebrew-fonts) tap bridged
+the gap while 3.4.0 was the newest release and is now archived.
 
 ### Client Coverage
 
@@ -112,11 +110,22 @@ so a glyph cannot be varied per client. The usable set is the intersection of
 every client's coverage. That is why the font goes onto every client, rather
 than holding the glyphs back to what a stock release covers.
 
-Rootshell and Moshi both import a TTF/OTF. Open the tap's latest release on the
-device and import the four `.otf` assets. They are uploaded individually so a
-single file can be tapped from Safari without unzipping. Release notes list the
-codepoints each build gained, so a re-import only matters when one of them turns
-up in `glyphs.conf`.
+Rootshell and Moshi both import a TTF/OTF. Upstream publishes Monaspace only as
+a 269 MB `.zip` or an 18 MB `.tar.xz`, and iOS unpacks neither, so the four
+styles are staged in iCloud Drive where the Files app can hand a single `.otf`
+to an app:
+
+```sh
+dest="$HOME/Library/Mobile Documents/com~apple~CloudDocs/Downloads/MonaspiceNe-NFM-3.5.0"
+mkdir -p "$dest"
+curl -sL "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.0/Monaspace.tar.xz" |
+  tar -xJ -C "$dest" \
+    MonaspiceNeNerdFontMono-Regular.otf MonaspiceNeNerdFontMono-Bold.otf \
+    MonaspiceNeNerdFontMono-Italic.otf MonaspiceNeNerdFontMono-BoldItalic.otf
+```
+
+A re-import only matters when a codepoint new to a release turns up in
+`glyphs.conf`.
 
 ### `glyphs.conf`
 

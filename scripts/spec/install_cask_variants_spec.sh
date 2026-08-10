@@ -90,6 +90,32 @@ Describe "install-cask-variants"
     The result of function uninstalled should equal ""
   End
 
+  # Homebrew's own cask cannot name a personal tap's variant, so retiring that
+  # variant works only if the variant's own metadata is consulted.
+  It "uninstalls a variant when only the variant declares the conflict"
+    declared font-monaspice-nerd-font
+    installed font-monaspice-nerd-font@tip
+    printf '{"casks":[{"conflicts_with":{"cask":[]}}]}\n' > "$sandbox/info-font-monaspice-nerd-font.json"
+    printf '{"casks":[{"conflicts_with":{"cask":["font-monaspice-nerd-font"]}}]}\n' > "$sandbox/info-font-monaspice-nerd-font@tip.json"
+
+    When call run_script
+    The status should be success
+    The output should include "uninstalling font-monaspice-nerd-font@tip, superseded by font-monaspice-nerd-font"
+    The result of function uninstalled should equal "font-monaspice-nerd-font@tip"
+  End
+
+  # The declared cask answered, so the pair is unconfirmed rather than unknown.
+  It "skips without failing when only the installed cask's metadata is unreadable"
+    declared ghostty@tip
+    installed ghostty
+    printf '{"casks":[{"conflicts_with":{"cask":[]}}]}\n' > "$sandbox/info-ghostty@tip.json"
+    printf 'not json at all\n' > "$sandbox/info-ghostty.json"
+
+    When call run_script
+    The status should be success
+    The result of function uninstalled should equal ""
+  End
+
   # Aborting mid-run would leave an app uninstalled with its replacement not yet
   # installed, so confirmation for every candidate has to finish first.
   It "uninstalls nothing when a later candidate cannot be confirmed"
