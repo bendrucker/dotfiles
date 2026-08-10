@@ -51,12 +51,17 @@ claude = [
 # Plugins themselves are installed by install.sh. The command IDs below come
 # from each plugin's herdr-plugin.toml.
 
-# herdr-navigator — fuzzy jump to any workspace, agent, project, or session.
+# Switching splits in two: native goto (prefix+g) reaches anything that already
+# has a workspace, and this reaches a directory that doesn't have one yet.
+# herdr-navigator used to cover both, but it paints Catppuccin Mocha regardless
+# of auto_switch above (thanhdat77/herdr-navigator#28), so it's dropped until
+# that's fixed. herdr-zoxide passes no --color, so its fzf picker inherits
+# FZF_DEFAULT_OPTS_FILE and follows the system appearance.
 [[keys.command]]
 key = "prefix+t"
 type = "plugin_action"
-command = "herdr-navigator.open"
-description = "jump to anything"
+command = "herdr-zoxide.browse"
+description = "open a directory as a workspace"
 
 # herdr-file-viewer — git-aware, read-only file browser (diffs, markdown, code).
 [[keys.command]]
