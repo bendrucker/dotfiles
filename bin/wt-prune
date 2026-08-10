@@ -90,24 +90,19 @@ worktree_age_secs () {
   print -r -- $(( EPOCHSECONDS - created ))
 }
 
-# The repo's default branch, or nothing when neither source resolves. Reads
-# worktrunk's own persisted resolution first, so this names the same branch
-# `wt` protects; the origin/HEAD symref covers a repo worktrunk has not
-# resolved yet.
+# The repo's default branch, empty when even worktrunk cannot name one.
 #
-# No pass here can remove a linked worktree holding the default branch:
-# `wt step prune` skips it, it has no PR of its own, and `wt remove` refuses it
-# outright (removing the checkout deletes the branch, and force-delete is the
-# only override). Both the pruner and the audit gate on this name so neither
-# treats it as removable.
+# No pass here can remove a linked worktree holding it: `wt step prune` skips
+# the default branch, it has no PR of its own, and `wt remove` refuses it
+# outright, since removing the checkout deletes the branch and force-delete is
+# the only override. The pruner and the audit both gate on this name to stay
+# out of a removal that cannot succeed.
+#
+# Asking worktrunk rather than reading git config is what makes the two agree:
+# the same resolution guards `wt remove`, and it detects and caches on a miss
+# instead of reporting nothing in a clone that has never been pruned.
 default_branch () {
-  local branch remote_head
-  branch=$(git config --get worktrunk.default-branch 2>/dev/null)
-  if [[ -z "$branch" ]]; then
-    remote_head=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) || return 0
-    branch=${remote_head#origin/}
-  fi
-  print -r -- "$branch"
+  wt config state default-branch get 2>/dev/null
 }
 
 # Resolve the exact PR/MR state for a branch on the forge. Prints
@@ -291,9 +286,8 @@ main () {
       [[ "$is_main" == true ]] && continue
       [[ -n "${seen[$branch]:-}" ]] && continue
 
-      # `wt remove` rejects the default branch, so classifying this worktree as
-      # a survivor buys a failed removal per run and nothing else. Record the
-      # keep before the forge lookup, which has no PR to find for it anyway.
+      # Recorded before the forge lookup, which has no PR to find for the
+      # default branch anyway.
       if [[ -n "$default_br" && "$branch" == "$default_br" ]]; then
         (( dry_run )) && [[ -z "${WT_ALL:-}" ]] \
           && reason_rows+=("${wtpath:t}"$'\t'"$branch"$'\t'"-"$'\t'"keep"$'\t'"default branch")

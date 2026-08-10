@@ -88,13 +88,16 @@ Describe "wt-prune --dry-run and wt-prune-audit (black-box)"
 
     # wt stub: `step prune` probe reports nothing integrated (so the survivor
     # reaches the forge pass); `list` emits the canned fixture; `remove` only
-    # logs, so a dry-run that wrongly removed would leave a trace here.
+    # logs, so a dry-run that wrongly removed would leave a trace here;
+    # `config state default-branch get` names the branch wt would refuse to
+    # remove, which both scripts read to identify an unprunable worktree.
     cat >"$stubdir/wt" <<'WT'
 #!/usr/bin/env bash
 case "$1" in
   step)   printf 'step %s\n' "$*" >>"$WT_STEP_LOG"; echo "[]" ;;
   list)   cat "$WT_LIST_JSON" ;;
   remove) printf 'remove %s\n' "$*" >>"$WT_REMOVE_LOG" ;;
+  config) echo main ;;
 esac
 exit 0
 WT
@@ -124,9 +127,6 @@ GH
     git -C "$repo" -c user.email=test@example.com -c user.name=test \
       commit -q --allow-empty -m init
     git -C "$repo" remote add origin "https://github.com/test/repo.git"
-    # worktrunk persists its default-branch resolution here, and both scripts
-    # read it to identify the branch `wt remove` refuses to touch.
-    git -C "$repo" config worktrunk.default-branch main
 
     # A real linked worktree, so the age helper resolves a per-worktree git dir
     # (a .git *file* pointing at .git/worktrees/<name>) rather than the repo's
