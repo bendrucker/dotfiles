@@ -26,6 +26,10 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
    - `<topic>/Brewfile` for dependencies
 3. Run `scripts/install` to install links and run topic installers
 
+A topic is a subject, not a package. Most new tools do not earn a directory. A tool that amounts to a Brewfile line and a few aliases goes in a file inside an existing topic, named for what it does: `system/ls.zsh` holds the eza aliases, `system/networking.zsh` the dns and ip ones. Use `system/` when nothing more specific fits.
+
+Give a tool its own directory when it has something to put there: config files to symlink, an installer, a `mise.toml`, a spec, or enough shell config that one file stops describing it. Directories are the unit someone scans to learn what this repo manages, so a wall of single-alias topics costs more than it explains.
+
 ### Managing Dependencies
 
 - **Homebrew packages**: Add to topic-specific `Brewfile` or main `Brewfile`
