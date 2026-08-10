@@ -25,6 +25,9 @@
 #
 # The MERGED rule needs no grace: the pruner's forge pass removes a merged
 # worktree at any age, so one that survives is a genuine miss.
+#
+# A worktree holding the default branch is excluded outright, since nothing the
+# pruner could do would remove it. See default_branch in bin/wt-prune.
 
 set -uo pipefail
 
@@ -71,11 +74,18 @@ main () {
     .kind == "worktree" and (.is_main | not) and (.is_current | not) and ((.branch // "") != ""))' <<<"$list_json")
   [[ "$has_candidate" == true ]] || return 0
 
-  local remote_host
+  local remote_host default_br
   remote_host=$(git remote get-url origin 2>/dev/null | sed -E 's|^[^@]*@||; s|^https?://||; s|[:/].*||')
+  default_br=$(default_branch)
 
   local branch main_state wtpath age pr_out pr_st
   while IFS=$'\t' read -r branch main_state wtpath; do
+    # A worktree holding the default branch reads as integrated because the
+    # branch is the integration target, and no prune pass can act on it. It is
+    # a permanent finding rather than drift: reporting it files the same to-do
+    # every night and no fix to the pruner ever clears it.
+    [[ -n "$default_br" && "$branch" == "$default_br" ]] && continue
+
     # Free signal: `wt list` already resolved this as integrated into the
     # default branch, so a healthy prune would have removed it, once the
     # worktree is old enough for the pruner to consider it at all. An age the

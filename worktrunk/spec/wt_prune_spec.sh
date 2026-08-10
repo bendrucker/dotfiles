@@ -124,6 +124,9 @@ GH
     git -C "$repo" -c user.email=test@example.com -c user.name=test \
       commit -q --allow-empty -m init
     git -C "$repo" remote add origin "https://github.com/test/repo.git"
+    # worktrunk persists its default-branch resolution here, and both scripts
+    # read it to identify the branch `wt remove` refuses to touch.
+    git -C "$repo" config worktrunk.default-branch main
 
     # A real linked worktree, so the age helper resolves a per-worktree git dir
     # (a .git *file* pointing at .git/worktrees/<name>) rather than the repo's
@@ -314,6 +317,50 @@ JSON
     When call run_audit_grace 30min
     The status should equal 1
     The stderr should include "cannot parse"
+    The output should equal ""
+  End
+
+  # A repo whose main worktree sits on a topic branch leaves the default branch
+  # checked out in a linked worktree. `wt step prune` skips that branch, it has
+  # no PR, and `wt remove` refuses it, so the age pass used to retry a removal
+  # that always fails while the audit filed a to-do for it every night.
+  fixture_default_branch_worktree() {
+    cat >"$WT_LIST_JSON" <<JSON
+[
+  {"kind":"worktree","branch":"topic","is_main":true,"is_current":true,
+   "path":"/repo","main_state":"is_main","commit":{"timestamp":0},
+   "working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false},
+   "remote":{"ahead":0,"behind":0}},
+  {"kind":"worktree","branch":"main","is_main":false,"is_current":false,
+   "path":"$linked","main_state":"integrated","commit":{"timestamp":1000},
+   "working_tree":{"staged":false,"modified":false,"untracked":false,"renamed":false,"deleted":false},
+   "remote":{"ahead":0,"behind":0}}
+]
+JSON
+  }
+
+  It "never attempts to remove a default-branch worktree that aged out"
+    fixture_default_branch_worktree
+    : >"$PR_STATE_FILE"
+    When call run_prune --before 1mo
+    The status should be success
+    The contents of file "$WT_REMOVE_LOG" should equal ""
+  End
+
+  It "dry-run explains the default-branch worktree as kept"
+    fixture_default_branch_worktree
+    : >"$PR_STATE_FILE"
+    When call run_prune --dry-run --before 1mo
+    The status should be success
+    The output should include "default branch"
+    The output should include "keep"
+  End
+
+  It "audit ignores a default-branch worktree at any age"
+    fixture_default_branch_worktree
+    : >"$PR_STATE_FILE"
+    When call run_audit_grace 0h
+    The status should be success
     The output should equal ""
   End
 
