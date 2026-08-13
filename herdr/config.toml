@@ -99,6 +99,21 @@ type = "plugin_action"
 command = "worktrunk.open-current"
 description = "worktree: switch / create (current branch)"
 
+# --- Scripts ---------------------------------------------------------------
+
+# bin/linear-work. A popup rather than a pane, because the picker is a modal
+# question and the answer is new layout: leaving the tab alone until the
+# script builds the location keeps the transition to one step. The script
+# reaches back through the herdr CLI, so it needs no size beyond fitting fzf
+# and its preview.
+[[keys.command]]
+key = "prefix+i"
+type = "popup"
+command = "linear-work"
+width = "85%"
+height = "80%"
+description = "linear: work an assigned issue"
+
 [ui]
 agent_panel_sort = "priority"
 

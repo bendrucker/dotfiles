@@ -1,0 +1,306 @@
+#!/usr/bin/env zsh
+# linear-work: pick an assigned Linear issue and open it as herdr work.
+#
+# Bound to prefix+i as a herdr popup (herdr/config.toml). Lists the issues
+# assigned to you that are unstarted or started, and on selection builds the
+# terminal location for the issue: a worktree on Linear's branch name with
+# Claude started on the `issue` skill. Alternate fzf keys pick a different
+# topology, or drop the agent for a plain shell.
+#
+# Selecting an issue herdr already has open focuses that location instead of
+# building a second one. Acting on an unstarted issue moves it to the team's
+# started state.
+
+set -uo pipefail
+
+# jq emits records separated by this rather than tabs, because tab is IFS
+# whitespace and `read` would collapse an empty field away.
+US=$'\037'
+
+repo_state="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/linear-repos"
+
+ASSIGNED_QUERY='{ viewer { assignedIssues(
+  filter: { state: { type: { in: ["unstarted", "started"] } } }
+  first: 100
+) { nodes {
+  identifier title branchName url priority updatedAt
+  state { name type } team { key } project { name }
+} } } }'
+
+# Started before unstarted, then by Linear priority, then most recently
+# touched. Priority 0 is "no priority" rather than the most urgent, so it
+# sorts past 4 (Low). updatedAt carries milliseconds, which fromdateiso8601
+# will not parse.
+SORT_ISSUES='[ .data.viewer.assignedIssues.nodes[] ] | sort_by(
+  (if .state.type == "started" then 0 else 1 end),
+  (if (.priority // 0) == 0 then 5 else .priority end),
+  -(.updatedAt | split(".")[0] + "Z" | fromdateiso8601)
+)'
+
+ISSUE_FIELDS='.[] | [
+  .identifier,
+  (.state.name // ""),
+  (.title // "" | gsub("\\s+"; " ")),
+  (.project.name // ""),
+  (.branchName // "")
+] | join($us)'
+
+die() {
+  gum log --level error "$@" >&2
+  exit 1
+}
+
+# wt applies its `sanitize` filter to the branch when it builds the worktree
+# path, and that filter only replaces forward slashes.
+sanitize_branch() {
+  print -r -- "${1//\//-}"
+}
+
+fetch_issues() {
+  local raw
+  raw=$(linear api "$ASSIGNED_QUERY") || return 1
+  if print -r -- "$raw" | jq -e 'has("errors")' >/dev/null; then
+    print -r -- "$raw" | jq -r '.errors[]?.message // empty' >&2
+    return 1
+  fi
+  print -r -- "$raw" | jq -c "$SORT_ISSUES"
+}
+
+# Everywhere herdr could already be holding an issue, keyed by the two names
+# it would be under: the identifier this script labels a location with, and
+# the sanitized branch, which is the directory a worktree lands in whether
+# this script or the worktrunk plugin created it.
+#
+# Panes come last so their tab wins over the workspace's active one. A pane's
+# own cwd stays at the repo it was created in, since wt replaces itself with
+# the agent rather than the pane's shell ever changing directory, so the
+# worktree only shows up as foreground_cwd.
+typeset -gA location_workspace location_tab
+
+index_locations() {
+  # Not `path`, which zsh ties to $PATH.
+  local ws tab label dir
+
+  while IFS=$US read -r ws tab label dir; do
+    [[ -n "$label" ]] && { location_workspace[$label]=$ws; location_tab[$label]=$tab }
+    [[ -n "$dir" ]] && { location_workspace[${dir:t}]=$ws; location_tab[${dir:t}]=$tab }
+  done < <(
+    herdr workspace list 2>/dev/null | jq -r --arg us "$US" '.result.workspaces[]
+      | [.workspace_id, (.active_tab_id // ""), (.label // ""),
+         (.worktree.checkout_path // "")] | join($us)'
+    herdr tab list 2>/dev/null | jq -r --arg us "$US" '.result.tabs[]
+      | [.workspace_id, .tab_id, (.label // ""), ""] | join($us)'
+    herdr pane list 2>/dev/null | jq -r --arg us "$US" '.result.panes[]
+      | [.workspace_id, .tab_id, (.label // ""),
+         (.foreground_cwd // .cwd // "")] | join($us)'
+  )
+}
+
+# Prints "<workspace_id><US><tab_id>" for the first key herdr knows.
+find_location() {
+  local key
+  for key in "$@"; do
+    if [[ -n "${location_workspace[$key]:-}" ]]; then
+      print -r -- "${location_workspace[$key]}$US${location_tab[$key]:-}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Rows read `IDENT ● STATE  TITLE · PROJECT`, keeping the identifier in the
+# first whitespace-delimited field so fzf's preview can pass it as {1}. The
+# marker calls out an issue herdr already has a location for.
+issue_rows() {
+  local ident state title project branch marker suffix row
+  local -a idents states titles projects branches
+  local -i ident_width=0 state_width=0 i
+
+  while IFS=$US read -r ident state title project branch; do
+    [[ -n "$ident" ]] || continue
+    idents+=("$ident"); states+=("$state"); titles+=("$title")
+    projects+=("$project"); branches+=("$branch")
+    (( ${#ident} > ident_width )) && ident_width=${#ident}
+    (( ${#state} > state_width )) && state_width=${#state}
+  done < <(print -r -- "$1" | jq -r --arg us "$US" "$ISSUE_FIELDS")
+
+  (( ${#idents} )) || return 1
+
+  for (( i = 1; i <= ${#idents}; i++ )); do
+    marker=' '
+    find_location "${idents[i]}" "$(sanitize_branch "${branches[i]}")" >/dev/null && marker='●'
+    suffix=''
+    [[ -n "${projects[i]}" ]] && suffix="  · ${projects[i]}"
+    printf -v row '%-*s %s %-*s  %s%s' \
+      "$ident_width" "${idents[i]}" "$marker" \
+      "$state_width" "${states[i]}" "${titles[i]}" "$suffix"
+    print -r -- "$row"
+  done
+}
+
+# The pane to split from. The popup is session-modal and is not the pane the
+# user is looking at, so it is excluded by ID and the focused pane behind it
+# is used instead.
+resolve_split_pane() {
+  local panes id tab
+  panes=$(herdr pane list 2>/dev/null) || return 1
+  id=$(print -r -- "$panes" | jq -r --arg self "${HERDR_PANE_ID:-}" \
+    'first(.result.panes[] | select(.focused and .pane_id != $self) | .pane_id) // empty')
+  if [[ -z "$id" ]]; then
+    tab=$(herdr workspace list 2>/dev/null \
+      | jq -r 'first(.result.workspaces[] | select(.focused)) | .active_tab_id // empty')
+    [[ -n "$tab" ]] && id=$(print -r -- "$panes" \
+      | jq -r --arg t "$tab" --arg self "${HERDR_PANE_ID:-}" \
+        'first(.result.panes[] | select(.tab_id == $t and .pane_id != $self) | .pane_id) // empty')
+  fi
+  [[ -n "$id" ]] || return 1
+  print -r -- "$id"
+}
+
+# Split a wide pane to the right and a narrow one down. A cell is about twice
+# as tall as it is wide, so the comparison doubles the height.
+split_direction() {
+  local dims
+  dims=$(herdr pane layout --pane "$1" 2>/dev/null | jq -r --arg p "$1" \
+    'first(.result.layout.panes[] | select(.pane_id == $p) | .rect)
+     | "\(.width) \(.height)"')
+  local -a wh=(${=dims})
+  if (( ${#wh} == 2 && wh[1] <= wh[2] * 2 )); then
+    print -r -- down
+  else
+    print -r -- right
+  fi
+}
+
+remembered_repo() {
+  [[ -f "$repo_state" ]] || return 1
+  local dir
+  dir=$(awk -F'\t' -v team="$1" '$1 == team { found = $2 } END { print found }' "$repo_state")
+  [[ -n "$dir" && -e "$dir/.git" ]] || return 1
+  print -r -- "$dir"
+}
+
+remember_repo() {
+  local team=$1 dir=$2 tmp
+  mkdir -p "${repo_state:h}" || return 1
+  tmp="${repo_state}.$$"
+  {
+    [[ -f "$repo_state" ]] && awk -F'\t' -v team="$team" '$1 != team' "$repo_state"
+    printf '%s\t%s\n' "$team" "$dir"
+  } >"$tmp" && mv "$tmp" "$repo_state"
+}
+
+pick_repo() {
+  local team=$1 remembered=$2 dir
+  local -a candidates
+  [[ -n "$remembered" ]] && candidates+=("$remembered")
+  for dir in ${(f)"$(zoxide query -l 2>/dev/null)"}; do
+    [[ -n "$dir" && -e "$dir/.git" ]] && candidates+=("$dir")
+  done
+  candidates=(${(u)candidates})
+  (( ${#candidates} )) || { gum log --level error "no git repos from zoxide" >&2; return 1 }
+
+  print -rl -- "${candidates[@]}" | fzf \
+    --no-sort \
+    --border --border-label " linear · repo for $team " \
+    --prompt '  '
+}
+
+[[ "${HERDR_ENV:-}" == 1 ]] \
+  || die "linear-work builds herdr topology; run it from a herdr session"
+
+issues=$(fetch_issues) || die "could not read assigned issues from linear"
+(( $(print -r -- "$issues" | jq 'length') )) || {
+  gum log --level warn "no unstarted or started issues assigned to you"
+  exit 0
+}
+
+index_locations
+
+selection=$(issue_rows "$issues" | fzf \
+  --no-sort \
+  --border --border-label ' linear · assigned ' \
+  --prompt '  ' \
+  --header 'enter/alt-t tab · alt-p pane · alt-w workspace · shift for a shell' \
+  --preview 'linear issue view {1} --no-pager' \
+  --preview-window 'right,50%,border-left' \
+  --expect=enter,alt-t,alt-p,alt-w,alt-T,alt-P,alt-W) || exit 0
+
+key=${selection%%$'\n'*}
+row=${selection#*$'\n'}
+[[ -n "$row" && "$row" != "$key" ]] || exit 0
+
+identifier=${row%% *}
+issue=$(print -r -- "$issues" | jq -c --arg id "$identifier" \
+  'first(.[] | select(.identifier == $id))')
+[[ -n "$issue" && "$issue" != null ]] || die "no issue matching $identifier"
+
+IFS=$US read -r branch url team state_type <<<"$(print -r -- "$issue" \
+  | jq -r --arg us "$US" '[.branchName, .url, (.team.key // ""), (.state.type // "")] | join($us)')"
+[[ -n "$branch" ]] || die "$identifier has no branch name"
+
+case "$key" in
+  alt-p) topology=pane;      use_agent=1 ;;
+  alt-w) topology=workspace; use_agent=1 ;;
+  alt-T) topology=tab;       use_agent=0 ;;
+  alt-P) topology=pane;      use_agent=0 ;;
+  alt-W) topology=workspace; use_agent=0 ;;
+  *)     topology=tab;       use_agent=1 ;;
+esac
+
+# Backgrounded so the popup closes on selection rather than on a round trip
+# to Linear. nohup because closing the popup takes down the pty this was
+# launched from, and the transition should outlive it. Every path below ends
+# here, including the focus-what-exists one.
+start_issue() {
+  [[ "$state_type" == unstarted ]] || return 0
+  nohup linear issue update "$identifier" --state started >/dev/null 2>&1 &!
+}
+
+if location=$(find_location "$identifier" "$(sanitize_branch "$branch")"); then
+  workspace=${location%%$US*}
+  tab=${location#*$US}
+  [[ -n "$workspace" ]] && herdr workspace focus "$workspace" >/dev/null
+  [[ -n "$tab" ]] && herdr tab focus "$tab" >/dev/null
+  start_issue
+  exit 0
+fi
+
+repo=$(pick_repo "$team" "$(remembered_repo "$team")") || exit 0
+[[ -n "$repo" ]] || exit 0
+remember_repo "$team" "$repo"
+
+case "$topology" in
+  tab)
+    created=$(herdr tab create --cwd "$repo" --label "$identifier" --focus) \
+      || die "could not create a tab"
+    pane=$(print -r -- "$created" | jq -r '.result.root_pane.pane_id')
+    ;;
+  workspace)
+    created=$(herdr workspace create --cwd "$repo" --label "$identifier" --focus) \
+      || die "could not create a workspace"
+    pane=$(print -r -- "$created" | jq -r '.result.root_pane.pane_id')
+    ;;
+  pane)
+    from=$(resolve_split_pane) || die "no pane to split"
+    created=$(herdr pane split --pane "$from" --direction "$(split_direction "$from")" \
+      --cwd "$repo" --focus) || die "could not split a pane"
+    pane=$(print -r -- "$created" | jq -r '.result.pane.pane_id')
+    ;;
+esac
+[[ -n "$pane" && "$pane" != null ]] || die "herdr returned no pane id"
+
+# wt creates the worktree, runs its pre-start hooks, and replaces itself with
+# the command, so the pane goes from a prompt straight to a running agent.
+typeset -a switch=(wt switch)
+git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" \
+  || git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch" \
+  || switch+=(--create)
+switch+=("$branch")
+(( use_agent )) && switch+=(-x claude -- "/issue $url")
+
+herdr pane run "$pane" "${(j: :)${(@q)switch}}" >/dev/null \
+  || die "could not run wt in $pane"
+herdr pane rename "$pane" "$identifier" >/dev/null
+
+start_issue
