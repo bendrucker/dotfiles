@@ -99,6 +99,38 @@ type = "plugin_action"
 command = "worktrunk.open-current"
 description = "worktree: switch / create (current branch)"
 
+# herdr-mirror mirrors a remote herdr server's workspaces and agents into the
+# local sidebar. Its hosts live in ~/.config/herdr-mirror/hosts.toml, untracked
+# because every entry is an ssh target. The daemon autostarts on workspace
+# focus, and the lifecycle actions (start, pause, teardown, status) are the same
+# subcommands of the herdr-mirror the install links into ~/.local/bin, so a key
+# buys them nothing. These four have no CLI equivalent worth typing: each takes
+# its host and cwd from the mirror it's invoked from, and degrades to the plain
+# local action outside one. Native key plus alt, so both sets stay reachable.
+[[keys.command]]
+key = "prefix+alt+n"
+type = "plugin_action"
+command = "mirror.remote-new-workspace"
+description = "remote: new workspace"
+
+[[keys.command]]
+key = "prefix+alt+c"
+type = "plugin_action"
+command = "mirror.remote-new-tab"
+description = "remote: new tab"
+
+[[keys.command]]
+key = "prefix+alt+v"
+type = "plugin_action"
+command = "mirror.remote-split-right"
+description = "remote: split right"
+
+[[keys.command]]
+key = "prefix+alt+minus"
+type = "plugin_action"
+command = "mirror.remote-split-down"
+description = "remote: split down"
+
 [ui]
 agent_panel_sort = "priority"
 
