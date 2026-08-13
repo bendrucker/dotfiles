@@ -50,6 +50,9 @@ install_launch_agent com.user.activitywatch.plist "ActivityWatch capture"
 # machine without herdr, so it installs in every mode like the watcher above.
 install_launch_agent com.user.herdr-agent-detection.plist "herdr agent detection watcher"
 
+# The Screen Time import agent is installed by activitywatch/install.sh, which
+# is where its binary comes from.
+
 # Only setup upgrade if we're in separate-directory mode (not a symlink)
 if [[ ! -L "$HOME/.dotfiles" ]]; then
   setup_dotfiles_upgrade

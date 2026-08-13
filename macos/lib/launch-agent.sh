@@ -1,5 +1,6 @@
 # shellcheck shell=bash
-# LaunchAgent installation, sourced by macos/install.sh.
+# LaunchAgent installation, sourced by macos/install.sh and by a topic
+# installer that owns an agent of its own.
 #
 # The nightly com.user.dotfiles-upgrade job runs scripts/install, so this code
 # routinely runs as a descendant of a job it is about to reinstall. launchctl
@@ -118,4 +119,15 @@ install_launch_agent() {
     launchd_failed=1
     return 1
   fi
+}
+
+# Tear a job down and remove its plist. An installer whose agent depends on a
+# binary calls this when the binary is absent, so a KeepAlive agent does not
+# respawn against a missing exec target.
+remove_launch_agent() {
+  local plist_name="$1"
+  local label="${plist_name%.plist}"
+
+  launchctl bootout "gui/$UID/$label" 2>/dev/null || true
+  rm -f "$HOME/Library/LaunchAgents/$plist_name"
 }

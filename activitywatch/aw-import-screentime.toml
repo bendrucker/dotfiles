@@ -1,0 +1,14 @@
+# aw-import-screentime decodes the iOS/iPadOS App.InFocus streams that Screen
+# Time's "Share Across Devices" syncs into ~/Library/Biome, and inserts them as
+# one ActivityWatch bucket per device.
+
+[watch]
+# Discover devices by enumerating the synced stream directories. The default
+# discovery filters Biome's DevicePeer table on platform=2, which finds the
+# iPhone but not the iPad: the iPad is filed under platform=1, while the
+# platform=7 rows that look like iPadOS carry no data at all. No single platform
+# value selects both devices.
+all_devices = true
+
+# Storefront for the App Store lookup that turns bundle ids into app names.
+storefront = ["us"]
