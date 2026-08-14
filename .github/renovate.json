@@ -15,28 +15,6 @@
         "(?m)^(?<depName>[^\\s#/]+/[^\\s#]+)\\s+(?<currentValue>\\S+)"
       ],
       "datasourceTemplate": "github-releases"
-    },
-    {
-      "description": "herdr plugins, pinned to commits so herdr-lazy's own update path stays out of the way. git-refs needs a branch to take digests from, and these repos default to main.",
-      "customType": "regex",
-      "fileMatch": ["^herdr/plugins\\.list$"],
-      "matchStrings": [
-        "(?m)^(?!den-tanui/)(?<depName>[^\\s#/]+/[^\\s#@]+)@(?<currentDigest>[0-9a-f]{40})\\s*$"
-      ],
-      "datasourceTemplate": "git-refs",
-      "packageNameTemplate": "https://github.com/{{{depName}}}",
-      "currentValueTemplate": "main"
-    },
-    {
-      "description": "den-tanui/herdr-zoxide defaults to master, so it needs its own currentValueTemplate. herdr-lazy parses plugins.list positionally, so the branch can't ride along in the line itself.",
-      "customType": "regex",
-      "fileMatch": ["^herdr/plugins\\.list$"],
-      "matchStrings": [
-        "(?m)^(?<depName>den-tanui/herdr-zoxide)@(?<currentDigest>[0-9a-f]{40})\\s*$"
-      ],
-      "datasourceTemplate": "git-refs",
-      "packageNameTemplate": "https://github.com/{{{depName}}}",
-      "currentValueTemplate": "master"
     }
   ],
   "packageRules": [

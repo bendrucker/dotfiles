@@ -29,11 +29,11 @@ export HERDR_LAZY_LIST="$PWD/plugins.list"
 
 lazy_repo=natori-hrj/herdr-lazy
 
-# Take the bootstrap ref from the list itself. A second copy of the SHA here
-# would disagree with it the first time Renovate bumps one of them.
-lazy_ref=$(sed -n "s|^${lazy_repo}@||p" plugins.list | head -1)
-if [[ -z "$lazy_ref" ]]; then
-  echo "plugins.list: ${lazy_repo} is missing or unpinned; nothing to bootstrap from" >&2
+# This script installs herdr-lazy by hand, so nothing below would notice its
+# absence from the list. `update` only moves what the list names, which would
+# leave it as the one plugin frozen at whatever commit first got installed.
+if ! grep -qE "^${lazy_repo}(@|\$)" plugins.list; then
+  echo "plugins.list: ${lazy_repo} is missing; it would never be updated" >&2
   exit 1
 fi
 
@@ -47,9 +47,9 @@ lazy_root() {
 
 root=$(lazy_root)
 if [[ -z "$root" ]]; then
-  echo "› herdr plugin install ${lazy_repo}@${lazy_ref}"
+  echo "› herdr plugin install ${lazy_repo}"
   # Keep a flaky third-party build from aborting the rest under `set -e`.
-  herdr plugin install "$lazy_repo" --ref "$lazy_ref" --yes || true
+  herdr plugin install "$lazy_repo" --yes || true
   root=$(lazy_root)
 fi
 
@@ -62,6 +62,11 @@ if [[ -z "$root" || ! -x "$lazy" ]]; then
 fi
 
 "$lazy" sync || echo "✗ herdr-lazy sync did not finish; some plugins may be missing" >&2
+
+# sync only installs what is absent, and an unpinned entry is satisfied by any
+# commit, so without this every plugin would sit at whatever it first installed.
+# This is the only thing that moves them, and the nightly upgrade runs it.
+"$lazy" update || echo "✗ herdr-lazy update did not finish; some plugins may be stale" >&2
 
 # With this on, a plugin added to the list later installs on the next herdr
 # start instead of waiting for someone to re-run this script.
