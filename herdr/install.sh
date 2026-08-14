@@ -61,12 +61,15 @@ if [[ -z "$root" || ! -x "$lazy" ]]; then
   exit 0
 fi
 
-"$lazy" sync || echo "✗ herdr-lazy sync did not finish; some plugins may be missing" >&2
+# sync counts an unpinned entry as satisfied by whatever commit is installed, so
+# update is the only thing that moves one forward, and the nightly upgrade is
+# where that happens. It reinstalls every unpinned entry, missing ones included,
+# which is why it comes first: sync then has only pinned entries left to place,
+# instead of installing everything a second time.
+"$lazy" update || echo "✗ herdr-lazy update did not run; plugins may be stale" >&2
 
-# sync only installs what is absent, and an unpinned entry is satisfied by any
-# commit, so without this every plugin would sit at whatever it first installed.
-# This is the only thing that moves them, and the nightly upgrade runs it.
-"$lazy" update || echo "✗ herdr-lazy update did not finish; some plugins may be stale" >&2
+# Pinned entries, which update skips, plus anything sitting at the wrong commit.
+"$lazy" sync || echo "✗ herdr-lazy sync did not run; some plugins may be missing" >&2
 
 # With this on, a plugin added to the list later installs on the next herdr
 # start instead of waiting for someone to re-run this script.
