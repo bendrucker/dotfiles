@@ -29,11 +29,11 @@ export HERDR_LAZY_LIST="$PWD/plugins.list"
 
 lazy_repo=natori-hrj/herdr-lazy
 
-# Take the bootstrap ref from the list itself. A second copy of the SHA here
-# would disagree with it the first time Renovate bumps one of them.
-lazy_ref=$(sed -n "s|^${lazy_repo}@||p" plugins.list | head -1)
-if [[ -z "$lazy_ref" ]]; then
-  echo "plugins.list: ${lazy_repo} is missing or unpinned; nothing to bootstrap from" >&2
+# This script installs herdr-lazy by hand, so nothing below would notice its
+# absence from the list. `update` only moves what the list names, which would
+# leave it as the one plugin frozen at whatever commit first got installed.
+if ! grep -qE "^${lazy_repo}(@|\$)" plugins.list; then
+  echo "plugins.list: ${lazy_repo} is missing; it would never be updated" >&2
   exit 1
 fi
 
@@ -47,9 +47,9 @@ lazy_root() {
 
 root=$(lazy_root)
 if [[ -z "$root" ]]; then
-  echo "› herdr plugin install ${lazy_repo}@${lazy_ref}"
+  echo "› herdr plugin install ${lazy_repo}"
   # Keep a flaky third-party build from aborting the rest under `set -e`.
-  herdr plugin install "$lazy_repo" --ref "$lazy_ref" --yes || true
+  herdr plugin install "$lazy_repo" --yes || true
   root=$(lazy_root)
 fi
 
@@ -61,7 +61,15 @@ if [[ -z "$root" || ! -x "$lazy" ]]; then
   exit 0
 fi
 
-"$lazy" sync || echo "✗ herdr-lazy sync did not finish; some plugins may be missing" >&2
+# sync counts an unpinned entry as satisfied by whatever commit is installed, so
+# update is the only thing that moves one forward, and the nightly upgrade is
+# where that happens. It reinstalls every unpinned entry, missing ones included,
+# which is why it comes first: sync then has only pinned entries left to place,
+# instead of installing everything a second time.
+"$lazy" update || echo "✗ herdr-lazy update did not run; plugins may be stale" >&2
+
+# Pinned entries, which update skips, plus anything sitting at the wrong commit.
+"$lazy" sync || echo "✗ herdr-lazy sync did not run; some plugins may be missing" >&2
 
 # With this on, a plugin added to the list later installs on the next herdr
 # start instead of waiting for someone to re-run this script.

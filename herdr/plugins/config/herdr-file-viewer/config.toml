@@ -1,6 +1,6 @@
 # Settings in herdr's own config.toml never reach a plugin.
 # https://github.com/smarzban/herdr-file-viewer/blob/main/docs/configuration.md
 
-# The installed version is the commit plugins.list pins, which Renovate moves.
-# A daily check can only ever announce a release this machine won't install.
+# herdr-lazy moves this to the latest commit on the nightly upgrade, so a daily
+# check can only ever announce something that is already on its way in.
 update_check = false

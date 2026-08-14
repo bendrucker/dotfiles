@@ -1,10 +1,11 @@
-# herdr plugins, installed by herdr-lazy. Commits are managed by Renovate
-# (.github/renovate.json customManagers).
-AltanS/collie@30371790c2eb486b02dbbfc668a551d0b4438617
-den-tanui/herdr-zoxide@7be842fe84d8d017c80e54f8d7eb7f0f6ef28c44
-devashish2203/herdr-worktrunk@a3107ca566bafcd463bc138007a0c01051970784
-natori-hrj/herdr-lazy@ae0eb89127ec1cfaaeb2c065e26c4eb346398b60
-nikok6/herdr-mirror@3738bacc148470af7c5c51c1ff11b8ebdb0a4878
-ogulcancelik/herdr-browser@be6888b71cf4eb5939ee79a746bd1a1c22ade046
-persiyanov/herdr-reviewr@792b4b31475ddbf263ee4d421a984e7418031506
-smarzban/herdr-file-viewer@71d4c1c3706e7958c714789b035a99d949620a9e
+# herdr plugins, installed by herdr-lazy. Entries are unpinned, so each tracks
+# its repository's default branch and `herdr-lazy update` in install.sh moves it
+# to the latest commit on every nightly upgrade. Add an @ref to hold one still.
+AltanS/collie
+den-tanui/herdr-zoxide
+devashish2203/herdr-worktrunk
+natori-hrj/herdr-lazy
+nikok6/herdr-mirror
+ogulcancelik/herdr-browser
+persiyanov/herdr-reviewr
+smarzban/herdr-file-viewer
