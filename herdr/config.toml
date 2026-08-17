@@ -84,6 +84,24 @@ type = "shell"
 command = "herdr plugin action invoke toggle --plugin persiyanov.reviewr"
 description = "reviewr diff (toggle)"
 
+# herdr-nvim — a per-tab nvim in a full-height split, plus a picker over the
+# files the agent just touched. The plugin has an nvim half too, declared in
+# neovim/config/init.lua, which is what sends annotations back to an agent.
+# Its README suggests prefix+e and prefix+o, both of which herdr already binds
+# (edit_scrollback, open_notification_target), so these take the shift variants
+# the same way the file viewer does above.
+[[keys.command]]
+key = "prefix+shift+e"
+type = "plugin_action"
+command = "chmarax.herdr-nvim.toggle"
+description = "nvim sidebar (toggle)"
+
+[[keys.command]]
+key = "prefix+shift+o"
+type = "plugin_action"
+command = "chmarax.herdr-nvim.pick-file"
+description = "nvim sidebar: open a file the agent touched"
+
 # worktrunk — routes worktree creation through wt instead of herdr's native
 # flow (see new_worktree above). prefix+shift+g reuses the native flow's key
 # so muscle memory carries. prefix+ctrl+g is the stacking entry point.
