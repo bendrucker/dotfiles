@@ -4,6 +4,10 @@
       "rev": "6d808f99bd63303646794406e270bd553ad7792e",
       "src": "https://github.com/lewis6991/gitsigns.nvim"
     },
+    "herdr-nvim": {
+      "rev": "40aadeab3cef3702ef5e05069181c7168084794f",
+      "src": "https://github.com/ChmaraX/herdr-nvim"
+    },
     "lualine.nvim": {
       "rev": "131a558e13f9f28b15cd235557150ccb23f89286",
       "src": "https://github.com/nvim-lualine/lualine.nvim"

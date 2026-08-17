@@ -8,6 +8,7 @@ vim.pack.add({
   "https://github.com/christoomey/vim-tmux-navigator",
   "https://github.com/nvim-lualine/lualine.nvim",
   "https://github.com/lewis6991/gitsigns.nvim",
+  "https://github.com/ChmaraX/herdr-nvim",
 })
 
 require("config.options")
@@ -15,6 +16,7 @@ require("config.colorscheme")
 require("config.statusline")
 require("config.gitsigns")
 require("config.keymaps")
+require("config.herdr")
 require("config.treesitter")
 require("config.lsp")
 require("config.completion")
