@@ -11,5 +11,9 @@ vim.keymap.set({ "n", "x" }, "k", "v:count == 0 ? 'gk' : 'k'", { expr = true, de
 vim.keymap.set("n", "<Esc>", "<cmd>nohlsearch<cr>", { desc = "Clear search highlight" })
 
 -- Visual P leaves the register alone where p replaces it with whatever was
--- selected. With clipboard=unnamedplus that difference is the system clipboard.
+-- selected, so the same text can be pasted over several places in a row.
 vim.keymap.set("x", "p", "P", { desc = "Paste over selection" })
+
+-- Only yanks reach the + register (see config.clipboard), so reading the system
+-- clipboard back is explicit. Insert-mode Cmd-V still works through the terminal.
+vim.keymap.set({ "n", "x" }, "<leader>p", '"+p', { desc = "Paste from clipboard" })

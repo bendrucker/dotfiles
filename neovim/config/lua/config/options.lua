@@ -10,10 +10,6 @@ vim.o.laststatus = 3
 -- Treesitter supplies folds; open files with all of them expanded.
 vim.o.foldlevelstart = 99
 
--- Yank and put go through the system clipboard. Deletes land there too, since
--- vim has no way to split the two, so d and c overwrite what you last copied.
-vim.o.clipboard = "unnamedplus"
-
 -- Wrapping defaults assume code. These are for the markdown drafts this config
 -- actually opens, usually in a split narrow enough that every paragraph wraps.
 vim.o.linebreak = true
