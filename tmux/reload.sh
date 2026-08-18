@@ -22,20 +22,28 @@ tmux list-sessions >/dev/null 2>&1 || exit 0
 # resurrects saved sessions into a live server and re-runs @resurrect-processes
 # in their panes. Wait it out instead. The server read the current config at
 # startup, so all this delays is a change that landed in the seconds since.
-started=$(tmux display-message -p -F '#{start_time}' 2>/dev/null || echo "")
 window=$(tmux show -gv @continuum-restore-max-delay 2>/dev/null || echo 10)
 [[ "$window" =~ ^[0-9]+$ ]] || window=10
-# continuum reads an unreadable start time as a just-started server and
-# restores on it, so match that reading rather than sourcing into it.
-[[ "$started" =~ ^[0-9]+$ ]] || exit 0
 
-remaining=$(( window - ($(date +%s) - started) + 1 ))
-if (( remaining > 0 )); then
+# Read twice, because the server can exit during the sleep and a replacement
+# take the socket. Sourcing on the first server's start time would then land in
+# the replacement's restore window, which is the case this exists to avoid.
+for _ in 1 2; do
+  started=$(tmux display-message -p -F '#{start_time}' 2>/dev/null || echo "")
+  # continuum reads an unreadable start time as a just-started server and
+  # restores on it, so match that reading rather than sourcing into it.
+  [[ "$started" =~ ^[0-9]+$ ]] || exit 0
+
+  remaining=$(( window - ($(date +%s) - started) + 1 ))
+  (( remaining <= 0 )) && break
   # A window widened past the minute the dispatcher allows each reload isn't
   # worth waiting out, and the server is still on config it read moments ago.
   (( remaining > 30 )) && exit 0
   sleep "$remaining"
-fi
+done
+# Still inside a window on the second read means a replacement server, which
+# has the current config anyway.
+(( remaining > 0 )) && exit 0
 
 # shellcheck source=../scripts/lib/tmux-source-lock.sh
 source "$root/scripts/lib/tmux-source-lock.sh"
