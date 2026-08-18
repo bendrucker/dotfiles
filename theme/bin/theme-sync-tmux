@@ -21,9 +21,14 @@ tmux list-sessions >/dev/null 2>&1 || exit 0
 # tmux/reload.sh holds the lock below while it re-sources tmux.conf, whose last
 # lines run this script. Waiting would burn the full timeout and then steal a
 # lock the reload is still using, so stand down instead: the reload re-applies
-# the flavor itself, through the plugin.
+# the flavor itself, through the plugin, and re-runs this script once it lets
+# the lock go. The option carries the reload's pid, so a reload killed before
+# it could clear the option leaves a pid that is gone, and this proceeds rather
+# than standing down for the life of the server.
 reloading=$(tmux show -gv @tmux_config_reloading 2>/dev/null || echo "")
-[[ "$reloading" == "1" ]] && exit 0
+if [[ -n "$reloading" ]] && kill -0 "$reloading" 2>/dev/null; then
+  exit 0
+fi
 
 # Plugin not installed yet (fresh bootstrap): nothing to retheme. A partial
 # checkout (one conf present, the other missing) would half-apply the theme

@@ -172,6 +172,38 @@ jobs:
 
         tmux_assert_opt @thm_surface_2 || exit 1
         tmux_assert_opt prefix C-s || exit 1
+
+        # tmux/reload.sh re-sources tmux.conf into this live server. It must
+        # leave the sessions alone: sourcing re-runs TPM, which re-runs
+        # tmux-continuum, which restores the whole saved session set into a
+        # server it reads as freshly started. Zeroing the restore window is what
+        # continuum reads as an aged server, and it is also what puts this
+        # server past reload.sh's own skip, so this exercises the source path.
+        tmux set -g @continuum-restore-max-delay 0
+        until (( $(date +%s) - $(tmux display-message -p -F '#{start_time}') >= 1 )); do
+          sleep 1
+        done
+
+        sessions_before=$(tmux list-sessions -F '#S' | sort | tr '\n' ' ')
+        reload_stderr=$(mktemp)
+        reload_exit=0
+        "$GITHUB_WORKSPACE/tmux/reload.sh" 2>"$reload_stderr" || reload_exit=$?
+        if [[ $reload_exit -ne 0 ]]; then
+          echo "FAIL: tmux/reload.sh exited with code $reload_exit"
+          cat "$reload_stderr"
+          exit 1
+        fi
+
+        sessions_after=$(tmux list-sessions -F '#S' | sort | tr '\n' ' ')
+        if [[ "$sessions_before" != "$sessions_after" ]]; then
+          echo "FAIL: reload changed the sessions: [$sessions_before] -> [$sessions_after]"
+          exit 1
+        fi
+        echo "OK: reload left sessions at [$sessions_after]"
+
+        # The config the reload just re-read is still in effect.
+        tmux_assert_opt @thm_surface_2 || exit 1
+        tmux_assert_opt prefix C-s || exit 1
     - name: Benchmark shell startup
       run: |
         hyperfine --warmup 3 --runs 10 --shell=none \
@@ -259,6 +291,17 @@ jobs:
           if [[ -n "$bad" ]]; then
             echo "ERROR: Files named 'completions.zsh' bypass the zshrc completion filter."
             echo "Rename to 'completion.zsh' (singular):"
+            echo "$bad"
+            exit 1
+          fi
+      - name: Check topic reload scripts are executable
+        run: |
+          # bin/dotfiles-reload skips a reload.sh without the exec bit, so one
+          # committed without it never runs and nothing says so.
+          bad=$(find . -name 'reload.sh' -not -path './.git/*' -not -perm -u+x)
+          if [[ -n "$bad" ]]; then
+            echo "ERROR: reload scripts are skipped unless executable."
+            echo "Run chmod +x on:"
             echo "$bad"
             exit 1
           fi

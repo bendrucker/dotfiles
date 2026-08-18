@@ -175,7 +175,7 @@ Most tools read their config once per invocation, so a sync is enough. A few hol
 
 Every one is in place: the program re-reads its config and keeps its state, its sessions, and its child processes. Nothing restarts. This runs unattended at 3am, and a restart would take live work down with it, so a tool whose only path to new config is a restart gets no `reload.sh` and picks the change up whenever it next starts.
 
-Each script self-gates, exiting 0 without work when its tool isn't installed or isn't running, so a fresh machine and CI both no-op. The dispatcher logs a failing one and carries on to the rest.
+Each script self-gates, exiting 0 without work when its tool isn't installed or isn't running, so a fresh machine and CI both no-op. The dispatcher logs a failing one and carries on to the rest. It also caps each at a minute, since a wedged socket would otherwise hang the nightly job past the point where it could report anything.
 
 The tmux reload and a theme flip both re-source the appearance configs, and tmux interleaves commands from concurrent clients, so the two serialize on the lock in [`scripts/lib/tmux-source-lock.sh`](scripts/lib/tmux-source-lock.sh).
 

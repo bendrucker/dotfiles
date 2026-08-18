@@ -17,11 +17,24 @@ shopt -s nullglob
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Every reload talks to a running program, over a socket or a tmux command, and
+# a wedged one would otherwise hang here forever. The nightly upgrade runs
+# unattended and reports failures by creating a Things task, so a hang is worse
+# than a failure: it never reports, and it holds the job open under every later
+# run. A minute is far past what any of these take. `timeout` comes from
+# coreutils and isn't on a stock macOS, so a machine without it runs unbounded
+# rather than not reloading.
+if command -v timeout >/dev/null 2>&1; then
+  bound() { timeout 60 "$@"; }
+else
+  bound() { "$@"; }
+fi
+
 status=0
 for reload in "$root"/*/reload.sh; do
   [[ -x "$reload" ]] || continue
-  # Not `if ! "$reload"`: that reads $? off the negation, which is always 0.
-  "$reload" && continue
+  # Not `if ! bound "$reload"`: that reads $? off the negation, which is always 0.
+  bound "$reload" && continue
   status=$?
   gum log --level error "$(basename "$(dirname "$reload")")/reload.sh exited $status"
 done

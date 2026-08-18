@@ -14,7 +14,11 @@ TMUX_SOURCE_LOCK="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/theme-sync-tmux.lock"
 # second, so a holder that outlives the wait is dead or wedged. Steal its lock.
 # Returns nonzero only when even the steal fails.
 tmux_source_lock_acquire() {
-  mkdir -p "$(dirname "$TMUX_SOURCE_LOCK")"
+  # Checked rather than left to `set -e`, which bash suppresses inside a
+  # function whose call is the left side of `||`. That is how both callers
+  # invoke this, so an unwritable cache directory would otherwise fall into the
+  # retry loop and spin out the whole timeout before failing.
+  mkdir -p "$(dirname "$TMUX_SOURCE_LOCK")" || return 1
 
   local _
   for _ in $(seq 1 100); do

@@ -9,26 +9,56 @@
 # no-op rather than a wrapper captured into itself.
 set -uo pipefail
 
+root="$(cd "$(dirname "$0")/.." && pwd)"
+
 command -v tmux >/dev/null 2>&1 || exit 0
 
 # No server, so nothing is holding the old config. The next one reads it fresh.
 tmux list-sessions >/dev/null 2>&1 || exit 0
 
+# A server this young read the current config when it started, so there is
+# nothing here to update. Skipping also keeps this out of tmux-continuum's
+# restore window. Re-sourcing tmux.conf re-runs TPM, which re-runs continuum's
+# entrypoint, and that restores the entire saved session set whenever the
+# server started under @continuum-restore-max-delay seconds ago. Sourcing
+# inside the window resurrects saved sessions into a live server and re-runs
+# @resurrect-processes in their panes.
+started=$(tmux display-message -p -F '#{start_time}' 2>/dev/null || echo "")
+window=$(tmux show -gv @continuum-restore-max-delay 2>/dev/null || echo 10)
+[[ "$window" =~ ^[0-9]+$ ]] || window=10
+# continuum reads an unreadable start time as a just-started server and
+# restores on it, so match that reading rather than sourcing into it.
+[[ "$started" =~ ^[0-9]+$ ]] || exit 0
+(( $(date +%s) - started <= window )) && exit 0
+
 # shellcheck source=../scripts/lib/tmux-source-lock.sh
-source "$(cd "$(dirname "$0")/.." && pwd)/scripts/lib/tmux-source-lock.sh"
+source "$root/scripts/lib/tmux-source-lock.sh"
 
 tmux_source_lock_acquire || exit 1
 
 # tmux.conf ends by running theme-sync-tmux, which takes the same lock. The
-# flag tells it to stand down for the duration rather than wait out the
-# timeout and steal a lock still in use. Re-sourcing tmux.conf re-applies the
-# flavor on its own, through the plugin: @catppuccin_flavor is set with -o, so
-# the value theme-sync-tmux chose survives the reload.
+# option tells it to stand down for the duration rather than wait out the
+# timeout and steal a lock still in use. It carries this process's pid rather
+# than a bare flag: a reload killed before its trap runs would otherwise leave
+# the option set for the life of the server, silently ending every later theme
+# flip. A pid that is gone reads as no reload in progress.
 release() {
   tmux set -gu @tmux_config_reloading 2>/dev/null
   tmux_source_lock_release
 }
 trap release EXIT
 
-tmux set -g @tmux_config_reloading 1
+tmux set -g @tmux_config_reloading $$
 tmux source-file "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"
+rc=$?
+
+release
+trap - EXIT
+
+# A flavor flip that fired inside the window above found a reload in progress
+# and stood down, and nothing would retry it. Re-run it now the lock is free.
+# It re-reads the system appearance and no-ops when the server already agrees,
+# so this costs nothing on the ordinary path.
+"$root/theme/bin/theme-sync-tmux" || true
+
+exit "$rc"

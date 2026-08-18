@@ -16,10 +16,15 @@ command -v herdr >/dev/null 2>&1 || exit 0
 # stale config, and a refusal leaves herdr on the config it already had.
 out=$(herdr server reload-config 2>/dev/null) || exit 0
 
+command -v jq >/dev/null 2>&1 || exit 0
+
 # reload-config reports a bad config.toml as diagnostics rather than as a
 # failure, and herdr goes on serving the old config either way. Nothing else
-# would say so.
-command -v jq >/dev/null 2>&1 || exit 0
-if [[ "$(jq -r '.result.diagnostics | length' <<<"$out" 2>/dev/null)" != "0" ]]; then
-  gum log --level warn "herdr kept its old config: $(jq -c '.result.diagnostics' <<<"$out")"
-fi
+# would say so. --exit-status covers the other shape this can take: a response
+# carrying no diagnostics field at all, from a herdr that answers something
+# other than what this expects, is not a rejected config and must not warn
+# like one.
+diagnostics=$(jq --compact-output --exit-status '.result.diagnostics' <<<"$out" 2>/dev/null) || exit 0
+[[ "$diagnostics" == "[]" ]] && exit 0
+
+gum log --level warn "herdr kept its old config: $diagnostics"
