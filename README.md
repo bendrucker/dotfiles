@@ -35,6 +35,7 @@ A file's name determines how and when it loads:
 | `Brewfile` | Homebrew packages for the topic. |
 | `mise.toml` | Pinned language/tool versions, merged into mise's config. |
 | `install.sh` | Non-symlink setup: plugin managers, system config. Run by `scripts/install`. |
+| `reload.sh` | Tells an already-running program to re-read its config (see [config reloads](#config-reloads)). |
 | `.shellspec` | Opts the topic into [integration tests](#topic-integration-tests) that run in CI. |
 
 The repo-root [`bin/`](bin/) holds executables that go on `$PATH`, like `dotfiles-upgrade` and `bench-startup`.
@@ -152,13 +153,31 @@ Three commands drive it:
 * `dotfiles dev enable` persistently repoints every symlink to the checkout and sets the flag. `dotfiles dev disable` restores the installed copy.
 * `dotfiles status` shows which root is active and its revision.
 
-Writing the flag file and re-running `install-symlinks` happen in one step.
+Writing the flag file and re-running `install-symlinks` happen in one step, which ends by [reloading](#config-reloads) whatever was already holding the old root's config.
 
 ### Sync and Upgrade
 
 A launchd agent ([`macos/com.user.dotfiles-upgrade.plist`](macos/com.user.dotfiles-upgrade.plist)) runs [`bin/dotfiles-upgrade`](bin/dotfiles-upgrade) nightly. It syncs from the remote, reruns `scripts/install`, and cleans up stale packages. On failure it files a Things task with the error.
 
 `dotfiles sync` runs the same pull by hand. It refuses to sync a dirty tree, fast-forwards only, and updates submodules.
+
+### Config Reloads
+
+Most tools read their config once per invocation, so a sync is enough. A few hold it in memory for weeks: a tmux server, a herdr server, an open Ghostty. Those would sit on the config they started with until something restarted them.
+
+[`bin/dotfiles-reload`](bin/dotfiles-reload) runs every `<topic>/reload.sh`, and the sync, the install, and a dev-mode toggle all end by calling it:
+
+| Topic | Reload |
+| --- | --- |
+| [`herdr`](herdr/reload.sh) | `herdr server reload-config` over its socket API |
+| [`tmux`](tmux/reload.sh) | `source-file` on `tmux.conf`, the same thing `prefix+r` does |
+| [`terminal`](terminal/reload.sh) | `SIGUSR2` to Ghostty, the same path as its `reload_config` keybind |
+
+Every one is in place: the program re-reads its config and keeps its state, its sessions, and its child processes. Nothing restarts. This runs unattended at 3am, and a restart would take live work down with it, so a tool whose only path to new config is a restart gets no `reload.sh` and picks the change up whenever it next starts.
+
+Each script self-gates, exiting 0 without work when its tool isn't installed or isn't running, so a fresh machine and CI both no-op. The dispatcher logs a failing one and carries on to the rest.
+
+The tmux reload and a theme flip both re-source the appearance configs, and tmux interleaves commands from concurrent clients, so the two serialize on the lock in [`scripts/lib/tmux-source-lock.sh`](scripts/lib/tmux-source-lock.sh).
 
 ### Topic Integration Tests
 
@@ -178,7 +197,7 @@ Because bootstrap runs before them, [these specs](git/spec/) verify the installe
 Two entry points split one-time setup from the repeatable reconcile step:
 
 * [`scripts/bootstrap`](scripts/bootstrap) is the **one-time** fresh-machine path: install Homebrew, prompt for git identity, init submodules, then hand off to `dotf`, which runs install.
-* [`scripts/install`](scripts/install) is the **idempotent** core, safe to rerun nightly: `brew bundle` → install mise runtimes → install symlinks → run each topic's `install.sh` → sync the theme.
+* [`scripts/install`](scripts/install) is the **idempotent** core, safe to rerun nightly: `brew bundle` → install mise runtimes → install symlinks → run each topic's `install.sh` → sync the theme → [reload](#config-reloads) whatever is running.
 
 The nightly upgrade and the dev-mode relink both call `install`.
 

@@ -8,7 +8,8 @@
 # them: tmux interleaves commands from concurrent clients, so unserialized
 # re-themes corrupt the window formats mid-build (the plugin assembles them
 # with a chain of appends) or capture the window-status wrapper into itself,
-# which renders every window tab empty.
+# which renders every window tab empty. tmux/reload.sh re-sources the same
+# files and shares the lock, which lives in scripts/lib/tmux-source-lock.sh.
 set -euo pipefail
 
 bin_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -16,6 +17,13 @@ flavor="$("$bin_dir/theme-flavor")"
 
 # No tmux server, nothing to sync. Next `tmux` will pick up the flavor at startup.
 tmux list-sessions >/dev/null 2>&1 || exit 0
+
+# tmux/reload.sh holds the lock below while it re-sources tmux.conf, whose last
+# lines run this script. Waiting would burn the full timeout and then steal a
+# lock the reload is still using, so stand down instead: the reload re-applies
+# the flavor itself, through the plugin.
+reloading=$(tmux show -gv @tmux_config_reloading 2>/dev/null || echo "")
+[[ "$reloading" == "1" ]] && exit 0
 
 # Plugin not installed yet (fresh bootstrap): nothing to retheme. A partial
 # checkout (one conf present, the other missing) would half-apply the theme
@@ -30,23 +38,11 @@ for f in "${plugin_confs[@]}"; do
   fi
 done
 
-# mkdir is the portable atomic lock. A retheme takes well under a second, so
-# a holder that outlives the wait is dead or wedged; steal its lock.
-lock="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/theme-sync-tmux.lock"
-mkdir -p "$(dirname "$lock")"
-acquire() {
-  local _
-  for _ in $(seq 1 100); do
-    mkdir "$lock" 2>/dev/null && return 0
-    sleep 0.1
-  done
-  return 1
-}
-if ! acquire; then
-  rmdir "$lock" 2>/dev/null || true
-  mkdir "$lock" 2>/dev/null || exit 1
-fi
-trap 'rmdir "$lock" 2>/dev/null' EXIT
+# shellcheck source=../../scripts/lib/tmux-source-lock.sh
+source "$bin_dir/../../scripts/lib/tmux-source-lock.sh"
+
+tmux_source_lock_acquire || exit 1
+trap tmux_source_lock_release EXIT
 
 # Gate under the lock so queued triggers see the winner's flavor and no-op.
 # Read globally on purpose: a stray session-scoped @catppuccin_flavor would

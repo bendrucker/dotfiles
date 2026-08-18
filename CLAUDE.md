@@ -10,6 +10,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
   - `path.zsh`: Loaded first for `$PATH` setup
   - `completion.zsh`: Deferred until after first prompt renders (via `precmd` hook)
   - `install.sh`: Topic installer for non-symlink setup (e.g., plugin managers, system config)
+  - `reload.sh`: Tells an already-running program to re-read its config (see [Config Reloads](#config-reloads))
   - `Brewfile`: Homebrew packages for the topic
 - **`*/symlinks.conf`**: Per-topic declarative symlink maps (`source:target`) discovered and processed by `scripts/install-symlinks`
 - **scripts/**: Bootstrap and setup scripts
@@ -188,6 +189,18 @@ Read the remote with `git config --get remote.<name>.url`, never `git remote get
 3. `mise install` — Install language runtimes
 4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
 5. Run topic `install.sh` scripts
+6. `theme/bin/theme-sync` reconciles theme-managed configs to the active flavor
+7. `bin/dotfiles-reload` hands the new config to whatever is already running
+
+### Config Reloads
+
+`bin/dotfiles-reload` runs every `<topic>/reload.sh`. `bin/dotfiles-sync`, `scripts/install`, and `dotfiles dev enable|disable` each end by calling it, so a config change reaches a program that has been running for weeks instead of waiting for a restart. Today that is `herdr server reload-config`, `tmux source-file` on `tmux.conf`, and `SIGUSR2` to Ghostty.
+
+Every reload is in place. The program re-reads its config and keeps its state, sessions, and child processes. Nothing here may restart a server, kill a session, or drop in-flight work: this runs unattended from the 3am job, where a restart takes live work down with it. A tool whose only path to new config is a restart gets no `reload.sh` and picks the change up on its next start. That is the whole test for whether something belongs here.
+
+A `reload.sh` self-gates. Exit 0 without work when the tool isn't installed or isn't running, since a fresh machine and CI hit both cases. The dispatcher logs a failing one and carries on to the rest.
+
+The tmux reload and a theme flip both re-source the appearance configs, and tmux interleaves commands from concurrent clients, so the two serialize on the lock in `scripts/lib/tmux-source-lock.sh`. `tmux/reload.sh` also sets `@tmux_config_reloading` while it sources, because `tmux.conf` ends by running `theme-sync-tmux`, which would otherwise wait out the lock timeout and then steal a lock still in use.
 
 ## Stacked PRs
 

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#
+# Tell the long-running programs that hold this repo's config in memory to
+# re-read it, so a sync or an install lands without waiting for a restart.
+#
+# Every reload here is in place: the program re-reads its config and keeps its
+# state, sessions, and child processes. Nothing restarts a server, because this
+# runs unattended from the nightly upgrade and a restart would take live work
+# down with it. A tool whose only path to new config is a restart therefore has
+# no `reload.sh` and picks the change up whenever it next starts.
+#
+# Each `<topic>/reload.sh` self-gates and exits 0 without work when its tool
+# isn't installed or isn't running. Most tools need nothing here at all: they
+# read their config once per invocation, so the next invocation has it.
+set -uo pipefail
+shopt -s nullglob
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+
+status=0
+for reload in "$root"/*/reload.sh; do
+  [[ -x "$reload" ]] || continue
+  # Not `if ! "$reload"`: that reads $? off the negation, which is always 0.
+  "$reload" && continue
+  status=$?
+  gum log --level error "$(basename "$(dirname "$reload")")/reload.sh exited $status"
+done
+exit "$status"

@@ -39,4 +39,10 @@ notify "Dotfiles Sync" "Updated to $new_rev" "Glass"
 if [[ "$1" == "--bootstrap" ]] && [[ -x "$DOTFILES_HOME/scripts/bootstrap" ]]; then
   gum log --level info "Running bootstrap..."
   "$DOTFILES_HOME/scripts/bootstrap" --no-prompt
+else
+  # The symlinks didn't move, but the files they point at just did, so anything
+  # holding the old config is now behind. Only on this branch: bootstrap
+  # reaches the same reload through scripts/install, once its own changes are
+  # in place.
+  "$DOTFILES_HOME/bin/dotfiles-reload" || gum log --level warn "some config reloads had issues"
 fi

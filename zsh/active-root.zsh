@@ -39,4 +39,12 @@ _dotfiles_switch_root() {
     root="$DOTFILES_HOME"
   fi
   "$root/scripts/install-symlinks" "$root"
+
+  # The links now resolve into a different tree, so anything already running is
+  # holding the config of the root we just left. Every reload is in place, so a
+  # mode toggle costs no sessions. Guarded because the root being switched to
+  # can be a checkout predating this script.
+  if [[ -x "$root/bin/dotfiles-reload" ]]; then
+    "$root/bin/dotfiles-reload"
+  fi
 }
