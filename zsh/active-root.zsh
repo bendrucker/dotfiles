@@ -44,7 +44,10 @@ _dotfiles_switch_root() {
   # holding the config of the root we just left. Every reload is in place, so a
   # mode toggle costs no sessions. Guarded because the root being switched to
   # can be a checkout predating this script.
+  # Downgraded to a warning, as in scripts/install and bin/dotfiles-sync: the
+  # flag and the symlinks have already moved, so the switch succeeded whatever
+  # the reload did, and returning its status would report otherwise.
   if [[ -x "$root/bin/dotfiles-reload" ]]; then
-    "$root/bin/dotfiles-reload"
+    "$root/bin/dotfiles-reload" || gum log --level warn "some config reloads had issues"
   fi
 }
