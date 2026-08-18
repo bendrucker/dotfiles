@@ -2,10 +2,11 @@ local treesitter = require("nvim-treesitter")
 
 local languages = {
   "bash", "diff", "dockerfile",
-  "git_rebase", "gitcommit", "go", "gomod",
+  "git_config", "git_rebase", "gitcommit", "go", "gomod",
   "hcl", "javascript", "json", "lua",
-  "python", "ruby", "rust", "terraform", "toml",
-  "typescript", "tsx", "yaml",
+  "markdown", "markdown_inline",
+  "python", "ruby", "rust", "ssh_config", "terraform",
+  "toml", "typescript", "tsx", "yaml",
 }
 
 treesitter.install(languages)

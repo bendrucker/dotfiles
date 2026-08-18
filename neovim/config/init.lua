@@ -9,6 +9,7 @@ vim.pack.add({
   "https://github.com/nvim-lualine/lualine.nvim",
   "https://github.com/lewis6991/gitsigns.nvim",
   "https://github.com/ChmaraX/herdr-nvim",
+  "https://github.com/folke/which-key.nvim",
 })
 
 require("config.options")
@@ -16,6 +17,8 @@ require("config.colorscheme")
 require("config.statusline")
 require("config.gitsigns")
 require("config.keymaps")
+require("config.whichkey")
+require("config.prose")
 require("config.herdr")
 require("config.treesitter")
 require("config.lsp")
