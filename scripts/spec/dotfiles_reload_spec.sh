@@ -45,8 +45,6 @@ Describe "dotfiles-reload"
     The status should be success
   End
 
-  # One tool refusing to reload must not stop the rest, the same way a failing
-  # topic installer doesn't abort the install.
   It "keeps going past a failing topic and reports its status"
     topic alpha 3
     topic beta 0
