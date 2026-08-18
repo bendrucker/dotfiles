@@ -294,15 +294,22 @@ jobs:
             echo "$bad"
             exit 1
           fi
-      - name: Check topic reload scripts are executable
+      - name: Check topic reload scripts are discoverable
         run: |
-          # bin/dotfiles-reload skips a reload.sh without the exec bit, so one
-          # committed without it never runs and nothing says so.
+          # bin/dotfiles-reload globs <topic>/reload.sh and skips one without
+          # the exec bit. Either way it runs nothing and says nothing.
           bad=$(find . -name 'reload.sh' -not -path './.git/*' -not -perm -u+x)
           if [[ -n "$bad" ]]; then
             echo "ERROR: reload scripts are skipped unless executable."
             echo "Run chmod +x on:"
             echo "$bad"
+            exit 1
+          fi
+          deep=$(find . -mindepth 3 -name 'reload.sh' -not -path './.git/*')
+          if [[ -n "$deep" ]]; then
+            echo "ERROR: bin/dotfiles-reload only globs one level down."
+            echo "Move to <topic>/reload.sh:"
+            echo "$deep"
             exit 1
           fi
       - name: Check private-use glyphs are declared

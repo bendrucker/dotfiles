@@ -153,7 +153,7 @@ Three commands drive it:
 * `dotfiles dev enable` persistently repoints every symlink to the checkout and sets the flag. `dotfiles dev disable` restores the installed copy.
 * `dotfiles status` shows which root is active and its revision.
 
-Writing the flag file and re-running `install-symlinks` happen in one step, which ends by [reloading](#config-reloads) whatever was already holding the old root's config.
+Writing the flag file and re-running `install-symlinks` happen in one step. It ends by [reloading](#config-reloads) the programs still holding the old root's config.
 
 ### Sync and Upgrade
 
@@ -165,19 +165,19 @@ A launchd agent ([`macos/com.user.dotfiles-upgrade.plist`](macos/com.user.dotfil
 
 Most tools read their config once per invocation, so a sync is enough. A few hold it in memory for weeks: a tmux server, a herdr server, an open Ghostty. Those would sit on the config they started with until something restarted them.
 
-[`bin/dotfiles-reload`](bin/dotfiles-reload) runs every `<topic>/reload.sh`, and the sync, the install, and a dev-mode toggle all end by calling it:
+A sync that moved the tree, an install, and a dev-mode toggle all end by calling [`bin/dotfiles-reload`](bin/dotfiles-reload). It runs every `<topic>/reload.sh`:
 
 | Topic | Reload |
 | --- | --- |
-| [`herdr`](herdr/reload.sh) | `herdr server reload-config` over its socket API |
-| [`tmux`](tmux/reload.sh) | `source-file` on `tmux.conf`, the same thing `prefix+r` does |
-| [`terminal`](terminal/reload.sh) | `SIGUSR2` to Ghostty, the same path as its `reload_config` keybind |
+| [`herdr`](herdr/reload.sh) | `herdr server reload-config` over its socket API, for `config.toml` only |
+| [`tmux`](tmux/reload.sh) | `source-file` on the installed `tmux.conf`, the same thing `prefix+r` does |
+| [`terminal`](terminal/reload.sh) | `SIGUSR2` to Ghostty, the same path as its `reload_config` action |
 
-Every one is in place: the program re-reads its config and keeps its state, its sessions, and its child processes. Nothing restarts. This runs unattended at 3am, and a restart would take live work down with it, so a tool whose only path to new config is a restart gets no `reload.sh` and picks the change up whenever it next starts.
+Every one is in place. The program re-reads its config and keeps its state, sessions, and child processes, and nothing restarts. This runs unattended at 3am, where a restart would take live work down with it. So a tool whose only path to new config is a restart gets no `reload.sh`, and picks the change up whenever it next starts.
 
-Each script self-gates, exiting 0 without work when its tool isn't installed or isn't running, so a fresh machine and CI both no-op. The dispatcher logs a failing one and carries on to the rest. It also caps each at a minute, since a wedged socket would otherwise hang the nightly job past the point where it could report anything.
+Each script self-gates, exiting 0 without work when its tool isn't installed or isn't running, so a fresh machine and CI both do nothing. The dispatcher logs a failing script and carries on to the rest. It caps each at a minute, since a wedged socket would otherwise hang the nightly job past the point where it could report anything.
 
-The tmux reload and a theme flip both re-source the appearance configs, and tmux interleaves commands from concurrent clients, so the two serialize on the lock in [`scripts/lib/tmux-source-lock.sh`](scripts/lib/tmux-source-lock.sh).
+The tmux reload and a theme flip both re-source the appearance configs, and tmux interleaves commands from concurrent clients, so the two serialize on the lock in [`scripts/lib/tmux-source-lock.sh`](scripts/lib/tmux-source-lock.sh). The lock alone isn't enough, because re-sourcing `tmux.conf` runs [`theme-sync-tmux`](theme/bin/theme-sync-tmux) from inside the reload's own lock. The reload publishes its pid in `@tmux_config_reloading` so that nested run stands down instead of waiting out the timeout and stealing a lock still in use.
 
 ### Topic Integration Tests
 

@@ -22,8 +22,8 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 # unattended and reports failures by creating a Things task, so a hang is worse
 # than a failure: it never reports, and it holds the job open under every later
 # run. A minute is far past what any of these take. `timeout` comes from
-# coreutils and isn't on a stock macOS, so a machine without it runs unbounded
-# rather than not reloading.
+# coreutils, which system/Brewfile declares for the macOS machines that have no
+# stock copy. A machine that somehow lacks it still reloads, unbounded.
 if command -v timeout >/dev/null 2>&1; then
   bound() { timeout 60 "$@"; }
 else

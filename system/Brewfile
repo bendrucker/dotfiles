@@ -1,5 +1,6 @@
 brew 'bash'
 brew 'btop'
+brew 'coreutils'
 brew 'eza'
 brew 'findutils'
 brew 'fzf'
