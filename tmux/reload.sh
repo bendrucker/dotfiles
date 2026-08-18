@@ -25,25 +25,28 @@ tmux list-sessions >/dev/null 2>&1 || exit 0
 window=$(tmux show -gv @continuum-restore-max-delay 2>/dev/null || echo 10)
 [[ "$window" =~ ^[0-9]+$ ]] || window=10
 
-# Read twice, because the server can exit during the sleep and a replacement
-# take the socket. Sourcing on the first server's start time would then land in
-# the replacement's restore window, which is the case this exists to avoid.
-for _ in 1 2; do
+# Seconds left on the window, reading the age fresh each call. The server can
+# exit and a replacement take the socket at any point here, so the answer has to
+# describe whichever server is about to be sourced into.
+window_remaining() {
+  local started
   started=$(tmux display-message -p -F '#{start_time}' 2>/dev/null || echo "")
   # continuum reads an unreadable start time as a just-started server and
   # restores on it, so match that reading rather than sourcing into it.
-  [[ "$started" =~ ^[0-9]+$ ]] || exit 0
+  [[ "$started" =~ ^[0-9]+$ ]] || { echo $(( window + 1 )); return; }
+  echo $(( window - ($(date +%s) - started) + 1 ))
+}
 
-  remaining=$(( window - ($(date +%s) - started) + 1 ))
-  (( remaining <= 0 )) && break
+remaining=$(window_remaining)
+if (( remaining > 0 )); then
   # A window widened past the minute the dispatcher allows each reload isn't
   # worth waiting out, and the server is still on config it read moments ago.
   (( remaining > 30 )) && exit 0
   sleep "$remaining"
-done
-# Still inside a window on the second read means a replacement server, which
-# has the current config anyway.
-(( remaining > 0 )) && exit 0
+  # Still inside a window means the socket turned over during the sleep. The
+  # replacement read the current config when it started.
+  (( $(window_remaining) > 0 )) && exit 0
+fi
 
 # shellcheck source=../scripts/lib/tmux-source-lock.sh
 source "$root/scripts/lib/tmux-source-lock.sh"
@@ -61,6 +64,13 @@ release() {
   tmux_source_lock_release
 }
 trap release EXIT
+
+# Acquiring the lock can take seconds, which is another chance for the socket to
+# turn over. This is the last look before the source, so it is the one that
+# matters.
+if (( $(window_remaining) > 0 )); then
+  exit 0
+fi
 
 tmux set -g @tmux_config_reloading $$
 tmux source-file "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"
