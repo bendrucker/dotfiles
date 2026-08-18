@@ -10,6 +10,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
   - `path.zsh`: Loaded first for `$PATH` setup
   - `completion.zsh`: Deferred until after first prompt renders (via `precmd` hook)
   - `install.sh`: Topic installer for non-symlink setup (e.g., plugin managers, system config)
+  - `reload.sh`: Tells an already-running program to re-read its config (see [Config Reloads](#config-reloads))
   - `Brewfile`: Homebrew packages for the topic
 - **`*/symlinks.conf`**: Per-topic declarative symlink maps (`source:target`) discovered and processed by `scripts/install-symlinks`
 - **scripts/**: Bootstrap and setup scripts
@@ -23,6 +24,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
    - `<topic>/<tool>.zsh` for shell configuration
    - Add a `symlinks.conf` in the topic directory for config files targeting `~/.config/<tool>/`
    - `<topic>/install.sh` only if non-symlink setup is needed (plugin managers, system config)
+   - `<topic>/reload.sh` only if the tool holds its config in memory and can re-read it without restarting (see [Config Reloads](#config-reloads))
    - `<topic>/Brewfile` for dependencies
 3. Run `scripts/install` to install links and run topic installers
 
@@ -188,6 +190,20 @@ Read the remote with `git config --get remote.<name>.url`, never `git remote get
 3. `mise install` — Install language runtimes
 4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
 5. Run topic `install.sh` scripts
+6. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
+7. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
+
+### Config Reloads
+
+`bin/dotfiles-reload` runs every `<topic>/reload.sh`, so a config change reaches a program that has been running for weeks instead of waiting for a restart. `scripts/install` and `dotfiles dev enable|disable` call it directly. `bin/dotfiles-sync` calls it only when the pull moved the tree, and its `--bootstrap` path reaches it through `scripts/install` instead. `herdr/`, `tmux/`, and `terminal/` are the topics that have one.
+
+Every reload is in place. The program re-reads its config and keeps its state, sessions, and child processes. Nothing here may restart a server, kill a session, or drop in-flight work. This runs unattended from the 3am job, where a restart takes live work down with it, so a tool whose only path to new config is a restart gets no `reload.sh` and picks the change up on its next start.
+
+A `reload.sh` self-gates. Exit 0 without work when the tool isn't installed or isn't running, since a fresh machine and CI hit both cases. Assume roughly a minute of runtime: the dispatcher caps each script there so a wedged peer can't hang the nightly job.
+
+A failing `reload.sh` is contained on purpose. The dispatcher logs it and carries on to the rest, and both callers downgrade its exit status to a warning, so a broken reload never fails an install or the nightly job. Leave that alone. The install it follows has already succeeded, and stale in-memory config resolves itself the next time the program starts.
+
+Re-sourcing `tmux.conf` runs `theme-sync-tmux` near the end, so a tmux reload and a theme flip collide. Both take the lock in `scripts/lib/tmux-source-lock.sh`, and `tmux/reload.sh` additionally publishes its pid in `@tmux_config_reloading` so the nested run stands down rather than waiting out the lock timeout and stealing a lock still in use. Route any new re-source trigger through one of those two scripts.
 
 ## Stacked PRs
 

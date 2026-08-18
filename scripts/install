@@ -53,3 +53,9 @@ find . -name install.sh "${excludes[@]}" | while read -r installer; do "${instal
 # installer so each config exists and tmux plugins are present; failures here
 # shouldn't abort an otherwise successful install.
 ./theme/bin/theme-sync || gum log --level warn "theme-sync had issues"
+
+# Hand the new config to whatever is already running with the old one. After
+# theme-sync, which re-themes tmux under the same lock the tmux reload takes.
+# Reloads are in place and never restart anything, so this is safe from the
+# nightly job. A failure here shouldn't abort an otherwise successful install.
+./bin/dotfiles-reload || gum log --level warn "some config reloads had issues"

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# Tell the long-running programs that hold this repo's config in memory to
+# re-read it, so a sync or an install lands without waiting for a restart.
+#
+# Every reload here is in place: the program re-reads its config and keeps its
+# state, sessions, and child processes. Nothing restarts a server, because this
+# runs unattended from the nightly upgrade and a restart would take live work
+# down with it. A tool whose only path to new config is a restart therefore has
+# no `reload.sh` and picks the change up whenever it next starts.
+#
+# Each `<topic>/reload.sh` self-gates and exits 0 without work when its tool
+# isn't installed or isn't running. Most tools need nothing here at all: they
+# read their config once per invocation, so the next invocation has it.
+set -uo pipefail
+shopt -s nullglob
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Every reload talks to a running program, over a socket or a tmux command, and
+# a wedged one would otherwise hang here forever. The nightly upgrade runs
+# unattended and reports failures by creating a Things task, so a hang is worse
+# than a failure: it never reports, and it holds the job open under every later
+# run. A minute is far past what any of these take. `timeout` comes from
+# coreutils, which system/Brewfile declares for the macOS machines that have no
+# stock copy. A machine that somehow lacks it still reloads, unbounded.
+if command -v timeout >/dev/null 2>&1; then
+  bound() { timeout 60 "$@"; }
+else
+  bound() { "$@"; }
+fi
+
+status=0
+for reload in "$root"/*/reload.sh; do
+  [[ -x "$reload" ]] || continue
+  # Not `if ! bound "$reload"`: that reads $? off the negation, which is always 0.
+  bound "$reload" && continue
+  status=$?
+  gum log --level error "$(basename "$(dirname "$reload")")/reload.sh exited $status"
+done
+exit "$status"

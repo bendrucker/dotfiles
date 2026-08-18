@@ -8,9 +8,10 @@ bin_dir="$(cd "$(dirname "$0")" && pwd)"
 status=0
 for sync in "$bin_dir"/theme-sync-*; do
   [[ -x "$sync" ]] || continue
-  if ! "$sync"; then
-    status=$?
-    gum log --level error "$(basename "$sync") exited $status"
-  fi
+  # Not `if ! "$sync"`: that reads $? off the negation, which is always 0, so
+  # every failure reported "exited 0" and the loop exited 0 along with it.
+  "$sync" && continue
+  status=$?
+  gum log --level error "$(basename "$sync") exited $status"
 done
 exit "$status"
