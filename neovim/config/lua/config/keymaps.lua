@@ -5,14 +5,8 @@ vim.keymap.set("n", "<leader>b", "<cmd>Telescope buffers<cr>", { desc = "Buffers
 -- j and k move by what's on screen rather than by logical line, so a wrapped
 -- paragraph steps a row at a time. Guarding on v:count keeps 5j counting real
 -- lines, which is what the relative number column is showing.
-local function by_display_line(key)
-  return function()
-    return vim.v.count == 0 and ("g" .. key) or key
-  end
-end
-
-vim.keymap.set({ "n", "x" }, "j", by_display_line("j"), { expr = true, desc = "Down by display line" })
-vim.keymap.set({ "n", "x" }, "k", by_display_line("k"), { expr = true, desc = "Up by display line" })
+vim.keymap.set({ "n", "x" }, "j", "v:count == 0 ? 'gj' : 'j'", { expr = true, desc = "Down by display line" })
+vim.keymap.set({ "n", "x" }, "k", "v:count == 0 ? 'gk' : 'k'", { expr = true, desc = "Up by display line" })
 
 vim.keymap.set("n", "<Esc>", "<cmd>nohlsearch<cr>", { desc = "Clear search highlight" })
 
