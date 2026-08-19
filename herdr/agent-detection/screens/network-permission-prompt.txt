@@ -1,0 +1,47 @@
+# state: blocked
+# claude-code: 2.1.234
+# Captured off a live pane rather than written. The vocabulary is the point:
+# Claude Code asks `Do you want to allow this connection?` and offers `(esc)`,
+# neither of which is the `Do you want to proceed?` / `esc to cancel` pair the
+# manifests key on. The spinner is still on screen above the prompt, so a working
+# rule matches here and only the `not` block stands it down.
+|>
+|>╭─ Claude Code ───────────────────────────╮
+|>│                                         │
+|>│            Welcome back Ben!            │
+|>│                                         │
+|>│                 ▐▛███▜▌                 │
+|>│                ▝▜█████▛▘                │
+|>│                  ▘▘ ▝▝                  │
+|>│                                         │
+|>│                Haiku 4.5                │
+|>│               Claude Max                │
+|>│         /…/scratchpad/trustdir          │
+|>│                                         │
+|>╰─────────────────────────────────────────╯
+|>
+|>
+|>❯ Use the Bash tool to run exactly: curl
+|>  -s https://example.com/zz | wc -c
+|>
+|>  Fetching from example.com/zz and counting
+|>  bytes · 17s
+|>  ⎿  $ curl -s https://example.com/zz | wc
+|>     -c (17s)
+|>     (ctrl+b ctrl+b (twice) to run in
+|>     background)
+|>
+|>✶ Gusting… (21s · ↓ 270 tokens)
+|>
+|>───────────────────────────────────────────
+|> Network request outside of sandbox
+|>
+|>   Host: example.com
+|>
+|>   Do you want to allow this connection?
+|>   ❯ 1. Yes
+|>     2. Yes, and don't ask again for
+|>        example.com
+|>     3. No, and tell Claude what to do
+|>        differently (esc)
+|>

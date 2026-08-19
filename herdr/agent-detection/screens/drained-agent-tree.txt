@@ -1,0 +1,14 @@
+# state: idle
+# claude-code: 2.1.234
+# The same tree once every agent has landed. A rule keyed on the count of rows
+# rather than on the live counter would hold this pane at working for good.
+|>⏺ All three reviewers came back clean.
+|>────────────────────────────────────────
+|>❯
+|>────────────────────────────────────────
+|>  o ⁝ 󰪟 +125 -32 herdr-agent-status-flapping
+|>  ⏵⏵ auto mode on · 1 shell · ← for agents
+|>
+|>  ⏺ main
+|>  ◯ content-lens    Review three docu… idle
+|>  ◯ style-lens      Review three docu… idle

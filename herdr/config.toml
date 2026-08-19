@@ -37,15 +37,23 @@ dark_name = "catppuccin"
 # Surface agent state changes (blocked / working / done) as native toasts.
 delivery = "herdr"
 
-# Claude Code writes what it's doing to the terminal title. The default agent
-# row is just ["agent"], which is the same word on every entry; trading it for
-# the title makes the sidebar answer "what is each agent doing" at a glance.
-# An override replaces the default rows rather than extending them.
-[ui.sidebar.agents.rows_by_agent]
-claude = [
-  ["state_icon", "workspace", "tab"],
-  ["agent", "terminal_title_stripped"],
-]
+# One row per agent, and nothing in it that changes faster than the agent's
+# state.
+#
+# `terminal_title_stripped` used to sit on a second row, on the theory that
+# Claude Code's title answers "what is each agent doing". It does not survive
+# a 26-column sidebar. The title is `<cwd basename> · <turn summary> ·
+# <session id>`, so the part that fits is the cwd, which `workspace` already
+# says, and the part that would earn the row is truncated away. What does
+# arrive is motion: the summary changes every turn, and Claude Code prefixes a
+# spinner frame while it streams, so the row animates in the corner of the eye
+# for the whole session.
+#
+# `agent` stays because its glyph is per-CLI and changes only when the pane's
+# occupant does. It moves onto the first row so keeping it costs no height.
+# This is `rows` rather than `rows_by_agent` since none of it is Claude-specific.
+[ui.sidebar.agents]
+rows = [["state_icon", "agent", "workspace", "tab"]]
 
 # --- Plugin keybindings ----------------------------------------------------
 # Plugins themselves are installed by install.sh. The command IDs below come

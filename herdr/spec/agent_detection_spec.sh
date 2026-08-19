@@ -209,66 +209,56 @@ TOML
     The output should equal 'id = "claude"'
   End
 
-  # The rule the whole change exists for, tested against the pattern as it is
-  # actually written in the overlay rather than a copy that can drift from it.
+  # The rules the whole overlay exists for, scored by herdr rather than by a
+  # copy of its matching semantics.
   #
-  # Every fixture below carries a leading `|>` that the test strips. Without it
-  # this file would hold spinner lines at column 0, which is exactly what the
-  # rule matches, and reading it in a pane would pin that pane at working while
-  # it sat idle. A test for a screen-scraping rule has to stay off the screen.
-  # Two characters, not one: a bare `|` before an indented fixture reproduces
-  # the `<non-space><space>` opening the rule keys on, and matches again.
-  overlay_pattern() {
-    sed -n "s/^line_regex = \['\(.*\)'\]\$/\1/p" \
-      "$SHELLSPEC_PROJECT_ROOT/agent-detection/claude.toml"
+  # An earlier version of this suite ran the patterns through `rg` instead. It
+  # passed against a rule that matched nothing at all: the two shapes had been
+  # written as two entries of one `line_regex`, and herdr ANDs the matchers
+  # within a rule, so it demanded a screen holding both lines at once. Only
+  # herdr can say what herdr does with a manifest.
+  #
+  # The screens themselves live in herdr/agent-detection/screens, each recording
+  # the state it should score, so `verify` is the whole assertion and its output
+  # names any screen that disagrees.
+  herdr_bin=$(command -v herdr 2>/dev/null || true)
+  cached_manifest="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/agent-detection/remote/claude.toml"
+
+  # Composing needs the manifest herdr fetched, which only exists once herdr has
+  # run on this machine. On a CI box that has never started it there is nothing
+  # to compose onto and nothing to score.
+  no_herdr_to_score_with() {
+    [ -z "$herdr_bin" ] || [ ! -s "$cached_manifest" ]
   }
 
-  It "matches every form of the live spinner line"
-    spinner_lines_match() {
-      local rx line
-      rx=$(overlay_pattern)
-      [ -n "$rx" ] || { echo "no line_regex found in the overlay"; return 1; }
-      while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        line=${line#|>}
-        printf '%s\n' "$line" | rg -q "$rx" || { echo "should have matched: $line"; return 1; }
-      done <<'LINES'
-|>✻ Crunching… (18m 20s · ↓ 53.5k tokens)
-|>✢ Twisting… (56s · ↓ 1.0k tokens)
-|>✽ Thinking… (1h 2m 3s · ↓ 900 tokens)
-|>✻ Crunching… (esc to interrupt)
-LINES
-    }
-    When call spinner_lines_match
+  # The real herdr rather than the stub, since scoring is what is under test.
+  # `setup` has already pointed XDG_STATE_HOME at a temp directory, so this
+  # scores against a copy of the cached manifest and leaves the machine's alone.
+  run_against_cached() {
+    cp "$cached_manifest" "$base"
+    ZDOTDIR="$root/empty" "$script" "$@" 2>&1
+  }
+
+  It "scores every screen the way the screen records"
+    When call run_against_cached verify
     The status should be success
+    The output should equal ""
+    Skip if "herdr has no cached manifest to compose from" no_herdr_to_score_with
   End
 
-  # A pane pinned at working while idle is worse than the flapping being fixed,
-  # so these are the cases that matter most. Each is a real line seen in a
-  # Claude Code pane, or the spinner quoted in prose the way this repo's own
-  # commit message quotes it.
-  It "does not match transcript text that merely looks like a spinner"
-    lookalikes_reject() {
-      local rx line
-      rx=$(overlay_pattern)
-      [ -n "$rx" ] || { echo "no line_regex found in the overlay"; return 1; }
-      while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        line=${line#|>}
-        printf '%s\n' "$line" | rg -q "$rx" && { echo "should not have matched: $line"; return 1; }
-      done <<'LINES'
-|>  ✻ Crunching… (18m 20s · ↓ 53.5k tokens)
-|>❯ ✻ Crunching… (18m 20s · ↓ 53.5k tokens)
-|>❯ ✻ Crunching… (esc to interrupt)
-|>- Building… (2m 10s elapsed)
-|>⏺ Downloading model weights… (4m remaining)
-|>⏺ Running 4 shell commands…
-|>✻ Churned for 33m 23s
-|>  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
-LINES
-      return 0
-    }
-    When call lookalikes_reject
+  # Ablation is only worth reading if the manifest under test actually loaded.
+  # herdr falls back to the one it fetched when it cannot parse an override, and
+  # taking a rule out is exactly the edit that produces unparseable TOML, so a
+  # broken harness reports every rule as moving nothing and reads as a clean
+  # bill of health. A screen that moves when the overlay comes out is proof the
+  # overlay was in.
+  It "reports which screens each overlay rule is holding up"
+    When call run_against_cached ablate
     The status should be success
+    The output should include "without local_spinner_line_working"
+    The output should include "without local_background_agent_working"
+    The output should include "without the overlay"
+    The output should include "streaming-turn: working"
+    Skip if "herdr has no cached manifest to compose from" no_herdr_to_score_with
   End
 End

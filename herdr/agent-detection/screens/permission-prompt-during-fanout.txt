@@ -1,0 +1,14 @@
+# state: blocked
+# claude-code: 2.1.234
+# The same approval with a fan-out still running above it. The spinner rule
+# matches the `Waiting for` line and outranks every blocked rule, so dropping its
+# `not` block reports working while the pane waits on a person.
+|>⏺ I need to run a command.
+|>✻ Waiting for 4 background agents to finish
+|>────────────────────────────────────────
+|>  Bash command
+|>  rm -rf build/
+|>
+|>  Do you want to proceed?
+|>  ❯ 1. Yes
+|>    2. No, and tell Claude what to do differently (esc to cancel)

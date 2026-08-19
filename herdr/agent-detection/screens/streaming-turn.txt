@@ -1,0 +1,13 @@
+# state: working
+# claude-code: 2.1.234
+# The ordinary mid-turn screen. Claude Code writes the spinner into the terminal
+# title too, but `agent explain --file` cannot see a title, so this scores from
+# the screen alone and stands in for the pane where the title has gone idle.
+|>⏺ Working on it.
+|>
+|>✽ Coalescing… (16m 8s · ↓ 56.2k tokens · thought for 6s)
+|>────────────────────────────────────────
+|>❯
+|>────────────────────────────────────────
+|>  o ⁝ 󰪟 +125 -32 herdr-agent-status-flapping
+|>  ⏵⏵ auto mode on · 1 shell · ← for agents
