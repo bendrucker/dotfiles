@@ -1,0 +1,17 @@
+# state: idle
+# claude-code: 2.1.234
+# An idle row carries its agent's description, and a description can hold
+# anything, including something shaped like an elapsed time and a count. What
+# separates the two is where the counter sits: a running row ends on it, an idle
+# row ends on the word `idle`. Without that anchor this pane reports working and
+# never stops, which no later screen clears.
+|>⏺ All reviewers came back clean.
+|>────────────────────────────────────────
+|>❯
+|>────────────────────────────────────────
+|>  o ⁝ 󰪟 +125 -32 herdr-agent-status-flapping
+|>  ⏵⏵ auto mode on · 1 shell · ← for agents
+|>
+|>  ⏺ main
+|>  ◯ bench-suite     Ran the suite in 12s · 5 files chang… idle
+|>  ◯ style-lens      Review three docu… idle

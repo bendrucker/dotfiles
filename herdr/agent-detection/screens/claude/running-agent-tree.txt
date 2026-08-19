@@ -1,0 +1,14 @@
+# state: working
+# claude-code: 2.1.234
+# The main thread is back at the prompt and the tree is still turning, which is
+# the case herdr has no state of its own for.
+|>⏺ Dispatched three reviewers. I'll report back when they land.
+|>────────────────────────────────────────
+|>❯
+|>────────────────────────────────────────
+|>  o ⁝ 󰪟 +125 -32 herdr-agent-status-flapping
+|>  ⏵⏵ auto mode on · 1 shell · ← for agents
+|>
+|>  ⏺ main
+|>  ◯ 󰚩 Running python3 · 10m 24s · 57.6k
+|>  ◯ content-lens    Review three docu… idle

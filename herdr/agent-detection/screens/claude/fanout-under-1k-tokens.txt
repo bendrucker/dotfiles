@@ -1,0 +1,15 @@
+# state: working
+# claude-code: 2.1.234
+# Agents are cheapest to miss in their first seconds, which is also the only time
+# their token counts have no `k` suffix. A rule requiring one goes blind exactly
+# when the main thread has just handed off and returned to the prompt.
+|>⏺ Dispatched three reviewers.
+|>────────────────────────────────────────
+|>❯
+|>────────────────────────────────────────
+|>  o ⁝ 󰪟 +125 -32 herdr-agent-status-flapping
+|>  ⏵⏵ auto mode on · 1 shell · ← for agents
+|>
+|>  ⏺ main
+|>  ◯ 󰚩 Running python3 · 3s · 412
+|>  ◯ content-lens    Review three docu… 8s · ↓ 640 tokens

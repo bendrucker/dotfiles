@@ -1,0 +1,17 @@
+# state: blocked
+# claude-code: 2.1.234
+# Every overlay rule outranks the blocked rules, so what keeps an approval
+# visible is the `not` block each one carries. Claude Code goes on drawing the
+# agent tree under a permission prompt, which is what makes this the case most
+# likely to regress.
+|>⏺ I need to run a command.
+|>────────────────────────────────────────
+|>  Bash command
+|>  rm -rf build/
+|>
+|>  Do you want to proceed?
+|>  ❯ 1. Yes
+|>    2. No, and tell Claude what to do differently (esc to cancel)
+|>
+|>  ⏺ main
+|>  ◯ 󰚩 Running python3 · 10m 24s · 57.6k

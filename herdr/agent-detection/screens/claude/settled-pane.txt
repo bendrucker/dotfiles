@@ -1,0 +1,11 @@
+# state: idle
+# claude-code: 2.1.234
+# Nothing running and nothing waiting.
+|>⏺ Done. The change is in.
+|>
+|>  Read 3 files, ran 11 shell commands
+|>────────────────────────────────────────
+|>❯
+|>────────────────────────────────────────
+|>  o ⁝ 󰪟 +125 -32 herdr-agent-status-flapping
+|>  ⏵⏵ auto mode on · 1 shell · ← for agents

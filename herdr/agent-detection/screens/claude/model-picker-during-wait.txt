@@ -1,0 +1,19 @@
+# state: idle
+# claude-code: 2.1.234
+# An arrow-key picker with no numbered options, open while a background wait is
+# still on screen. Upstream scores these with `model_picker_menu`, which carries
+# `skip_state_update` so the pane keeps whatever state it had. Both overlay rules
+# outrank that, so both have to stand down on it. The options carry no digits, so
+# a guard keyed on a numbered choice cannot see this screen.
+|>⏺ I need to run a command.
+|>
+|>✻ Waiting for 4 background agents to finish
+|>
+|>───────────────────────────────────────────
+|>  Select model
+|>
+|>  ❯ Sonnet
+|>    Opus
+|>    Haiku
+|>
+|>  Enter to select · Esc to cancel
