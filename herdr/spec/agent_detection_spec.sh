@@ -395,10 +395,10 @@ LINES
   }
 
   It "scores every screen the way the screen records"
+    Skip if "herdr has no cached manifest to compose from" no_herdr_to_score_with
     When call run_against_cached verify
     The status should be success
     The output should equal ""
-    Skip if "herdr has no cached manifest to compose from" no_herdr_to_score_with
   End
 
   # Ablation is only worth reading if the manifest under test actually loaded.
@@ -408,12 +408,12 @@ LINES
   # bill of health. A screen that moves when the overlay comes out is proof the
   # overlay was in.
   It "reports which screens each overlay rule is holding up"
+    Skip if "herdr has no cached manifest to compose from" no_herdr_to_score_with
     When call run_against_cached ablate
     The status should be success
     The output should include "without local_spinner_line_working"
     The output should include "without local_background_agent_working"
     The output should include "without the overlay"
     The output should include "streaming-turn: working"
-    Skip if "herdr has no cached manifest to compose from" no_herdr_to_score_with
   End
 End
