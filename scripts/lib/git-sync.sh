@@ -15,8 +15,9 @@
 #
 # git_https_pin <repo_dir> <remote> <https_url>
 #   Hold the remote on HTTPS when an insteadOf rule would send it back to SSH.
-#   Called by git_https_remote. The comment above the function covers why
-#   storing an HTTPS URL is not by itself enough.
+#   Only SSH, since a rule routing it to another HTTPS host is a mirror or a
+#   proxy to leave in place. Called by git_https_remote. The comment above the
+#   function covers why storing an HTTPS URL is not by itself enough.
 #
 # git_https_env
 #   Export the same rewrite as an insteadOf rule, for child processes cloning
@@ -53,6 +54,17 @@ git_default_branch() {
 
 GIT_HTTPS_SSH_PREFIXES=("git@github.com:" "ssh://git@github.com/")
 GIT_HTTPS_BASE="https://github.com/"
+
+# Succeed when a URL is one of the github SSH forms.
+git_https_ssh_url() {
+  local url="$1" prefix
+
+  for prefix in "${GIT_HTTPS_SSH_PREFIXES[@]}"; do
+    [[ "$url" == "$prefix"* ]] && return 0
+  done
+
+  return 1
+}
 
 # Echo the anonymous HTTPS form of a github.com URL. A URL pointing anywhere
 # else echoes nothing, since only github.com is public enough to read without
@@ -118,6 +130,13 @@ git_https_pin() {
   local resolved
   resolved=$(git -C "$repo_dir" ls-remote --get-url "$remote")
   [[ "$resolved" == "$url" ]] && return 0
+
+  # SSH is the only transport this pin exists to escape, because it is the one
+  # that cannot sign against a locked Mac. A rule sending the remote to another
+  # HTTPS host is a mirror or a proxy someone chose, and it can be the only
+  # route out. Bypassing it would be worse than the problem being solved, and
+  # recording it as the pushurl would aim pushes at a read-only mirror.
+  git_https_ssh_url "$resolved" || return 0
 
   gum log --level info "Pinning $remote to HTTPS past an insteadOf rule"
 

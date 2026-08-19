@@ -30,6 +30,7 @@ force_ssh() {
 
 fetch_url() { git -C "$repo" config --get remote.origin.url; }
 push_url() { git -C "$repo" config --get "remote.origin.pushurl"; }
+stored_push_url() { push_url || true; }
 effective_url() { git -C "$repo" ls-remote --get-url origin; }
 pin_key="url.https://github.com/bendrucker/claude.git.insteadOf"
 pin() { git -C "$repo" config --get "$pin_key" || true; }
@@ -132,6 +133,19 @@ Describe "git_https_remote"
     When call rewrite "https://bitbucket.org/bendrucker/private.git"
     The output should equal "https://bitbucket.org/bendrucker/private.git"
     The result of function pin should equal ""
+    The stderr should not include "Pinning"
+  End
+
+  # A mirror or proxy rule can be the only route out of a network. Pinning past
+  # it would bypass it for fetches and aim pushes at a mirror that may be read
+  # only, and neither has anything to do with an agent that will not sign.
+  It "leaves a rule routing the remote to another https host in place"
+    git config --file "$global" \
+      "url.https://mirror.corp.example/github/.insteadOf" "https://github.com/"
+    When call rewrite "https://github.com/bendrucker/claude.git"
+    The output should equal "https://github.com/bendrucker/claude.git"
+    The result of function effective_url should equal "https://mirror.corp.example/github/bendrucker/claude.git"
+    The result of function stored_push_url should equal ""
     The stderr should not include "Pinning"
   End
 
