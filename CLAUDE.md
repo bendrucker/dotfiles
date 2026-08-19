@@ -174,7 +174,11 @@ The nightly jobs run at 3am against a locked Mac, where Secretive refuses to sig
 
 `claude-upgrade` also calls `git_https_env`, which exports the same rewrite as an `insteadOf` rule. That covers the marketplace and plugin clones Claude Code makes for itself, which it creates with `git@github.com:` URLs and re-clones on every update. An `insteadOf` rule outranks a `pushurl`, so the exports are scoped to the plugin steps rather than the whole script.
 
-Read the remote with `git config --get remote.<name>.url`, never `git remote get-url`. The latter resolves `insteadOf` rules, so it reports HTTPS while `.git/config` still holds the SSH URL, and a rewrite keyed on it silently never fires.
+Storing an HTTPS URL does not settle which transport the fetch uses. An org that standardizes on SSH installs a `url.<base>.insteadOf` rule mapping `https://github.com/` back to `git@github.com:`, and that rule rewrites whatever is stored. Nothing written to the remote escapes it. `git_https_pin` covers that. Git applies the longest matching rule, so one keyed on the remote's full HTTPS URL and mapping it to itself outranks any broader `github.com` rule. It goes in the repo's own config and names a single URL, so every other remote is left alone. The pin is written only when git resolves the remote somewhere other than that URL, and the SSH URL the rule was producing stays behind as the `pushurl`. A rule of equal length registered earlier still wins the tie. The pin is written once and logs where the remote resolves instead, so the run that cannot win leaves the config no larger.
+
+Only the stored URL decides whether a remote is a github remote. A rule can send some other host to github, but one that rewrites the host without keeping the repo path would have us store a URL naming a repository that does not exist, so `git_https_remote` acts on what `.git/config` holds and nothing else.
+
+`git config --get remote.<name>.url` gives the stored URL, which is what a rewrite keys on. Never read that with `git remote get-url`: it resolves `insteadOf` rules, so it reports HTTPS while `.git/config` still holds the SSH URL, and a rewrite keyed on it silently never fires. `git ls-remote --get-url` gives the URL the fetch will actually open, which is how the pin tells whether it took.
 
 ### Manual Commands
 
