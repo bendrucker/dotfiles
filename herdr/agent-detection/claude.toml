@@ -17,9 +17,9 @@
 # Both are redundant once herdr scores `working` from something other than the
 # title, and two things watch for it. `herdr-agent-detection check` compares the
 # set below against the manifest and reports when it moves, and it rescores every
-# screen under herdr/agent-detection/screens with this file and without it and
+# screen under herdr/agent-detection/screens/claude with this file and without it and
 # reports when the two agree. The set is a proxy, since herdr can fix how a rule
-# matches without changing which rules exist; the rescore is the measurement.
+# matches without changing which rules exist. The rescore is the measurement.
 # `herdr-agent-detection ablate` says which single rule is carrying which screen.
 # base-working-rules: btw_overlay_working osc_title_working
 
@@ -54,9 +54,9 @@ visible_working = true
 # The second shape is where the flapping actually came from. Blocked on a
 # subagent, Claude Code stops streaming and rewrites the title to its idle
 # `<dir> · <summary> · <session>` form, so `osc_title_working` stands down and
-# `live_prompt_box` takes the pane to idle for as long as the wait lasts.
-# Sampling every pane once a second caught 13 `working → done` transitions and
-# 12 of them had one of these lines above the input box.
+# `live_prompt_box` takes the pane to idle for as long as the wait lasts. Nearly
+# every `working → done` transition sampled off a live machine had one of these
+# lines above the input box.
 #
 # A region this deep holds ordinary transcript text, so the patterns carry the
 # precision instead. Both anchor at column 0, where Claude Code draws its own
@@ -84,10 +84,7 @@ visible_working = true
 # `<glyph> Word…` alternative is not. It would cover `✳ Forging…`, the shape
 # Claude Code draws in the second before the timer appears, at the cost of
 # matching the `✻ Thinking…` that stays in the transcript afterward. Sampled
-# against live panes it fired twice, once on a working pane and once on an idle
-# one. The `Waiting for` pattern fired 131 times over the same window, every one
-# of them on a working pane and none across 1117 idle, done, and blocked
-# samples.
+# against live panes it was as likely to fire on an idle pane as a working one.
 #
 # The two shapes go in `any` because the matchers within one rule are ANDed.
 # Two entries in a single `line_regex` would demand a screen holding both lines
@@ -109,15 +106,27 @@ any = [
 # idle, which is the bug this file exists to fix, arriving through the door
 # meant to guard it.
 #
-# So key on the shape rather than the words: `❯` on a numbered choice, which is
-# the selected option of a picker and which prose does not produce. The wording
-# drifts and the shape has not. Claude Code 2.1.234 asks `Do you want to allow
-# this connection?` and offers `(esc)`, matching neither the `esc to cancel` the
-# blocked rules require nor a `do you want to proceed?` a phrase guard here would
-# name, so a guard spelled in words stands down on the very screen it was written
-# for and reports working while the pane waits on a person.
+# So key on the shape rather than the words: an indented `❯`, which is a picker's
+# selected option. The wording drifts and the shape has not. Claude Code 2.1.234
+# asks `Do you want to allow this connection?` and offers `(esc)`, matching
+# neither the `esc to cancel` the blocked rules require nor the
+# `do you want to proceed?` a phrase guard here would name, so a guard spelled in
+# words stands down on the very screen it was written for and reports working
+# while the pane waits on a person.
+#
+# The indent is what separates the two things Claude Code draws with this glyph.
+# A picker indents its options inside the box. The input box draws its own prompt
+# at column 0, and carries whatever has been typed there, so a guard matching a
+# bare `❯` would stand the rule down on any pane with text sitting in the box
+# while the agent works, which is the flapping this file fixes.
+#
+# It deliberately does not require a number after the marker. Numbered choices
+# are only the permission prompts. `/model`, theme, and output-style selection
+# are arrow-key pickers with bare option text, and upstream carries
+# `model_picker_menu` with `skip_state_update` precisely so the state survives
+# one. A rule ranked above it that answered `working` would defeat that.
 not = [
-  { line_regex = ['^\s*❯\s*\d\.\s'] },
+  { line_regex = ['^\s+❯\s'] },
 ]
 
 # Background agents outliving the turn that dispatched them.
@@ -155,7 +164,7 @@ visible_working = true
 # where the main thread has just handed off and gone back to the prompt.
 #
 # What replaces it as the precision is the end anchor. A running row ends on its
-# counter, `· 57.6k` or `· ↓ 40.5k tokens`; an idle row ends on the word `idle`.
+# counter, `· 57.6k` or `· ↓ 40.5k tokens`. An idle row ends on the word `idle`.
 # Without the anchor the counter can be satisfied by the row's description text
 # instead, and a drained tree listing `Ran the suite in 12s · 5 files chang…
 # idle` holds the pane at working for good. A pane stuck working is worse than
@@ -165,5 +174,5 @@ line_regex = ['^\s*◯ .*\d+s · (?:↓ )?\d+(?:\.\d+)?k?(?: tokens)?\s*$']
 # the footer under a permission prompt, so without this the footer would answer
 # `working` at the one moment the pane is waiting on a person.
 not = [
-  { line_regex = ['^\s*❯\s*\d\.\s'] },
+  { line_regex = ['^\s+❯\s'] },
 ]

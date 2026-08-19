@@ -13,8 +13,8 @@
 #   check   report an install that has fallen behind its base manifest, a base
 #           manifest whose own working rules have moved, or a screen the overlay
 #           no longer scores the way it records
-#   verify  score every screen under herdr/agent-detection/screens against the
-#           composed manifest and report the ones that disagree
+#   verify  score every screen under herdr/agent-detection/screens/<agent>
+#           against the composed manifest and report the ones that disagree
 #   ablate  take each overlay rule out in turn and report which screens move,
 #           which is what says whether the rule is still worth carrying
 #
@@ -152,13 +152,19 @@ override_not_served () {
   print -r -- "$agent: herdr is reading $serving, not $installed"
 }
 
-# A screen under herdr/agent-detection/screens is a pane capture with every line
-# prefixed `|>`, under `# key: value` metadata. The prefix is not decoration:
-# without it these files hold spinner lines and agent-tree rows at column 0,
-# which is exactly what the rules match, so opening one in a pane would pin that
-# pane at working while it sat idle. Two characters rather than one, because a
-# bare `|` reproduces the `<non-space><space>` opening the spinner rule keys on.
-screens_dir="$dotfiles/herdr/agent-detection/screens"
+# A screen is a pane capture with every line prefixed `|>`, under `# key: value`
+# metadata. The prefix is not decoration: without it these files hold spinner
+# lines and agent-tree rows at column 0, which is exactly what the rules match,
+# so opening one in a pane would pin that pane at working while it sat idle. Two
+# characters rather than one, because a bare `|` reproduces the
+# `<non-space><space>` opening the spinner rule keys on.
+#
+# They sit per agent, since a screen only means anything against the CLI that
+# drew it. An agent with no screens scores nothing, which every caller below
+# treats as an answer it could not get rather than as a clean result.
+screens_dir () {
+  print -r -- "$dotfiles/herdr/agent-detection/screens/$1"
+}
 
 fixture_screen () {
   sed -n 's/^|>//p' "$1"
@@ -168,25 +174,49 @@ fixture_field () {
   sed -n "s/^# $2: *//p" "$1" | head -1
 }
 
+# Prints a line per screen whose shape the harness cannot trust, and nothing
+# when every one is well formed.
+#
+# Both failures below score without complaint, and both report as a rule that
+# stopped matching. A line missing its `|>` is dropped rather than kept, so the
+# screen loses a row and every line-counted region under it shifts; a missing
+# `# state:` compares against the empty string and names the screen in a
+# mismatch that reads exactly like a real regression.
+malformed_screens () {
+  local agent="$1" screen key
+
+  for screen in "$(screens_dir "$agent")"/*.txt(N); do
+    for key in state claude-code; do
+      [[ -n "$(fixture_field "$screen" "$key")" ]] ||
+        print -r -- "$agent: ${screen:t} has no \`# $key:\` line"
+    done
+    grep -qv '^|>' -- "$screen" &&
+      grep -v '^|>' -- "$screen" | grep -qv '^#' &&
+      print -r -- "$agent: ${screen:t} has a line that is neither \`|>\` screen text nor \`#\` metadata"
+  done
+}
+
 # `<name> <state>` a line, for every screen scored against `manifest`.
 #
 # herdr reads an agent manifest out of $XDG_CONFIG_HOME, so a throwaway one puts
 # the manifest under test in front of herdr without touching what is installed.
 score_screens () {
-  local manifest="$1" sandbox screen name output
+  local agent="$1" manifest="$2" sandbox screen name output served st
 
   sandbox=$(mktemp -d "${TMPDIR:-/tmp}/herdr-detection.XXXXXX") || return 1
   mkdir -p "$sandbox/herdr/agent-detection" &&
-    cp "$manifest" "$sandbox/herdr/agent-detection/claude.toml" || {
+    cp "$manifest" "$sandbox/herdr/agent-detection/$agent.toml" || {
       rm -rf "$sandbox"
       return 1
     }
 
-  for screen in "$screens_dir"/*.txt(N); do
+  for screen in "$(screens_dir "$agent")"/*.txt(N); do
     name="${screen:t:r}"
     fixture_screen "$screen" >"$sandbox/screen.txt"
     output=$(XDG_CONFIG_HOME="$sandbox" herdr agent explain \
-      --file "$sandbox/screen.txt" --agent claude 2>/dev/null)
+      --file "$sandbox/screen.txt" --agent "$agent" 2>/dev/null)
+    served=$(print -r -- "$output" | sed -n 's/^manifest: //p')
+    st=$(print -r -- "$output" | sed -n 's/^state: //p')
 
     # herdr ignores an override it cannot parse and reads the manifest it
     # fetched instead, which scores every screen against upstream while reading
@@ -194,16 +224,52 @@ score_screens () {
     # is worth is precisely the operation that produces unparseable TOML, so
     # every score below is worthless without this. herdr marks the fallback by
     # prefixing the path it reports with `remote:`.
-    if [[ "$(print -r -- "$output" | sed -n 's/^manifest: //p')" == remote:* ]]; then
+    if [[ "$served" == remote:* ]]; then
       print -u2 -- "herdr fell back to its own manifest; $manifest did not load"
       rm -rf "$sandbox"
       return 1
     fi
 
-    print -r -- "$name $(print -r -- "$output" | sed -n 's/^state: //p')"
+    # A herdr that answered nothing at all, because its server is down or the
+    # binary is broken. Emitting the empty state would let every caller compare
+    # empty against empty: the redundancy check would find both sides equal and
+    # report the overlay dead, and ablation would report every rule as moving
+    # nothing. A scorer that failed must not read as evidence a rule is unused.
+    if [[ -z "$st" ]]; then
+      print -u2 -- "herdr scored no state for $name against $manifest"
+      rm -rf "$sandbox"
+      return 1
+    fi
+
+    print -r -- "$name $st"
   done
 
   rm -rf "$sandbox"
+}
+
+# Fills the caller's `scores` associative array, and returns nonzero unless
+# every screen came back with a state. zsh scopes dynamically, so the caller
+# declaring `local -A scores` is the array this writes.
+#
+# Every caller goes through here rather than reading `score_with_overlay`
+# itself, because the check is easy to leave out and silent when it is missing.
+# `score_screens` gives up partway through the moment herdr stops answering, so
+# a short read is a scorer that failed rather than screens that scored nothing,
+# and the difference decides whether `ablate` is naming a rule that can go or
+# reporting a herdr that was not running. The exit status cannot say so here,
+# since a process substitution discards it, which is why the count is what this
+# compares.
+read_scores () {
+  local agent="$1" overlay="$2" name st
+  local -a screens
+
+  screens=("$(screens_dir "$agent")"/*.txt(N))
+  scores=()
+  while read -r name st; do
+    scores[$name]=$st
+  done < <(score_with_overlay "$agent" "$overlay")
+
+  (( ${#scores} == ${#screens} ))
 }
 
 # The same, for the base manifest with `overlay` appended. An empty overlay
@@ -218,15 +284,18 @@ score_with_overlay () {
     cat "$cache_dir/$agent.toml" >"$manifest"
   fi || { rm -f "$manifest"; return 1 }
 
-  score_screens "$manifest"
+  score_screens "$agent" "$manifest"
   rc=$?
   rm -f "$manifest"
   return $rc
 }
 
 # The overlay with one rule taken out. Splitting the text rather than
-# round-tripping through yq is what keeps the regex literals exactly as written:
-# yq re-quotes them, and a re-quoted pattern matches different screens.
+# round-tripping through yq is what keeps the rule documentation: yq parses TOML
+# into a data model that has no place for a comment and emits none, and this
+# file is mostly comments. Losing them changes nothing about how the remaining
+# rules score, and it makes the ablated overlay unreadable when a run wants
+# looking at.
 overlay_without () {
   awk -v target="$2" '
     /^\[\[rules\]\]/ {
@@ -247,23 +316,23 @@ overlay_without () {
 verify_agent () {
   local agent="$1" screen name expected failed=0
   local -a screens
-  local -A scored
+  local -A scores
 
-  screens=("$screens_dir"/*.txt(N))
-  if (( ${#screens} == 0 )); then
-    print -r -- "$agent: no screens under $screens_dir"
+  # An agent with no screens has nothing to verify, which is the same answer
+  # `overlay_redundant` gives it. An overlay arrives before its captures do.
+  screens=("$(screens_dir "$agent")"/*.txt(N))
+  (( ${#screens} )) || return 0
+
+  if ! read_scores "$agent" "$overlay_dir/$agent.toml"; then
+    print -r -- "$agent: herdr scored only ${#scores} of ${#screens} screens, so none of them can be judged"
     return 1
   fi
-
-  while read -r name expected; do
-    scored[$name]=$expected
-  done < <(score_with_overlay "$agent" "$overlay_dir/$agent.toml")
 
   for screen in $screens; do
     name="${screen:t:r}"
     expected=$(fixture_field "$screen" state)
-    [[ "${scored[$name]}" == "$expected" ]] && continue
-    print -r -- "$agent: $name scores ${scored[$name]:-nothing}, and records $expected"
+    [[ "${scores[$name]}" == "$expected" ]] && continue
+    print -r -- "$agent: $name scores ${scores[$name]}, and records $expected"
     failed=1
   done
 
@@ -278,18 +347,15 @@ verify_agent () {
 ablate_agent () {
   local agent="$1"
   local overlay="$overlay_dir/$agent.toml"
-  local rule name st reduced moved label
+  local rule name reduced moved label
   local -a rules
-  local -A baseline scored
+  local -A baseline scores
 
-  while read -r name st; do
-    baseline[$name]=$st
-  done < <(score_with_overlay "$agent" "$overlay")
-
-  if (( ${#baseline} == 0 )); then
-    print -u2 -- "$agent: nothing scored, so nothing can be ablated"
+  if ! read_scores "$agent" "$overlay"; then
+    print -u2 -- "$agent: herdr scored only ${#scores} screens, so nothing can be ablated"
     return 1
   fi
+  baseline=(${(kv)scores})
 
   print -r -- "$agent: ${#baseline} screens, manifest $(manifest_version "$cache_dir/$agent.toml")"
 
@@ -307,18 +373,19 @@ ablate_agent () {
       reduced=''
     fi
 
-    scored=()
-    while read -r name st; do
-      scored[$name]=$st
-    done < <(score_with_overlay "$agent" "$reduced")
+    if ! read_scores "$agent" "$reduced"; then
+      [[ -n "$reduced" ]] && rm -f "$reduced"
+      print -u2 -- "$agent: herdr scored only ${#scores} screens $label, so it cannot be judged"
+      return 1
+    fi
     [[ -n "$reduced" ]] && rm -f "$reduced"
 
     print -r -- "  $label"
     moved=0
     for name in ${(ok)baseline}; do
-      [[ "${scored[$name]}" == "${baseline[$name]}" ]] && continue
+      [[ "${scores[$name]}" == "${baseline[$name]}" ]] && continue
       moved=1
-      print -r -- "    $name: ${baseline[$name]} → ${scored[$name]:-nothing}"
+      print -r -- "    $name: ${baseline[$name]} → ${scores[$name]}"
     done
     (( moved )) || print -r -- "    no screen moves; it earns nothing the rest do not"
   done
@@ -336,22 +403,25 @@ ablate_agent () {
 # distinct from a judged answer for the same reason as the drift check: two
 # empty score sets compare equal and would report the overlay as dead.
 overlay_redundant () {
-  local agent="$1" name st
-  local -A with without
+  local agent="$1" name
+  local -a screens
+  local -A with scores
 
-  while read -r name st; do with[$name]=$st; done \
-    < <(score_with_overlay "$agent" "$overlay_dir/$agent.toml")
-  (( ${#with} )) || return 1
+  # An agent with no screens has nothing to measure, which is not the same as a
+  # measurement that failed. Reporting it as unjudgeable would pin the drift
+  # latch open for good the first time an overlay arrives without captures.
+  screens=("$(screens_dir "$agent")"/*.txt(N))
+  (( ${#screens} )) || return 0
 
-  while read -r name st; do without[$name]=$st; done \
-    < <(score_with_overlay "$agent" '')
-  (( ${#without} == ${#with} )) || return 1
+  read_scores "$agent" "$overlay_dir/$agent.toml" || return 1
+  with=(${(kv)scores})
+  read_scores "$agent" '' || return 1
 
   for name in ${(k)with}; do
-    [[ "${with[$name]}" == "${without[$name]}" ]] || return 0
+    [[ "${with[$name]}" == "${scores[$name]}" ]] || return 0
   done
 
-  print -r -- "$agent: herdr scores every screen under $screens_dir the same with the overlay and without it"
+  print -r -- "$agent: herdr scores every screen under $(screens_dir "$agent") the same with the overlay and without it"
 }
 
 # The screens are pane captures, so they age with the CLI that drew them. Claude
@@ -361,25 +431,34 @@ overlay_redundant () {
 # Compared at minor version. Claude Code ships patches most days and its chrome
 # does not move on that cadence, so comparing the full version would file a to-do
 # nightly and teach whoever reads it to close this one unread.
+#
+# Only claude, since the version has to come from the CLI itself and this is the
+# one whose command is known. Another agent's screens age the same way and go
+# unwatched until someone writes the probe for it.
 screens_behind_claude () {
-  local installed newest screen
+  local agent="$1" installed newest screen
   local -a versions
 
+  [[ "$agent" == claude ]] || return 0
   command -v claude >/dev/null 2>&1 || return 0
   installed=$(claude --version 2>/dev/null | awk '{print $1}')
   [[ -n "$installed" ]] || return 0
 
-  for screen in "$screens_dir"/*.txt(N); do
+  for screen in "$(screens_dir "$agent")"/*.txt(N); do
     versions+=("$(fixture_field "$screen" claude-code)")
   done
   (( ${#versions} )) || return 0
 
+  # Only when Claude Code is ahead. A machine pinned to an older release than the
+  # screens were taken on has nothing to recapture, and an equality test would
+  # send it the same to-do with the sentence pointing the wrong way.
   newest=${${(On)versions}[1]}
-  [[ "${newest%.*}" == "${installed%.*}" ]] && return 0
+  autoload -Uz is-at-least
+  is-at-least "${installed%.*}" "${newest%.*}" && return 0
   print -r -- "screens were captured under Claude Code $newest, this machine runs $installed"
 }
 
-screens_explanation='The screens under `herdr/agent-detection/screens` are pane captures, and Claude
+screens_explanation='The screens under `herdr/agent-detection/screens/claude` are pane captures, and Claude
 Code has drawn a new minor version since the newest of them. The overlay reads
 the screen, so chrome that moved is a rule that silently stopped matching.
 
@@ -525,17 +604,6 @@ check_agent () {
   fi
   [[ -n "$drift" ]] && print -r -- "$drift"
 
-  if command -v herdr >/dev/null 2>&1; then
-    if ! redundant=$(overlay_redundant "$agent"); then
-      print -r -- "$agent: screens could not be scored, so redundancy cannot be judged"
-      return 1
-    fi
-    if [[ -n "$redundant" ]]; then
-      print -r -- "$redundant"
-      drift="$redundant"
-    fi
-  fi
-
   if [[ ! -f "$installed" ]]; then
     print -r -- "$agent: nothing installed at $installed"
     return 1
@@ -553,7 +621,17 @@ check_agent () {
     fi
   fi
 
-  [[ -z "$drift" ]]
+  # Last, because it is the only check here that shells out once per screen, and
+  # because a failure to score would otherwise mask the cheaper findings above.
+  if command -v herdr >/dev/null 2>&1; then
+    if ! redundant=$(overlay_redundant "$agent"); then
+      print -r -- "$agent: screens could not be scored, so redundancy cannot be judged"
+      return 1
+    fi
+    [[ -n "$redundant" ]] && print -r -- "$redundant"
+  fi
+
+  [[ -z "$drift$redundant" ]]
 }
 
 overlays=("$overlay_dir"/*.toml(N))
@@ -574,6 +652,7 @@ case "${1:-sync}" in
     evaluated=0
     drifts=()
     breaks=()
+    screen_findings=()
 
     for overlay in $overlays; do
       agent="${overlay:t:r}"
@@ -581,22 +660,33 @@ case "${1:-sync}" in
         breaks+=("$agent: could not compose or install, see the run output")
 
       [[ -s "$cache_dir/$agent.toml" ]] || continue
+      drift_judged=0
+      redundancy_judged=0
       if drift=$(working_rule_drift "$agent" "$cache_dir/$agent.toml" "$overlay"); then
-        # Only a comparison that actually happened counts. Clearing the drift
-        # latch on a run that could not judge any would retire a standing to-do
-        # without anyone having looked at it.
-        evaluated=1
+        drift_judged=1
         [[ -n "$drift" ]] && drifts+=("$drift")
       else
         breaks+=("$agent: cached manifest could not be read, so drift cannot be judged")
       fi
 
+      # A herdr that cannot score is not an install that failed, and `breaks`
+      # files the to-do that says it was. `score_screens` has already said so on
+      # stderr. What this owes is to leave the latch alone.
       if redundant=$(overlay_redundant "$agent"); then
-        evaluated=1
+        redundancy_judged=1
         [[ -n "$redundant" ]] && drifts+=("$redundant")
-      else
-        breaks+=("$agent: screens could not be scored, so redundancy cannot be judged")
       fi
+
+      # Both comparisons have to land before the latch clears. Clearing it on a
+      # run that could judge neither would retire a standing to-do without
+      # anyone having looked at it.
+      (( drift_judged && redundancy_judged )) && evaluated=1
+
+      # Both describe a corpus that needs a person, so they share a to-do.
+      # Empty elements are dropped, since a command that found nothing prints an
+      # empty line and an empty finding would file the to-do on its own.
+      screen_findings+=(${(f)"$(malformed_screens "$agent")"})
+      screen_findings+=(${(f)"$(screens_behind_claude "$agent")"})
     done
 
     remove_orphans || breaks+=("could not remove a generated file whose overlay is gone")
@@ -629,8 +719,8 @@ case "${1:-sync}" in
     # Claude Code ships, with nobody having touched herdr or this repo, and the
     # thing to do about it is to recapture screens rather than to read a rule.
     report_job herdr-agent-detection-screens \
-      "herdr agent detection screens predate this Claude Code" \
-      "$screens_explanation" "$(screens_behind_claude)"
+      "herdr agent detection screens need attention" \
+      "$screens_explanation" "${(F)screen_findings}"
 
     # Unconditional, because a run that composed nothing is exactly the run this
     # to-do exists to surface. `install.sh` only prints the failure.
@@ -647,11 +737,20 @@ case "${1:-sync}" in
     for overlay in $overlays; do
       agent="${overlay:t:r}"
       check_agent "$agent" || failed=1
+
+      screen_findings=(${(f)"$(malformed_screens "$agent")"})
+      screen_findings+=(${(f)"$(screens_behind_claude "$agent")"})
+      if (( ${#screen_findings} )); then
+        print -rl -- $screen_findings
+        failed=1
+      fi
+
+      # A malformed screen scores without complaint and reports as a rule that
+      # stopped matching, so verifying one would name the wrong culprit.
+      (( ${#screen_findings} )) && continue
       command -v herdr >/dev/null 2>&1 || continue
       verify_agent "$agent" || failed=1
     done
-    stale_screens=$(screens_behind_claude)
-    [[ -n "$stale_screens" ]] && { print -r -- "$stale_screens"; failed=1 }
     exit $failed
     ;;
 
