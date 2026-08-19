@@ -19,6 +19,14 @@ import sys
 # Nerd Fonts places its glyphs in the basic private use area and in plane 15.
 PRIVATE_USE = ((0xE000, 0xF8FF), (0xF0000, 0xFFFFD))
 
+# Verbatim captures of another program's output. The declared check asks which
+# glyphs this repo chose to render, and nothing here was chosen: the glyphs are
+# whatever the captured program drew, and a recapture would bring in whatever it
+# draws next. Declaring them would also assert the installed font must carry
+# them, which is a promise about someone else's glyph choices that this repo
+# cannot keep.
+CAPTURED_OUTPUT = ("herdr/agent-detection/screens/",)
+
 DEFAULT_FONT = "~/Library/Fonts/MonaspiceNeNerdFontMono-Regular.otf"
 
 DECLARATION = re.compile(r"^U\+([0-9A-Fa-f]+)\s+(\S+)")
@@ -59,6 +67,8 @@ def scan_tracked_files(root):
         if not entry:
             continue
         relative = entry.decode()
+        if relative.startswith(CAPTURED_OUTPUT):
+            continue
         path = os.path.join(root, relative)
         if not os.path.isfile(path):
             continue
