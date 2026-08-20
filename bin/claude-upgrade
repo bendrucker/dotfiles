@@ -35,12 +35,48 @@ revert_cosmetic_json_changes() {
   done <<< "$changed_files"
 }
 
+# Does this settings.json carry Vibe Island's own hook command? Scoped to
+# .hooks, so the string appearing anywhere else is not read as one.
+vibe_island_hook_present() {
+  jq -e '[.hooks // {} | .. | objects | .command? // empty]
+         | any(test("vibe-island/bin/vibe-island-hook"))' >/dev/null 2>&1
+}
+
+# Vibe Island writes ~/.claude/settings.json itself, through the symlink and
+# into the tracked config, replacing every hook with the command it uses on a
+# remote agent host. That binary is not installed here, so every hook event in a
+# new session fails, and the dirty tracked file stalls the sync behind it.
+# Discard it, and say so: a silent revert would leave the app taking hook
+# management back with nothing to show for it.
+revert_vibe_island_hook_rewrite() {
+  local file="user/settings.json"
+
+  [[ -f "$file" ]] || return 0
+
+  local working head
+  working=$(jq -S . "$file" 2>/dev/null) || return 0
+  head=$(git show "HEAD:$file" 2>/dev/null | jq -S . 2>/dev/null) || return 0
+
+  print -r -- "$working" | vibe_island_hook_present || return 0
+  print -r -- "$head" | vibe_island_hook_present && return 0
+
+  # A change reaching outside .hooks is a real edit this must not discard.
+  # git_review_dirty still gets to ask about those.
+  [[ "$(print -r -- "$working" | jq -S 'del(.hooks)')" == \
+     "$(print -r -- "$head" | jq -S 'del(.hooks)')" ]] || return 0
+
+  gum log --level warn "Reverting Vibe Island's hook rewrite in $file"
+  git checkout HEAD -- "$file"
+  notify "Claude Upgrade" "Reverted Vibe Island's hook rewrite in settings.json"
+}
+
 sync_repo() {
   gum log --level info "Syncing Claude repository..."
 
   cd "$CLAUDE_REPO_HOME" || return 1
 
   revert_cosmetic_json_changes
+  revert_vibe_island_hook_rewrite
 
   git_review_dirty "$CLAUDE_REPO_HOME" "Claude Upgrade" || return 1
 

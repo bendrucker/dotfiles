@@ -456,3 +456,132 @@ Describe "claude-plugin-audit"
     The output should include "could not compare"
   End
 End
+
+# Vibe Island rewrites ~/.claude/settings.json through the dotfiles symlink,
+# swapping every hook for the command it runs on a remote agent host. The
+# binary it names is not installed here, so hooks fail in every new session,
+# and the dirty tracked file stalls the sync until someone looks at it. These
+# lock the self-heal: the rewrite is discarded and reported, and nothing else
+# is.
+Describe "revert_vibe_island_hook_rewrite"
+  # This block wants a real git repo, so its stubs deliberately leave out the
+  # audit's canned git.
+  revert_setup() {
+    revert_sandbox="$SHELLSPEC_TMPBASE/claude-upgrade-revert"
+    revert_stub="$revert_sandbox/stub"
+    repo="$revert_sandbox/repo"
+    rm -rf "$revert_sandbox"
+    mkdir -p "$revert_stub" "$repo/user"
+
+    export NOTIFY_LOG="$revert_sandbox/notify.log"
+    : >"$NOTIFY_LOG"
+
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$NOTIFY_LOG"\n' \
+      >"$revert_stub/osascript"
+    chmod +x "$revert_stub/osascript"
+
+    printf '#!/usr/bin/env bash\n[ "$1" = log ] && printf "%%s\\n" "${@: -1}" >&2\nexit 0\n' \
+      >"$revert_stub/gum"
+    chmod +x "$revert_stub/gum"
+
+    write_settings_json "$(guarded_hooks)"
+    git -C "$repo" init -q -b main
+    git -C "$repo" config user.email spec@example.test
+    git -C "$repo" config user.name Spec
+    git -C "$repo" config commit.gpgsign false
+    git -C "$repo" add -A
+    git -C "$repo" commit -q -m "settings"
+  }
+  BeforeEach 'revert_setup'
+
+  # What the tracked config holds: a bridge invocation guarded on the binary
+  # existing, so a machine without it runs a no-op rather than failing.
+  guarded_hooks() {
+    printf '%s' '"/bin/sh -c [ -x \"$HOME/.vibe-island/bin/vibe-island-bridge\" ] && exit 0"'
+  }
+
+  # What the app writes: the remote agent binary, plus the host it means to
+  # reach, unguarded.
+  rewritten_hooks() {
+    printf '%s' '"~/.vibe-island/bin/vibe-island-hook --host user@example"'
+  }
+
+  write_settings_json() {
+    local command="$1" extra="${2:-bar}"
+    jq -n --argjson command "$command" --arg extra "$extra" '{
+      env: {EXAMPLE: $extra},
+      hooks: {SessionStart: [{hooks: [{type: "command", command: $command}]}]}
+    }' >"$repo/user/settings.json"
+  }
+
+  call_revert() {
+    PATH="$revert_stub:$PATH" zsh -fc \
+      'cd "$1" || exit 1; source "$2"; revert_vibe_island_hook_rewrite' _ "$repo" "$upgrade"
+  }
+
+  settings_status() {
+    if [ -n "$(git -C "$repo" status --porcelain user/settings.json)" ]; then
+      printf 'dirty'
+    else
+      printf 'clean'
+    fi
+  }
+
+  It "discards the rewrite and says so"
+    write_settings_json "$(rewritten_hooks)"
+    When call call_revert
+    The status should be success
+    The stderr should include "Reverting Vibe Island's hook rewrite"
+    The contents of file "$NOTIFY_LOG" should include "hook rewrite"
+    The result of function settings_status should equal "clean"
+  End
+
+  # The app reformats the whole file while it rewrites the hooks, so the
+  # revert cannot depend on the rest of the file being byte-identical.
+  It "discards a rewrite that also reordered the file"
+    write_settings_json "$(rewritten_hooks)"
+    jq -S . "$repo/user/settings.json" >"$repo/user/settings.json.next"
+    mv "$repo/user/settings.json.next" "$repo/user/settings.json"
+    When call call_revert
+    The status should be success
+    The stderr should include "Reverting"
+    The result of function settings_status should equal "clean"
+  End
+
+  # Anything outside .hooks could be a real edit. git_review_dirty asks about
+  # those, and it cannot ask about a file this already threw away.
+  It "leaves a change outside .hooks alone"
+    write_settings_json "$(guarded_hooks)" changed
+    When call call_revert
+    The status should be success
+    The stderr should equal ""
+    The result of function settings_status should equal "dirty"
+  End
+
+  It "leaves a rewrite carrying a change outside .hooks alone"
+    write_settings_json "$(rewritten_hooks)" changed
+    When call call_revert
+    The status should be success
+    The stderr should equal ""
+    The contents of file "$NOTIFY_LOG" should equal ""
+    The result of function settings_status should equal "dirty"
+  End
+
+  # Only the app's own command is the app's doing. A hook edited by hand is a
+  # local change like any other.
+  It "leaves a hand-edited hook alone"
+    write_settings_json '"echo hello"'
+    When call call_revert
+    The status should be success
+    The stderr should equal ""
+    The result of function settings_status should equal "dirty"
+  End
+
+  It "does nothing to a clean tree"
+    When call call_revert
+    The status should be success
+    The stderr should equal ""
+    The contents of file "$NOTIFY_LOG" should equal ""
+    The result of function settings_status should equal "clean"
+  End
+End

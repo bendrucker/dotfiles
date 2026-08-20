@@ -8,11 +8,16 @@
 #   with `jq -S` so cosmetic key reordering doesn't show as noise; everything
 #   else falls back to plain `git diff HEAD`.
 #
+# diff_names_host [repo_dir]
+#   Return 0 when the tracked diff against HEAD contains this machine's name,
+#   matched case-insensitively against both `hostname -s` and `hostname`.
+#
 # git_review_open_pr <repo_dir> <title>
 #   Capture the working-tree changes (tracked and untracked) onto a fresh branch,
 #   push it, and open a draft PR with `gh`, then return the base branch to a clean
 #   state so the caller can fast-forward it. Returns nonzero if any step fails,
-#   leaving the base branch checked out.
+#   leaving the base branch checked out. Refuses before touching the tree when
+#   the diff names this machine.
 #
 # git_review_dirty <repo_dir> <title>
 #   If the tree is clean, return 0. Otherwise render the diff and, on a TTY,
@@ -41,12 +46,39 @@ render_diff() {
   )
 }
 
+diff_names_host() {
+  local repo_dir="${1:-.}"
+
+  local diff
+  diff=$(git -C "$repo_dir" diff HEAD 2>/dev/null)
+  [[ -z "$diff" ]] && return 1
+
+  # printf into grep, not a here-string: bash 3.2 stages those through a temp
+  # file it picks itself, and a guard that fails open is worse than no guard.
+  local name
+  for name in "$(hostname -s)" "$(hostname)"; do
+    [[ -n "$name" ]] || continue
+    printf '%s\n' "$diff" | grep -qiF -- "$name" && return 0
+  done
+
+  return 1
+}
+
 git_review_open_pr() {
   local repo_dir="$1" title="$2"
 
-  local base branch host
+  # The repos this serves are public deploy checkouts, and what lands in them
+  # without being written by hand is whatever an app decided to configure -
+  # Vibe Island puts the machine's own name into a hook command. Refuse the
+  # whole sync rather than publishing it, leaving the tree for inspection.
+  if diff_names_host "$repo_dir"; then
+    gum log --level error "Local changes name this machine - refusing to push them to a public remote"
+    notify "$title" "Skipped: local changes name this machine"
+    return 1
+  fi
+
+  local base branch
   base=$(git -C "$repo_dir" symbolic-ref --short HEAD 2>/dev/null || git_default_branch "$repo_dir")
-  host=$(hostname -s)
   branch="sync/local-changes-$(date +%Y%m%d-%H%M%S)"
 
   gum log --level info "Opening a PR for local changes on $branch..."
@@ -57,7 +89,7 @@ git_review_open_pr() {
   fi
 
   if ! git -C "$repo_dir" add -A ||
-     ! git -C "$repo_dir" commit -m "sync: local changes captured on $host"; then
+     ! git -C "$repo_dir" commit -m "sync: local changes captured"; then
     gum log --level error "Failed to commit local changes"
     git -C "$repo_dir" checkout "$base"
     return 1
