@@ -480,6 +480,12 @@ Describe "revert_vibe_island_hook_rewrite"
       >"$revert_stub/osascript"
     chmod +x "$revert_stub/osascript"
 
+    # notify only reaches osascript on Darwin, and the Linux leg of CI runs
+    # these specs too. Stubbing the platform keeps the notification assertion
+    # testing the revert rather than the runner.
+    printf '#!/usr/bin/env bash\nprintf "Darwin\\n"\n' >"$revert_stub/uname"
+    chmod +x "$revert_stub/uname"
+
     printf '#!/usr/bin/env bash\n[ "$1" = log ] && printf "%%s\\n" "${@: -1}" >&2\nexit 0\n' \
       >"$revert_stub/gum"
     chmod +x "$revert_stub/gum"
