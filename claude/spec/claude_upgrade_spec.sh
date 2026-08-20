@@ -578,6 +578,19 @@ Describe "revert_vibe_island_hook_rewrite"
     The result of function settings_status should equal "dirty"
   End
 
+  # A command the predicates cannot read is a hook the revert cannot vouch for,
+  # so the file goes to git_review_dirty like any other. This holds whether the
+  # answer comes from the type test or from jq raising on it. It pins the
+  # promise made about settings.json shapes, leaving jq's route to it free.
+  It "leaves a rewrite standing beside a non-string command alone"
+    write_mixed_hooks_json "$(rewritten_hooks)" 123
+    When call call_revert
+    The status should be success
+    The stderr should equal ""
+    The contents of file "$NOTIFY_LOG" should equal ""
+    The result of function settings_status should equal "dirty"
+  End
+
   # Only the app's own command is the app's doing. A hook edited by hand is a
   # local change like any other.
   It "leaves a hand-edited hook alone"

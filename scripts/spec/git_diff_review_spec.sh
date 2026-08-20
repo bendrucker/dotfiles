@@ -42,6 +42,19 @@ Describe "git_review_open_pr"
       >"$stubdir/hostname"
     chmod +x "$stubdir/hostname"
 
+    # macOS keeps the Cocoa-facing name separately, and a user can set it to
+    # something the POSIX hostname does not contain. HostName is commonly unset,
+    # which scutil reports as a failure with nothing on stdout.
+    printf '%s\n' \
+      '#!/usr/bin/env bash' \
+      'case "$2" in' \
+      '  ComputerName)  printf "Spec Machine\n" ;;' \
+      '  LocalHostName) printf "spechost\n" ;;' \
+      '  *)             exit 1 ;;' \
+      'esac' \
+      >"$stubdir/scutil"
+    chmod +x "$stubdir/scutil"
+
     PATH="$stubdir:$PATH"
 
     git init -q --bare "$sandbox/origin.git"
@@ -111,6 +124,15 @@ Describe "git_review_open_pr"
       The stderr should be defined
     End
 
+    # An app asking Cocoa for the computer's name gets this one, which the
+    # POSIX hostname need not contain.
+    It "refuses the Cocoa computer name"
+      printf 'ran on Spec Machine\n' >"$repo/file.txt"
+      When call git_review_open_pr "$repo" "Title"
+      The status should be failure
+      The stderr should be defined
+    End
+
     It "leaves the tree and the branches untouched"
       printf 'ran on spechost\n' >"$repo/file.txt"
       When call git_review_open_pr "$repo" "Title"
@@ -121,7 +143,46 @@ Describe "git_review_open_pr"
     End
   End
 
+  # Vibe Island writes on its own schedule, so the tree can gain the machine's
+  # name after the first check has already passed. The `git` stub writes it in
+  # on the `add`, standing in for that timing.
+  Describe "a change that arrives mid-flight"
+    It "refuses once the tree is staged"
+      printf 'unremarkable\n' >"$repo/file.txt"
+      printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'for a in "$@"; do' \
+        '  [ "$a" = add ] && printf "ran on spechost\n" >>"$REPO/file.txt"' \
+        'done' \
+        'exec /usr/bin/git "$@"' \
+        >"$stubdir/git"
+      chmod +x "$stubdir/git"
+      export REPO="$repo"
+      # setup ran git before this stub existed, so bash has the real path
+      # cached and would keep using it.
+      hash -r
+
+      When call git_review_open_pr "$repo" "Title"
+      The status should be failure
+      The variable notified should include "name this machine"
+      The stderr should include "refusing to push"
+      The contents of file "$GH_LOG" should equal ""
+      The output should be defined
+    End
+  End
+
   Describe "changes that do not"
+    # The machine's name is short, so an unanchored match would find it inside
+    # unrelated words and refuse a sync over nothing.
+    It "allows a name embedded in a longer word"
+      printf 'the spechostname helper and a spechosting provider\n' >"$repo/file.txt"
+      When call git_review_open_pr "$repo" "Title"
+      The status should be success
+      The contents of file "$GH_LOG" should include "pr create"
+      The stderr should be defined
+      The output should be defined
+    End
+
     It "opens the PR"
       printf 'unremarkable\n' >"$repo/file.txt"
       When call git_review_open_pr "$repo" "Title"

@@ -39,14 +39,23 @@ revert_cosmetic_json_changes() {
 # replaces all of them at once, so a file where only some match holds something
 # else as well, and reverting the file would take that with it. Scoped to
 # .hooks, so the string appearing elsewhere is not read as a hook.
+#
+# The type test states what an unreadable command means here rather than
+# leaving it to jq. Without it, test() on a non-string raises, and the answer
+# these give comes from a swallowed error rather than from the predicate. It
+# lands on the same decision today, so this is about resting the decision on
+# something other than a redirect. Guard the match rather than filtering ahead
+# of it: filtering drops an unreadable command from the set, which lets the rest
+# of the file answer for it and reverts a hook nothing inspected.
 vibe_island_owns_every_hook() {
   jq -e '[.hooks // {} | .. | objects | .command? // empty]
-         | length > 0 and all(test("vibe-island/bin/vibe-island-hook"))' >/dev/null 2>&1
+         | length > 0
+           and all(type == "string" and test("vibe-island/bin/vibe-island-hook"))' >/dev/null 2>&1
 }
 
 vibe_island_hook_present() {
   jq -e '[.hooks // {} | .. | objects | .command? // empty]
-         | any(test("vibe-island/bin/vibe-island-hook"))' >/dev/null 2>&1
+         | any(type == "string" and test("vibe-island/bin/vibe-island-hook"))' >/dev/null 2>&1
 }
 
 # Vibe Island writes ~/.claude/settings.json itself, through the symlink and

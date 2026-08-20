@@ -46,6 +46,9 @@ setup() {
   # A reopen that fails: the app stays down, and the user's menu bar with it.
   export OPEN_FAILS=""
 
+  # A preference write that does not take, leaving the key unset behind it.
+  export WRITE_FAILS=""
+
   # printf, not a here-document: bash stages those through a temp file it picks
   # itself, which a sandbox may deny. Same reasoning as scripts/spec/spec_helper.sh.
   printf '%s\n' \
@@ -59,6 +62,7 @@ setup() {
     '    printf "%s\n" "$value"' \
     '    ;;' \
     '  write)' \
+    '    [ -n "$WRITE_FAILS" ] && exit 1' \
     '    case "${*: -1}" in' \
     '      false) printf 0 >"$PREF_FILE" ;;' \
     '      *)     printf 1 >"$PREF_FILE" ;;' \
@@ -189,6 +193,33 @@ Describe "macos/vibe-island.sh"
       The status should be success
       The stderr should include "Could not reopen"
       The contents of file "$ACTION_LOG" should include "-bool false"
+    End
+
+    # stderr on the nightly run goes to a log file nobody reads, and a missing
+    # menu bar is not something the user can trace back to this script.
+    It "notifies when it cannot reopen the app"
+      export OPEN_FAILS=1
+      When call run_script
+      The status should be success
+      The stderr should be defined
+      The contents of file "$ACTION_LOG" should include "display notification"
+    End
+
+    # A preference that could not be written is not the app overriding one.
+    It "reports a failed write as its own, not as the app ignoring the opt-out"
+      export WRITE_FAILS=1
+      When call run_script
+      The status should be success
+      The stderr should include "Could not write"
+      The stderr should not include "ignoring the opt-out"
+    End
+
+    It "says so when it cannot read the preference back"
+      export WRITE_FAILS=1
+      When call run_script
+      The status should be success
+      The stderr should include "Could not read"
+      The stderr should not include "ignoring the opt-out"
     End
 
     # An app that will not quit leaves the old behavior: write anyway, and say

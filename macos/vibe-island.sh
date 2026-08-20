@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 
 # Vibe Island manages Claude Code's hooks by writing ~/.claude/settings.json
-# itself. It writes with an atomic rename, which replaces the dotfiles symlink
-# with a regular file, so Claude Code silently stops reading the tracked config
-# in ~/.claude-repo and every later edit there goes nowhere. What it writes is
-# the hook shape for a remote agent host, naming a binary that is only installed
-# on machines the app SSHes into, so every hook event in a session started
-# afterward fails.
+# itself. It follows the dotfiles symlink and writes through it, so what lands
+# is a dirty user/settings.json in the tracked ~/.claude-repo checkout. What it
+# writes is the hook shape for a remote agent host, naming a binary that is only
+# installed on machines the app SSHes into, so every hook event in a session
+# started afterward fails.
+#
+# An earlier version replaced the symlink with a regular file instead, which
+# left Claude Code reading a file no longer connected to the repo. Both are
+# worth defending against, and they need different defenses: claude/install.sh
+# restores a replaced symlink, while claude-upgrade reverts a write that came
+# through one.
 #
 # This preference opts out of that management, recording a standing choice so a
 # new machine does not arrive with the app owning the hook config again. Opting
@@ -20,12 +25,10 @@
 # change, which does not carry over: the Dock and SystemUIServer relaunch
 # themselves, while Vibe Island has to be reopened or the user loses their menu
 # bar.
-#
-# claude/install.sh restores the symlink when it finds one already replaced.
-# This is what keeps it from being replaced again.
 
 VIBE_ISLAND_APP="${VIBE_ISLAND_APP:-/Applications/Vibe Island.app}"
 VIBE_ISLAND_DOMAIN="app.vibeisland.macos"
+APP_WAIT_SECONDS=10
 
 [ -d "$VIBE_ISLAND_APP" ] || exit 0
 
@@ -37,19 +40,32 @@ app_running() {
   pgrep -x vibe-island >/dev/null 2>&1
 }
 
+# Wait for the app to reach a running state, or give up. Bounded in one place,
+# so the quit and the relaunch cannot drift to different limits. Takes the
+# state to wait for, and answers whether it arrived.
+wait_for_app() {
+  local want="$1" waited=0
+
+  while [ "$waited" -lt "$APP_WAIT_SECONDS" ]; do
+    if app_running; then
+      [ "$want" = running ] && return 0
+    else
+      [ "$want" = gone ] && return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  return 1
+}
+
 # Ask the app to quit and wait for it to go, so the write lands while nothing
 # holds a cached copy of the preference. Bounded: an app that will not quit must
 # not hang the nightly install.
 quit_app() {
   osascript -e 'quit app "Vibe Island"' >/dev/null 2>&1
 
-  local waited=0
-  while app_running && [ "$waited" -lt 10 ]; do
-    sleep 1
-    waited=$((waited + 1))
-  done
-
-  ! app_running
+  wait_for_app gone
 }
 
 # Already off. Stopping here skips quitting the app on a nightly run that has
@@ -67,14 +83,22 @@ if app_running; then
   fi
 fi
 
-defaults write "$VIBE_ISLAND_DOMAIN" hookAutoConfig_claude -bool false
+wrote=1
+defaults write "$VIBE_ISLAND_DOMAIN" hookAutoConfig_claude -bool false || wrote=""
+
+if [ -z "$wrote" ]; then
+  gum log --level warn "Could not write the Vibe Island preference. The opt-out did not take."
+fi
 
 [ -n "$quit" ] || exit 0
 
 # This script took the menu bar away, so it owns putting it back, and owns
-# saying when it could not.
+# saying when it could not. A failed reopen is the one outcome the user cannot
+# discover on their own, and stderr on a nightly run goes to a log nobody reads,
+# so it also goes to Notification Center.
 if ! open -a "$VIBE_ISLAND_APP"; then
   gum log --level warn "Could not reopen Vibe Island. Open it to get the menu bar back."
+  osascript -e 'display notification "Could not reopen it after applying a preference. Open it to get the menu bar back." with title "Vibe Island"' >/dev/null 2>&1
   exit 0
 fi
 
@@ -84,12 +108,14 @@ fi
 # there. A best-effort signal either way: an app slow to write its own value
 # back reads as compliant here, and the revert's notification is the detector
 # that does not depend on timing.
-waited=0
-while ! app_running && [ "$waited" -lt 10 ]; do
-  sleep 1
-  waited=$((waited + 1))
-done
+wait_for_app running || exit 0
 
-if [ "$(hook_auto_config)" != 0 ]; then
+# An unreadable preference is not the app overriding one. Blaming it for a read
+# that never returned a value would point at the wrong defense, so the two get
+# different messages.
+current=$(hook_auto_config)
+if [ -z "$current" ]; then
+  gum log --level warn "Could not read the Vibe Island preference back after relaunching. Whether the opt-out took is unknown."
+elif [ "$current" != 0 ]; then
   gum log --level warn "Vibe Island turned Claude hook management back on after relaunching. It is ignoring the opt-out."
 fi
