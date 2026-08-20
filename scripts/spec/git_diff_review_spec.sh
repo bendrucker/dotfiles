@@ -95,6 +95,22 @@ Describe "git_review_open_pr"
       The stderr should be defined
     End
 
+    # git add -A commits untracked files too, so a guard reading only the
+    # tracked diff would wave through a file an app just dropped in.
+    It "refuses an untracked file whose contents name it"
+      printf 'ran on spechost\n' >"$repo/dropped.txt"
+      When call git_review_open_pr "$repo" "Title"
+      The status should be failure
+      The stderr should be defined
+    End
+
+    It "refuses an untracked file whose own name names it"
+      printf 'unremarkable\n' >"$repo/spechost-diagnostics.txt"
+      When call git_review_open_pr "$repo" "Title"
+      The status should be failure
+      The stderr should be defined
+    End
+
     It "leaves the tree and the branches untouched"
       printf 'ran on spechost\n' >"$repo/file.txt"
       When call git_review_open_pr "$repo" "Title"

@@ -43,6 +43,9 @@ setup() {
   # The app that ignores the opt-out: relaunching puts hook management back on.
   export APP_CLOBBERS=""
 
+  # A reopen that fails: the app stays down, and the user's menu bar with it.
+  export OPEN_FAILS=""
+
   # printf, not a here-document: bash stages those through a temp file it picks
   # itself, which a sandbox may deny. Same reasoning as scripts/spec/spec_helper.sh.
   printf '%s\n' \
@@ -84,6 +87,7 @@ setup() {
   printf '%s\n' \
     '#!/usr/bin/env bash' \
     'printf "%s\n" "open $*" >>"$ACTION_LOG"' \
+    '[ -n "$OPEN_FAILS" ] && exit 1' \
     'rm -f "$QUIT_FLAG"' \
     '[ -n "$APP_CLOBBERS" ] && printf 1 >"$PREF_FILE"' \
     'exit 0' \
@@ -175,6 +179,16 @@ Describe "macos/vibe-island.sh"
       When call run_script
       The status should be success
       The stderr should include "ignoring the opt-out"
+    End
+
+    # Quitting the app was this script's doing, so a reopen it could not manage
+    # is its to report. Silence here costs the user their menu bar.
+    It "warns when it cannot reopen the app"
+      export OPEN_FAILS=1
+      When call run_script
+      The status should be success
+      The stderr should include "Could not reopen"
+      The contents of file "$ACTION_LOG" should include "-bool false"
     End
 
     # An app that will not quit leaves the old behavior: write anyway, and say

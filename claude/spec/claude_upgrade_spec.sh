@@ -514,6 +514,17 @@ Describe "revert_vibe_island_hook_rewrite"
     }' >"$repo/user/settings.json"
   }
 
+  # Two hooks under different events, so an example can hold one of each kind.
+  write_mixed_hooks_json() {
+    jq -n --argjson session "$1" --argjson pre "$2" '{
+      env: {EXAMPLE: "bar"},
+      hooks: {
+        SessionStart: [{hooks: [{type: "command", command: $session}]}],
+        PreToolUse: [{hooks: [{type: "command", command: $pre}]}]
+      }
+    }' >"$repo/user/settings.json"
+  }
+
   call_revert() {
     PATH="$revert_stub:$PATH" zsh -fc \
       'cd "$1" || exit 1; source "$2"; revert_vibe_island_hook_rewrite' _ "$repo" "$upgrade"
@@ -575,6 +586,26 @@ Describe "revert_vibe_island_hook_rewrite"
     The status should be success
     The stderr should equal ""
     The result of function settings_status should equal "dirty"
+  End
+
+  # The revert restores the whole file, so a hand-edited hook sitting beside
+  # the app's would go with it. The app replaces every hook at once, so a file
+  # holding anything else is not the case this handles.
+  It "leaves a rewrite standing beside a hand-edited hook alone"
+    write_mixed_hooks_json "$(rewritten_hooks)" '"echo hello"'
+    When call call_revert
+    The status should be success
+    The stderr should equal ""
+    The contents of file "$NOTIFY_LOG" should equal ""
+    The result of function settings_status should equal "dirty"
+  End
+
+  It "discards a rewrite that took every hook"
+    write_mixed_hooks_json "$(rewritten_hooks)" "$(rewritten_hooks)"
+    When call call_revert
+    The status should be success
+    The stderr should include "Reverting"
+    The result of function settings_status should equal "clean"
   End
 
   It "does nothing to a clean tree"

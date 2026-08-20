@@ -8,16 +8,20 @@
 #   with `jq -S` so cosmetic key reordering doesn't show as noise; everything
 #   else falls back to plain `git diff HEAD`.
 #
-# diff_names_host [repo_dir]
-#   Return 0 when the tracked diff against HEAD contains this machine's name,
-#   matched case-insensitively against both `hostname -s` and `hostname`.
+# capturable_content [repo_dir]
+#   Print everything `git add -A` would capture: the tracked diff against HEAD,
+#   plus the name and contents of every untracked file.
+#
+# changes_name_host [repo_dir]
+#   Return 0 when capturable_content contains this machine's name, matched
+#   case-insensitively against both `hostname -s` and `hostname`.
 #
 # git_review_open_pr <repo_dir> <title>
 #   Capture the working-tree changes (tracked and untracked) onto a fresh branch,
 #   push it, and open a draft PR with `gh`, then return the base branch to a clean
 #   state so the caller can fast-forward it. Returns nonzero if any step fails,
 #   leaving the base branch checked out. Refuses before touching the tree when
-#   the diff names this machine.
+#   what it would capture names this machine.
 #
 # git_review_dirty <repo_dir> <title>
 #   If the tree is clean, return 0. Otherwise render the diff and, on a TTY,
@@ -46,19 +50,34 @@ render_diff() {
   )
 }
 
-diff_names_host() {
+capturable_content() {
+  local repo_dir="${1:-.}"
+  (
+    cd "$repo_dir" || return
+    git diff HEAD
+    # git add -A stages untracked files too, so they are as publishable as the
+    # tracked diff. Their names carry as much as their contents.
+    local f
+    git ls-files --others --exclude-standard | while IFS= read -r f; do
+      printf '%s\n' "$f"
+      [[ -f "$f" ]] && cat "$f"
+    done
+  ) 2>/dev/null
+}
+
+changes_name_host() {
   local repo_dir="${1:-.}"
 
-  local diff
-  diff=$(git -C "$repo_dir" diff HEAD 2>/dev/null)
-  [[ -z "$diff" ]] && return 1
+  local content
+  content=$(capturable_content "$repo_dir")
+  [[ -z "$content" ]] && return 1
 
   # printf into grep, not a here-string: bash 3.2 stages those through a temp
   # file it picks itself, and a guard that fails open is worse than no guard.
   local name
   for name in "$(hostname -s)" "$(hostname)"; do
     [[ -n "$name" ]] || continue
-    printf '%s\n' "$diff" | grep -qiF -- "$name" && return 0
+    printf '%s\n' "$content" | grep -qiF -- "$name" && return 0
   done
 
   return 1
@@ -71,7 +90,7 @@ git_review_open_pr() {
   # without being written by hand is whatever an app decided to configure -
   # Vibe Island puts the machine's own name into a hook command. Refuse the
   # whole sync, leaving the tree for inspection.
-  if diff_names_host "$repo_dir"; then
+  if changes_name_host "$repo_dir"; then
     gum log --level error "Local changes name this machine - refusing to push them to a public remote"
     notify "$title" "Skipped: local changes name this machine"
     return 1

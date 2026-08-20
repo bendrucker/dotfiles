@@ -35,8 +35,15 @@ revert_cosmetic_json_changes() {
   done <<< "$changed_files"
 }
 
-# Does this settings.json carry Vibe Island's own hook command? Scoped to
-# .hooks, so the string appearing anywhere else is not read as one.
+# Is every hook in this settings.json Vibe Island's own command? The app
+# replaces all of them at once, so a file where only some match holds something
+# else as well, and reverting the file would take that with it. Scoped to
+# .hooks, so the string appearing elsewhere is not read as a hook.
+vibe_island_owns_every_hook() {
+  jq -e '[.hooks // {} | .. | objects | .command? // empty]
+         | length > 0 and all(test("vibe-island/bin/vibe-island-hook"))' >/dev/null 2>&1
+}
+
 vibe_island_hook_present() {
   jq -e '[.hooks // {} | .. | objects | .command? // empty]
          | any(test("vibe-island/bin/vibe-island-hook"))' >/dev/null 2>&1
@@ -57,7 +64,7 @@ revert_vibe_island_hook_rewrite() {
   working=$(jq -S . "$file" 2>/dev/null) || return 0
   head=$(git show "HEAD:$file" 2>/dev/null | jq -S . 2>/dev/null) || return 0
 
-  print -r -- "$working" | vibe_island_hook_present || return 0
+  print -r -- "$working" | vibe_island_owns_every_hook || return 0
   print -r -- "$head" | vibe_island_hook_present && return 0
 
   # A change reaching outside .hooks is a real edit this must not discard.

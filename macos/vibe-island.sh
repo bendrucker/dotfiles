@@ -71,12 +71,25 @@ defaults write "$VIBE_ISLAND_DOMAIN" hookAutoConfig_claude -bool false
 
 [ -n "$quit" ] || exit 0
 
-open -a "$VIBE_ISLAND_APP"
+# This script took the menu bar away, so it owns putting it back, and owns
+# saying when it could not.
+if ! open -a "$VIBE_ISLAND_APP"; then
+  gum log --level warn "Could not reopen Vibe Island. Open it to get the menu bar back."
+  exit 0
+fi
 
-# The app reads the preference at launch, so what it reports now is what it
-# means to honor. A value that is still not 0 means the app is ignoring the
-# opt-out, and only claude-upgrade's revert can defend the config from there.
-sleep 2
+# The app reads the preference at launch, so what it reports once it is up is
+# what it means to honor. A value that is still not 0 means the app is ignoring
+# the opt-out, and only claude-upgrade's revert can defend the config from
+# there. A best-effort signal either way: an app slow to write its own value
+# back reads as compliant here, and the revert's notification is the detector
+# that does not depend on timing.
+waited=0
+while ! app_running && [ "$waited" -lt 10 ]; do
+  sleep 1
+  waited=$((waited + 1))
+done
+
 if [ "$(hook_auto_config)" != 0 ]; then
   gum log --level warn "Vibe Island turned Claude hook management back on after relaunching. It is ignoring the opt-out."
 fi
