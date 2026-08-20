@@ -52,8 +52,8 @@ quit_app() {
   ! app_running
 }
 
-# Already off. Stopping here keeps the nightly install silent rather than
-# quitting the app out from under the user on every run.
+# Already off. Stopping here skips quitting the app on a nightly run that has
+# nothing to write.
 if [ "$(hook_auto_config)" = 0 ]; then
   exit 0
 fi
@@ -74,9 +74,8 @@ defaults write "$VIBE_ISLAND_DOMAIN" hookAutoConfig_claude -bool false
 open -a "$VIBE_ISLAND_APP"
 
 # The app reads the preference at launch, so what it reports now is what it
-# means to honor. A value that is still not 0 means it is ignoring the opt-out
-# rather than caching over it, and only claude-upgrade's revert can defend the
-# config from there.
+# means to honor. A value that is still not 0 means the app is ignoring the
+# opt-out, and only claude-upgrade's revert can defend the config from there.
 sleep 2
 if [ "$(hook_auto_config)" != 0 ]; then
   gum log --level warn "Vibe Island turned Claude hook management back on after relaunching. It is ignoring the opt-out."

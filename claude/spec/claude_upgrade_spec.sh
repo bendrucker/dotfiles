@@ -495,7 +495,7 @@ Describe "revert_vibe_island_hook_rewrite"
   BeforeEach 'revert_setup'
 
   # What the tracked config holds: a bridge invocation guarded on the binary
-  # existing, so a machine without it runs a no-op rather than failing.
+  # existing, so a machine without it runs a no-op.
   guarded_hooks() {
     printf '%s' '"/bin/sh -c [ -x \"$HOME/.vibe-island/bin/vibe-island-bridge\" ] && exit 0"'
   }

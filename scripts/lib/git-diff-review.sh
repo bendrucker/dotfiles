@@ -70,7 +70,7 @@ git_review_open_pr() {
   # The repos this serves are public deploy checkouts, and what lands in them
   # without being written by hand is whatever an app decided to configure -
   # Vibe Island puts the machine's own name into a hook command. Refuse the
-  # whole sync rather than publishing it, leaving the tree for inspection.
+  # whole sync, leaving the tree for inspection.
   if diff_names_host "$repo_dir"; then
     gum log --level error "Local changes name this machine - refusing to push them to a public remote"
     notify "$title" "Skipped: local changes name this machine"

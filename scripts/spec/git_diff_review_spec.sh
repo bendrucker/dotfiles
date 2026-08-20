@@ -95,8 +95,6 @@ Describe "git_review_open_pr"
       The stderr should be defined
     End
 
-    # Nothing is committed or pushed, so the change stays where it can be
-    # looked at.
     It "leaves the tree and the branches untouched"
       printf 'ran on spechost\n' >"$repo/file.txt"
       When call git_review_open_pr "$repo" "Title"
