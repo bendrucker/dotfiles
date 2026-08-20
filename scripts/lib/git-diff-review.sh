@@ -8,11 +8,24 @@
 #   with `jq -S` so cosmetic key reordering doesn't show as noise; everything
 #   else falls back to plain `git diff HEAD`.
 #
+# capturable_content [repo_dir]
+#   Print everything `git add -A` would capture: the tracked diff against HEAD,
+#   plus the name and contents of every untracked file.
+#
+# host_names
+#   Print every name this machine answers to, one per line: the `hostname`
+#   forms plus scutil's ComputerName, LocalHostName, and HostName.
+#
+# changes_name_host [repo_dir]
+#   Return 0 when capturable_content contains one of host_names, matched
+#   case-insensitively on word boundaries.
+#
 # git_review_open_pr <repo_dir> <title>
 #   Capture the working-tree changes (tracked and untracked) onto a fresh branch,
 #   push it, and open a draft PR with `gh`, then return the base branch to a clean
 #   state so the caller can fast-forward it. Returns nonzero if any step fails,
-#   leaving the base branch checked out.
+#   leaving the base branch checked out. Refuses before touching the tree when
+#   what it would capture names this machine, and again once it is staged.
 #
 # git_review_dirty <repo_dir> <title>
 #   If the tree is clean, return 0. Otherwise render the diff and, on a TTY,
@@ -41,12 +54,71 @@ render_diff() {
   )
 }
 
+capturable_content() {
+  local repo_dir="${1:-.}"
+  (
+    cd "$repo_dir" || return
+    git diff HEAD
+    # git add -A stages untracked files too, so they are as publishable as the
+    # tracked diff. Their names carry as much as their contents.
+    local f
+    git ls-files --others --exclude-standard | while IFS= read -r f; do
+      printf '%s\n' "$f"
+      [[ -f "$f" ]] && cat "$f"
+    done
+  ) 2>/dev/null
+}
+
+# Every name this machine answers to. `hostname` covers the POSIX forms, and
+# scutil covers the ones macOS keeps separately: an app asking Cocoa for the
+# computer's name gets ComputerName, which a user can set to something the
+# POSIX hostname does not contain. Duplicates are harmless, so they are not
+# filtered.
+host_names() {
+  hostname -s 2>/dev/null
+  hostname 2>/dev/null
+
+  local key
+  for key in ComputerName LocalHostName HostName; do
+    scutil --get "$key" 2>/dev/null
+  done
+}
+
+changes_name_host() {
+  local repo_dir="${1:-.}"
+
+  # grep -F reads a newline-separated argument as several patterns, so the whole
+  # set goes in one pass without an array or a temp file. Blank lines are
+  # dropped first: an empty pattern matches every line and would refuse every
+  # sync.
+  local names
+  names=$(host_names | grep -v '^[[:space:]]*$')
+  [[ -z "$names" ]] && return 1
+
+  # -w, so a short machine name does not match inside an unrelated word and
+  # refuse a sync over nothing. Word boundaries still catch every form the app
+  # writes, including the user@host in its hook command.
+  #
+  # Streamed into grep rather than captured first: an untracked file can be any
+  # size, and grep -q stops reading at the first match.
+  capturable_content "$repo_dir" | grep -qiwF -- "$names"
+}
+
 git_review_open_pr() {
   local repo_dir="$1" title="$2"
 
-  local base branch host
+  # The repos this serves are public deploy checkouts, and what lands in them
+  # without being written by hand is whatever an app decided to configure -
+  # Vibe Island puts the machine's own name into a hook command. Refuse the
+  # whole sync, leaving the tree for inspection.
+  if changes_name_host "$repo_dir"; then
+    gum log --level error "Local changes name this machine - refusing to push them to a public remote"
+    notify "$title" "Skipped: local changes name this machine"
+    return 1
+  fi
+
+  local base branch
   base=$(git -C "$repo_dir" symbolic-ref --short HEAD 2>/dev/null || git_default_branch "$repo_dir")
-  host=$(hostname -s)
   branch="sync/local-changes-$(date +%Y%m%d-%H%M%S)"
 
   gum log --level info "Opening a PR for local changes on $branch..."
@@ -56,8 +128,24 @@ git_review_open_pr() {
     return 1
   fi
 
-  if ! git -C "$repo_dir" add -A ||
-     ! git -C "$repo_dir" commit -m "sync: local changes captured on $host"; then
+  if ! git -C "$repo_dir" add -A; then
+    gum log --level error "Failed to stage local changes"
+    git -C "$repo_dir" checkout "$base"
+    return 1
+  fi
+
+  # Checked again now that the tree is staged. Vibe Island writes on its own
+  # schedule, so a write that landed after the first check would otherwise ride
+  # out on this commit.
+  if changes_name_host "$repo_dir"; then
+    gum log --level error "Local changes name this machine - refusing to push them to a public remote"
+    notify "$title" "Skipped: local changes name this machine"
+    git -C "$repo_dir" reset >/dev/null 2>&1
+    git -C "$repo_dir" checkout "$base"
+    return 1
+  fi
+
+  if ! git -C "$repo_dir" commit -m "sync: local changes captured"; then
     gum log --level error "Failed to commit local changes"
     git -C "$repo_dir" checkout "$base"
     return 1
