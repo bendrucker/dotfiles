@@ -157,6 +157,29 @@ type = "plugin_action"
 command = "mirror.remote-split-down"
 description = "remote: split down"
 
+# terminal-code (tode) and terminal-browser — a VS Code and a browser, each in
+# a right-hand split. Both ship a CLI on PATH (~/.local/bin, zsh/.zshenv) whose
+# `--split right` is what the plugin action shells out to, so these keys buy
+# reaching them without a shell prompt. prefix+b and prefix+c are herdr's
+# toggle_sidebar and new_tab, so both take the shift variant the same way the
+# file viewer and nvim do above.
+#
+# terminal-browser overlaps ogulcancelik/herdr-browser, which stays: that one
+# owns the link handler that opens a localhost URL from a pane, and this one
+# has the `terminal-browser action` CLI an agent drives. Nothing is bound to
+# herdr-browser, so they don't contend for a key.
+[[keys.command]]
+key = "prefix+shift+c"
+type = "plugin_action"
+command = "zenbu-labs.tode.open-split"
+description = "terminal-code (right split)"
+
+[[keys.command]]
+key = "prefix+shift+b"
+type = "plugin_action"
+command = "zenbu-labs.terminal-browser.open-split"
+description = "terminal-browser (right split)"
+
 [ui]
 agent_panel_sort = "priority"
 

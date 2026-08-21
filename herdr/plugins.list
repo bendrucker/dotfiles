@@ -10,3 +10,12 @@ nikok6/herdr-mirror
 ogulcancelik/herdr-browser
 persiyanov/herdr-reviewr
 smarzban/herdr-file-viewer
+
+# The two zenbu-labs entries build by piping a vendor install script to bash,
+# which fetches a ~130MB tarball of a vendored Electron rather than compiling.
+# `update` reinstalls unpinned entries unconditionally, so each nightly upgrade
+# re-downloads both and takes about 35s. They stay unpinned anyway: the pin
+# would freeze the herdr manifest while the binary version comes from the
+# install endpoint, so pinning buys a stale plugin and no stable binary.
+zenbu-labs/terminal-browser/herdr-plugin
+zenbu-labs/terminal-code/herdr-plugin
