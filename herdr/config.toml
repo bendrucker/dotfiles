@@ -127,12 +127,35 @@ description = "worktree: switch / create (current branch)"
 
 # herdr-mirror mirrors a remote herdr server's workspaces and agents into the
 # local sidebar. Its hosts live in ~/.config/herdr-mirror/hosts.toml, untracked
-# because every entry is an ssh target. The daemon autostarts on workspace
-# focus, and the lifecycle actions (start, pause, teardown, status) are the same
-# subcommands of the herdr-mirror the install links into ~/.local/bin, so a key
-# buys them nothing. These four have no CLI equivalent worth typing: each takes
-# its host and cwd from the mirror it's invoked from, and degrades to the plain
-# local action outside one. Native key plus alt, so both sets stay reachable.
+# because every entry is an ssh target.
+#
+# That file also carries `autostart = false`, so focusing a workspace no longer
+# pulls the remote in. One sidebar holding both machines loses the separation
+# that makes the second machine useful: which agents are here and which are over
+# there stops being answerable at a glance, and the rows that scroll past are
+# mostly not the ones being worked on. Mirroring is per-sitting instead of
+# ambient, which is what the two keys below are for.
+#
+# teardown closes the local mirrors and nothing else. The remote panes and their
+# agents keep running, and start re-mirrors them from scratch. The rest of the
+# lifecycle (pause, status, once, restore) stays on the herdr-mirror the install
+# links into ~/.local/bin, where it reads fine as a typed command.
+[[keys.command]]
+key = "prefix+shift+m"
+type = "plugin_action"
+command = "mirror.start"
+description = "remote: mirror hosts into the sidebar"
+
+[[keys.command]]
+key = "prefix+alt+d"
+type = "plugin_action"
+command = "mirror.teardown"
+description = "remote: stop mirroring, close every mirror"
+
+# Creating objects on the remote. These four have no CLI equivalent worth
+# typing: each takes its host and cwd from the mirror it's invoked from, and
+# degrades to the plain local action outside one. Native key plus alt, so both
+# sets stay reachable.
 [[keys.command]]
 key = "prefix+alt+n"
 type = "plugin_action"
