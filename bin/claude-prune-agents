@@ -24,6 +24,8 @@ setopt typeset_silent
 # could not find the usage header to print.
 typeset -g script_path=${0:A}
 
+source "${0:A:h}/../scripts/lib/spin.sh"
+
 # Split a worktree path into its parent repo root and branch. Worktrunk uses
 # .worktrees/, the built-in harness uses .claude/worktrees/. Prints
 # "<repo root>\t<branch>", or nothing when the path is not a worktree.
@@ -233,12 +235,15 @@ main () {
   rows_file=$(mktemp "${TMPDIR:-/tmp}/claude-prune-agents.XXXXXX") || return 1
   trap "rm -f '$rows_file'" EXIT
 
-  # A handful of gh calls per agent, so show progress. gum spin needs a command
-  # to wrap, and the scan is an in-process function, so spin on the wait.
-  if [[ -t 2 ]] && (( ${+commands[gum]} )); then
+  # A handful of gh calls per agent, so show progress. spin needs a command to
+  # wrap, and the scan is an in-process function, so spin on the wait. The
+  # background fork and its polling loop exist only to feed the spinner, so
+  # they are gated on the spinner rather than left running where nothing
+  # renders it.
+  if spin_has_terminal && spin_have_gum; then
     scan_agents "$rows_file" &
     local scan_pid=$!
-    gum spin --title "Resolving PRs for $total agents" -- \
+    spin --title "Resolving PRs for $total agents" -- \
       zsh -c "while kill -0 $scan_pid 2>/dev/null; do sleep 0.2; done"
     wait $scan_pid
   else

@@ -69,6 +69,8 @@ Describe "git_review_open_pr"
     git -C "$repo" push -q -u origin main
 
     # shellcheck source=/dev/null
+    source "$SHELLSPEC_PROJECT_ROOT/lib/spin.sh"
+    # shellcheck source=/dev/null
     source "$SHELLSPEC_PROJECT_ROOT/lib/git-sync.sh"
     # shellcheck source=/dev/null
     source "$SHELLSPEC_PROJECT_ROOT/lib/git-diff-review.sh"

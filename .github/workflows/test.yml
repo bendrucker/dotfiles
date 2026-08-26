@@ -318,6 +318,9 @@ jobs:
       - name: Check for expired migrations
         run: scripts/lint-expired
 
+      - name: Check spinners degrade without a terminal
+        run: scripts/lint-spinners
+
       - name: Check tmux/bin aggregate is in sync
         run: |
           # tmux/bin holds a symlink to every topic-bin script (see tmux/bin-sync).

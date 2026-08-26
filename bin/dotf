@@ -3,11 +3,13 @@
 # Install and update dotfiles dependencies; run periodically.
 export ZSH="$HOME/.dotfiles"
 
+. "$ZSH/scripts/lib/spin.sh"
+
 "$ZSH/scripts/homebrew.sh"
 if [ -n "$CI" ]; then
   echo "› skipping brew update (CI)"
 else
-  gum spin --show-output --show-error --title "brew update" -- brew update
+  spin --show-output --show-error --title "brew update" -- brew update
 fi
 
 echo "› building default packages"

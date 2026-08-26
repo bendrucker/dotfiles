@@ -8,6 +8,7 @@ CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 # audit could not be found from there.
 typeset -g bin_dir=${0:A:h}
 
+source "${0:A:h}/../scripts/lib/spin.sh"
 source "${0:A:h}/../scripts/lib/claude-plugins.sh"
 source "${0:A:h}/../scripts/lib/git-sync.sh"
 source "${0:A:h}/../scripts/lib/report-failure.sh"

@@ -8,6 +8,7 @@ set -o pipefail
 
 DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 
+source "${0:A:h}/../scripts/lib/spin.sh"
 source "${0:A:h}/../scripts/lib/report-failure.sh"
 
 SYNC_LOG=$(mktemp)
@@ -23,7 +24,7 @@ report_log_failure() {
   report_failure "dotfiles-upgrade" "$title" "$command" "$output" "$revision"
 }
 
-if ! gum spin --show-output --show-error --title "Syncing dotfiles" -- \
+if ! spin --show-output --show-error --title "Syncing dotfiles" -- \
   "$DOTFILES_HOME/bin/dotfiles-sync" 2>&1 | tee "$SYNC_LOG"; then
   gum log --level error "sync failed"
 
@@ -39,7 +40,7 @@ if ! "$DOTFILES_HOME/scripts/install" 2>&1 | tee "$INSTALL_LOG"; then
   exit 1
 fi
 
-if ! gum spin --show-output --show-error --title "Running brew cleanup" -- brew cleanup; then
+if ! spin --show-output --show-error --title "Running brew cleanup" -- brew cleanup; then
   gum log --level warn "brew cleanup had issues"
 fi
 
