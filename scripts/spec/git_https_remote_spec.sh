@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2329
 
+# shellcheck source=../lib/spin.sh
+Include "$SHELLSPEC_PROJECT_ROOT/lib/spin.sh"
 # shellcheck source=../lib/git-sync.sh
 Include "$SHELLSPEC_PROJECT_ROOT/lib/git-sync.sh"
 

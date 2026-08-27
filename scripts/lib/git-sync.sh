@@ -1,5 +1,6 @@
 # shellcheck shell=bash
 # Sourceable helpers for safely fast-forwarding a clone from origin.
+# Requires spin.sh (spin) to be sourced first.
 #
 # git_default_branch [repo_dir]
 #   Echo the remote default branch, resolving origin/HEAD with a
@@ -176,7 +177,7 @@ git_sync_fetch() {
   local retries=4 delay=2 i
 
   for ((i = 1; i <= retries; i++)); do
-    if gum spin --show-error --title "Fetching origin/$branch (attempt $i/$retries)" -- \
+    if spin --show-error --title "Fetching origin/$branch (attempt $i/$retries)" -- \
       git -C "$repo_dir" fetch origin "$branch"; then
       return 0
     fi

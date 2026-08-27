@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Sourceable interactive handler for a dirty working tree before a sync.
-# Requires report-failure.sh (notify) and git-sync.sh (git_default_branch) to be
-# sourced first. gum and gh must be on PATH.
+# Requires report-failure.sh (notify), git-sync.sh (git_default_branch), and
+# spin.sh (spin) to be sourced first. gum and gh must be on PATH.
 #
 # render_diff [repo_dir]
 #   Print the diff of tracked changes against HEAD. JSON files are normalized
@@ -151,7 +151,7 @@ git_review_open_pr() {
     return 1
   fi
 
-  if ! gum spin --show-error --title "Pushing $branch" -- \
+  if ! spin --show-error --title "Pushing $branch" -- \
     git -C "$repo_dir" push -u origin "$branch"; then
     gum log --level error "Failed to push $branch - change is committed locally on $branch"
     git -C "$repo_dir" checkout "$base"

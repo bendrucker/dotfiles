@@ -1,0 +1,46 @@
+#!/usr/bin/env sh
+# Usage: lint-spinners [dotfiles-root]
+#
+# Fail when a gum spinner bypasses spin (scripts/lib/spin.sh), which skips it
+# when stderr is not a terminal.
+#
+# gum 2 renders through Bubble Tea v2, which writes its frames whether or not a
+# terminal can interpret them. The unattended jobs run under `2>&1 | tee`, so a
+# direct `gum spin` tees cursor and mode-setting escapes into the log, and they
+# ride into the Things to-do filed from it as raw control characters.
+#
+# Retire this check if gum learns to detect a non-terminal itself.
+set -e
+
+DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
+cd "$DOTFILES_ROOT"
+
+# git grep, so an untracked scratch file that happens to contain the string
+# cannot fail a check about what this repo ships.
+matches=$(git grep -n -- 'gum spin' || true)
+
+report() {
+  while IFS=: read -r file line rest; do
+    [ -n "$file" ] || continue
+
+    # The wrapper makes the call this forbids. Its spec, the gum stub that
+    # stands in for the real binary, and the skill documenting the rule all
+    # quote the string without calling it.
+    case "$file" in
+      scripts/lib/spin.sh | scripts/lint-spinners) continue ;;
+      scripts/spec/spin_spec.sh | scripts/spec/spec_helper.sh) continue ;;
+      .claude/*) continue ;;
+    esac
+
+    printf '  %s:%s: %s\n' "$file" "$line" "$rest"
+  done
+}
+
+offenders=$(printf '%s\n' "$matches" | report)
+
+[ -n "$offenders" ] || exit 0
+
+echo "ERROR: these call gum directly instead of spin, so the spinner renders where nothing is watching:" >&2
+printf '%s\n' "$offenders" >&2
+echo "  Source scripts/lib/spin.sh and call spin with the same arguments." >&2
+exit 1

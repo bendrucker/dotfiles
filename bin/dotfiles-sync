@@ -7,6 +7,7 @@ set -e
 
 DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
 
+source "${0:A:h}/../scripts/lib/spin.sh"
 source "${0:A:h}/../scripts/lib/git-sync.sh"
 source "${0:A:h}/../scripts/lib/report-failure.sh"
 source "${0:A:h}/../scripts/lib/sync-notify.sh"
@@ -25,7 +26,7 @@ case $sync_rc in
     ;;
 esac
 
-if ! gum spin --show-error --title "Updating submodules" -- \
+if ! spin --show-error --title "Updating submodules" -- \
   git -C "$DOTFILES_HOME" submodule update --init; then
   gum log --level error "Submodule update failed"
   notify "Dotfiles Sync" "Failed: submodules"

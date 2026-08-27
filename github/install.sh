@@ -4,6 +4,10 @@
 
 set -e
 
+# Before the cd: ${0:A} resolves against the current directory, so a relative
+# $0 would pick up the new one and name a path inside it.
+source "${0:A:h}/../scripts/lib/spin.sh"
+
 cd "${0:h}"
 
 command -v gh >/dev/null || exit 0
@@ -80,5 +84,5 @@ fi
 while IFS= read -r repo; do
   [[ -z "$repo" ]] && continue
   name=${${repo##*/}#gh-}
-  gum spin --title "Removing gh-$name" -- gh extension remove "$name"
+  spin --title "Removing gh-$name" -- gh extension remove "$name"
 done <<< "$to_remove"
