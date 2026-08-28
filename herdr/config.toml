@@ -203,6 +203,35 @@ type = "plugin_action"
 command = "zenbu-labs.terminal-browser.open-split"
 description = "terminal-browser (right split)"
 
+# herdr-annotate — comment on a terminal selection, then copy the set as
+# Markdown for an agent. It works off what herdr copies to the system
+# clipboard, so what it can annotate is any pane's scrollback: a build log or
+# a test run that already scrolled past. That is the half herdr-nvim above
+# does not cover, since that one annotates the buffers it has open. Its
+# README's visual-mode nvim mapping is skipped for the same reason. Inside
+# nvim, herdr-nvim already owns sending annotations to an agent.
+#
+# These are the plugin's own suggested keys, and all three are unbound in
+# herdr's defaults, so none of them needs the shift variant the bindings above
+# take.
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "annotate.capture"
+description = "annotate the terminal selection"
+
+[[keys.command]]
+key = "prefix+shift+a"
+type = "plugin_action"
+command = "annotate.copy-context"
+description = "copy annotations as agent context"
+
+[[keys.command]]
+key = "prefix+m"
+type = "plugin_action"
+command = "annotate.manage"
+description = "manage annotations"
+
 [ui]
 agent_panel_sort = "priority"
 
