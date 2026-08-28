@@ -37,6 +37,12 @@ dark_name = "catppuccin"
 # Surface agent state changes (blocked / working / done) as native toasts.
 delivery = "herdr"
 
+[ui.sound]
+# The toasts above already report every state change, and they report which
+# agent it was. A chime carries less and interrupts more, including whoever
+# else is in the room.
+enabled = false
+
 # One row per agent, and nothing in it that changes faster than the agent's
 # state.
 #
