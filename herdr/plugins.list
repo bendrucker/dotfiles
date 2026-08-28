@@ -9,6 +9,7 @@ natori-hrj/herdr-lazy
 nikok6/herdr-mirror
 ogulcancelik/herdr-browser
 persiyanov/herdr-reviewr
+plannotator/herdr-annotate
 smarzban/herdr-file-viewer
 
 # The two zenbu-labs entries build by piping a vendor install script to bash,
