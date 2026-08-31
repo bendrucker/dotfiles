@@ -59,6 +59,34 @@ compare_payload () {
   diff -rq $excludes "$payload" "$source_dir" 2>"$diff_errors"
 }
 
+# Reduce diff -rq's output to the paths it names, relative to the payload. The
+# absolute pair diff prints is noise beside the plugin id the row already
+# carries, and a bare count leaves the reader nothing to go and look at.
+differing_paths () {
+  local payload=$1 source_dir=$2
+  local line dir name
+
+  while IFS= read -r line; do
+    case $line in
+      "Files $payload/"*)
+        line=${line#Files $payload/}
+        print -r -- "${line%% and $source_dir/*}"
+        ;;
+      "Only in "*": "*)
+        dir=${line#Only in }
+        name=${dir#*: }
+        dir=${dir%%: *}
+        dir=${dir#$payload}
+        dir=${dir#$source_dir}
+        print -r -- "${${dir#/}:+${dir#/}/}$name"
+        ;;
+      # Anything else diff can say about a pair (a fifo against a regular file,
+      # a symlink it would not follow) already names the paths in its own words.
+      *) print -r -- "$line" ;;
+    esac
+  done
+}
+
 resolve_ref () {
   local url=$1 ref=$2 refs peeled
 
@@ -140,7 +168,15 @@ audit_relative_plugin () {
   fi
   (( diff_rc == 0 )) && { print -r -- "current"$'\t'; return }
 
-  print -r -- "stale"$'\t'"differs from $relative at $(plural $(print -r -- "$differences" | wc -l | tr -d ' ') path)"
+  local -a paths
+  paths=("${(@f)$(differing_paths "$payload" "$source_dir" <<< "$differences")}")
+
+  # Enough paths to recognize what moved, without a wholesale divergence
+  # filling the report with the contents of a plugin.
+  local named=${(j:, :)paths[1,3]}
+  (( ${#paths} > 3 )) && named+=", and $(( ${#paths} - 3 )) more"
+
+  print -r -- "stale"$'\t'"differs from $relative at $(plural ${#paths} path): $named"
 }
 
 audit_external_plugin () {
@@ -242,8 +278,8 @@ main () {
   (( $# )) && { print -u2 -- "claude-plugin-audit: unknown option $1"; return 1 }
 
   local -a drifted unverified
-  local -A vouched
-  local name location url ref id payload verdict detail current=0
+  local -A vouched marketplace_verdict marketplace_detail folded
+  local name location url ref id payload verdict detail marketplace current=0
   local marketplaces inventory
 
   # Same reasoning as the plugin inventory below: an unreadable marketplace list
@@ -254,11 +290,14 @@ main () {
     return 2
   fi
 
+  # Held rather than recorded, because a marketplace the audit cannot vouch for
+  # takes the plugins riding on it onto its own line below.
   while IFS=$'\t' read -r name location url ref; do
     [[ -n "$name" ]] || continue
     IFS=$'\t' read -r verdict detail <<< "$(audit_marketplace "$location" "$url" "$ref")"
     [[ "$verdict" == current ]] && vouched[$name]=1
-    record_verdict "marketplace/$name" "$verdict" "$detail"
+    marketplace_verdict[$name]=$verdict
+    marketplace_detail[$name]=$detail
   done <<< "$marketplaces"
 
   # An inventory that could not be read is not an empty one, and reporting
@@ -270,31 +309,54 @@ main () {
 
   while IFS=$'\t' read -r id payload; do
     [[ -n "$id" ]] || continue
+    marketplace=${id##*@}
     IFS=$'\t' read -r verdict detail <<< "$(audit_plugin "$id" "$payload")"
     # A payload is only as current as the tree it was compared against. A match
     # with a marketplace the audit could not vouch for proves nothing, and
     # calling it current is how a stale clone hides every stale install under it.
-    if [[ "$verdict" == current && -z "${vouched[${id##*@}]:-}" ]]; then
+    if [[ "$verdict" == current && -z "${vouched[$marketplace]:-}" ]]; then
+      # The marketplace's own row already says why. Repeating it once per
+      # plugin restated one stale marketplace as four more rows that read like
+      # findings and carried nothing the marketplace line did not. A plugin
+      # whose own check failed keeps its row: that is a separate answer.
+      if [[ -n "${marketplace_verdict[$marketplace]:-}" ]]; then
+        folded[$marketplace]=$(( ${folded[$marketplace]:-0} + 1 ))
+        continue
+      fi
       verdict=unknown
-      detail="matches marketplace ${id##*@}, which is itself unverified"
+      detail="matches marketplace $marketplace, which is itself unverified"
     fi
     record_verdict "$id" "$verdict" "$detail"
   done <<< "$inventory"
 
-  (( ${#unverified} )) && {
-    print -rl -- $unverified | sort | column -t -s $'\t'
-    print -r -- ""
-  }
+  for name in ${(k)marketplace_verdict}; do
+    detail=${marketplace_detail[$name]}
+    (( ${folded[$name]:-0} )) &&
+      detail="$detail; $(plural ${folded[$name]} plugin) unverified with it"
+    record_verdict "marketplace/$name" "${marketplace_verdict[$name]}" "$detail"
+  done
+
+  # Unlabelled, the two blocks were one flat list separated by a blank line, so
+  # a plain-text report read every row as something to act on.
+  (( ${#unverified} )) && print_block "Unverified (could not check):" $unverified
 
   (( ${#drifted} )) || {
     print -r -- "$(plural $current check) current"
     return 0
   }
 
-  print -rl -- $drifted | sort | column -t -s $'\t'
-  print -r -- ""
+  print_block "Findings (act on these):" $drifted
   print -r -- "$(plural ${#drifted} finding) to act on ($current current)"
   return 1
+}
+
+# Rows under a header, indented so the grouping survives a plain-text note.
+print_block () {
+  local header=$1
+  shift
+  print -r -- "$header"
+  print -rl -- "$@" | sort | column -t -s $'\t' | sed 's/^/  /'
+  print -r -- ""
 }
 
 # Sort a verdict into the two piles main reports on. A comparison that could not
