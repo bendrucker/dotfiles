@@ -206,6 +206,14 @@ root_source() {
   rm -f "$payload/.gcs-sha" "$payload/.git"
 }
 
+# A marketplace serving installed plugins that known_marketplaces.json never
+# names, so its plugins have no marketplace row to be folded under.
+forget_marketplace() {
+  local marketplace="$1" file="$plugins/known_marketplaces.json"
+  jq --arg name "$marketplace" 'del(.[$name])' "$file" >"$file.next" &&
+    mv "$file.next" "$file"
+}
+
 BeforeEach 'setup'
 
 # `zsh -f` skips ~/.zshenv, which after bootstrap re-runs `brew shellenv` and
@@ -371,13 +379,88 @@ Describe "claude-plugin-audit"
   End
 
   # A stale clone matches every stale payload under it, so calling those current
-  # is how one unchecked marketplace hides every install it serves.
-  It "does not call a payload current against a marketplace it cannot vouch for"
+  # is how one unchecked marketplace hides every install it serves. Neither are
+  # they separate answers: a row per plugin restated one unverifiable
+  # marketplace as four more rows carrying nothing it did not already say.
+  It "folds the payloads it cannot vouch for into their marketplace's row"
     rm -rf "$plugins/marketplaces/first/.git"
     When call run_audit
     The status should be success
-    The output should include "alpha@first"
+    The output should include "marketplace/first"
+    The output should include "2 plugins unverified with it"
+    The output should not include "alpha@first"
+    The output should not include "gamma@first"
+    # Folded is not checked. The two stay out of the current count.
+    The output should include "3 checks current"
+  End
+
+  # Folding is only ever the marketplace's answer standing in for a plugin's.
+  # A plugin whose own check said something else keeps saying it.
+  It "keeps the verdict of a plugin that drifted under an unvouched marketplace"
+    rm -rf "$plugins/marketplaces/first/.git"
+    rm "$plugins/cache/first/gamma/1.0.0/README.md"
+    When call run_audit
+    The status should be failure
+    The output should include "gamma@first"
+    The output should include "stale"
+    The output should include "1 plugin unverified with it"
+  End
+
+  # Folding needs a marketplace row to fold into. A marketplace the list never
+  # named has none, so the plugin has to carry the answer itself.
+  It "keeps the row for a plugin whose marketplace is not listed at all"
+    forget_marketplace third
+    When call run_audit
+    The status should be success
+    The output should include "beta@third"
     The output should include "itself unverified"
+  End
+
+  # "differs at 1 path" with the path thrown away left a nightly report naming
+  # a plugin and nothing to go and look at.
+  It "names the path a payload differs at"
+    printf 'changed\n' >"$plugins/cache/third/beta/abc123/README.md"
+    When call run_audit
+    The status should be failure
+    The output should include "beta@third"
+    The output should include "1 path: README.md"
+  End
+
+  # diff names a one-sided path against the directory holding it, which is an
+  # absolute path into the cache. The plugin id already says which install.
+  It "names a nested path only the payload has"
+    mkdir -p "$plugins/marketplaces/third/plugins/beta/skills" \
+      "$plugins/cache/third/beta/abc123/skills"
+    printf 'extra\n' >"$plugins/cache/third/beta/abc123/skills/extra.md"
+    When call run_audit
+    The status should be failure
+    The output should include "1 path: skills/extra.md"
+  End
+
+  # A payload that diverged wholesale should still say how far, without filling
+  # the report with the contents of a plugin.
+  It "names the first few paths and counts the rest"
+    for i in 1 2 3 4 5; do
+      printf 'payload\n' >"$plugins/cache/third/beta/abc123/file$i.md"
+      printf 'source\n' >"$plugins/marketplaces/third/plugins/beta/file$i.md"
+    done
+    When call run_audit
+    The status should be failure
+    The output should include "5 paths: file1.md, file2.md, file3.md, and 2 more"
+  End
+
+  # Separated by a blank line and nothing else, the two blocks read as one flat
+  # list in a plain-text note, so a correct "1 finding" looked wrong against the
+  # rows above it.
+  It "labels the unverified rows and the findings as separate blocks"
+    rm -rf "$plugins/marketplaces/first/.git"
+    rm "$plugins/cache/third/beta/abc123/README.md"
+    When call run_audit
+    The status should be failure
+    The line 1 of output should equal "Unverified (could not check):"
+    The output should include "Findings (act on these):"
+    # One row under each header, and the count speaks for the findings block.
+    The output should include "1 finding to act on (2 current)"
   End
 
   # An inventory that could not be read is not an empty one. Reporting
