@@ -4,9 +4,10 @@
 # spin.sh (spin) to be sourced first. gum and gh must be on PATH.
 #
 # render_diff [repo_dir]
-#   Print the diff of tracked changes against HEAD. JSON files are normalized
-#   with `jq -S` so cosmetic key reordering doesn't show as noise; everything
-#   else falls back to plain `git diff HEAD`.
+#   Print the diff of tracked changes against HEAD, then every untracked file as
+#   a new-file diff. JSON files are normalized with `jq -S` so cosmetic key
+#   reordering doesn't show as noise; everything else falls back to plain
+#   `git diff HEAD`.
 #
 # capturable_content [repo_dir]
 #   Print everything `git add -A` would capture: the tracked diff against HEAD,
@@ -27,30 +28,48 @@
 #   leaving the base branch checked out. Refuses before touching the tree when
 #   what it would capture names this machine, and again once it is staged.
 #
+# git_review_fetch <repo_dir> <branch>
+#   Move origin to HTTPS and refresh origin/<branch>, once. Best effort: git_sync
+#   retries properly a moment later, and a failure here only costs the gate the
+#   incoming rules.
+#
+# git_review_blocking <repo_dir> [branch]
+#   Print the paths that still block a sync, one per line. Tracked changes always
+#   block. Untracked paths are judged against origin/<branch>'s .gitignore when
+#   that resolves; with no branch, or no such file, the local rules decide.
+#
 # git_review_dirty <repo_dir> <title>
-#   If the tree is clean, return 0. Otherwise render the diff and, on a TTY,
-#   prompt to discard, open a PR, or skip. Without a TTY (launchd) it skips.
-#   Returns 0 when the tree is clean to continue syncing (discard or PR), 1 to
-#   abort the sync (skip).
+#   If nothing blocks, return 0. Otherwise render the diff and, on a TTY, prompt
+#   to discard, open a PR, or skip. Without a TTY (launchd) it skips. Returns 0
+#   to continue syncing (nothing blocking, discard, or PR), 1 to abort (skip).
 
 render_diff() {
   local repo_dir="${1:-.}"
   (
     cd "$repo_dir" || return
-    local changed_files
-    changed_files=$(git diff HEAD --name-only 2>/dev/null)
-    [[ -z "$changed_files" ]] && return
 
     local f head_sorted working_sorted
-    while IFS= read -r f; do
+    local changed_files
+    changed_files=$(git diff HEAD --name-only 2>/dev/null)
+    if [[ -n "$changed_files" ]]; then
+      while IFS= read -r f; do
+        [[ -f "$f" ]] || continue
+        if [[ "$f" == *.json ]]; then
+          head_sorted=$(git show "HEAD:$f" 2>/dev/null | jq -S . 2>/dev/null) &&
+            working_sorted=$(jq -S . "$f" 2>/dev/null) &&
+            { diff -u --label "a/$f" --label "b/$f" <(echo "$head_sorted") <(echo "$working_sorted") || true; continue; }
+        fi
+        git diff HEAD -- "$f" 2>/dev/null
+      done <<< "$changed_files"
+    fi
+
+    # `git diff HEAD` never names an untracked file, while the gate calls one
+    # dirty, so a tree dirty only in untracked paths rendered an empty diff -
+    # which was all the report of that block had to go on.
+    git ls-files --others --exclude-standard 2>/dev/null | while IFS= read -r f; do
       [[ -f "$f" ]] || continue
-      if [[ "$f" == *.json ]]; then
-        head_sorted=$(git show "HEAD:$f" 2>/dev/null | jq -S . 2>/dev/null) &&
-          working_sorted=$(jq -S . "$f" 2>/dev/null) &&
-          { diff -u --label "a/$f" --label "b/$f" <(echo "$head_sorted") <(echo "$working_sorted") || true; continue; }
-      fi
-      git diff HEAD -- "$f" 2>/dev/null
-    done <<< "$changed_files"
+      git diff --no-index -- /dev/null "$f" 2>/dev/null || true
+    done
   )
 }
 
@@ -173,6 +192,42 @@ git_review_open_pr() {
   notify "$title" "Opened PR for local changes"
 }
 
+git_review_fetch() {
+  local repo_dir="$1" branch="$2"
+
+  git_https_remote "$repo_dir"
+  spin --title "Fetching origin/$branch" -- git -C "$repo_dir" fetch origin "$branch"
+}
+
+git_review_blocking() {
+  local repo_dir="${1:-.}" branch="${2:-}"
+
+  # .gitignore has no say over a path git already tracks, so a tracked change
+  # blocks whatever is arriving.
+  git -C "$repo_dir" status --porcelain --untracked-files=no 2>/dev/null | cut -c4-
+
+  # The incoming rules have to reach ls-files as a real file. Handed a process
+  # substitution, git sizes the pipe with fstat and reads nothing whenever the
+  # writer has yet to run, so the exclusions would apply or not by luck of
+  # scheduling. The git dir holds it: writable wherever the pull this gate
+  # guards would be, and private to the repo.
+  local git_dir="" exclude=""
+  [[ -n "$branch" ]] && git_dir=$(git -C "$repo_dir" rev-parse --absolute-git-dir 2>/dev/null)
+
+  if [[ -n "$git_dir" ]]; then
+    exclude="$git_dir/incoming-exclude"
+    git -C "$repo_dir" show "origin/$branch:.gitignore" >"$exclude" 2>/dev/null ||
+      { rm -f "$exclude"; exclude=""; }
+  fi
+
+  if [[ -n "$exclude" ]]; then
+    git -C "$repo_dir" ls-files --others --exclude-standard --exclude-from="$exclude" 2>/dev/null
+    rm -f "$exclude"
+  else
+    git -C "$repo_dir" ls-files --others --exclude-standard 2>/dev/null
+  fi
+}
+
 git_review_dirty() {
   local repo_dir="$1" title="$2"
 
@@ -182,10 +237,34 @@ git_review_dirty() {
     return 0
   fi
 
+  # A .gitignore rule reaches this checkout only through the pull the gate is
+  # about to block, so a rule shipped alongside the files it covers deadlocks:
+  # the files hold the gate shut and the gate holds the rule out. Fetching needs
+  # no clean tree, so it happens first and the incoming rules get to answer for
+  # the paths they were written for. A fetch that fails leaves the local rules
+  # deciding, as before.
+  local branch
+  branch=$(git_default_branch "$repo_dir")
+  git_review_fetch "$repo_dir" "$branch" || branch=""
+
+  local blocking
+  blocking=$(git_review_blocking "$repo_dir" "$branch")
+  if [[ -z "$blocking" ]]; then
+    gum log --level info "Local changes in $repo_dir are ignored by the incoming .gitignore - syncing"
+    return 0
+  fi
+
   gum log --level info "Local changes in $repo_dir:"
   echo "$tree" >&2
   gum log --level info "Diff:"
   render_diff "$repo_dir" >&2
+
+  # The blocking paths get a log line to themselves, ahead of any error.
+  # report_upgrade_failure fingerprints on fields 2-4 of the WARN and ERRO lines,
+  # and the error below reads identically whatever is dirty, so without this a
+  # block that recurs over a different dirty set files nothing after the first
+  # and the deadlock goes silent.
+  gum log --level warn "$(echo "$blocking" | tr '\n' ' ')"
 
   if [[ ! -t 0 ]]; then
     gum log --level error "Local changes present - skipping sync"
