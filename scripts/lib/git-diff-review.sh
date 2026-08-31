@@ -40,8 +40,9 @@
 #
 # git_review_dirty <repo_dir> <title>
 #   If nothing blocks, return 0. Otherwise render the diff and, on a TTY, prompt
-#   to discard, open a PR, or skip. Without a TTY (launchd) it skips. Returns 0
-#   to continue syncing (nothing blocking, discard, or PR), 1 to abort (skip).
+#   to discard, open a PR, or skip. The prompt draws on /dev/tty so it survives a
+#   caller that pipes stderr. Without a TTY (launchd) it skips. Returns 0 to
+#   continue syncing (nothing blocking, discard, or PR), 1 to abort (skip).
 
 render_diff() {
   local repo_dir="${1:-.}"
@@ -272,9 +273,17 @@ git_review_dirty() {
     return 1
   fi
 
+  # gum draws its UI on stderr and takes the viewport size from the terminal
+  # stderr points at. A caller that pipes stderr, as bin/claude-upgrade does to
+  # tee the run into a log, leaves that size at zero and every frame renders
+  # empty, while stdin is still the terminal so the keys keep working: an
+  # invisible prompt that answers the first Enter with whatever the cursor
+  # started on. Draw on the controlling terminal instead. Only the frames move,
+  # so the lines above still reach the log. spin.sh answers the same problem by
+  # dropping the spinner for a log line, which a prompt has no equivalent of.
   local choice
   choice=$(gum choose --header "Local changes present. What now?" \
-    "Discard and sync" "Open a PR and sync" "Skip sync") || choice="Skip sync"
+    "Discard and sync" "Open a PR and sync" "Skip sync" 2>/dev/tty) || choice="Skip sync"
 
   case "$choice" in
     "Discard and sync")
