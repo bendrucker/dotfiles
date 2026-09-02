@@ -13,16 +13,27 @@ fi
 
 # Collect file_path inputs from Edit/Write/MultiEdit tool calls, keeping only
 # files that still exist (deleted or renamed files have nothing left to check).
+# Parse line by line so one malformed transcript line can't break the rest.
 existing_files=()
-while IFS= read -r f; do
-  [[ -n "$f" && -f "$f" ]] && existing_files+=("$f")
-done < <(
-  jq -r '
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  paths=$(jq -r '
     select(.type == "assistant") | .message.content[]?
     | select(.type == "tool_use" and (.name == "Edit" or .name == "Write" or .name == "MultiEdit"))
     | .input.file_path // empty
-  ' "$transcript_path" 2>/dev/null | sort -u
-)
+  ' <<< "$line" 2>/dev/null) || continue
+  while IFS= read -r f; do
+    [[ -n "$f" && -f "$f" ]] && existing_files+=("$f")
+  done <<< "$paths"
+done < "$transcript_path"
+
+if [[ ${#existing_files[@]} -gt 0 ]]; then
+  deduped=()
+  while IFS= read -r f; do
+    deduped+=("$f")
+  done < <(printf '%s\n' "${existing_files[@]}" | sort -u)
+  existing_files=("${deduped[@]}")
+fi
 
 if [[ ${#existing_files[@]} -eq 0 ]]; then
   exit 0
