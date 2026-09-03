@@ -81,7 +81,7 @@ Describe "brew-drift.sh"
     End
 
     # A tap is a Brewfile entry like any other, and Homebrew announces orphaned
-    # ones under their own header rather than with the formulae.
+    # ones under their own header.
     It "labels the taps under the untap header"
       Data
         #|Would untap:
@@ -96,7 +96,7 @@ Describe "brew-drift.sh"
     End
 
     # Mac App Store apps list as `Name (id)`, so their section is the one whose
-    # entries carry spaces and are not bare tokens.
+    # entries carry spaces.
     It "keeps the name and id of a Mac App Store app together"
       Data
         #|Would uninstall Mac App Store apps:
@@ -157,8 +157,8 @@ Describe "brew-drift.sh"
       The line 3 should equal "tap 'hashicorp/tap'"
     End
 
-    # A mas entry needs the id, so this is the one kind whose line is not the
-    # token wrapped in quotes.
+    # A mas entry needs the id, so its line carries the name and the id as
+    # separate fields.
     It "splits a Mac App Store app back into a name and an id"
       Data
         #|mas	Xcode (497799835)
