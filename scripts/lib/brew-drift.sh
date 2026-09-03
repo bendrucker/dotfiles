@@ -2,23 +2,36 @@
 # Parsing for brew-drift, kept separate so it can be tested without a Homebrew
 # installation.
 
-# Read `brew bundle cleanup` dry-run output on stdin and print the packages it
-# would uninstall, as `kind<TAB>token` lines.
+# Read `brew bundle cleanup` output on stdin and print what it would remove, as
+# `kind<TAB>token` lines.
 #
-# The dry run announces each kind with its own header and then lists one bare
-# token per line. Reading only the formula and cask headers is what keeps the
-# report to packages: the same command also offers to prune the download cache
-# and, on a Brewfile that declares them, VS Code extensions and npm globals.
-# Selecting the two headers means a manager this repo picks up later cannot
-# silently turn the nightly report into an extension audit.
+# The command announces each kind with its own header and then lists its
+# entries. The four headers read here are the four kinds this repo's Brewfiles
+# declare. Homebrew cleans up VS Code extensions and npm globals under the same
+# shape, and naming the headers rather than matching the shape is what keeps a
+# manager this repo picks up later from turning the nightly report into an
+# extension audit.
 #
-# Any line that is not a bare token ends the current section, so a trailing
-# blank line, the next header, or a sentence of Homebrew prose all close it.
+# Every kind but `mas` lists a bare token per line. Mac App Store apps list as
+# `Name (id)`, because a Brewfile entry for one needs both.
+#
+# Any line matching neither the current kind's shape nor a header ends the
+# section, so a trailing blank line or a sentence of Homebrew prose closes it.
+# That is what stops the download-cache listing, which follows these sections
+# and names paths, from reading as packages.
 brew_drift_parse() {
   awk '
-    /^Would uninstall formulae:/ { kind = "formula"; next }
-    /^Would uninstall casks:/    { kind = "cask";    next }
-    kind != "" && /^[A-Za-z0-9][A-Za-z0-9@+._\/-]*$/ { print kind "\t" $0; next }
+    /^Would uninstall formulae:/           { kind = "formula"; next }
+    /^Would uninstall casks:/              { kind = "cask";    next }
+    /^Would uninstall Mac App Store apps:/ { kind = "mas";     next }
+    /^Would untap:/                        { kind = "tap";     next }
+
+    kind == "mas" && /^.+ \([0-9]+\)$/ { print kind "\t" $0; next }
+    kind != "" && kind != "mas" && /^[A-Za-z0-9][A-Za-z0-9@+._\/-]*$/ {
+      print kind "\t" $0
+      next
+    }
+
     { kind = "" }
   '
 }
@@ -30,5 +43,12 @@ brew_drift_format() {
   awk -F'\t' '
     $1 == "formula" { printf "brew '\''%s'\''\n", $2; next }
     $1 == "cask"    { printf "cask '\''%s'\''\n", $2; next }
+    $1 == "tap"     { printf "tap '\''%s'\''\n",  $2; next }
+
+    $1 == "mas" && match($2, /\([0-9]+\)$/) {
+      printf "mas '\''%s'\'', id: %s\n", \
+        substr($2, 1, RSTART - 2), substr($2, RSTART + 1, RLENGTH - 2)
+      next
+    }
   '
 }

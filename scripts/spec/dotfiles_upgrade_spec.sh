@@ -12,24 +12,7 @@ Describe "dotfiles-upgrade failure reporting"
     rm -rf "$sandbox"
     mkdir -p "$stubdir" "$home/bin" "$sandbox/state"
 
-    # printf, not a here-document: bash stages those through a temp file it
-    # picks itself, which a sandbox may deny.
-    # shellcheck disable=SC2016 # the stub's own $1 and $@, not this shell's
-    printf '%s\n' \
-      '#!/usr/bin/env bash' \
-      'case "$1" in' \
-      '  spin)' \
-      '    shift' \
-      '    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done' \
-      '    [ "$1" = "--" ] && shift' \
-      '    exec "$@"' \
-      '    ;;' \
-      '  log)' \
-      '    printf "%s\n" "${@: -1}" >&2' \
-      '    ;;' \
-      'esac' \
-      > "$stubdir/gum"
-    chmod +x "$stubdir/gum"
+    stub_gum "$stubdir"
 
     # report_failure files the to-do by handing a things:/// URL to `open`.
     # Record it instead of launching Things.
@@ -39,8 +22,7 @@ Describe "dotfiles-upgrade failure reporting"
       > "$stubdir/open"
     chmod +x "$stubdir/open"
 
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$stubdir/osascript"
-    chmod +x "$stubdir/osascript"
+    stub_osascript "$stubdir"
 
     printf '#!/usr/bin/env bash\necho "fatal: could not read from remote" >&2\nexit 1\n' \
       > "$home/bin/dotfiles-sync"
@@ -102,22 +84,7 @@ Describe "dotfiles-upgrade drift reporting"
     rm -rf "$sandbox"
     mkdir -p "$stubdir" "$home/bin" "$home/scripts" "$sandbox/state"
 
-    # shellcheck disable=SC2016 # the stub's own $1 and $@, not this shell's
-    printf '%s\n' \
-      '#!/usr/bin/env bash' \
-      'case "$1" in' \
-      '  spin)' \
-      '    shift' \
-      '    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done' \
-      '    [ "$1" = "--" ] && shift' \
-      '    exec "$@"' \
-      '    ;;' \
-      '  log)' \
-      '    printf "%s\n" "${@: -1}" >&2' \
-      '    ;;' \
-      'esac' \
-      > "$stubdir/gum"
-    chmod +x "$stubdir/gum"
+    stub_gum "$stubdir"
 
     printf '%s\n' \
       '#!/usr/bin/env bash' \
@@ -125,12 +92,12 @@ Describe "dotfiles-upgrade drift reporting"
       > "$stubdir/open"
     chmod +x "$stubdir/open"
 
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$stubdir/osascript"
+    stub_osascript "$stubdir"
+
     printf '#!/usr/bin/env bash\nexit 0\n' > "$stubdir/brew"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$home/bin/dotfiles-sync"
     printf '#!/usr/bin/env bash\nexit 0\n' > "$home/scripts/install"
-    chmod +x "$stubdir/osascript" "$stubdir/brew" \
-      "$home/bin/dotfiles-sync" "$home/scripts/install"
+    chmod +x "$stubdir/brew" "$home/bin/dotfiles-sync" "$home/scripts/install"
 
     : > "$drift"
     printf '%s\n' '#!/usr/bin/env bash' "cat '$drift'" > "$home/scripts/brew-drift"
@@ -184,6 +151,22 @@ Describe "dotfiles-upgrade drift reporting"
     The contents of file "$opened" should include "figma"
     The stdout should be present
     The stderr should be present
+  End
+
+  # Homebrew orders the listing by a dependency sort taken over every installed
+  # package, so installing something unrelated and declared can reshuffle the
+  # undeclared names. The latch keys on the sorted set, which is what keeps that
+  # from filing a duplicate to-do for a finding already standing.
+  It "stays quiet when the same packages come back in another order"
+    printf "brew 'cmake'\ncask 'figma'\n" > "$drift"
+    run_upgrade >/dev/null 2>&1 || true
+    printf "cask 'figma'\nbrew 'cmake'\n" > "$drift"
+
+    When call run_upgrade
+    The status should equal 0
+    The result of function todo_filed should equal 1
+    The stderr should include "to-do already filed"
+    The stdout should be present
   End
 
   It "files nothing when the machine matches the Brewfile"

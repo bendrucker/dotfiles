@@ -40,10 +40,14 @@ if [ -n "${cleanup_failed-}" ] && [ -z "$output" ]; then
   exit 1
 fi
 
-# Staged through a variable rather than piped straight into the formatter: a
-# pipeline reports only its last command's status, so a parser that broke on a
-# changed Homebrew format would exit 0 here and report a clean machine forever.
-# The command substitution lets set -e see that failure.
+# Staged through a variable rather than piped straight into the formatter,
+# because a pipeline reports only its last command's status. A parser that died
+# would exit 0 here and report a clean machine. The command substitution lets
+# set -e see that.
+#
+# A parser that runs but matches nothing is a different case this cannot catch,
+# because a clean machine produces the same empty result. Renaming a header
+# upstream would silence the report rather than break it.
 parsed=$(printf '%s\n' "$output" | brew_drift_parse)
 
 [ -n "$parsed" ] || exit 0
