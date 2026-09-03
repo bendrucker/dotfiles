@@ -24,6 +24,10 @@ prefix = "ctrl+s"
 # worktrunk plugin bindings below.
 new_worktree = ""
 
+# prefix+o is the key herdr-annotate's README asks for, and its document
+# review earns it over jumping to the pane a notification came from.
+open_notification_target = ""
+
 [theme]
 # ghostty already flips Mocha/Latte with the system appearance and reports the
 # change to the pane (terminal/ghostty.config), so herdr's chrome can follow the
@@ -98,23 +102,21 @@ type = "shell"
 command = "herdr plugin action invoke toggle --plugin persiyanov.reviewr"
 description = "reviewr diff (toggle)"
 
-# herdr-nvim — a per-tab nvim in a full-height split, plus a picker over the
-# files the agent just touched. The plugin has an nvim half too, declared in
-# neovim/config/init.lua, which is what sends annotations back to an agent.
-# Its README suggests prefix+e and prefix+o, both of which herdr already binds
-# (edit_scrollback, open_notification_target), so these take the shift variants
-# the same way the file viewer does above.
+# herdr-nvim — a per-tab nvim in a full-height split. The plugin has an nvim
+# half too, declared in neovim/config/init.lua, which is what sends
+# annotations back to an agent. Its README suggests prefix+e, which herdr
+# binds as edit_scrollback, so the toggle takes the shift variant the same way
+# the file viewer does above.
+#
+# Its picker over the files the agent just touched held prefix+shift+o and
+# gave it up to herdr-annotate below. Unbound rather than moved, since
+# `herdr plugin action invoke pick-file --plugin chmarax.herdr-nvim` reaches
+# it and nothing else was competing for the key it would move to.
 [[keys.command]]
 key = "prefix+shift+e"
 type = "plugin_action"
 command = "chmarax.herdr-nvim.toggle"
 description = "nvim sidebar (toggle)"
-
-[[keys.command]]
-key = "prefix+shift+o"
-type = "plugin_action"
-command = "chmarax.herdr-nvim.pick-file"
-description = "nvim sidebar: open a file the agent touched"
 
 # worktrunk — routes worktree creation through wt instead of herdr's native
 # flow (see new_worktree above). prefix+shift+g reuses the native flow's key
@@ -237,6 +239,28 @@ key = "prefix+m"
 type = "plugin_action"
 command = "annotate.manage"
 description = "manage annotations"
+
+# The plugin's other half is document review, which runs the plannotator-tui
+# binary it fetches at build time. `open` reviews the focused pane's folder
+# with a file tree, `last` reviews the agent's most recent message, and both
+# send the feedback back to that pane's agent as its next message. A Ctrl-click
+# on a file:// Markdown link opens that file through the plugin's own link
+# handler, which needs no key.
+#
+# These are the README's keys. Both were taken, and both were freed for them:
+# open_notification_target is unbound above and herdr-nvim's picker gave up
+# the shift variant.
+[[keys.command]]
+key = "prefix+o"
+type = "plugin_action"
+command = "annotate.open"
+description = "review documents in this folder"
+
+[[keys.command]]
+key = "prefix+shift+o"
+type = "plugin_action"
+command = "annotate.last"
+description = "review the agent's last reply"
 
 [ui]
 agent_panel_sort = "priority"
