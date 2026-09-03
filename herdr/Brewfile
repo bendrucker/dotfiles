@@ -1,1 +1,10 @@
 brew 'herdr'
+
+# plannotator-tui — review a Markdown document and send the annotations back to
+# an agent. herdr-annotate's review pane runs the copy it bundles at build time
+# and never this one, so what brew buys is the two uses that pane cannot cover:
+# reviewing a file outside herdr, and the plugin's plannotator-tui skill, which
+# has an agent run `plannotator-tui herdr open <file>` from its own pane to hand
+# a plan over for review.
+tap 'plannotator/tap'
+brew 'plannotator/tap/plannotator-tui'
