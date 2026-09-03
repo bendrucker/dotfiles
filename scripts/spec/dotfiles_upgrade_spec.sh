@@ -159,7 +159,7 @@ Describe "dotfiles-upgrade drift reporting"
   End
 
   # This test only holds because the drift check never auto-resolves a
-    # standing to-do.
+  # standing to-do.
   It "stays quiet while the same packages stay undeclared"
     printf "brew 'cmake'\n" > "$drift"
     run_upgrade >/dev/null 2>&1 || true
@@ -172,7 +172,7 @@ Describe "dotfiles-upgrade drift reporting"
   End
 
   # A package installed while an older finding is still standing is reported
-    # as a new finding, because each finding is tracked by its own fingerprint.
+  # as a new finding, because each finding is tracked by its own fingerprint.
   It "files a fresh to-do when a new package appears"
     printf "brew 'cmake'\n" > "$drift"
     run_upgrade >/dev/null 2>&1 || true
