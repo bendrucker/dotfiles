@@ -158,7 +158,8 @@ Describe "dotfiles-upgrade drift reporting"
     The stdout should be present
   End
 
-  # Reporting rather than removing only works if the standing to-do stays put.
+  # This test only holds because the drift check never auto-resolves a
+    # standing to-do.
   It "stays quiet while the same packages stay undeclared"
     printf "brew 'cmake'\n" > "$drift"
     run_upgrade >/dev/null 2>&1 || true
@@ -170,9 +171,8 @@ Describe "dotfiles-upgrade drift reporting"
     The stdout should be present
   End
 
-  # The fingerprint is what separates this from a plain latch: a package
-  # installed while an older finding is still standing would otherwise never be
-  # reported at all.
+  # A package installed while an older finding is still standing is reported
+    # as a new finding, because each finding is tracked by its own fingerprint.
   It "files a fresh to-do when a new package appears"
     printf "brew 'cmake'\n" > "$drift"
     run_upgrade >/dev/null 2>&1 || true

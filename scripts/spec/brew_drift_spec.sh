@@ -39,8 +39,7 @@ Describe "brew-drift.sh"
 
     # The cache listing follows the package sections and names paths that would
     # otherwise read as tokens. Its own entries are prose, but a bare package
-    # name reappears in it, so the section has to close rather than merely skip
-    # lines that don't look like tokens.
+    # name reappears in it, so the section has to close.
     It "stops before the download cache listing"
       Data
         #|Would uninstall formulae:
