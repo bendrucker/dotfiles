@@ -10,8 +10,8 @@
 # Uninstalling on that ambiguity loses work no one asked to lose, so the answer
 # goes to a to-do and the removal stays a decision someone makes awake.
 #
-# `brew bundle cleanup` without --force is what decides "undeclared". Reusing
-# it keeps this honest about the things a hand-rolled comparison gets wrong:
+# `brew bundle cleanup` is what decides "undeclared". Reusing it keeps this
+# honest about the things a hand-rolled comparison gets wrong:
 # renamed casks whose old token survives as a Caskroom symlink, formulae kept
 # alive as another package's dependency, and anything declared in
 # ~/Brewfile.local, which the root Brewfile evaluates and this repo never sees.
@@ -24,11 +24,16 @@ DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 
 command -v brew >/dev/null 2>&1 || exit 0
 
-# Without --force the command prompts, and it exits nonzero when it cannot show
-# that prompt, which is every unattended run that found something. The listing
-# is the signal and the status says nothing, so status decides only when there
-# is no output at all to read.
-output=$(brew bundle cleanup --file "$DOTFILES_ROOT/Brewfile" 2>/dev/null) || cleanup_failed=1
+# Without --force the command still uninstalls, it just asks first, and it
+# prints the listing before it asks. Closing stdin is what makes it a read: the
+# prompt cannot be shown, so it exits 1 with the listing already printed and
+# nothing removed. That holds at a terminal too, where a person running this by
+# hand would otherwise be one keystroke from the uninstall this refuses to do.
+#
+# The nonzero status is therefore the normal result of a run that found
+# something. The listing is the signal, so status decides only when there is no
+# output at all to read.
+output=$(brew bundle cleanup --file "$DOTFILES_ROOT/Brewfile" </dev/null 2>/dev/null) || cleanup_failed=1
 
 if [ -n "${cleanup_failed-}" ] && [ -z "$output" ]; then
   echo "brew-drift: brew bundle cleanup produced no output, so undeclared packages would go unnoticed." >&2
