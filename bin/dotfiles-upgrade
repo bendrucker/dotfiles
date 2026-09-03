@@ -15,13 +15,34 @@ SYNC_LOG=$(mktemp)
 INSTALL_LOG=$(mktemp)
 trap 'rm -f "$SYNC_LOG" "$INSTALL_LOG"' EXIT
 
+current_revision() {
+  git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown"
+}
+
 report_log_failure() {
   local title="$1" command="$2" log="$3"
 
-  local revision output
-  revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  local output
   output=$(tail -n 100 "$log" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')
-  report_failure "dotfiles-upgrade" "$title" "$command" "$output" "$revision"
+  report_failure "dotfiles-upgrade" "$title" "$command" "$output" "$(current_revision)"
+}
+
+report_drift() {
+  local output="$1" fingerprint
+
+  # Drift is a standing finding rather than a break, so the latch keys on the
+  # package set. An unactioned to-do stays quiet while the same packages are
+  # undeclared, and a newly installed one reopens it under its own to-do.
+  #
+  # Sorted, because Homebrew orders the listing by a dependency sort taken over
+  # every installed package. Installing something unrelated and declared can
+  # reshuffle the undeclared names, and an unsorted key would read that as a
+  # new finding and file a duplicate to-do.
+  fingerprint=$(printf '%s\n' "$output" | sort | tr '\n' ' ')
+
+  report_failure "brew-drift" "Undeclared Homebrew packages" \
+    "$DOTFILES_HOME/scripts/brew-drift" "$output" "$(current_revision)" \
+    "" "Undeclared Packages" "$fingerprint"
 }
 
 if ! spin --show-output --show-error --title "Syncing dotfiles" -- \
@@ -42,6 +63,19 @@ fi
 
 if ! spin --show-output --show-error --title "Running brew cleanup" -- brew cleanup; then
   gum log --level warn "brew cleanup had issues"
+fi
+
+# Undeclared packages are reported and left installed. Nothing here removes
+# them: the install above already succeeded, a package no Brewfile names breaks
+# nothing tonight, and at 3am the difference between a leftover and something
+# installed deliberately an hour ago is not one this job can tell.
+if ! drift=$("$DOTFILES_HOME/scripts/brew-drift"); then
+  gum log --level warn "brew drift check could not run"
+elif [[ -n "$drift" ]]; then
+  gum log --level warn "undeclared packages installed"
+  report_drift "$drift"
+else
+  report_success "brew-drift"
 fi
 
 report_success "dotfiles-upgrade"

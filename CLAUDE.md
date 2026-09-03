@@ -165,8 +165,26 @@ Never add employer-specific tooling to a topic directory. Machines legitimately 
 ### Automated Nightly Upgrades (macOS)
 
 - `macos/com.user.dotfiles-upgrade.plist` runs `bin/dotfiles-upgrade` daily at 3am
-- Syncs dotfiles, runs `scripts/install`, cleans up stale packages
+- Syncs dotfiles, runs `scripts/install`, runs `brew cleanup`, reports undeclared packages
 - Creates a Things task on failure with error output
+
+### Package Drift
+
+`scripts/brew-drift` prints the Brewfile entries that would declare whatever is installed and declared nowhere. The nightly job runs it after `brew cleanup`, and `report_drift` in `bin/dotfiles-upgrade` files a Things to-do naming what it found. Silence means the machine matches the Brewfile.
+
+Nothing uninstalls. A package no Brewfile names is either a leftover or something installed deliberately an hour ago that has not been written down yet. At 3am those are the same thing. Removing on that ambiguity loses work no one asked to lose, so the removal stays a decision made awake. Act on a to-do by declaring the package in a topic Brewfile or uninstalling it by hand.
+
+Omitting `--force` does not make `brew bundle cleanup` a dry run. It prints the listing, then asks whether to uninstall, and `--force` only skips the question. `scripts/brew-drift` closes stdin, so the prompt cannot be shown and the command exits 1 with the listing already printed and nothing removed. That is what stops a hand run from uninstalling anything.
+
+`brew bundle cleanup` therefore exits nonzero whenever it printed a listing it could not act on, which is the normal result of a run that found something. `scripts/brew-drift` treats the listing as the signal and the status as decisive only when there is no output at all to read, so it exits 0 on a finding and 1 only when cleanup produced nothing. That is what lets `bin/dotfiles-upgrade` tell a finding apart from a check that could not run.
+
+`brew bundle cleanup` is what decides "undeclared", so the answer accounts for what a hand-rolled comparison gets wrong. `brew list --cask` is the trap: it enumerates the compatibility symlinks Homebrew leaves behind when a cask is renamed, so `docker`, `google-cloud-sdk`, `logi-options-plus`, and `tailscale` all read as installed-but-undeclared while being nothing of the kind. Uninstalling one resolves the alias and takes out the cask that replaced it. Bundle cleanup also spares a formula kept alive as another package's dependency, and anything declared in `~/Brewfile.local`.
+
+It reports the four kinds this repo's Brewfiles declare: formulae, casks, taps, and Mac App Store apps. Homebrew cleans up VS Code extensions and npm globals under the same output shape. Naming the headers rather than matching the shape keeps a package manager this repo adopts later from turning the nightly report into an extension audit. The cost is that a renamed header upstream silences that kind rather than breaking the run, because an empty parse is also what a clean machine produces.
+
+The to-do latch keys on the sorted package set rather than on the fact of a finding. A to-do left unactioned stays quiet while the same packages are undeclared. A newly installed one reopens it under its own to-do. Sorting matters because Homebrew orders the listing by a dependency sort taken over every installed package, so installing something unrelated and declared can reshuffle the undeclared names without changing the set.
+
+A failing drift check is contained the way a failing `reload.sh` is. The install it follows has already succeeded, and a package that is merely undeclared breaks nothing overnight.
 
 ### GitHub Transport
 
@@ -185,6 +203,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 - `dotfiles sync` — Pull latest from remote
 - `dotfiles sync --bootstrap` — Sync and re-run bootstrap for symlinks
 - `dotf` — Full install/update: Homebrew, brew bundle, mise install, topic installers
+- `scripts/brew-drift`: Print the Brewfile entries that would declare whatever is installed and undeclared
 
 ### Installation Flow
 
