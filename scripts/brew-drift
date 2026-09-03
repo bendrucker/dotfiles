@@ -1,0 +1,46 @@
+#!/usr/bin/env sh
+# Usage: brew-drift [dotfiles-root]
+#
+# Print the Brewfile entries that would declare what is installed on this
+# machine but declared nowhere. Silence means the machine matches the Brewfile.
+#
+# This reports and never removes. The nightly job runs unattended at 3am, and a
+# package is undeclared for two indistinguishable reasons: it is a leftover, or
+# it was installed deliberately an hour ago and has not been written down yet.
+# Uninstalling on that ambiguity loses work no one asked to lose, so the answer
+# goes to a to-do and the removal stays a decision someone makes awake.
+#
+# `brew bundle cleanup` without --force is what decides "undeclared". Reusing
+# it keeps this honest about the things a hand-rolled comparison gets wrong:
+# renamed casks whose old token survives as a Caskroom symlink, formulae kept
+# alive as another package's dependency, and anything declared in
+# ~/Brewfile.local, which the root Brewfile evaluates and this repo never sees.
+set -e
+
+DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
+
+# shellcheck source=lib/brew-drift.sh
+. "$(dirname "$0")/lib/brew-drift.sh"
+
+command -v brew >/dev/null 2>&1 || exit 0
+
+# Without --force the command prompts, and it exits nonzero when it cannot show
+# that prompt, which is every unattended run that found something. The listing
+# is the signal and the status says nothing, so status decides only when there
+# is no output at all to read.
+output=$(brew bundle cleanup --file "$DOTFILES_ROOT/Brewfile" 2>/dev/null) || cleanup_failed=1
+
+if [ -n "${cleanup_failed-}" ] && [ -z "$output" ]; then
+  echo "brew-drift: brew bundle cleanup produced no output, so undeclared packages would go unnoticed." >&2
+  exit 1
+fi
+
+# Staged through a variable rather than piped straight into the formatter: a
+# pipeline reports only its last command's status, so a parser that broke on a
+# changed Homebrew format would exit 0 here and report a clean machine forever.
+# The command substitution lets set -e see that failure.
+parsed=$(printf '%s\n' "$output" | brew_drift_parse)
+
+[ -n "$parsed" ] || exit 0
+
+printf '%s\n' "$parsed" | brew_drift_format

@@ -165,8 +165,20 @@ Never add employer-specific tooling to a topic directory. Machines legitimately 
 ### Automated Nightly Upgrades (macOS)
 
 - `macos/com.user.dotfiles-upgrade.plist` runs `bin/dotfiles-upgrade` daily at 3am
-- Syncs dotfiles, runs `scripts/install`, cleans up stale packages
+- Syncs dotfiles, runs `scripts/install`, prunes Homebrew's download cache, reports undeclared packages
 - Creates a Things task on failure with error output
+
+### Package Drift
+
+`scripts/brew-drift` prints the Brewfile entries that would declare whatever is installed and declared nowhere. The nightly job runs it last and files a Things to-do naming what it found. Silence means the machine matches the Brewfile.
+
+Nothing uninstalls. A package no Brewfile names is either a leftover or something installed deliberately an hour ago and not yet written down, and at 3am those are the same thing. Removing on that ambiguity loses work no one asked to lose, so the removal stays a decision made awake. Act on a to-do by declaring the package in a topic Brewfile or uninstalling it by hand.
+
+`brew bundle cleanup` without `--force` is what decides "undeclared", so the answer accounts for what a hand-rolled comparison gets wrong. `brew list --cask` is the trap: it enumerates the compatibility symlinks Homebrew leaves behind when a cask is renamed, so `docker`, `google-cloud-sdk`, `logi-options-plus`, and `tailscale` all read as installed-but-undeclared while being nothing of the kind. Uninstalling one resolves the alias and takes out the cask that replaced it. Bundle cleanup also spares a formula kept alive as another package's dependency, and anything declared in `~/Brewfile.local`, which the root Brewfile evaluates and this repo never sees.
+
+The to-do latch keys on the package set rather than on the fact of a finding, so a to-do left unactioned stays quiet while the same packages are undeclared, and a newly installed one reopens it under its own to-do.
+
+A failing drift check is contained the way a failing `reload.sh` is. The install it follows has already succeeded, and a package that is merely undeclared breaks nothing overnight.
 
 ### GitHub Transport
 
@@ -185,6 +197,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 - `dotfiles sync` — Pull latest from remote
 - `dotfiles sync --bootstrap` — Sync and re-run bootstrap for symlinks
 - `dotf` — Full install/update: Homebrew, brew bundle, mise install, topic installers
+- `scripts/brew-drift`: List installed packages no Brewfile declares, as the entries that would declare them
 
 ### Installation Flow
 
