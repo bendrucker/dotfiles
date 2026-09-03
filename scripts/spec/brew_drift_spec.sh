@@ -37,9 +37,8 @@ Describe "brew-drift.sh"
       The lines of output should equal 2
     End
 
-    # The cache listing follows the package sections and names paths that would
-    # otherwise read as tokens. Its own entries are prose, but a bare package
-    # name reappears in it, so the section has to close.
+    # A bare package name reappears inside the cache listing, so the section
+    # has to close rather than merely skip the prose lines.
     It "stops before the download cache listing"
       Data
         #|Would uninstall formulae:
@@ -54,10 +53,8 @@ Describe "brew-drift.sh"
       The output should equal "$(printf 'formula\tcmake')"
     End
 
-    # Homebrew cleans up VS Code extensions and npm globals too, on a Brewfile
-    # that declares them. Naming the headers this repo's Brewfiles use is what
-    # keeps those out, so a Brewfile that grows a `vscode` line later cannot
-    # turn the nightly report into an extension audit.
+    # These appear only on a Brewfile that declares them, which is what a
+    # `vscode` line added later would do.
     It "ignores managers this repo does not declare"
       Data
         #|Would uninstall VS Code extensions:
@@ -80,8 +77,6 @@ Describe "brew-drift.sh"
       The output should equal ""
     End
 
-    # A tap is a Brewfile entry like any other, and Homebrew announces orphaned
-    # ones under their own header.
     It "labels the taps under the untap header"
       Data
         #|Would untap:
@@ -95,8 +90,6 @@ Describe "brew-drift.sh"
       The lines of output should equal 2
     End
 
-    # Mac App Store apps list as `Name (id)`, so their section is the one whose
-    # entries carry spaces.
     It "keeps the name and id of a Mac App Store app together"
       Data
         #|Would uninstall Mac App Store apps:
@@ -110,8 +103,8 @@ Describe "brew-drift.sh"
       The lines of output should equal 2
     End
 
-    # The app section's entries carry spaces, so it is the one section whose
-    # shape could swallow the prose that follows it.
+    # The app section is the one whose entries carry spaces, so its shape is
+    # the one that could swallow the prose following it.
     It "closes the app section on a line that is not an app"
       Data
         #|Would uninstall Mac App Store apps:
@@ -157,8 +150,6 @@ Describe "brew-drift.sh"
       The line 3 should equal "tap 'hashicorp/tap'"
     End
 
-    # A mas entry needs the id, so its line carries the name and the id as
-    # separate fields.
     It "splits a Mac App Store app back into a name and an id"
       Data
         #|mas	Xcode (497799835)

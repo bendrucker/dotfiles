@@ -15,10 +15,10 @@ Describe "brew-drift"
 
   BeforeEach 'setup'
 
-  # `brew bundle cleanup` prints the listing and then asks whether to uninstall.
-  # This stub reproduces both halves. Whatever it reads from stdin is what a
-  # person's "y" would have been, and it lands in a file the test can read
-  # because the answer never reaches the script's own stdout.
+  # Reproduces both halves of `brew bundle cleanup`: it prints the listing,
+  # then asks whether to uninstall. Whatever it reads from stdin is what a
+  # person's "y" would have been, recorded to a file because the answer never
+  # reaches the script's own stdout.
   stub_brew() {
     printf '%s\n' \
       '#!/usr/bin/env bash' \
@@ -69,9 +69,8 @@ Describe "brew-drift"
     The output should equal ""
   End
 
-  # CI and a fresh machine both reach this before Homebrew exists. The system
-  # paths stay on PATH so the script's own interpreter still resolves. Homebrew
-  # installs to neither of them.
+  # The system paths stay on PATH so the script's own interpreter resolves.
+  # Homebrew installs to neither of them.
   run_without_brew() { PATH="/usr/bin:/bin" "$brew_drift" "$root"; }
 
   It "reports nothing when brew is absent"

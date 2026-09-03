@@ -3,22 +3,16 @@
 # installation.
 
 # Read `brew bundle cleanup` output on stdin and print what it would remove, as
-# `kind<TAB>token` lines.
-#
-# The command announces each kind with its own header and then lists its
-# entries. The four headers read here are the four kinds this repo's Brewfiles
-# declare. Homebrew cleans up VS Code extensions and npm globals under the same
-# shape, and naming the headers rather than matching the shape is what keeps a
-# manager this repo picks up later from turning the nightly report into an
-# extension audit.
+# `kind<TAB>token` lines. The four headers matched are the four kinds this
+# repo's Brewfiles declare. Package Drift in CLAUDE.md covers why the others
+# are left out.
 #
 # Every kind but `mas` lists a bare token per line. Mac App Store apps list as
 # `Name (id)`, because a Brewfile entry for one needs both.
 #
-# Any line matching neither the current kind's shape nor a header ends the
-# section, so a trailing blank line or a sentence of Homebrew prose closes it.
-# That is what stops the download-cache listing, which follows these sections
-# and names paths, from reading as packages.
+# A line matching neither the current kind's shape nor a header ends the
+# section. That is what stops the download-cache listing, which follows these
+# sections and names paths, from reading as packages.
 brew_drift_parse() {
   awk '
     /^Would uninstall formulae:/           { kind = "formula"; next }
@@ -37,8 +31,8 @@ brew_drift_parse() {
 }
 
 # Render `kind<TAB>token` lines as the Brewfile entries that would declare
-# them. The report exists to be acted on, and the action is pasting a line
-# into a topic Brewfile, so print the line.
+# them, because the action a report leads to is pasting the line into a topic
+# Brewfile.
 brew_drift_format() {
   awk -F'\t' '
     $1 == "formula" { printf "brew '\''%s'\''\n", $2; next }
