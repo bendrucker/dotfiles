@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#
+# Focus the flock workspace, creating it on the first run of the day.
+#
+# flock is a singleton by design: it coordinates every other pane, so a second
+# one would hand out contradictory dispositions. Routing the keybind through
+# a label lookup rather than a remembered id means the workspace can be closed
+# and rebuilt without the binding going stale.
+set -uo pipefail
+
+LABEL=flock
+
+for tool in herdr jq; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "herdr-flock: $tool is not on PATH" >&2
+    exit 1
+  }
+done
+
+existing=$(herdr api snapshot 2>/dev/null |
+  jq -r --arg l "$LABEL" '
+    [.result.snapshot.workspaces[]? | select((.label // "") == $l) | .workspace_id][0] // empty')
+
+if [ -n "$existing" ]; then
+  exec herdr workspace focus "$existing" >/dev/null
+fi
+
+created=$(herdr workspace create --label "$LABEL" --cwd "$HOME" --focus 2>/dev/null) || {
+  echo "herdr-flock: could not create a workspace" >&2
+  exit 1
+}
+
+pane=$(printf '%s' "$created" | jq -r '.result.root_pane.pane_id // empty')
+if [ -z "$pane" ]; then
+  echo "herdr-flock: workspace created but reported no pane, so start claude yourself" >&2
+  exit 1
+fi
+
+# The pane comes up at a shell prompt, so claude has to be started in it before
+# it can be prompted.
+herdr agent start "$LABEL" --kind claude --pane "$pane" >/dev/null || {
+  echo "herdr-flock: claude did not come up in $pane" >&2
+  exit 1
+}
+
+herdr agent prompt "$pane" "/flock" >/dev/null
