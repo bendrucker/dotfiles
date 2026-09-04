@@ -262,6 +262,15 @@ type = "plugin_action"
 command = "annotate.last"
 description = "review the agent's last reply"
 
+# flock coordinates every other pane, so there is one of it and this is the way
+# back to it. The launcher looks the workspace up by label and builds it on the
+# first run, which keeps the binding working after the workspace is closed.
+[[keys.command]]
+key = "prefix+alt+f"
+type = "shell"
+command = "herdr-flock"
+description = "flock coordinator (focus or create)"
+
 [ui]
 agent_panel_sort = "priority"
 
