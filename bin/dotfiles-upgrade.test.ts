@@ -120,8 +120,9 @@ const UTILITIES = ["dirname", "cat"].map(
   (name) => Bun.which(name, { PATH: REAL_PATH }) ?? join("/usr/bin", name),
 );
 
-// Mirrors scripts/spec/spec_helper.sh: `gum spin … -- cmd` runs cmd, and
-// `gum log … msg` echoes msg to stderr, where the real gum writes it.
+// Mirrors scripts/spec/spec_helper.sh: the spin branch runs the command after
+// the separator, and `gum log … msg` echoes msg to stderr, where the real gum
+// writes it.
 const GUM_STUB = `#!/bin/sh
 case "$1" in
   spin)
