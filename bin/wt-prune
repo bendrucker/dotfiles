@@ -1,478 +1,591 @@
-#!/usr/bin/env zsh
-# wt prune [args]: per-repo worktree prune, summarized to one line.
-#
-# Integration pass: `wt step prune` removes worktrees integrated into the
-# default branch (including squash merges, via patch-id). Forge pass: for each
-# branch that survives, resolves the exact PR/MR state (gh/glab) and removes it
-# when merged, or when closed with the tip backed up on a remote and a clean
-# tree. Resolving per survivor (not a capped bulk list) catches PRs that merged
-# outside the recent window.
-#
-# The integration pass leaves worktrees younger than $WT_PRUNE_MIN_AGE alone,
-# since a worktree branched off main reads as integrated before any work lands
-# in it. The forge pass has no such guard and does not need one: a MERGED PR is
-# proof the work is done however new the checkout is.
-#
-# Age pass (--before [DURATION], default 1mo): removes old, clean worktree
-# directories that aren't integrated anywhere, to clear out stale checkouts. It
-# keeps the branch (so committed work is recoverable) and skips worktrees with
-# uncommitted changes, relying on `wt remove`'s own guards.
-#
-# Interactive (-i / --interactive, standalone only): after the auto passes,
-# present the ambiguous remainder as a `gum` multi-select checklist annotated by
-# recoverability, and remove only the selections.
-#
-# Prints one summary line ("N worktrees, M branches") or nothing when there's
-# nothing to remove. Honors --dry-run: counts what would be removed without
-# removing. For per-branch detail, run `wt step prune --dry-run` directly.
+#!/usr/bin/env bun
+//
+// wt prune [args]: per-repo worktree prune, summarized to one line.
+//
+// Integration pass: `wt step prune` removes worktrees integrated into the
+// default branch (including squash merges, via patch-id). Forge pass: for each
+// branch that survives, resolves the exact PR/MR state (gh/glab) and removes it
+// when merged, or when closed with the tip backed up on a remote and a clean
+// tree. Resolving per survivor (not a capped bulk list) catches PRs that merged
+// outside the recent window.
+//
+// The integration pass leaves worktrees younger than $WT_PRUNE_MIN_AGE alone,
+// since a worktree branched off main reads as integrated before any work lands
+// in it. The forge pass has no such guard and does not need one: a MERGED PR is
+// proof the work is done however new the checkout is.
+//
+// Age pass (--before [DURATION], default 1mo): removes old, clean worktree
+// directories that aren't integrated anywhere, to clear out stale checkouts. It
+// keeps the branch (so committed work is recoverable) and skips worktrees with
+// uncommitted changes, relying on `wt remove`'s own guards.
+//
+// Interactive (-i / --interactive, standalone only): after the auto passes,
+// present the ambiguous remainder as a `gum` multi-select checklist annotated
+// by recoverability, and remove only the selections.
+//
+// Prints one summary line ("N worktrees, M branches") or nothing when there's
+// nothing to remove. Honors --dry-run: counts what would be removed without
+// removing. For per-branch detail, run `wt step prune --dry-run` directly.
+//
+// Only the summary and the dry-run table reach stdout, because `wt all` parses
+// that one line. Every command spawned here has its output captured or
+// discarded rather than inherited, so a wt subcommand's stray bookkeeping
+// cannot land in it.
 
-set -uo pipefail
-# Suppress zsh's default of echoing a parameter when `local`/`typeset` re-declares
-# one that already holds a value (e.g. `branch`, reused across both read loops).
-setopt typeset_silent
-# $EPOCHSECONDS, so the age helper reads the clock without forking `date` once
-# per candidate worktree across the fleet sweep.
-zmodload zsh/datetime
+import { writeSync } from "node:fs";
+import { basename } from "node:path";
+import { parseArgs } from "node:util";
+import {
+  defaultBranch,
+  listWorktrees,
+  minAge,
+  nowSeconds,
+  parseDuration,
+  prState,
+  remoteHost,
+  type Worktree,
+} from "../scripts/lib/worktree-state.ts";
 
-# `wt step prune` refuses to remove a worktree younger than this, because a
-# worktree just branched off main points at main's commit and so reads as
-# integrated before any work happens in it. Set explicitly rather than left to
-# worktrunk's default: wt-prune-audit sources this file to honor the same
-# deferral, and an oracle that does not model the guard reports every worktree
-# created since the last run as drift.
-: ${WT_PRUNE_MIN_AGE:=1d}
+const USAGE = [
+  "Usage: wt prune [--dry-run] [-i|--interactive] [--min-age=DURATION] [--before[=DURATION]]",
+  "Remove worktrees whose work has landed, and report what went.",
+  "  --dry-run             count and explain, remove nothing",
+  "  -i, --interactive     pick from the ambiguous remainder (needs a terminal)",
+  "  --min-age=DURATION    the age floor the integration pass applies",
+  "  --before[=DURATION]   also remove old clean checkouts, keeping their branches",
+].join("\n");
 
-# Convert a duration like 2w / 30d / 1mo into seconds. Returns nonzero on a
-# spec it doesn't understand so callers can fall back to a default.
-parse_duration () {
-  [[ "$1" =~ '^([0-9]+)(h|d|w|mo|y)$' ]] || return 1
-  integer n=$match[1]
-  case "$match[2]" in
-    h)  print -r -- $(( n * 3600 ));;
-    d)  print -r -- $(( n * 86400 ));;
-    w)  print -r -- $(( n * 604800 ));;
-    mo) print -r -- $(( n * 2592000 ));;
-    y)  print -r -- $(( n * 31536000 ));;
-  esac
+// What --before means when it names no duration of its own.
+const DEFAULT_BEFORE = "1mo";
+
+export interface Options {
+  dryRun: boolean;
+  interactive: boolean;
+  minAge: string;
+  // Seconds, or undefined when the age pass is off.
+  before: number | undefined;
 }
 
-# Seconds since a worktree was created, on the same clock worktrunk's --min-age
-# guard uses: the birth time of the per-worktree git dir, falling back to the
-# mtime of the commondir file inside it. Both steps mirror worktrunk's own
-# worktree_age (src/commands/step/prune.rs), so the two agree about which
-# worktrees are too young to touch. Filesystems that record no birth time
-# report 0, which is why the commondir fallback carries them.
-#
-# Returns nonzero only when the path is gone or neither clock reads, and
-# callers treat that as "old enough", matching worktrunk's handling of an age
-# it cannot resolve.
-#
-# `wt list` carries only the tip commit's timestamp, which is main's tip for a
-# worktree that has no commits of its own. Age derived from it says nothing
-# about when the worktree appeared.
-worktree_age_secs () {
-  # Not `path`: zsh ties that name to $PATH, so a local declaration of it would
-  # empty the command search path for the whole function and lose `git`.
-  local wt_path=$1 gitdir created
-  gitdir=$(git -C "$wt_path" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+export type Parse = { ok: true; options: Options } | { ok: false; message: string };
 
-  # BSD stat takes the format as an argument to -f. GNU stat spells the same
-  # field %W under -c and reads a -f argument as a filename, so it exits
-  # nonzero and hands off to the next call.
-  created=$(stat -f %B "$gitdir" 2>/dev/null) || created=$(stat -c %W "$gitdir" 2>/dev/null) || created=
-  if [[ "$created" != <-> ]] || (( created == 0 )); then
-    created=$(stat -f %m "$gitdir/commondir" 2>/dev/null) \
-      || created=$(stat -c %Y "$gitdir/commondir" 2>/dev/null) \
-      || return 1
-  fi
-
-  [[ "$created" == <-> ]] && (( created > 0 )) || return 1
-  print -r -- $(( EPOCHSECONDS - created ))
+export interface Outcome {
+  status: number;
+  stdout: string;
+  stderr: string;
 }
 
-# The repo's default branch, empty when even worktrunk cannot name one.
-#
-# No pass here can remove a linked worktree holding it: `wt step prune` skips
-# the default branch, it has no PR of its own, and `wt remove` refuses it
-# outright, since removing the checkout deletes the branch and force-delete is
-# the only override. The pruner and the audit both gate on this name to stay
-# out of a removal that cannot succeed.
-#
-# Asking worktrunk rather than reading git config is what makes the two agree:
-# the same resolution guards `wt remove`, and it detects and caches on a miss
-# instead of reporting nothing in a clone that has never been pruned.
-default_branch () {
-  wt config state default-branch get 2>/dev/null
+// --before's duration is optional, which parseArgs has no way to express: it
+// would take the next token whatever that is, so `--before --dry-run` would
+// consume the flag behind it. Attaching the default here leaves parseArgs a
+// grammar it can enforce strictly.
+export function attachBeforeDefault(args: string[]): string[] {
+  return args.map((arg, index) => {
+    if (arg !== "--before") return arg;
+    const next = args[index + 1];
+    return next === undefined || next.startsWith("-") ? `--before=${DEFAULT_BEFORE}` : arg;
+  });
 }
 
-# Resolve the exact PR/MR state for a branch on the forge. Prints
-# "STATE\tNUMBER" (e.g. "MERGED\t142"), or nothing when no PR exists. gh is the
-# tested path; glab mirrors it (newest MR wins) but is untested.
-pr_state () {
-  local branch=$1 host=$2
-  if [[ "$host" == *gitlab* ]]; then
-    glab mr list --source-branch "$branch" --state all --output json 2>/dev/null \
-      | jq -r 'if length > 0
-               then ((.[0].state | ascii_upcase | if . == "OPENED" then "OPEN" else . end)) + "\t" + (.[0].iid | tostring)
-               else empty end'
-  else
-    gh pr view "$branch" --json state,number --jq '"\(.state)\t\(.number)"' 2>/dev/null
-  fi
+export function parseOptions(args: string[]): Parse {
+  let values;
+  try {
+    ({ values } = parseArgs({
+      args: attachBeforeDefault(args),
+      allowPositionals: false,
+      options: {
+        "dry-run": { type: "boolean", default: false },
+        interactive: { type: "boolean", short: "i", default: false },
+        "min-age": { type: "string" },
+        before: { type: "string" },
+        help: { type: "boolean", short: "h", default: false },
+      },
+    }));
+  } catch (error) {
+    // The shell version forwarded anything it did not recognize to `wt step
+    // prune`, which takes no positional arguments, so a typo made both prune
+    // calls exit 2 with their output discarded and quietly turned this into a
+    // forge-pass-only tool that still exited 0. A refusal is the only way that
+    // reaches anyone.
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+
+  if (values.help) return { ok: false, message: "" };
+
+  let before: number | undefined;
+  if (values.before !== undefined) {
+    before = parseDuration(values.before);
+    // The shell version fell back to a month here and left the unreadable token
+    // in the arguments it forwarded, which disabled the integration pass
+    // silently. `--before 30min` is a plausible typo and it must not become a
+    // different prune.
+    if (before === undefined) {
+      return { ok: false, message: `cannot read --before=${values.before} as a duration` };
+    }
+  }
+
+  return {
+    ok: true,
+    options: {
+      dryRun: values["dry-run"],
+      interactive: values.interactive,
+      // Forwarded to `wt step prune` verbatim rather than validated against the
+      // duration grammar, which is this repo's, not worktrunk's.
+      minAge: values["min-age"] ?? minAge(),
+      before,
+    },
+  };
 }
 
-# Decide a survivor's fate from its resolved state. Pure: it reads only its
-# arguments, touches no globals, and has no side effects, so the removal
-# rules can be exercised in isolation. This is the source of truth; main acts
-# on the answer but does not re-derive it.
-#
-# Prints "<action>\t<reason>" for defer/keep, and "<action>\t<reason>\t<mode>"
-# for remove, where:
-#   action  remove / defer / keep
-#   reason  a short human string, for the dry-run table (display only, never
-#           matched on: renaming a reason must not change behavior)
-#   mode    delete-branch when the work has landed, keep-branch when the branch
-#           still holds the only copy of committed work. main maps this token
-#           to the `wt remove` flags, so the branch-deletion call lives here.
-#
-#   pr_state       MERGED / CLOSED / OPEN / "" (no PR on the forge)
-#   onremote       "onremote" when the tip is pushed, anything else otherwise
-#   clean          "clean" when the tree has no changes, anything else otherwise
-#   is_current     "true" for the checked-out worktree
-#   before_enabled 1 when the age pass is active
-#   age_exceeded   1 when the worktree is older than the age threshold
-classify_survivor () {
-  local pr_state=$1 onremote=$2 clean=$3 is_current=$4 before_enabled=$5 age_exceeded=$6
+export type Decision =
+  | { action: "remove"; reason: string; mode: "delete-branch" | "keep-branch" }
+  | { action: "keep" | "defer"; reason: string };
 
-  # Never the current worktree: you cannot remove the checkout you stand in.
-  [[ "$is_current" == true ]] && { print -r -- "keep"$'\t'"current worktree"; return }
-
-  # Merged upstream: the work landed, so the leftovers are cruft even when dirty
-  # or ahead. A squash merge leaves local commits, so the forge state is the
-  # only proof it landed, and it outranks a dirty tree. Landed, so drop branch.
-  [[ "$pr_state" == MERGED ]] && { print -r -- "remove"$'\t'"merged"$'\t'"delete-branch"; return }
-
-  # Closed without merging is weaker than merged, so guard it: remove only when
-  # the tip is backed up on a remote (recoverable) and the tree is clean.
-  [[ "$pr_state" == CLOSED && "$onremote" == onremote && "$clean" == clean ]] \
-    && { print -r -- "remove"$'\t'"closed, recoverable"$'\t'"delete-branch"; return }
-
-  # Old and clean with no decisive forge state: drop the stale checkout but keep
-  # the branch, so committed work survives. Applies whatever the PR state.
-  (( before_enabled )) && [[ "$clean" == clean ]] && (( age_exceeded )) \
-    && { print -r -- "remove"$'\t'"aged out"$'\t'"keep-branch"; return }
-
-  # Preserved this run. Label why, for the dry-run reasons table.
-  [[ "$pr_state" == OPEN ]] && { print -r -- "keep"$'\t'"open PR"; return }
-  if [[ "$pr_state" == CLOSED ]]; then
-    [[ "$clean" == clean ]] && { print -r -- "keep"$'\t'"local-only"; return }
-    print -r -- "keep"$'\t'"dirty & closed"; return
-  fi
-  print -r -- "defer"$'\t'"local-only"
+export interface SurvivorState {
+  // MERGED / CLOSED / OPEN, or empty when the forge has no PR for the branch.
+  prState: string;
+  onRemote: boolean;
+  clean: boolean;
+  isCurrent: boolean;
+  beforeEnabled: boolean;
+  ageExceeded: boolean;
 }
 
-main () {
-  # wt subcommands occasionally flush stray bookkeeping to stdout mid-run, which
-  # would corrupt our single summary line (and the `wt all` table). Detach the
-  # body's stdout to stderr and emit the summary on a saved descriptor; $(...)
-  # captures read a command's stdout directly, so they're unaffected.
-  local stdout_fd
-  exec {stdout_fd}>&1
-  exec 1>&2
+// Decide a survivor's fate from its resolved state. Pure: it reads only its
+// argument, touches no globals, and has no side effects, so the removal rules
+// can be exercised in isolation. This is the source of truth; the passes act on
+// the answer but do not re-derive it.
+//
+// `reason` is a short human string for the dry-run table, display only and
+// never matched on, so renaming one must not change behaviour. `mode` is where
+// the branch-deletion call lives: keep-branch when the branch still holds the
+// only copy of committed work, delete-branch when the work has landed.
+export function classifySurvivor(state: SurvivorState): Decision {
+  // Never the current worktree: you cannot remove the checkout you stand in.
+  if (state.isCurrent) return { action: "keep", reason: "current worktree" };
 
-  local dry_run=0 before_enabled=0 interactive=0
-  integer before_secs=0
-  local -a passthrough
-  integer i=1
-  while (( i <= $# )); do
-    local a="${argv[i]}"
-    case "$a" in
-      --dry-run)
-        dry_run=1
-        passthrough+=("$a")
-        ;;
-      -i|--interactive)
-        interactive=1
-        ;;
-      # Consumed rather than forwarded: main appends --min-age itself, and
-      # `wt step prune` rejects the flag given twice.
-      --min-age)
-        local mn="${argv[i+1]:-}"
-        if [[ -n "$mn" && "$mn" != -* ]]; then
-          WT_PRUNE_MIN_AGE="$mn"
-          (( i++ ))
-        fi
-        ;;
-      --min-age=*)
-        WT_PRUNE_MIN_AGE="${a#*=}"
-        ;;
-      --before)
-        before_enabled=1
-        local nxt="${argv[i+1]:-}"
-        if [[ -n "$nxt" && "$nxt" != -* ]] && before_secs=$(parse_duration "$nxt"); then
-          (( i++ ))
-        else
-          before_secs=$(parse_duration 1mo)
-        fi
-        ;;
-      --before=*)
-        before_enabled=1
-        before_secs=$(parse_duration "${a#*=}") || before_secs=$(parse_duration 1mo)
-        ;;
-      *)
-        passthrough+=("$a")
-        ;;
-    esac
-    (( i++ ))
-  done
+  // Merged upstream: the work landed, so the leftovers are cruft even when
+  // dirty or ahead. A squash merge leaves local commits, so the forge state is
+  // the only proof it landed, and it outranks a dirty tree.
+  if (state.prState === "MERGED") {
+    return { action: "remove", reason: "merged", mode: "delete-branch" };
+  }
 
-  # Interactive is standalone-only: it drives a `gum` checklist on the terminal,
-  # so it cannot run under the `wt all` xargs fan-out or with a non-TTY stderr.
-  if (( interactive )) && [[ -n "${WT_ALL:-}" || ! -t 2 ]]; then
-    print -r -- "wt prune -i: interactive mode requires a terminal and cannot run under wt all" >&2
-    return 1
-  fi
+  // Closed without merging is weaker than merged, so guard it: remove only when
+  // the tip is backed up on a remote (recoverable) and the tree is clean.
+  if (state.prState === "CLOSED" && state.onRemote && state.clean) {
+    return { action: "remove", reason: "closed, recoverable", mode: "delete-branch" };
+  }
 
-  # Count from a dry-run probe. A dry-run always lists the candidates, whether
-  # or not this is a real run. Real-mode JSON reports only what it actually
-  # removed, which is empty when removal is approval-gated or raced by
-  # background cleanup, so counting from it under-counts.
-  local -a probe_args=("${passthrough[@]:#--dry-run}")
-  local probe_json
-  probe_json=$(wt step prune "${probe_args[@]}" --min-age "$WT_PRUNE_MIN_AGE" --dry-run --format=json 2>/dev/null)
+  // Old and clean with no decisive forge state: drop the stale checkout but
+  // keep the branch, so committed work survives. Applies whatever the PR state.
+  if (state.beforeEnabled && state.clean && state.ageExceeded) {
+    return { action: "remove", reason: "aged out", mode: "keep-branch" };
+  }
 
-  local -A seen
-  local worktrees=0 branches=0
-  if [[ -n "$probe_json" && "$probe_json" != "[]" ]]; then
-    local kind branch
-    while IFS=$'\t' read -r kind branch; do
-      seen[$branch]=1
-      if [[ "$kind" == worktree ]]; then ((worktrees++)); else ((branches++)); fi
-    done < <(jq -r '.[] | "\(.kind)\t\(.branch)"' <<<"$probe_json")
-  fi
-
-  # Real run: actually remove. --yes skips approval prompts and --foreground
-  # blocks until removal completes, both required under the non-interactive
-  # parallel fan-out and the nightly job.
-  (( dry_run )) || wt step prune "${probe_args[@]}" --min-age "$WT_PRUNE_MIN_AGE" --yes --foreground </dev/null >/dev/null 2>&1
-
-  # Linked-worktree pass over a single `wt list`: exact forge-state removals,
-  # plus the age pass (non-interactive) or candidate collection for the
-  # interactive checklist under -i.
-  local list_json
-  list_json=$(wt list --format=json 2>/dev/null)
-
-  # Only consult the forge (a network round-trip) when a linked worktree
-  # survives the integration pass. Most repos in a fan-out have only their main
-  # worktree, so this skips a `gh`/`glab` call per such repo across the sweep.
-  local has_linked=false
-  [[ -n "$list_json" && "$list_json" != "[]" ]] \
-    && has_linked=$(jq -r 'any(.[]; .kind == "worktree" and (.is_main | not))' <<<"$list_json")
-
-  # Candidates deferred to the interactive checklist, split so recoverable
-  # (on-remote) entries sort ahead of local-only ones. Parallel arrays hold the
-  # handle passed to `wt remove` and the raw tab-separated display row.
-  local -a rec_handles rec_rows loc_handles loc_rows
-
-  # Standalone dry-run: a row per survivor for the reasons table below.
-  local -a reason_rows
-
-  if [[ "$has_linked" == true ]]; then
-    local remote_host default_br
-    remote_host=$(git remote get-url origin 2>/dev/null | sed -E 's|^[^@]*@||; s|^https?://||; s|[:/].*||')
-    default_br=$(default_branch)
-
-    local branch is_main ts clean onremote is_current wtpath pr_out pr_st pr_num
-    while IFS=$'\t' read -r branch is_main ts clean onremote is_current wtpath; do
-      [[ "$is_main" == true ]] && continue
-      [[ -n "${seen[$branch]:-}" ]] && continue
-
-      # Recorded before the forge lookup, which has no PR to find for the
-      # default branch anyway.
-      if [[ -n "$default_br" && "$branch" == "$default_br" ]]; then
-        (( dry_run )) && [[ -z "${WT_ALL:-}" ]] \
-          && reason_rows+=("${wtpath:t}"$'\t'"$branch"$'\t'"-"$'\t'"keep"$'\t'"default branch")
-        continue
-      fi
-
-      # Resolve the exact PR/MR state for this survivor. The integration pass
-      # already cleared branches merged into the local default. A squash-merged
-      # PR still shows local commits ahead of main, so only the forge state
-      # proves it landed. This runs once per survivor, not once per PR ever.
-      pr_out=$(pr_state "$branch" "$remote_host")
-      IFS=$'\t' read -r pr_st pr_num <<<"$pr_out"
-
-      # The age pass is consulted only under --before. Interactive ignores it
-      # and defers aged candidates to the checklist, so mask before there.
-      #
-      # FIXME: ts is the tip commit's timestamp, not the worktree's. A worktree
-      # branched off an old main inherits that tip, so a checkout created
-      # minutes ago can read as older than the threshold and age out the same
-      # night. worktree_age_secs is the right clock here; switching to it
-      # changes what this pass removes, so it is left for its own change.
-      integer age_exceeded=0
-      (( before_enabled && EPOCHSECONDS - ts >= before_secs )) && age_exceeded=1
-      integer classify_before=before_enabled
-      (( interactive )) && classify_before=0
-
-      local decision action reason mode
-      decision=$(classify_survivor "$pr_st" "$onremote" "$clean" "$is_current" "$classify_before" "$age_exceeded")
-      IFS=$'\t' read -r action reason mode <<<"$decision"
-
-      local pr_disp="-"
-      [[ -n "$pr_st" ]] && pr_disp="${pr_st}#${pr_num}"
-
-      # Standalone dry-run: record what would happen and why. WT_ALL runs keep
-      # the terse count contract, so they skip the table.
-      if (( dry_run )) && [[ -z "${WT_ALL:-}" ]]; then
-        reason_rows+=("${wtpath:t}"$'\t'"$branch"$'\t'"$pr_disp"$'\t'"$action"$'\t'"$reason")
-      fi
-
-      # Removals read stdin from /dev/null: the loop's stdin is the jq pipe, and
-      # a `wt remove` that pauses on a prompt would otherwise consume it. We
-      # count only confirmed removals so the summary matches what was removed (a
-      # dry-run counts everything it lists, since it removes nothing).
-      if [[ "$action" == remove ]]; then
-        # classify_survivor owns the branch-deletion call via its mode token:
-        # keep-branch drops only the directory (committed work survives), any
-        # other mode force-deletes the landed branch too. main does not infer
-        # this from the display reason, so rewording a reason is behavior-safe.
-        local -a rmflags=(--foreground)
-        [[ "$mode" == keep-branch ]] || rmflags+=(--force --force-delete)
-        if (( dry_run )) || wt remove "${rmflags[@]}" "$branch" </dev/null >/dev/null 2>&1; then
-          (( worktrees++ )); seen[$branch]=1
-        fi
-        continue
-      fi
-
-      # Interactive: defer everything classify did not auto-remove to the
-      # checklist, split by recoverability. Never offer the current worktree.
-      if (( interactive )); then
-        [[ "$is_current" == true ]] && continue
-        local dir=${wtpath:t} remote_disp="LOCAL-ONLY"
-        [[ "$onremote" == onremote ]] && remote_disp="onremote"
-        local row="$dir"$'\t'"$branch"$'\t'"$pr_disp"$'\t'"$remote_disp"$'\t'"$clean"
-        if [[ "$onremote" == onremote ]]; then
-          rec_handles+=("$branch"); rec_rows+=("$row")
-        else
-          loc_handles+=("$branch"); loc_rows+=("$row")
-        fi
-        continue
-      fi
-    done < <(jq -r '
-      .[]
-      | select(.kind == "worktree" and (.branch // "") != "")
-      | [ .branch,
-          (.is_main | tostring),
-          (.commit.timestamp | tostring),
-          (if (.working_tree.staged or .working_tree.modified or .working_tree.untracked or .working_tree.renamed or .working_tree.deleted) then "dirty" else "clean" end),
-          (if .remote and ((.remote.ahead // 1) == 0) then "onremote" else "local" end),
-          (.is_current | tostring),
-          .path
-        ] | @tsv' <<<"$list_json")
-
-    # Detached worktrees (agent-*/wf_*) have no branch and no PR, so they never
-    # auto-remove; offer them in the checklist, removed by path.
-    if (( interactive )); then
-      local dpath dclean
-      while IFS=$'\t' read -r dpath dclean; do
-        loc_handles+=("$dpath")
-        loc_rows+=("${dpath:t}"$'\t'"detached"$'\t'"-"$'\t'"LOCAL-ONLY"$'\t'"$dclean")
-      done < <(jq -r '
-        .[]
-        | select(.kind == "worktree" and (.branch // "") == "" and (.is_main | not) and (.is_current | not))
-        | [ .path,
-            (if (.working_tree.staged or .working_tree.modified or .working_tree.untracked or .working_tree.renamed or .working_tree.deleted) then "dirty" else "clean" end)
-          ] | @tsv' <<<"$list_json")
-    fi
-  fi
-
-  # Interactive sweep: present the ambiguous remainder as a multi-select
-  # checklist. Selecting nothing (or declining the local-only confirm) removes
-  # nothing, so this doubles as a safe preview.
-  if (( interactive )); then
-    local -a handles=("${rec_handles[@]}" "${loc_handles[@]}")
-    local -a rows=("${rec_rows[@]}" "${loc_rows[@]}")
-    if (( ${#handles} > 0 )); then
-      local labels_str
-      labels_str=$(printf '%s\n' "${rows[@]}" | column -t -s $'\t')
-      local -a labels
-      labels=("${(@f)labels_str}")
-
-      # Map each aligned label back to its removal handle. Labels are unique
-      # because worktree dir names are.
-      local -A handle_of localonly_of
-      integer idx
-      for (( idx = 1; idx <= ${#labels}; idx++ )); do
-        handle_of[${labels[idx]}]=${handles[idx]}
-        [[ "${rows[idx]}" == *$'\t'LOCAL-ONLY$'\t'* ]] && localonly_of[${labels[idx]}]=1
-      done
-
-      local selected_str
-      selected_str=$(printf '%s\n' "${labels[@]}" \
-        | gum choose --no-limit --header "Select worktrees to remove (esc/none keeps all)")
-      local -a selected
-      selected=("${(@f)selected_str}")
-
-      integer sel_count=0 localonly_count=0
-      local lbl
-      for lbl in "${selected[@]}"; do
-        [[ -z "$lbl" ]] && continue
-        (( sel_count++ ))
-        [[ -n "${localonly_of[$lbl]:-}" ]] && (( localonly_count++ ))
-      done
-
-      # A local-only selection has no remote backup, so gate the whole batch
-      # behind an explicit confirm that names the at-risk count.
-      local do_remove=1
-      if (( localonly_count > 0 )); then
-        gum confirm "Remove $sel_count worktrees — $localonly_count have no remote copy?" || do_remove=0
-      fi
-
-      if (( do_remove )); then
-        for lbl in "${selected[@]}"; do
-          [[ -z "$lbl" ]] && continue
-          if (( dry_run )) || wt remove --foreground --force --force-delete "${handle_of[$lbl]}" </dev/null >/dev/null 2>&1; then
-            (( worktrees++ ))
-          fi
-        done
-      fi
-    fi
-  fi
-
-  # Standalone dry-run: print the per-survivor decisions so the forge and age
-  # passes explain themselves (the integration pass is covered by `wt step
-  # prune --dry-run`). This prints even when nothing would be removed, so a
-  # survivor that is kept still shows the reason it was kept.
-  if (( dry_run )) && [[ -z "${WT_ALL:-}" ]] && (( ${#reason_rows} > 0 )); then
-    {
-      print -r -- "DIR"$'\t'"BRANCH"$'\t'"STATE"$'\t'"DECISION"$'\t'"REASON"
-      print -rl -- "${reason_rows[@]}"
-    } | column -t -s $'\t' >&$stdout_fd
-  fi
-
-  (( worktrees == 0 && branches == 0 )) && return
-
-  # Under `wt all`, emit tab-separated counts so the caller can build a table.
-  # Standalone, print a friendly one-line summary.
-  if [[ -n "${WT_ALL:-}" ]]; then
-    print -r -- "$worktrees"$'\t'"$branches" >&$stdout_fd
-    return
-  fi
-
-  local -a parts
-  (( worktrees )) && parts+=("$(plural $worktrees worktree)")
-  (( branches )) && parts+=("$(plural $branches branch)")
-  print -r -- "${(j:, :)parts}" >&$stdout_fd
+  // Preserved this run. Label why, for the dry-run reasons table.
+  if (state.prState === "OPEN") return { action: "keep", reason: "open PR" };
+  if (state.prState === "CLOSED") {
+    return state.clean
+      ? { action: "keep", reason: "local-only" }
+      : { action: "keep", reason: "dirty & closed" };
+  }
+  return { action: "defer", reason: "local-only" };
 }
 
-plural () {
-  local n=$1 noun=$2
-  (( n == 1 )) && print -r -- "$n $noun" && return
-  [[ "$noun" == branch ]] && noun=branches || noun="${noun}s"
-  print -r -- "$n $noun"
+export function plural(count: number, noun: string): string {
+  if (count === 1) return `${count} ${noun}`;
+  return `${count} ${noun === "branch" ? "branches" : `${noun}s`}`;
 }
 
-# Run only when executed directly. When sourced (tests, wt-prune-audit),
-# ZSH_EVAL_CONTEXT gains a ":file" suffix, so the functions are defined without
-# running the prune.
-[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"
+// Pad every column but the last, so a table reads down its columns without
+// needing `column` on the machine that prints it.
+export function alignColumns(rows: string[][]): string[] {
+  const widths: number[] = [];
+  for (const row of rows) {
+    row.forEach((cell, column) => {
+      widths[column] = Math.max(widths[column] ?? 0, cell.length);
+    });
+  }
+
+  return rows.map((row) =>
+    row
+      .map((cell, column) => (column === row.length - 1 ? cell : cell.padEnd(widths[column] ?? 0)))
+      .join("  ")
+      .trimEnd(),
+  );
+}
+
+interface Pruned {
+  kind: string;
+  branch: string;
+}
+
+// What `wt step prune --format=json` says it would remove. Undefined when it
+// could not be read, which counts as nothing rather than as an error: the
+// integration pass is worktrunk's to report on, and `wt step prune --dry-run`
+// is the per-branch detail for it.
+function readPruned(captured: string): Pruned[] | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(captured);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed)) return undefined;
+
+  return parsed
+    .filter(
+      (entry): entry is Record<string, unknown> =>
+        typeof entry === "object" && entry !== null && !Array.isArray(entry),
+    )
+    .map((entry) => ({
+      kind: typeof entry.kind === "string" ? entry.kind : "",
+      branch: typeof entry.branch === "string" ? entry.branch : "",
+    }));
+}
+
+export interface Candidate {
+  // The branch, or the path for a detached worktree: what `wt remove` is given.
+  handle: string;
+  row: string[];
+  onRemote: boolean;
+}
+
+export interface Report {
+  worktrees: number;
+  branches: number;
+  reasons: string[][];
+}
+
+function prune(options: Options): Outcome {
+  const report: Report = { worktrees: 0, branches: 0, reasons: [] };
+  const fanOut = (process.env.WT_ALL ?? "") !== "";
+  // A dry-run table is standalone detail. The fan-out keeps its terse count
+  // contract, which is the one line `wt all` parses.
+  const explaining = options.dryRun && !fanOut;
+
+  // Count from a dry-run probe. A dry run always lists the candidates, whether
+  // or not this is a real run. Real-mode JSON reports only what it actually
+  // removed, which is empty when removal is approval-gated or raced by
+  // background cleanup, so counting from it under-counts. The over-count it
+  // trades for is the current worktree, which the probe lists and the real run
+  // refuses.
+  const seen = new Set<string>();
+  const probe = capture([
+    "wt",
+    "step",
+    "prune",
+    "--min-age",
+    options.minAge,
+    "--dry-run",
+    "--format=json",
+  ]);
+  for (const entry of readPruned(probe ?? "") ?? []) {
+    seen.add(entry.branch);
+    if (entry.kind === "worktree") report.worktrees += 1;
+    else report.branches += 1;
+  }
+
+  // Real run: actually remove. --yes skips approval prompts and --foreground
+  // blocks until removal completes, both required under the non-interactive
+  // parallel fan-out and the nightly job.
+  if (!options.dryRun) {
+    silently(["wt", "step", "prune", "--min-age", options.minAge, "--yes", "--foreground"]);
+  }
+
+  const worktrees = listWorktrees() ?? [];
+  // Only consult the forge (a network round-trip) when a linked worktree
+  // survives the integration pass. Most repos in a fan-out have only their main
+  // worktree, so this skips a gh/glab call per such repo across the sweep.
+  const candidates = worktrees.some((entry) => entry.kind === "worktree" && !entry.isMain)
+    ? forgePass(worktrees, options, seen, report, explaining)
+    : [];
+
+  if (options.interactive) checklist(candidates, options, report);
+
+  return finish(report, fanOut, explaining);
+}
+
+// Exact forge-state removals over the surviving linked worktrees, plus the age
+// pass, or under -i the collection of what neither of them decided.
+function forgePass(
+  worktrees: Worktree[],
+  options: Options,
+  seen: Set<string>,
+  report: Report,
+  explaining: boolean,
+): Candidate[] {
+  const host = remoteHost();
+  const defaultName = defaultBranch();
+  const now = nowSeconds();
+
+  const recoverable: Candidate[] = [];
+  const localOnly: Candidate[] = [];
+
+  for (const worktree of worktrees) {
+    if (worktree.kind !== "worktree" || worktree.branch === "") continue;
+    if (worktree.isMain) continue;
+    // Removed by the integration pass already, so it is not counted twice.
+    if (seen.has(worktree.branch)) continue;
+
+    // Recorded before the forge lookup, which has no PR to find for the default
+    // branch anyway.
+    if (defaultName !== "" && worktree.branch === defaultName) {
+      if (explaining) {
+        report.reasons.push([dir(worktree), worktree.branch, "-", "keep", "default branch"]);
+      }
+      continue;
+    }
+
+    // Resolve the exact PR/MR state for this survivor. The integration pass
+    // already cleared branches merged into the local default. A squash-merged
+    // PR still shows local commits ahead of main, so only the forge state
+    // proves it landed. This runs once per survivor, not once per PR ever.
+    const pr = prState(worktree.branch, host);
+
+    // FIXME: timestamp is the tip commit's, not the worktree's. A worktree
+    // branched off an old main inherits that tip, so a checkout created minutes
+    // ago can read as older than the threshold and age out the same night.
+    // worktreeAgeSecs is the right clock here; switching to it changes what
+    // this pass removes, so it is left for its own change.
+    const ageExceeded = options.before !== undefined && now - worktree.timestamp >= options.before;
+
+    const decision = classifySurvivor({
+      prState: pr?.state ?? "",
+      onRemote: worktree.onRemote,
+      clean: worktree.clean,
+      isCurrent: worktree.isCurrent,
+      // Interactive ignores the age pass and defers aged candidates to the
+      // checklist instead of auto-removing them.
+      beforeEnabled: options.before !== undefined && !options.interactive,
+      ageExceeded,
+    });
+
+    const state = pr === undefined ? "-" : `${pr.state}#${pr.number}`;
+    if (explaining) {
+      report.reasons.push([dir(worktree), worktree.branch, state, decision.action, decision.reason]);
+    }
+
+    if (decision.action === "remove") {
+      // The mode token owns the branch-deletion call: keep-branch drops only
+      // the directory so committed work survives, anything else force-deletes
+      // the landed branch too. Nothing here infers it from the display reason,
+      // so rewording a reason is behaviour-safe.
+      const flags =
+        decision.mode === "keep-branch"
+          ? ["--foreground"]
+          : ["--foreground", "--force", "--force-delete"];
+      // Only confirmed removals count, so the summary matches what was removed.
+      // A dry run counts everything it lists, since it removes nothing.
+      if (options.dryRun || remove([...flags, worktree.branch])) {
+        report.worktrees += 1;
+        seen.add(worktree.branch);
+      }
+      continue;
+    }
+
+    if (!options.interactive) continue;
+    // Never offer the current worktree, which the classifier already kept.
+    if (worktree.isCurrent) continue;
+
+    const candidate: Candidate = {
+      handle: worktree.branch,
+      row: [
+        dir(worktree),
+        worktree.branch,
+        state,
+        worktree.onRemote ? "onremote" : "LOCAL-ONLY",
+        worktree.clean ? "clean" : "dirty",
+      ],
+      onRemote: worktree.onRemote,
+    };
+    if (worktree.onRemote) recoverable.push(candidate);
+    else localOnly.push(candidate);
+  }
+
+  // Detached worktrees (agent-*/wf_*) have no branch and no PR, so they never
+  // auto-remove. Offer them in the checklist, removed by path.
+  if (options.interactive) {
+    for (const worktree of worktrees) {
+      if (worktree.kind !== "worktree" || worktree.branch !== "") continue;
+      if (worktree.isMain || worktree.isCurrent) continue;
+      localOnly.push({
+        handle: worktree.path,
+        row: [
+          dir(worktree),
+          "detached",
+          "-",
+          "LOCAL-ONLY",
+          worktree.clean ? "clean" : "dirty",
+        ],
+        onRemote: false,
+      });
+    }
+  }
+
+  // Recoverable entries sort ahead of the ones with no remote copy.
+  return [...recoverable, ...localOnly];
+}
+
+// Present the ambiguous remainder as a multi-select checklist and remove only
+// the selections. Selecting nothing, or declining the local-only confirm,
+// removes nothing, so this doubles as a safe preview.
+export function checklist(candidates: Candidate[], options: Options, report: Report): void {
+  if (candidates.length === 0) return;
+
+  // Labels are unique because worktree directory names are, which is what lets
+  // a selection map back to the handle `wt remove` is given.
+  const labels = alignColumns(candidates.map((candidate) => candidate.row));
+  const handles = new Map<string, Candidate>();
+  labels.forEach((label, index) => handles.set(label, candidates[index]));
+
+  const selected = choose(labels)
+    .map((label) => handles.get(label))
+    .filter((candidate): candidate is Candidate => candidate !== undefined);
+  if (selected.length === 0) return;
+
+  // A local-only selection has no remote backup, so gate the whole batch behind
+  // an explicit confirm that names the at-risk count.
+  const exposed = selected.filter((candidate) => !candidate.onRemote).length;
+  if (exposed > 0) {
+    const question = `Remove ${selected.length} worktrees — ${exposed} have no remote copy?`;
+    if (!confirm(question)) return;
+  }
+
+  for (const candidate of selected) {
+    if (options.dryRun || remove(["--foreground", "--force", "--force-delete", candidate.handle])) {
+      report.worktrees += 1;
+    }
+  }
+}
+
+function finish(report: Report, fanOut: boolean, explaining: boolean): Outcome {
+  let stdout = "";
+
+  // The per-survivor decisions, so the forge and age passes explain themselves
+  // (the integration pass is covered by `wt step prune --dry-run`). Printed
+  // even when nothing would be removed, so a survivor that is kept still shows
+  // the reason it was kept.
+  if (explaining && report.reasons.length > 0) {
+    const header = ["DIR", "BRANCH", "STATE", "DECISION", "REASON"];
+    stdout += `${alignColumns([header, ...report.reasons]).join("\n")}\n`;
+  }
+
+  if (report.worktrees === 0 && report.branches === 0) return { status: 0, stdout, stderr: "" };
+
+  // Under `wt all`, tab-separated counts so the caller can total them into a
+  // table. Standalone, a one-line summary.
+  if (fanOut) return { status: 0, stdout: `${report.worktrees}\t${report.branches}\n`, stderr: "" };
+
+  const parts: string[] = [];
+  if (report.worktrees > 0) parts.push(plural(report.worktrees, "worktree"));
+  if (report.branches > 0) parts.push(plural(report.branches, "branch"));
+  return { status: 0, stdout: `${stdout}${parts.join(", ")}\n`, stderr: "" };
+}
+
+export function run(args: string[]): Outcome {
+  const parsed = parseOptions(args);
+  if (!parsed.ok) {
+    return parsed.message === ""
+      ? { status: 0, stdout: `${USAGE}\n`, stderr: "" }
+      : { status: 2, stdout: "", stderr: `wt prune: ${parsed.message}\n${USAGE}\n` };
+  }
+
+  // Interactive is standalone-only: it drives a `gum` checklist on the
+  // terminal, so it cannot run under the `wt all` xargs fan-out or with a
+  // non-TTY stderr.
+  if (parsed.options.interactive && ((process.env.WT_ALL ?? "") !== "" || !process.stderr.isTTY)) {
+    return {
+      status: 1,
+      stdout: "",
+      stderr: "wt prune -i: interactive mode requires a terminal and cannot run under wt all\n",
+    };
+  }
+
+  return prune(parsed.options);
+}
+
+function dir(worktree: Worktree): string {
+  return basename(worktree.path);
+}
+
+// Every spawn hands the environment over explicitly, because Bun otherwise
+// resolves a bare command name against the PATH it captured at startup and a
+// caller that adjusted PATH would reach a different binary than it meant to.
+// A binary that is not installed throws here where the shell printed `command
+// not found` and carried on, so the throw reads as an empty answer: a machine
+// without worktrunk gets a prune that removes nothing rather than one that
+// aborts mid-sweep.
+function capture(cmd: string[]): string | undefined {
+  try {
+    const run = Bun.spawnSync({ cmd, env: process.env, stdin: "ignore", stderr: "ignore" });
+    return run.stdout.toString().replace(/\n+$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+// stdin is closed on every removal, so a `wt remove` that paused on a prompt
+// cannot consume the caller's stdin. Its own output says nothing the summary
+// does not, and a removal that fails is simply not counted.
+function silently(cmd: string[]): boolean {
+  try {
+    const run = Bun.spawnSync({
+      cmd,
+      env: process.env,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    return run.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+function remove(args: string[]): boolean {
+  return silently(["wt", "remove", ...args]);
+}
+
+// gum draws its checklist on the terminal and prints the selection on stdout,
+// so the labels go in over stdin and only stdout is read back. An absent gum
+// selects nothing, which removes nothing.
+function choose(labels: string[]): string[] {
+  try {
+    const run = Bun.spawnSync({
+      cmd: ["gum", "choose", "--no-limit", "--header", "Select worktrees to remove (esc/none keeps all)"],
+      env: process.env,
+      stdin: Buffer.from(labels.map((label) => `${label}\n`).join("")),
+      stderr: "inherit",
+    });
+    return run.stdout.toString().split("\n").filter((label) => label !== "");
+  } catch {
+    return [];
+  }
+}
+
+function confirm(question: string): boolean {
+  try {
+    const run = Bun.spawnSync({
+      cmd: ["gum", "confirm", question],
+      env: process.env,
+      stdio: ["inherit", "inherit", "inherit"],
+    });
+    return run.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+// A write followed by process.exit delivers only one pipe buffer, and the
+// nightly job reads this through a pipe. The reasons table can outrun that.
+function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let written = 0;
+  while (written < bytes.length) written += writeSync(fd, bytes, written);
+}
+
+if (import.meta.main) {
+  const outcome = run(process.argv.slice(2));
+  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
+  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
+  process.exit(outcome.status);
+}

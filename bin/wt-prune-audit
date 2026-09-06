@@ -4,7 +4,8 @@
 # `wt list` and applies the minimal landed-work invariant, so it fires whatever
 # the cause of the miss (a truncated forge query, a detection regression, a
 # skipped pass). It is deliberately simpler than the pruner and does not share
-# its decision code: it reuses only pr_state, sourced from bin/wt-prune.
+# its decision code: it reuses only the shared worktree facts (pr_state and
+# the age and duration helpers).
 #
 # Prints "<branch>\t<reason>\t<path>" for each linked, non-current worktree that
 # a healthy prune should already have removed:
@@ -31,10 +32,11 @@
 
 set -uo pipefail
 
-# Sourcing defines pr_state, worktree_age_secs, parse_duration, and
-# WT_PRUNE_MIN_AGE without running the prune (guarded on ZSH_EVAL_CONTEXT). $0
-# is this script's path even when invoked by `wt`.
-source "${0:A:h}/wt-prune"
+# Defines pr_state, worktree_age_secs, parse_duration, default_branch, and
+# WT_PRUNE_MIN_AGE. The pruner is TypeScript and imports the same module
+# directly, so the two read one implementation of every fact they both decide
+# on. $0 is this script's path even when invoked by `wt`.
+source "${0:A:h}/../scripts/lib/worktree-state.sh"
 
 # Grace, in seconds. $WT_PRUNE_DRIFT_GRACE overrides it and takes the same
 # duration grammar as $WT_PRUNE_MIN_AGE (2h, 1d, 1w, 1mo, 1y); the default is
@@ -75,7 +77,11 @@ main () {
   [[ "$has_candidate" == true ]] || return 0
 
   local remote_host default_br
-  remote_host=$(git remote get-url origin 2>/dev/null | sed -E 's|^[^@]*@||; s|^https?://||; s|[:/].*||')
+  # `git config --get`, never `git remote get-url`: the latter resolves insteadOf
+  # rules, so an org that rewrites github.com reports a host the stored URL does
+  # not name and routes the branch to the wrong forge CLI. bin/wt-prune reads the
+  # same remote the same way, and the two have to agree on what forge this is.
+  remote_host=$(git config --get remote.origin.url 2>/dev/null | sed -E 's|^[^@]*@||; s|^https?://||; s|[:/].*||')
   default_br=$(default_branch)
 
   local branch main_state wtpath age pr_out pr_st

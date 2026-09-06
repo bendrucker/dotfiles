@@ -1,0 +1,105 @@
+#!/usr/bin/env bun
+//
+// The worktree facts bin/wt-prune and bin/wt-prune-audit share, as a CLI.
+// scripts/lib/worktree-state.ts holds the logic and
+// scripts/lib/worktree-state.sh is the shim bin/wt-prune-audit sources, which
+// is the only caller: the pruner imports the module directly.
+//
+//   worktree-state min-age
+//   worktree-state duration --spec=2w
+//   worktree-state age --path=/path/to/worktree
+//   worktree-state default-branch
+//   worktree-state remote-host
+//   worktree-state pr --branch=NAME --host=HOST
+//
+// duration and age print nothing and exit 1 when they cannot answer, which is
+// the nonzero return their shell originals used to hand back. Everything else
+// prints what it found, or nothing, and exits 0: an absent forge CLI or a repo
+// worktrunk cannot read is a degradation every caller was written against.
+
+import { parseArgs } from "node:util";
+import {
+  defaultBranch,
+  minAge,
+  parseDuration,
+  prState,
+  remoteHost,
+  worktreeAgeSecs,
+} from "../scripts/lib/worktree-state.ts";
+
+const USAGE = [
+  "Usage: worktree-state <query>",
+  "  min-age                          the age floor the prune passes apply",
+  "  duration --spec=2w               the duration in seconds",
+  "  age --path=<worktree>            seconds since the worktree was created",
+  "  default-branch                   the branch no prune pass can remove",
+  "  remote-host                      the host of the origin remote",
+  "  pr --branch=<name> --host=<host> the branch's forge state, as STATE<tab>NUMBER",
+].join("\n");
+
+export interface Outcome {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
+
+export function run(args: string[]): Outcome {
+  if (args[0] === "-h" || args[0] === "--help") return { status: 0, stdout: `${USAGE}\n`, stderr: "" };
+
+  let values;
+  let positionals;
+  try {
+    ({ values, positionals } = parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        spec: { type: "string", default: "" },
+        path: { type: "string", default: "" },
+        branch: { type: "string", default: "" },
+        host: { type: "string", default: "" },
+      },
+    }));
+  } catch (error) {
+    return usageError(error instanceof Error ? error.message : String(error));
+  }
+
+  switch (positionals[0]) {
+    case "min-age":
+      return line(minAge());
+    case "duration": {
+      const seconds = parseDuration(values.spec);
+      return seconds === undefined ? { status: 1, stdout: "", stderr: "" } : line(String(seconds));
+    }
+    case "age": {
+      const seconds = worktreeAgeSecs(values.path);
+      return seconds === undefined ? { status: 1, stdout: "", stderr: "" } : line(String(seconds));
+    }
+    case "default-branch":
+      return line(defaultBranch());
+    case "remote-host":
+      return line(remoteHost());
+    case "pr": {
+      const pr = prState(values.branch, values.host);
+      return pr === undefined ? { status: 0, stdout: "", stderr: "" } : line(`${pr.state}\t${pr.number}`);
+    }
+    default:
+      return usageError(`unknown query ${positionals[0] ?? ""}`);
+  }
+}
+
+// An empty answer prints nothing at all, so a caller reading the output into a
+// variable gets the empty string rather than a blank line.
+function line(value: string): Outcome {
+  return { status: 0, stdout: value === "" ? "" : `${value}\n`, stderr: "" };
+}
+
+function usageError(message: string): Outcome {
+  return { status: 2, stdout: "", stderr: `worktree-state: ${message}\n${USAGE}\n` };
+}
+
+if (import.meta.main) {
+  const outcome = run(process.argv.slice(2));
+  if (outcome.stdout !== "") process.stdout.write(outcome.stdout);
+  if (outcome.stderr !== "") process.stderr.write(outcome.stderr);
+  process.exit(outcome.status);
+}
