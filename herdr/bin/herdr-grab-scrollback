@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#
+# Copy the focused pane's scrollback to the system clipboard.
+#
+# One keystroke to get a build log or a test run out of a pane and into an
+# issue or an agent prompt. herdr's own edit_scrollback (prefix+e) opens the
+# same buffer in an editor, which is where to go when the point is to read it.
+set -uo pipefail
+
+# The key binding runs this detached from the herdr server, so stderr reaches
+# no terminal and a failed keypress would otherwise look like a key that does
+# nothing. A toast is the only channel back to the user.
+fail() {
+  echo "herdr-grab-scrollback: $1" >&2
+  if command -v herdr >/dev/null 2>&1; then
+    herdr notification show "Grab scrollback failed" --body "$1" \
+      --position top-right >/dev/null 2>&1
+  fi
+  exit 1
+}
+
+for tool in herdr jq; do
+  command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
+done
+
+# pbcopy is the one that runs here. The other two cost three lines and are what
+# a Linux box would have, since nothing in this repo installs a clipboard tool.
+clipboard() {
+  if command -v pbcopy >/dev/null 2>&1; then
+    pbcopy
+  elif command -v wl-copy >/dev/null 2>&1; then
+    wl-copy
+  elif command -v xclip >/dev/null 2>&1; then
+    xclip -selection clipboard
+  else
+    return 1
+  fi
+}
+
+# `pane read` takes no --current. `pane current` answers with the calling
+# shell's own pane when HERDR_PANE_ID is set, and with the UI-focused pane
+# otherwise, which is the path a keybinding takes. Its exit status is what
+# separates a server that is down from a server reporting no focused pane.
+current=$(herdr pane current 2>/dev/null) || fail "herdr is not answering"
+pane=$(jq -r '.result.pane.pane_id // empty' <<<"$current")
+[ -n "$pane" ] || fail "no focused pane"
+
+# --lines, because the default returns the visible screen and drops exactly the
+# history this key exists to capture. 10000 is what completion.zsh already asks
+# for against the same source. recent-unwrapped rejoins soft wraps, so a pasted
+# log keeps the line breaks it was written with.
+#
+# This reaches the host scrollback, which is where a shell's output lands. Rows
+# a full-screen program painted on the alternate screen never enter it, so no
+# line count recovers what an editor or a pager had up.
+buffer=$(herdr pane read "$pane" --source recent-unwrapped --lines 10000) ||
+  fail "could not read $pane"
+
+# Copy only once the read has succeeded. Piping a failed read straight to the
+# clipboard replaces whatever the user was holding with nothing.
+printf '%s\n' "$buffer" | clipboard || fail "no clipboard tool on PATH"

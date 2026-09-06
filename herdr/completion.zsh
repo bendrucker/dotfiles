@@ -5,9 +5,7 @@ if command -v herdr > /dev/null; then
 fi
 
 # Complete a word from what this pane has already printed: a path, a branch, a
-# container id, anything on screen that would be retyped otherwise. Came from the
-# tmux config, where the capture was `tmux capture-pane` and fzf drew itself in a
-# tmux popup.
+# container id, anything on screen that would be retyped otherwise.
 #
 # `recent-unwrapped` rejoins soft-wrapped lines, so a long path that the pane
 # broke across rows comes back as one word instead of two halves.

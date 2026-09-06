@@ -15,19 +15,15 @@ channel = "stable"
 version_check = false
 
 [session]
-# The tmux config this replaced hand-rolled agent resume: a Claude SessionStart
-# hook wrote `claude --resume <id>` into a pane option, and a resurrect save hook
-# swapped it into that pane's restore command, because a session id is runtime
-# state that resurrect's saved command and directory could not recover. herdr
-# does this natively off the integration hook the claude repo installs
-# (user/hooks/herdr-agent-state.sh), which reports the session ref herdr resumes
+# herdr resumes agents off the integration hook the claude repo installs
+# (user/hooks/herdr-agent-state.sh), which reports the session ref to resume
 # into. Declared rather than left to the default, since a silent flip to false
 # would look like panes simply coming back empty.
 resume_agents_on_restore = true
 
 [keys]
-# C-s, carried over from the tmux config this replaced. Ghostty maps Hyper+A to
-# the same byte (terminal/ghostty.config) for a chord that misses readline.
+# Ghostty maps Hyper+A to the same byte (terminal/ghostty.config) for a chord
+# that misses readline.
 prefix = "ctrl+s"
 
 # Native worktree creation lands in ~/.herdr/worktrees, outside the worktrunk
@@ -272,6 +268,30 @@ key = "prefix+shift+o"
 type = "plugin_action"
 command = "annotate.last"
 description = "review the agent's last reply"
+
+# Whole scrollback onto the clipboard in one keystroke, which is how a build
+# log or a test run gets into an issue or an agent prompt. Native
+# edit_scrollback (prefix+e) opens the same buffer in an editor, for reading it
+# rather than moving it. `y` is the yank key everywhere else and herdr binds
+# nothing to it.
+[[keys.command]]
+key = "prefix+y"
+type = "shell"
+command = "herdr-grab-scrollback"
+description = "copy scrollback to the clipboard"
+
+# Claude Code's background-agent view, which tmux held on prefix+a. herdr's
+# sidebar lists pane agents, and a background agent occupies no pane, so
+# nothing here reports them. annotate.capture holds the plain key, so this
+# takes the alt variant the mirror bindings do. A popup rather than a pane:
+# the view is a detour, and it should not reshape the layout to take one.
+[[keys.command]]
+key = "prefix+alt+a"
+type = "popup"
+command = "herdr-claude-agents"
+description = "claude background agents"
+width = "85%"
+height = "85%"
 
 # flock coordinates every other pane, so there is one of it and this is the way
 # back to it. The launcher looks the workspace up by label and builds it on the

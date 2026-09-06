@@ -23,7 +23,8 @@ All modes share the same primitives:
 2. `scripts/find-herdr-window [workspace]`: resolves the CGWindowID hosting a herdr workspace, defaulting to the focused one. herdr's server reparents to PID 1, so ancestor walking from a pane never reaches the terminal app. Scores window titles against the workspace label and its panes' cwd basenames instead, and warns on stderr when nothing matched and it fell back to the frontmost window.
 3. `scripts/capture-window <window-id> <out.png>`: wraps `screencapture -x -o -l <id>`. `-x` silences the shutter, `-o` omits window shadow.
 4. `scripts/crop-png <src> <dst> <x> <y> <w> <h>`: crops via `NSBitmapImageRep`. The `sips` CLI fails under Claude Code's sandbox because it writes to a hardcoded `/var/folders` scratch path. Coordinates are in physical pixels (Retina is 2x point coords).
-5. `scripts/herdr-snapshot [out-dir]`: dumps `snapshot.json` plus `workspaces.tsv`, `tabs.tsv`, `panes.tsv`, `agents.tsv`, and `panes/<pane-id>.txt` per pane. Pairs with the screenshot so the rendered chrome and the textual contents are inspectable side-by-side.
+5. `scripts/herdr-snapshot [out-dir]`: dumps `snapshot.json` plus `workspaces.tsv`, `tabs.tsv`, `panes.tsv`, `agents.tsv`, and one buffer per pane at `panes/<pane-id>.txt` with the colon
+   replaced by a dash, so pane `wC5:p1` lands at `panes/wC5-p1.txt`. Pairs with the screenshot so the rendered chrome and the textual contents are inspectable side-by-side.
 
 ## Gotchas
 
@@ -35,7 +36,7 @@ When the screen is locked, Quartz shows `loginwindow` and the `Window Server`'s 
 
 #### Sandbox kills JXA in child scripts
 
-The Claude Code sandbox segfaults JXA's access to AppKit/Quartz when `osascript -l JavaScript` runs from a child shell script. Inline JXA (heredoc inside a Bash tool call) works fine. Helper scripts in `scripts/` must be invoked with `dangerouslyDisableSandbox: true` on the Bash call. The sandbox does not cover Write/Edit tool calls, so editing this skill is unaffected. The sandbox also blocks writes to `.claude/skills/` itself; pass the same flag when modifying skill files.
+The Claude Code sandbox segfaults JXA's access to AppKit/Quartz when `osascript -l JavaScript` runs from a child shell script. Inline JXA (heredoc inside a Bash tool call) works fine. Helper scripts in `scripts/` must be invoked with `dangerouslyDisableSandbox: true` on the Bash call. The sandbox does not cover Write/Edit tool calls, so editing this skill is unaffected. The sandbox also blocks writes to `.claude/skills/` itself. Pass the same flag when modifying skill files.
 
 #### `sips` cannot crop under the sandbox
 
@@ -47,7 +48,7 @@ The Claude Code sandbox segfaults JXA's access to AppKit/Quartz when `osascript 
 
 #### JXA does not have `$.exit()`
 
-When writing JXA helpers, do not call `$.exit(N)`; it is undefined and throws. Print JSON to stdout and let the parent shell script translate the result into an exit code (see `scripts/preflight` for the pattern).
+When writing JXA helpers, do not call `$.exit(N)`. It is undefined and throws. Print JSON to stdout and let the parent shell script translate the result into an exit code (see `scripts/preflight` for the pattern).
 
 #### Don't drive the user's working pane
 
@@ -77,6 +78,7 @@ For closer inspection of specific UI regions, status bar at top, prompt at botto
 ## Workflow: fresh
 
 ```sh
+prev=$(herdr api snapshot | jq -r '.result.snapshot.focused_workspace_id')
 ws=$(herdr workspace create --label screenshot-skill --cwd "$PWD" --focus | jq -r '.result.workspace.workspace_id')
 pane=$(herdr api snapshot | jq -r --arg w "$ws" '
   .result.snapshot as $s
@@ -86,9 +88,10 @@ herdr pane run "$pane" 'ls -la'
 window_id=$(.claude/skills/screenshot-terminal/scripts/find-herdr-window "$ws")
 .claude/skills/screenshot-terminal/scripts/capture-window "$window_id" tmp/fresh.png
 herdr workspace close "$ws"
+herdr workspace focus "$prev"
 ```
 
-The workspace has to be focused for its window to be the one on screen, which is why `--focus` is passed. Restore the user's workspace afterwards with `herdr workspace focus`.
+The workspace has to be focused for its window to be the one on screen, which is why `--focus` is passed. Capturing `$prev` first is what makes the last line able to put the user back where they were.
 
 ## What this skill does *not* do
 

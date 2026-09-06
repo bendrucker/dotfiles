@@ -25,10 +25,15 @@ jq -r '.agents[] | [.pane_id, .agent, .agent_status, (.agent_session.value // ""
   "$out/snapshot.json" > "$out/agents.tsv"
 
 # Visible buffer per pane. `--source visible` rather than `recent`, which returns
-# nothing for a pane created moments ago.
+# nothing for a pane created moments ago. A pane can close between the snapshot
+# and this loop, and an unreadable pane must not pass as an empty terminal.
+unread=()
 while IFS=$'\t' read -r pane_id _; do
-  herdr pane read "$pane_id" --source visible \
-    > "$out/panes/${pane_id//:/-}.txt" 2>/dev/null || true
+  buffer="$out/panes/${pane_id//:/-}.txt"
+  if ! herdr pane read "$pane_id" --source visible > "$buffer" 2>/dev/null; then
+    rm -f "$buffer"
+    unread+=("$pane_id")
+  fi
 done < "$out/panes.tsv"
 
 cat <<INFO
@@ -40,3 +45,7 @@ $out/
   agents.tsv      $(wc -l < "$out/agents.tsv" | tr -d ' ') agent(s)
   panes/          per-pane visible buffer
 INFO
+
+if (( ${#unread[@]} )); then
+  echo "herdr-snapshot: no buffer for ${unread[*]}" >&2
+fi

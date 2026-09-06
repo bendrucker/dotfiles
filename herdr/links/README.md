@@ -4,19 +4,18 @@ Turns a token printed in a pane into the URL it refers to: `#123` into an issue
 on the repo the pane is sitting in, `ENG-1234` into a Linear issue, a bare SHA
 into a commit page.
 
-This drove tmux-fzf-links, which scanned a pane's scrollback and offered every
-match through fzf. That host went away with tmux and nothing calls this code
-today. herdr's equivalent is `[[link_handlers]]`, a per-plugin regex that makes
-matching text Ctrl-clickable, so the port is a small herdr plugin wrapping these
-handlers rather than a picker over the whole screen. The tests still run in CI so
-the scheme logic stays honest until then.
-
-Each module sits beside its `_test.py` sidecar.
+Nothing in this repo calls these handlers. Their last host, tmux-fzf-links,
+scanned a pane's scrollback and offered every match through fzf, and it went out
+with tmux. herdr's `[[link_handlers]]` takes a per-plugin regex that makes
+matching text Ctrl-clickable, so porting this means a small herdr plugin
+wrapping these handlers rather than a picker over the whole screen. CI keeps
+running the tests so the scheme logic stays correct until that port lands. Each
+module sits beside its `_test.py` sidecar.
 
 ## Schemes
 
 | Pattern | Opens |
-|---|---|
+| --- | --- |
 | `#123` | issue/PR on the current repo's forge; labeled `[PR]` when the token is a hyperlinked pull request (see below) |
 | `!123` | GitLab merge request |
 | `owner/repo#123` | issue/PR in another repo |
@@ -33,18 +32,19 @@ the visible text is `#497` but the escape sequence carries the real target,
 issue-vs-PR distinction, with no API call or per-repo cache.
 
 `osc8.py` re-captures the pane with escape sequences intact, parses it into a
-visible-text → target-URL index, and the reference handlers prefer that target when a matched
-token was hyperlinked. So `#497` linked to `/pull/497` opens the PR directly and
-shows `[PR]`; an un-hyperlinked `#123` falls back to forge-guessing `/issues/N`
-(GitHub redirects that to `/pull/N` for PRs anyway). Commit and `owner/repo#N`
-matches likewise open their exact target when one is present.
+visible-text → target-URL index, and the reference handlers prefer that target
+when a matched token was hyperlinked. So `#497` linked to `/pull/497` opens the
+PR directly and shows `[PR]`. An un-hyperlinked `#123` falls back to
+forge-guessing `/issues/N` (GitHub redirects that to `/pull/N` for PRs
+anyway). Commit and `owner/repo#N` matches likewise open their exact target
+when one is present.
 
 ## How the forge is resolved
 
 The host `chdir`s into the pane's working directory before matching, so
 `git_context.py` reads the remote from there with `pygit2` and parses the URL
-with [`giturlparse`](https://github.com/nephila/python-giturlparse). A `#123` in
-a pane sitting in a GitHub repo opens that repo's issue; the same token in a
+with [`giturlparse`](https://github.com/nephila/giturlparse). A `#123` in
+a pane sitting in a GitHub repo opens that repo's issue. The same token in a
 GitLab repo opens a GitLab issue, and `!123` opens a merge request. No per-repo
 configuration.
 
@@ -71,8 +71,8 @@ home again.
 ## Interpreter and dependencies
 
 The `python` shim runs the schemes under `uv run`. uv provisions an interpreter
-matching `requires-python` and installs `giturlparse` from
-`pyproject.toml`/`uv.lock` on first use, then serves both from its cache (~50 ms
+matching `requires-python` and installs `giturlparse` and `pygit2` from
+`pyproject.toml`/`uv.lock` on first use, then serves them from its cache (~50 ms
 warm). A host that invokes this on a keystroke wants that cache warm, since a
 cold first run otherwise lands in front of the user.
 

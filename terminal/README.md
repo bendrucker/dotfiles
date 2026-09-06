@@ -4,8 +4,10 @@ Shell and terminal emulator configuration.
 
 ## Ghostty
 
-Theme configuration for the Ghostty terminal emulator. The config is symlinked
-to `~/.config/ghostty/config` by `install.sh`.
+`ghostty.config` sets the font, titlebar, selection rendering, shell
+integration, and the Hyper+A keybind below. `symlinks.conf` maps it to
+`~/.config/ghostty/config`. `install.sh` covers what a symlink cannot: the yazi
+flavors and the iTerm2 preferences folder.
 
 Ghostty draws a selection by inverting foreground and background rather than
 tinting, so a selection reads the same whether herdr is intercepting the mouse
