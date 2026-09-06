@@ -6,6 +6,11 @@
     ],
     "deny": []
   },
+  "sandbox": {
+    "network": {
+      "allowUnixSockets": ["~/.config/herdr/sessions"]
+    }
+  },
   "hooks": {
     "PostToolUse": [
       {
