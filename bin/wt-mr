@@ -1,110 +1,160 @@
-#!/usr/bin/env zsh
-# shellcheck shell=bash
-# wt mr: pick one of your open merge requests, or one waiting on your review,
-# from any project and switch to a worktree for it.
-#
-# The GitLab companion to wt pr. `wt switch --prs` already covers the in-repo
-# case. This starts from the merge request instead, so the project does not have
-# to be the one you are standing in, or cloned at all. clone-repo resolves the
-# checkout and clones it if missing.
+#!/usr/bin/env bun
+//
+// wt mr: pick one of your open merge requests, or one waiting on your review,
+// from any project and switch to a worktree for it.
+//
+// The GitLab companion to wt pr. `wt switch --prs` already covers the in-repo
+// case. This starts from the merge request instead, so the project does not have
+// to be the one you are standing in, or cloned at all. clone-repo resolves the
+// checkout and clones it if missing.
+//
+// scripts/lib/forge-worktree.ts holds everything below the query, which is what
+// bin/wt-pr shares with this.
 
-set -e
-set -o pipefail
+import {
+  type Bucket,
+  capture,
+  choose,
+  count,
+  isRecord,
+  log,
+  missingTool,
+  ordered,
+  parseOptions,
+  type Request,
+  switchTo,
+  text,
+} from "../scripts/lib/forge-worktree.ts";
 
-usage() {
-  cat <<'EOF'
-usage: wt mr [--mine|--review] [wt switch options]
+const USAGE = [
+  "usage: wt mr [--mine|--review] [wt switch options]",
+  "",
+  "Pick from your open merge requests and those waiting on your review, across",
+  "every project, then switch to a worktree for the one you choose.",
+  "",
+  "  --mine    Only merge requests you authored",
+  "  --review  Only merge requests waiting on your review",
+  "",
+  "Remaining options go to `wt switch`, so `wt mr -x claude` opens the worktree and",
+  "launches Claude in it.",
+].join("\n");
 
-Pick from your open merge requests and those waiting on your review, across
-every project, then switch to a worktree for the one you choose.
+// The web URL minus the merge request it points at, which is the project's own
+// URL. Taken off the URL the API returned rather than rebuilt from a path, so a
+// self-hosted host survives.
+const MERGE_REQUEST_PATH = /\/-\/merge_requests\/[0-9]+$/;
 
-  --mine    Only merge requests you authored
-  --review  Only merge requests waiting on your review
+// Undefined when glab could not answer, which the caller treats as a reason to
+// stop rather than to show the other half of the results as the whole picture.
+function search(query: string, bucket: Bucket): Request[] | undefined {
+  const captured = capture([
+    "glab",
+    "api",
+    `/merge_requests?state=opened&per_page=50&${query}`,
+    "--output",
+    "ndjson",
+  ]);
+  if (captured === undefined) return undefined;
 
-Remaining options go to `wt switch`, so `wt mr -x claude` opens the worktree and
-launches Claude in it.
-EOF
+  const requests: Request[] = [];
+  for (const line of captured.split("\n")) {
+    if (line === "") continue;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return undefined;
+    }
+    if (!isRecord(parsed)) return undefined;
+
+    const references = isRecord(parsed.references) ? parsed.references : {};
+    // "group/project!12" is what the API calls the full reference, and the
+    // project is the half in front of the bang.
+    const project = text(references.full).split("!")[0] ?? "";
+    const number = count(parsed.iid);
+    const url = text(parsed.web_url);
+
+    requests.push({
+      bucket,
+      label: `${project}!${number}`,
+      project,
+      number,
+      title: text(parsed.title),
+      url,
+      checkout: url.replace(MERGE_REQUEST_PATH, ""),
+    });
+  }
+  return requests;
 }
 
-want_mine=true
-want_review=true
+// GitLab has no @me alias for reviewer, unlike scope=created_by_me, so the
+// review query has to name the user.
+function username(): string | undefined {
+  const captured = capture(["glab", "api", "/user"]);
+  if (captured === undefined) return undefined;
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --mine)
-      want_review=false
-      shift
-      ;;
-    --review)
-      want_mine=false
-      shift
-      ;;
-    -h | --help)
-      usage
-      exit 0
-      ;;
-    *) break ;;
-  esac
-done
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(captured);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed)) return undefined;
 
-for tool in glab jq fzf clone-repo wt; do
-  if ! command -v "$tool" >/dev/null; then
-    gum log --level error "$tool is required"
-    exit 1
-  fi
-done
-
-# repo_url drops the /-/merge_requests/N suffix rather than rebuilding the URL
-# from a path, so it stays correct on self-hosted GitLab.
-search() {
-  glab api "/merge_requests?state=opened&per_page=50&$1" --output ndjson |
-    jq -c --arg bucket "$2" '{
-      url: .web_url,
-      title,
-      project: (.references.full | split("!")[0]),
-      iid,
-      bucket: $bucket,
-      repo_url: (.web_url | sub("/-/merge_requests/[0-9]+$"; ""))
-    }'
+  const name = text(parsed.username);
+  return name === "" ? undefined : name;
 }
 
-collect() {
-  if [[ "$want_mine" == true ]]; then
-    search "scope=created_by_me" mine
-  fi
-  if [[ "$want_review" == true ]]; then
-    # GitLab has no @me alias for reviewer, unlike scope=created_by_me.
-    search "scope=all&reviewer_username=$(glab api /user | jq -r .username)" review
-  fi
+function main(args: string[]): number {
+  const parsed = parseOptions(args);
+  if (!parsed.ok) {
+    if (parsed.message === "") {
+      process.stdout.write(`${USAGE}\n`);
+      return 0;
+    }
+    process.stderr.write(`wt mr: ${parsed.message}\n${USAGE}\n`);
+    return 2;
+  }
+
+  const missing = missingTool(["glab", "fzf", "clone-repo", "wt"]);
+  if (missing !== undefined) {
+    log("error", `${missing} is required`);
+    return 1;
+  }
+
+  const queries: [Bucket, string][] = [];
+  // Authored first, so a merge request that is both keeps the authored bucket.
+  if (parsed.options.mine) queries.push(["mine", "scope=created_by_me"]);
+  if (parsed.options.review) {
+    const me = username();
+    if (me === undefined) {
+      log("error", "glab could not name the current user");
+      return 1;
+    }
+    queries.push(["review", `scope=all&reviewer_username=${encodeURIComponent(me)}`]);
+  }
+
+  const found: Request[] = [];
+  for (const [bucket, query] of queries) {
+    const results = search(query, bucket);
+    if (results === undefined) {
+      log("error", `glab api /merge_requests?${query} failed`);
+      return 1;
+    }
+    found.push(...results);
+  }
+
+  const requests = ordered(found);
+  if (requests.length === 0) {
+    log("warn", "no open merge requests");
+    return 1;
+  }
+
+  const chosen = choose(requests, { prompt: "mr> ", preview: "glab mr view {4}" });
+  if (chosen === undefined) return 1;
+
+  return switchTo(chosen, parsed.options.rest);
 }
 
-# Authored wins over review-requested when a merge request is both, because
-# unique_by keeps the first and collect emits authored first.
-rows=$(collect | jq -rs '
-  unique_by(.url)
-  | sort_by(.bucket, .project, .iid)
-  | .[]
-  | [.bucket, (.project + "!" + (.iid | tostring)), .title, .url, .repo_url]
-  | @tsv
-')
-
-if [[ -z "$rows" ]]; then
-  gum log --level warn "no open merge requests"
-  exit 1
-fi
-
-selection=$(
-  printf '%s\n' "$rows" |
-    fzf --delimiter='\t' --with-nth=1,2,3 \
-      --prompt='mr> ' \
-      --preview='glab mr view {4}' \
-      --preview-window='right,60%,border-left'
-) || exit 1
-
-url=$(printf '%s' "$selection" | cut -f4)
-repo_url=$(printf '%s' "$selection" | cut -f5)
-
-# Not `path`: zsh ties that name to $PATH, so assigning to it wipes the PATH
-# this script still needs to find wt.
-checkout=$(clone-repo "$repo_url")
-exec wt -C "$checkout" switch "$url" "$@"
+if (import.meta.main) process.exit(main(process.argv.slice(2)));

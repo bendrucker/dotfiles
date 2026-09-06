@@ -1,101 +1,127 @@
-#!/usr/bin/env zsh
-# shellcheck shell=bash
-# wt pr: pick one of your open pull requests, or one waiting on your review,
-# from any repo and switch to a worktree for it.
-#
-# `wt switch --prs` already covers the in-repo case. This starts from the pull
-# request instead, so the repo does not have to be the one you are standing in,
-# or cloned at all. clone-repo resolves the checkout and clones it if missing.
+#!/usr/bin/env bun
+//
+// wt pr: pick one of your open pull requests, or one waiting on your review,
+// from any repo and switch to a worktree for it.
+//
+// `wt switch --prs` already covers the in-repo case. This starts from the pull
+// request instead, so the repo does not have to be the one you are standing in,
+// or cloned at all. clone-repo resolves the checkout and clones it if missing.
+//
+// scripts/lib/forge-worktree.ts holds everything below the query, which is what
+// bin/wt-mr shares with this.
 
-set -e
-set -o pipefail
+import {
+  type Bucket,
+  capture,
+  choose,
+  count,
+  isRecord,
+  log,
+  missingTool,
+  ordered,
+  parseOptions,
+  type Request,
+  switchTo,
+  text,
+} from "../scripts/lib/forge-worktree.ts";
 
-usage() {
-  cat <<'EOF'
-usage: wt pr [--mine|--review] [wt switch options]
+const USAGE = [
+  "usage: wt pr [--mine|--review] [wt switch options]",
+  "",
+  "Pick from your open pull requests and those waiting on your review, across every",
+  "repo, then switch to a worktree for the one you choose.",
+  "",
+  "  --mine    Only pull requests you authored",
+  "  --review  Only pull requests waiting on your review",
+  "",
+  "Remaining options go to `wt switch`, so `wt pr -x claude` opens the worktree and",
+  "launches Claude in it.",
+].join("\n");
 
-Pick from your open pull requests and those waiting on your review, across every
-repo, then switch to a worktree for the one you choose.
+// Undefined when gh could not answer, which every caller treats as a reason to
+// stop rather than to show the other half of the results as the whole picture.
+function search(filter: string, bucket: Bucket): Request[] | undefined {
+  const captured = capture([
+    "gh",
+    "search",
+    "prs",
+    "--state=open",
+    `${filter}=@me`,
+    "--limit",
+    "50",
+    "--json",
+    "number,title,repository,url",
+  ]);
+  if (captured === undefined) return undefined;
 
-  --mine    Only pull requests you authored
-  --review  Only pull requests waiting on your review
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(captured);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed)) return undefined;
 
-Remaining options go to `wt switch`, so `wt pr -x claude` opens the worktree and
-launches Claude in it.
-EOF
+  return parsed.filter(isRecord).map((entry) => {
+    const repository = isRecord(entry.repository) ? entry.repository : {};
+    const project = text(repository.nameWithOwner);
+    const number = count(entry.number);
+    return {
+      bucket,
+      label: `${project}#${number}`,
+      project,
+      number,
+      title: text(entry.title),
+      url: text(entry.url),
+      // gh's own shorthand, which clone-repo resolves against the host it is
+      // already authenticated to.
+      checkout: project,
+    };
+  });
 }
 
-want_mine=true
-want_review=true
+function main(args: string[]): number {
+  const parsed = parseOptions(args);
+  if (!parsed.ok) {
+    if (parsed.message === "") {
+      process.stdout.write(`${USAGE}\n`);
+      return 0;
+    }
+    process.stderr.write(`wt pr: ${parsed.message}\n${USAGE}\n`);
+    return 2;
+  }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --mine)
-      want_review=false
-      shift
-      ;;
-    --review)
-      want_mine=false
-      shift
-      ;;
-    -h | --help)
-      usage
-      exit 0
-      ;;
-    *) break ;;
-  esac
-done
+  const missing = missingTool(["gh", "fzf", "clone-repo", "wt"]);
+  if (missing !== undefined) {
+    log("error", `${missing} is required`);
+    return 1;
+  }
 
-for tool in gh jq fzf clone-repo wt; do
-  if ! command -v "$tool" >/dev/null; then
-    gum log --level error "$tool is required"
-    exit 1
-  fi
-done
+  const found: Request[] = [];
+  // Authored first, so a pull request that is both keeps the authored bucket.
+  for (const [wanted, filter, bucket] of [
+    [parsed.options.mine, "--author", "mine"],
+    [parsed.options.review, "--review-requested", "review"],
+  ] as const) {
+    if (!wanted) continue;
+    const results = search(filter, bucket);
+    if (results === undefined) {
+      log("error", `gh search prs ${filter}=@me failed`);
+      return 1;
+    }
+    found.push(...results);
+  }
 
-search() {
-  gh search prs --state=open "$1=@me" --limit 50 \
-    --json number,title,repository,url \
-    --jq ".[] | {url, title, repo: .repository.nameWithOwner, number, bucket: \"$2\"}"
+  const requests = ordered(found);
+  if (requests.length === 0) {
+    log("warn", "no open pull requests");
+    return 1;
+  }
+
+  const chosen = choose(requests, { prompt: "pr> ", preview: "gh pr view {4}" });
+  if (chosen === undefined) return 1;
+
+  return switchTo(chosen, parsed.options.rest);
 }
 
-collect() {
-  if [[ "$want_mine" == true ]]; then
-    search --author mine
-  fi
-  if [[ "$want_review" == true ]]; then
-    search --review-requested review
-  fi
-}
-
-# Authored wins over review-requested when a pull request is both, because
-# unique_by keeps the first and collect emits authored first.
-rows=$(collect | jq -rs '
-  unique_by(.url)
-  | sort_by(.bucket, .repo, .number)
-  | .[]
-  | [.bucket, (.repo + "#" + (.number | tostring)), .title, .url]
-  | @tsv
-')
-
-if [[ -z "$rows" ]]; then
-  gum log --level warn "no open pull requests"
-  exit 1
-fi
-
-selection=$(
-  printf '%s\n' "$rows" |
-    fzf --delimiter='\t' --with-nth=1,2,3 \
-      --prompt='pr> ' \
-      --preview='gh pr view {4}' \
-      --preview-window='right,60%,border-left'
-) || exit 1
-
-repo=$(printf '%s' "$selection" | cut -f2)
-repo=${repo%%\#*}
-url=$(printf '%s' "$selection" | cut -f4)
-
-# Not `path`: zsh ties that name to $PATH, so assigning to it wipes the PATH
-# this script still needs to find wt.
-checkout=$(clone-repo "$repo")
-exec wt -C "$checkout" switch "$url" "$@"
+if (import.meta.main) process.exit(main(process.argv.slice(2)));
