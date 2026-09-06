@@ -1,82 +1,349 @@
-#!/usr/bin/env zsh
-# shellcheck shell=bash
-# Nightly dotfiles sync and dependency upgrade
-# Syncs dotfiles, runs scripts/install, creates Things task on failure
+#!/usr/bin/env bun
+//
+// Nightly dotfiles sync and dependency upgrade, run unattended from launchd at
+// 3am (macos/com.user.dotfiles-upgrade.plist). Syncs dotfiles, runs
+// scripts/install, cleans up Homebrew, reports packages no Brewfile declares,
+// and files a Things to-do on a failure nobody is awake to read.
+//
+// Takes no arguments.
+//
+// DOTFILES_HOME (default ~/.dotfiles) selects the tree being upgraded. bin/spin
+// comes from this file's own directory instead, so a run out of a dev worktree
+// uses that worktree's helpers while operating on the installed tree.
 
-set -e
-set -o pipefail
+import { realpathSync, writeSync } from "node:fs";
+import { constants as osConstants, homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { reportFailure, reportSuccess } from "../scripts/lib/report-failure.ts";
 
-DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
+const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
 
-source "${0:A:h}/../scripts/lib/spin.sh"
-source "${0:A:h}/../scripts/lib/report-failure.sh"
+const JOB = "dotfiles-upgrade";
+const DRIFT_JOB = "brew-drift";
 
-SYNC_LOG=$(mktemp)
-INSTALL_LOG=$(mktemp)
-trap 'rm -f "$SYNC_LOG" "$INSTALL_LOG"' EXIT
+// A failure ends at the end of its log, and Things caps a note at 10,000
+// characters, so the tail is the part worth keeping.
+const LOG_TAIL_LINES = 100;
 
-current_revision() {
-  git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown"
+const SYNC_TITLE = "Syncing dotfiles";
+
+const TRAILING_NEWLINES = /\n+$/;
+
+// Colour and cursor escapes from the child tools would otherwise render as
+// garbage in the Things note. CSI only: an OSC title sequence carries text a
+// reader may want and does not end in a letter.
+const CSI = /\u001b\[[0-9;]*[a-zA-Z]/g;
+
+export function stripCsi(text: string): string {
+  return text.replace(CSI, "");
 }
 
-report_log_failure() {
-  local title="$1" command="$2" log="$3"
-
-  local output
-  output=$(tail -n 100 "$log" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')
-  report_failure "dotfiles-upgrade" "$title" "$command" "$output" "$(current_revision)"
+export function tailLines(text: string, count: number): string {
+  const lines = text.split("\n");
+  // The newline a log ends with terminates its last line rather than opening
+  // another one.
+  if (lines.at(-1) === "") lines.pop();
+  return lines.slice(-count).join("\n");
 }
 
-report_drift() {
-  local output="$1" fingerprint
-
-  # Drift is a standing finding rather than a break, so the latch keys on the
-  # package set. An unactioned to-do stays quiet while the same packages are
-  # undeclared, and a newly installed one reopens it under its own to-do.
-  #
-  # Sorted, because Homebrew orders the listing by a dependency sort taken over
-  # every installed package. Installing something unrelated and declared can
-  # reshuffle the undeclared names, and an unsorted key would read that as a
-  # new finding and file a duplicate to-do.
-  fingerprint=$(printf '%s\n' "$output" | sort | tr '\n' ' ')
-
-  report_failure "brew-drift" "Undeclared Homebrew packages" \
-    "$DOTFILES_HOME/scripts/brew-drift" "$output" "$(current_revision)" \
-    "" "Undeclared Packages" "$fingerprint"
+// What a failure to-do carries: the end of the step's log, legible, and with no
+// trailing blank lines to push the note's closing fence away from the text.
+export function logExcerpt(log: string): string {
+  return stripCsi(tailLines(log, LOG_TAIL_LINES)).replace(TRAILING_NEWLINES, "");
 }
 
-if ! spin --show-output --show-error --title "Syncing dotfiles" -- \
-  "$DOTFILES_HOME/bin/dotfiles-sync" 2>&1 | tee "$SYNC_LOG"; then
-  gum log --level error "sync failed"
+// Drift is a standing finding rather than a break, so the latch keys on the
+// package set. An unactioned to-do stays quiet while the same packages are
+// undeclared, and a newly installed one reopens it under its own to-do.
+//
+// Sorted, because Homebrew orders the listing by a dependency sort taken over
+// every installed package. Installing something unrelated and declared can
+// reshuffle the undeclared names, and an unsorted key would read that as a new
+// finding and file a duplicate to-do.
+//
+// By code unit rather than by locale collation: the launchd job inherits no
+// LANG and a hand run inherits en_US.UTF-8, and the two disagree about lines
+// differing only in case. A fingerprint that moves with the caller's locale
+// refiles a to-do the other context already filed.
+//
+// The trailing space is the encoding: `tr '\n' ' '` converted the final newline
+// too, and it is part of every latch already standing.
+export function driftFingerprint(listing: string): string {
+  return `${listing.split("\n").sort(byCodeUnit).join(" ")} `;
+}
 
-  report_log_failure "Dotfiles sync failed" "dotfiles-sync" "$SYNC_LOG"
-  exit 1
-fi
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 
-gum log --level info "Running install"
-if ! "$DOTFILES_HOME/scripts/install" 2>&1 | tee "$INSTALL_LOG"; then
-  gum log --level error "install failed"
+// The revision the to-do names. Falls back to a literal where DOTFILES_HOME is
+// not a checkout, which is a state a fresh machine passes through.
+export function currentRevision(dotfilesHome: string): string {
+  const git = Bun.which("git", { PATH: process.env.PATH });
+  if (git === null) return "unknown";
+  try {
+    const rev = Bun.spawnSync({
+      cmd: [git, "-C", dotfilesHome, "rev-parse", "--short", "HEAD"],
+      env: process.env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const short = rev.stdout.toString().trim();
+    return rev.exitCode === 0 && short !== "" ? short : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
-  report_log_failure "Dotfiles install failed" "brew bundle" "$INSTALL_LOG"
-  exit 1
-fi
+// Every message the job emits goes to stderr, where a caller capturing stdout
+// does not pick it up.
+//
+// A machine without gum cannot report anything either, because the reporting
+// library logs through gum too, so the run ends here rather than part way
+// through a filing whose latch would then claim a to-do that was never created.
+// Bun raises where the shell exited 127, and the status is what launchd records.
+function log(level: "info" | "warn" | "error", message: string): void {
+  let status: number | null;
+  try {
+    status = Bun.spawnSync({
+      cmd: ["gum", "log", "--level", level, message],
+      env: process.env,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).exitCode;
+  } catch {
+    writeAll(2, "dotfiles-upgrade: gum is not installed\n");
+    process.exit(127);
+  }
 
-if ! spin --show-output --show-error --title "Running brew cleanup" -- brew cleanup; then
-  gum log --level warn "brew cleanup had issues"
-fi
+  // A gum that runs but fails, as one left linked against a missing dylib does,
+  // ends the run the same way. Under set -e the shell's bare `gum log` aborted
+  // with gum's own status, and a job that cannot say anything cannot file a
+  // to-do either.
+  if (status !== 0) {
+    writeAll(2, "dotfiles-upgrade: gum log failed\n");
+    process.exit(127);
+  }
+}
 
-# Undeclared packages are reported and left installed. Nothing here removes
-# them: the install above already succeeded, a package no Brewfile names breaks
-# nothing tonight, and at 3am the difference between a leftover and something
-# installed deliberately an hour ago is not one this job can tell.
-if ! drift=$("$DOTFILES_HOME/scripts/brew-drift"); then
-  gum log --level warn "brew drift check could not run"
-elif [[ -n "$drift" ]]; then
-  gum log --level warn "undeclared packages installed"
-  report_drift "$drift"
-else
-  report_success "brew-drift"
-fi
+// Bun raises where the shell printed its own "no such file or directory" and
+// left it in the log and in the to-do filed from it. A step that could not be
+// started has to say why, or the failure arrives with nothing in it to act on.
+function spawnReason(cmd: string[], error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  return `dotfiles-upgrade: ${cmd[0]}: ${detail}\n`;
+}
 
-report_success "dotfiles-upgrade"
-gum log --level info "All upgrades completed successfully"
+// A child killed by a signal has no exit code, and Bun reports null. Handed to
+// process.exit that would exit 0, so a step that died on SIGTERM would read as
+// a step that worked. 128 + the signal is what the shell reported.
+function exitStatus(run: { exitCode: number | null; signalCode: string | null }): number {
+  if (run.exitCode !== null) return run.exitCode;
+  return run.signalCode === null ? 0 : 128 + (osConstants.signals[run.signalCode] ?? 0);
+}
+
+function spawnTeed(cmd: string[]) {
+  return Bun.spawn({
+    cmd,
+    env: process.env,
+    stdin: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+interface Step {
+  status: number;
+  output: string;
+}
+
+// A step whose output is both the progress report and the body of the to-do a
+// failure files. It reaches the job's stdout as it is produced and is kept, and
+// the child's stderr joins it there, which is what `2>&1 | tee` did.
+//
+// Piping the child's stderr is also what keeps bin/spin on its plain path: the
+// terminal test it makes is on the stderr it inherits, and a spinner rendered
+// into a captured log rides into the to-do as raw control characters.
+async function runTeed(cmd: string[]): Promise<Step> {
+  let child: ReturnType<typeof spawnTeed>;
+  // Bun raises where the shell exited 127, and a step that could not be run is
+  // a step that failed.
+  try {
+    child = spawnTeed(cmd);
+  } catch (error) {
+    // Into the teed output as well as onto the stream, because this is the text
+    // the to-do's Error Output section is built from.
+    const reason = spawnReason(cmd, error);
+    writeAll(1, reason);
+    return { status: 127, output: reason };
+  }
+
+  const chunks: Uint8Array[] = [];
+  const pump = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+      writeAll(1, chunk);
+    }
+  };
+  await Promise.all([pump(child.stdout), pump(child.stderr)]);
+
+  const status = await child.exited;
+  return { status, output: Buffer.concat(chunks).toString() };
+}
+
+function runInherited(cmd: string[]): number {
+  try {
+    return exitStatus(
+      Bun.spawnSync({
+        cmd,
+        env: process.env,
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      }),
+    );
+  } catch (error) {
+    writeAll(2, spawnReason(cmd, error));
+    return 127;
+  }
+}
+
+// stdout is captured and stderr is not. scripts/brew-drift leaves stdout empty
+// when it has nothing to report and says why on stderr, precisely because
+// anything printed here is filed as a package listing.
+function runCapturingStdout(cmd: string[]): Step {
+  try {
+    const child = Bun.spawnSync({
+      cmd,
+      env: process.env,
+      stdin: "inherit",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    return {
+      status: exitStatus(child),
+      output: child.stdout.toString().replace(TRAILING_NEWLINES, ""),
+    };
+  } catch (error) {
+    // Onto stderr, never stdout: anything on stdout here is filed as a package
+    // listing.
+    writeAll(2, spawnReason(cmd, error));
+    return { status: 127, output: "" };
+  }
+}
+
+// The latch carries which step broke. Sharing one unfingerprinted latch between
+// the two would let a sync failure one night silence an install failure the
+// next, since the run exits before it can clear the latch and the second break
+// stores the same value the first did.
+function reportStepFailure(
+  home: string,
+  step: string,
+  title: string,
+  command: string,
+  output: string,
+): number {
+  const status = reportFailure({
+    job: JOB,
+    title,
+    command,
+    output: logExcerpt(output),
+    revision: currentRevision(home),
+    extraMeta: "",
+    outputHeading: "Error Output",
+    fingerprint: step,
+  });
+  // A refused `open` took the whole run down with its own status rather than
+  // the 1 that follows a reported failure.
+  return status !== 0 ? status : 1;
+}
+
+function reportDrift(home: string, listing: string): number {
+  return reportFailure({
+    job: DRIFT_JOB,
+    title: "Undeclared Homebrew packages",
+    command: join(home, "scripts", "brew-drift"),
+    output: listing,
+    revision: currentRevision(home),
+    extraMeta: "",
+    // This output is a finding list rather than an error.
+    outputHeading: "Undeclared Packages",
+    fingerprint: driftFingerprint(listing),
+  });
+}
+
+export async function run(): Promise<number> {
+  const home = process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles");
+
+  const sync = await runTeed([
+    SPIN,
+    "--show-output",
+    "--show-error",
+    "--title",
+    SYNC_TITLE,
+    "--",
+    join(home, "bin", "dotfiles-sync"),
+  ]);
+  if (sync.status !== 0) {
+    log("error", "sync failed");
+    return reportStepFailure(home, "sync", "Dotfiles sync failed", "dotfiles-sync", sync.output);
+  }
+
+  log("info", "Running install");
+  const installer = join(home, "scripts", "install");
+  const install = await runTeed([installer]);
+  if (install.status !== 0) {
+    log("error", "install failed");
+    // The installer, not `brew bundle`: that is the first of its six steps, and
+    // a run failing at symlinks, mise or a topic install.sh reproduces nothing
+    // from it.
+    return reportStepFailure(home, "install", "Dotfiles install failed", installer, install.output);
+  }
+
+  const cleanup = runInherited([
+    SPIN,
+    "--show-output",
+    "--show-error",
+    "--title",
+    "Running brew cleanup",
+    "--",
+    "brew",
+    "cleanup",
+  ]);
+  // Housekeeping after an install that already succeeded, so it changes no exit
+  // code and files nothing.
+  if (cleanup !== 0) log("warn", "brew cleanup had issues");
+
+  // Undeclared packages are reported and left installed. Nothing here removes
+  // them: the install above already succeeded, a package no Brewfile names breaks
+  // nothing tonight, and at 3am the difference between a leftover and something
+  // installed deliberately an hour ago is not one this job can tell.
+  const drift = runCapturingStdout([join(home, "scripts", "brew-drift")]);
+  if (drift.status !== 0) {
+    log("warn", "brew drift check could not run");
+  } else if (drift.output !== "") {
+    log("warn", "undeclared packages installed");
+    const filed = reportDrift(home, drift.output);
+    if (filed !== 0) return filed;
+  } else {
+    reportSuccess(DRIFT_JOB);
+  }
+
+  reportSuccess(JOB);
+  log("info", "All upgrades completed successfully");
+  return 0;
+}
+
+// A write followed by process.exit delivers one pipe buffer and drops the rest.
+// The launchd log is a redirect, but a hand run pipes this into a pager or tee.
+function writeAll(fd: number, data: Uint8Array | string): void {
+  const bytes = typeof data === "string" ? Buffer.from(data) : data;
+  let written = 0;
+  while (written < bytes.length) written += writeSync(fd, bytes, written);
+}
+
+if (import.meta.main) {
+  process.exit(await run());
+}
