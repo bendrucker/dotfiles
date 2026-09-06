@@ -14,6 +14,17 @@ onboarding = false
 channel = "stable"
 version_check = false
 
+[session]
+# The tmux config this replaced hand-rolled agent resume: a Claude SessionStart
+# hook wrote `claude --resume <id>` into a pane option, and a resurrect save hook
+# swapped it into that pane's restore command, because a session id is runtime
+# state that resurrect's saved command and directory could not recover. herdr
+# does this natively off the integration hook the claude repo installs
+# (user/hooks/herdr-agent-state.sh), which reports the session ref herdr resumes
+# into. Declared rather than left to the default, since a silent flip to false
+# would look like panes simply coming back empty.
+resume_agents_on_restore = true
+
 [keys]
 # C-s, carried over from the tmux config this replaced. Ghostty maps Hyper+A to
 # the same byte (terminal/ghostty.config) for a chord that misses readline.
