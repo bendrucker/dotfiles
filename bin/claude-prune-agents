@@ -1,332 +1,720 @@
-#!/usr/bin/env zsh
-#/ Usage: claude-prune-agents [-f|--force] [-n|--dry-run]
-#/ Remove completed background agents whose pull requests have all left the
-#/ open state.
-#/
-#/   -f, --force    remove every stale agent without prompting
-#/   -n, --dry-run  print the decision table, remove nothing
-#
-# Completed agents (`claude agents`) accumulate indefinitely, and most of them
-# shipped a PR that has since merged. An agent is prunable when every PR it
-# produced has left the open state: a single open PR keeps it, and an agent with
-# no discoverable PR is reported but never auto-removed.
-#
-# PRs are discovered two ways, unioned and deduped by <owner>/<repo>#<number>:
-# the branch the agent worked on (resolved from its worktree path, which
-# survives the worktree directory being deleted) and the PR references in the
-# agent's own summary text. Removal is `claude rm`, which owns the worktree and
-# refuses when there are unpushed commits.
+#!/usr/bin/env bun
+//
+// Remove completed background agents whose pull requests have all left the open
+// state.
+//
+// Completed agents (`claude agents`) accumulate indefinitely, and most of them
+// shipped a PR that has since merged. An agent is prunable when every PR it
+// produced has left the open state: a single open PR keeps it, and an agent with
+// no discoverable PR is reported but never auto-removed.
+//
+// PRs are discovered two ways, unioned and deduped by <owner>/<repo>#<number>:
+// the branch the agent worked on (resolved from its worktree path, which
+// survives the worktree directory being deleted) and the PR references in the
+// agent's own summary text. Removal is `claude rm`, which owns the worktree and
+// refuses when there are unpushed commits.
 
-set -uo pipefail
-setopt typeset_silent
+import { readFileSync, realpathSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
-# Captured at file scope: inside a function $0 is the function name, so --help
-# could not find the usage header to print.
-typeset -g script_path=${0:A}
+const USAGE = [
+  "Usage: claude-prune-agents [-f|--force] [-n|--dry-run]",
+  "Remove completed background agents whose pull requests have all left the",
+  "open state.",
+  "",
+  "  -f, --force    remove every stale agent without prompting",
+  "  -n, --dry-run  print the decision table, remove nothing",
+].join("\n");
 
-source "${0:A:h}/../scripts/lib/spin.sh"
-
-# Split a worktree path into its parent repo root and branch. Worktrunk uses
-# .worktrees/, the built-in harness uses .claude/worktrees/. Prints
-# "<repo root>\t<branch>", or nothing when the path is not a worktree.
-split_worktree_path () {
-  local path=$1
-  [[ "$path" =~ '^(.+)/(\.worktrees|\.claude/worktrees)/([^/]+)' ]] || return 1
-  print -r -- "$match[1]"$'\t'"$match[3]"
+export interface Outcome {
+  status: number;
+  stdout: string;
+  stderr: string;
 }
 
-# Decide an agent's fate from the resolved states of its PRs. Pure: it reads
-# only its arguments, touches no globals, and has no side effects, so the
-# removal rules can be exercised in isolation. This is the source of truth;
-# main acts on the answer but does not re-derive it.
-#
-# Prints "<action>\t<reason>", where action is one of:
-#   stale  every PR is in a terminal state, so the agent is removable
-#   keep   at least one PR is still open, or could not be resolved
-#   skip   no PR was discovered, so there is nothing to judge
-#
-# The reason is a short human string for the table, display only: main never
-# matches on it, so rewording one is behavior-safe.
-classify_agent () {
-  (( $# == 0 )) && { print -r -- "skip"$'\t'"no PRs"; return }
+//   stale  every PR is in a terminal state, so the agent is removable
+//   keep   at least one PR is still open, or could not be resolved
+//   skip   no PR was discovered, so there is nothing to judge
+export type Action = "stale" | "keep" | "skip";
 
-  [[ " $* " == *" OPEN "* ]] && { print -r -- "keep"$'\t'"open PR"; return }
-
-  # ERROR is a lookup that failed rather than a state the forge reported. The
-  # PR behind it may well be open, so it blocks removal like an open one.
-  [[ " $* " == *" ERROR "* ]] && { print -r -- "keep"$'\t'"PR lookup failed"; return }
-
-  # Closed-unmerged does not block: only an open PR means work is still in
-  # flight. Both terminal states are named so a mixed set explains itself.
-  local -a reasons
-  [[ " $* " == *" MERGED "* ]] && reasons+=(merged)
-  [[ " $* " == *" CLOSED "* ]] && reasons+=(closed)
-
-  # Every state was something this script does not recognize. Keep rather than
-  # remove, so an unmodeled state can never delete an agent.
-  (( ${#reasons} )) || { print -r -- "keep"$'\t'"unknown PR state"; return }
-
-  print -r -- "stale"$'\t'"${(j:, :)reasons}"
+export interface Decision {
+  action: Action;
+  // A short human string for the table, display only: nothing matches on it, so
+  // rewording one is behavior-safe.
+  reason: string;
 }
 
-format_age () {
-  integer secs=$1
-  (( secs < 3600 )) && { print -r -- "$(( secs / 60 ))m"; return }
-  (( secs < 86400 )) && { print -r -- "$(( secs / 3600 ))h"; return }
-  print -r -- "$(( secs / 86400 ))d"
+// The `-` number is the synthetic row a failed branch query contributes; it
+// carries no PR of its own, only the ERROR that blocks removal.
+export interface Pr {
+  number: string;
+  state: string;
 }
 
-typeset -gA repo_slugs
-
-# Resolve a repo root to its <owner>/<repo> slug, memoized: the scan hits the
-# same handful of repos repeatedly, and this is a subprocess per call.
-repo_slug () {
-  local root=$1
-  [[ -z "$root" || ! -d "$root" ]] && return 1
-  if [[ -z "${repo_slugs[$root]:-}" ]]; then
-    repo_slugs[$root]=$( (cd "$root" && gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) )
-    [[ -z "${repo_slugs[$root]}" ]] && repo_slugs[$root]="-"
-  fi
-  [[ "${repo_slugs[$root]}" == "-" ]] && return 1
-  print -r -- "${repo_slugs[$root]}"
+export interface Candidate {
+  id: string;
+  cwd: string;
+  started: number;
+  name: string;
 }
 
-# Every PR reference in an agent's summary text, as "<owner>/<repo>\t<number>".
-# Full github.com URLs carry their own repo. Bare #<n> refs resolve against the
-# agent's own repo, and are dropped when it has none, since a bare number
-# against the wrong repo would resolve to an unrelated PR.
-summary_pr_refs () {
-  local summary=$1 slug=$2 ref
-  for ref in ${(f)"$(print -r -- "$summary" | grep -oE 'github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+')"}; do
-    [[ -z "$ref" ]] && continue
-    local rest=${ref#github.com/}
-    print -r -- "${rest%%/pull/*}"$'\t'"${rest##*/pull/}"
-  done
-
-  [[ -z "$slug" ]] && return
-  for ref in ${(f)"$(print -r -- "$summary" | grep -oE '#[0-9]+')"}; do
-    [[ -z "$ref" ]] && continue
-    print -r -- "$slug"$'\t'"${ref#\#}"
-  done
+export interface Row {
+  id: string;
+  name: string;
+  age: string;
+  prs: string;
+  action: Action;
+  reason: string;
 }
 
-# Resolve every PR an agent produced, printing "<number>\t<STATE>" per PR in
-# discovery order. Refs that fail to resolve (issue numbers, another repo's
-# numbering) are dropped rather than treated as blocking.
-agent_prs () {
-  local slug=$1 branch=$2 summary=$3
-  local -A seen
-  local -a out
-  local num st
-
-  if [[ -n "$slug" && -n "$branch" ]]; then
-    # Captured rather than piped, so a failed query stays distinguishable from
-    # a branch that genuinely has no PR. Both are empty output, but only the
-    # failure exits nonzero, and treating it as "no PRs" would hide an open PR
-    # and let the agent classify as stale.
-    local listing
-    if listing=$(gh pr list --repo "$slug" --head "$branch" --state all \
-        --json number,state --jq '.[] | "\(.number)\t\(.state)"' 2>/dev/null); then
-      while IFS=$'\t' read -r num st; do
-        [[ -z "$num" ]] && continue
-        seen[$slug#$num]=1
-        out+=("$num"$'\t'"$st")
-      done <<<"$listing"
-    else
-      out+=("-"$'\t'"ERROR")
-    fi
-  fi
-
-  local refslug refnum
-  while IFS=$'\t' read -r refslug refnum; do
-    [[ -z "$refnum" || -n "${seen[$refslug#$refnum]:-}" ]] && continue
-    seen[$refslug#$refnum]=1
-    st=$(gh pr view "$refnum" --repo "$refslug" --json state --jq .state 2>/dev/null)
-    [[ -z "$st" ]] && continue
-    out+=("$refnum"$'\t'"$st")
-  done < <(summary_pr_refs "$summary" "$slug")
-
-  (( ${#out} )) && print -rl -- "${out[@]}"
+export interface Worktree {
+  root: string;
+  branch: string;
 }
 
-# Classify every candidate agent, one tab-separated row per agent appended to
-# the given file: id, name, age, PR summary, action, reason.
-scan_agents () {
-  local outfile=$1
-  : >"$outfile"
+// Worktrunk uses .worktrees/, the built-in harness uses .claude/worktrees/. The
+// split is pure string work and never stats the directory, because a finished
+// agent's worktree is usually already gone and the path is the only surviving
+// record of its branch.
+const WORKTREE = /^(.+)\/(?:\.worktrees|\.claude\/worktrees)\/([^/]+)/;
 
-  local id cwd started name
-  while IFS=$'\t' read -r id cwd started name; do
-    [[ -z "$id" ]] && continue
-
-    local statefile=$HOME/.claude/jobs/$id/state.json
-    local worktree_path="" summary=""
-    if [[ -f "$statefile" ]]; then
-      worktree_path=$(jq -r '.worktreePath // ""' "$statefile" 2>/dev/null)
-      summary=$(jq -r '[.detail // "", .output.result // ""] | join(" ")' "$statefile" 2>/dev/null)
-    fi
-
-    # The worktree path is the branch signal, not cwd: a finished agent reports
-    # cwd as the repo root even when it worked in a worktree.
-    local repo_root="" branch="" split
-    if split=$(split_worktree_path "${worktree_path:-$cwd}"); then
-      IFS=$'\t' read -r repo_root branch <<<"$split"
-    else
-      repo_root=$cwd
-    fi
-
-    local slug=""
-    slug=$(repo_slug "$repo_root") || slug=""
-
-    local -a pr_states pr_disp
-    pr_states=() pr_disp=()
-    local num st
-    while IFS=$'\t' read -r num st; do
-      [[ -z "$num" ]] && continue
-      pr_states+=("$st")
-      if [[ "$st" == ERROR ]]; then
-        pr_disp+=("lookup failed")
-      else
-        pr_disp+=("#$num ${st:l}")
-      fi
-    done < <(agent_prs "$slug" "$branch" "$summary")
-
-    local action reason
-    IFS=$'\t' read -r action reason < <(classify_agent "${pr_states[@]}")
-
-    local disp="-"
-    (( ${#pr_disp} )) && disp="${(j:, :)pr_disp}"
-
-    print -r -- "$id"$'\t'"$name"$'\t'"$(format_age $(( EPOCHSECONDS - started / 1000 )))"$'\t'"$disp"$'\t'"$action"$'\t'"$reason" >>"$outfile"
-  done <<<"$agents_tsv"
+export function splitWorktreePath(path: string): Worktree | undefined {
+  const match = WORKTREE.exec(path);
+  return match ? { root: match[1], branch: match[2] } : undefined;
 }
 
-main () {
-  local dry_run=0 force=0 arg
-  for arg in "$@"; do
-    case "$arg" in
-      -n|--dry-run) dry_run=1 ;;
-      -f|--force)   force=1 ;;
-      -h|--help)    grep '^#/' "$script_path" | cut -c4-; return ;;
-      *) print -ru2 -- "claude-prune-agents: unknown option: $arg"; return 1 ;;
-    esac
-  done
+// The single source of truth for the decision. Pure: it reads only its argument,
+// touches no globals, and has no side effects, so the removal rules can be
+// exercised in isolation. The caller acts on the answer but does not re-derive
+// it.
+export function classifyAgent(states: string[]): Decision {
+  if (states.length === 0) return { action: "skip", reason: "no PRs" };
 
-  zmodload zsh/datetime
+  if (states.includes("OPEN")) return { action: "keep", reason: "open PR" };
 
-  local agents_json
-  agents_json=$(claude agents --json --all 2>/dev/null)
-  [[ -z "$agents_json" || "$agents_json" == "[]" ]] && { print -r -- "no agents"; return }
+  // ERROR is a lookup that failed rather than a state the forge reported. The PR
+  // behind it may well be open, so it blocks removal like an open one.
+  if (states.includes("ERROR")) return { action: "keep", reason: "PR lookup failed" };
 
-  # Only completed background agents are candidates. Every other state --
-  # working, failed, anything new -- is left alone.
-  local agents_tsv
-  agents_tsv=$(jq -r '
-    .[]
-    | select(.kind == "background" and .state == "done")
-    | [.id, .cwd, (.startedAt | tostring), .name] | @tsv' <<<"$agents_json")
-  [[ -z "$agents_tsv" ]] && { print -r -- "no completed agents"; return }
+  // Closed-unmerged does not block: only an open PR means work is still in
+  // flight. Both terminal states are named so a mixed set explains itself.
+  const reasons: string[] = [];
+  if (states.includes("MERGED")) reasons.push("merged");
+  if (states.includes("CLOSED")) reasons.push("closed");
 
-  integer total=$(print -r -- "$agents_tsv" | grep -c .)
+  // Every state was something this script does not recognize. Keep rather than
+  // remove, so an unmodeled state can never delete an agent.
+  if (reasons.length === 0) return { action: "keep", reason: "unknown PR state" };
 
-  # An explicit template: macOS mktemp resolves its default from the process's
-  # confstr temp dir, not $TMPDIR, which sandboxed callers may have redirected.
-  local rows_file
-  rows_file=$(mktemp "${TMPDIR:-/tmp}/claude-prune-agents.XXXXXX") || return 1
-  trap "rm -f '$rows_file'" EXIT
-
-  # A handful of gh calls per agent, so show progress. spin needs a command to
-  # wrap, and the scan is an in-process function, so spin on the wait. The
-  # background fork and its polling loop exist only to feed the spinner, so
-  # they are gated on the spinner rather than left running where nothing
-  # renders it.
-  if spin_has_terminal && spin_have_gum; then
-    scan_agents "$rows_file" &
-    local scan_pid=$!
-    spin --title "Resolving PRs for $total agents" -- \
-      zsh -c "while kill -0 $scan_pid 2>/dev/null; do sleep 0.2; done"
-    wait $scan_pid
-  else
-    scan_agents "$rows_file"
-  fi
-
-  local -a stale_ids stale_rows all_rows
-  integer kept=0 skipped=0
-  local id name age prs action reason
-  while IFS=$'\t' read -r id name age prs action reason; do
-    [[ -z "$id" ]] && continue
-    all_rows+=("$id"$'\t'"$name"$'\t'"$age"$'\t'"$prs"$'\t'"$action"$'\t'"$reason")
-    case "$action" in
-      stale) stale_ids+=("$id"); stale_rows+=("$id"$'\t'"$name"$'\t'"$age"$'\t'"$prs") ;;
-      keep)  (( kept++ )) ;;
-      skip)  (( skipped++ )) ;;
-    esac
-  done < "$rows_file"
-
-  if (( dry_run )); then
-    {
-      print -r -- "ID"$'\t'"NAME"$'\t'"AGE"$'\t'"PRS"$'\t'"DECISION"$'\t'"REASON"
-      (( ${#all_rows} )) && print -rl -- "${all_rows[@]}"
-    } | column -t -s $'\t'
-  fi
-
-  local -a remove_ids
-  if (( ${#stale_ids} == 0 )); then
-    remove_ids=()
-  elif (( dry_run )); then
-    remove_ids=()
-  elif (( force )); then
-    remove_ids=("${stale_ids[@]}")
-  else
-    # Without gum there is no checklist to approve the batch, and silently
-    # removing nothing would read as "nothing was stale". Name the two flags
-    # that work without it instead.
-    if (( ! ${+commands[gum]} )); then
-      print -ru2 -- "claude-prune-agents: gum is required to select interactively; use --force or --dry-run"
-      return 1
-    fi
-
-    # Preselect everything: enter accepts the batch, individual rows can be
-    # deselected, esc removes nothing.
-    local labels_str
-    labels_str=$(printf '%s\n' "${stale_rows[@]}" | column -t -s $'\t')
-    local selected_str
-    selected_str=$(printf '%s\n' "${(@f)labels_str}" \
-      | gum choose --no-limit --selected='*' --header "Select agents to remove")
-    local line
-    for line in "${(@f)selected_str}"; do
-      [[ -z "$line" ]] && continue
-      remove_ids+=("${line%% *}")
-    done
-  fi
-
-  integer removed=0 failed=0
-  for id in "${remove_ids[@]}"; do
-    if claude rm "$id" </dev/null >/dev/null 2>&1; then
-      (( removed++ ))
-    else
-      (( failed++ ))
-      gum log --level warn "claude rm $id failed, likely unpushed commits"
-    fi
-  done
-
-  local -a notes
-  (( kept ))    && notes+=("$kept kept")
-  (( skipped )) && notes+=("$skipped skipped: no PRs")
-  (( failed ))  && notes+=("$failed failed")
-
-  local summary="$(plural $removed agent) removed"
-  (( dry_run )) && summary="$(plural ${#stale_ids} agent) removable"
-  (( ${#notes} )) && summary="$summary (${(j:, :)notes})"
-  print -r -- "$summary"
+  return { action: "stale", reason: reasons.join(", ") };
 }
 
-plural () {
-  local n=$1 noun=$2
-  (( n == 1 )) && { print -r -- "$n $noun"; return }
-  print -r -- "$n ${noun}s"
+export function formatAge(secs: number): string {
+  if (secs < 3600) return `${Math.trunc(secs / 60)}m`;
+  if (secs < 86400) return `${Math.trunc(secs / 3600)}h`;
+  return `${Math.trunc(secs / 86400)}d`;
 }
 
-# Run only when executed directly. When sourced (tests), ZSH_EVAL_CONTEXT gains
-# a ":file" suffix, so the functions are defined without running the prune.
-[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"
+export interface PrRef {
+  slug: string;
+  number: string;
+}
+
+const PR_URL = /github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/pull\/([0-9]+)/g;
+const BARE_REF = /#([0-9]+)/g;
+
+// Every PR reference in an agent's summary text. Full github.com URLs carry
+// their own repo, so a cross-repo link resolves against that repo. Bare #<n>
+// refs resolve against the agent's own repo, and are dropped when it has none,
+// since a bare number against the wrong repo would resolve to an unrelated PR.
+export function summaryPrRefs(summary: string, slug: string): PrRef[] {
+  const refs: PrRef[] = [];
+  for (const match of summary.matchAll(PR_URL)) refs.push({ slug: match[1], number: match[2] });
+  if (slug === "") return refs;
+  for (const match of summary.matchAll(BARE_REF)) refs.push({ slug, number: match[1] });
+  return refs;
+}
+
+export function prDisplay(prs: Pr[]): string {
+  if (prs.length === 0) return "-";
+  return prs
+    .map((pr) =>
+      pr.state === "ERROR" ? "lookup failed" : `#${pr.number} ${pr.state.toLowerCase()}`,
+    )
+    .join(", ");
+}
+
+// `column -t -s $'\t'`, except that an empty cell stays a blank column rather
+// than shifting the rest of the row left, which is what BSD column does when it
+// collapses adjacent delimiters. An agent with no name has an empty cell.
+export function columnize(rows: string[][]): string[] {
+  const escaped = rows.map((row) => row.map(escapeCell));
+  const widths: number[] = [];
+  for (const row of escaped) {
+    row.forEach((cell, index) => {
+      widths[index] = Math.max(widths[index] ?? 0, cell.length);
+    });
+  }
+  return escaped.map((row) =>
+    row
+      .map((cell, index) => (index === row.length - 1 ? cell : cell.padEnd(widths[index] + 2)))
+      .join("")
+      .replace(/ +$/, ""),
+  );
+}
+
+// One row is one line, and an agent names itself. jq's @tsv, which built these
+// rows for the shell, escaped an embedded newline or tab rather than emitting
+// it. Without that a name holding a newline splits its row across two lines: the
+// dry-run table misaligns, and on the interactive path gum offers two entries,
+// neither of which matches the label the selection is read back against, so the
+// agent is silently never removed.
+function escapeCell(cell: string): string {
+  return cell
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+}
+
+export function plural(n: number, noun: string): string {
+  return n === 1 ? `${n} ${noun}` : `${n} ${noun}s`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+// zsh arithmetic reads a missing or non-numeric timestamp as 0, which yields an
+// epoch-sized age rather than an error. Reproduced so a state file this program
+// cannot read still produces a row.
+function asMilliseconds(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && /^-?[0-9]+$/.test(value)) return Number(value);
+  return 0;
+}
+
+// Only completed background agents are candidates. Every other state -- working,
+// failed, anything new -- is left alone. Returns undefined when the payload is
+// not the array of agents `claude agents --json --all` promises.
+export function parseAgents(text: string): Candidate[] | undefined {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(payload)) return undefined;
+
+  const candidates: Candidate[] = [];
+  for (const agent of payload) {
+    if (!isRecord(agent)) continue;
+    if (agent.kind !== "background" || agent.state !== "done") continue;
+    const id = asString(agent.id);
+    if (id === "") continue;
+    candidates.push({
+      id,
+      cwd: asString(agent.cwd),
+      started: asMilliseconds(agent.startedAt),
+      name: asString(agent.name),
+    });
+  }
+  return candidates;
+}
+
+export interface AgentState {
+  worktreePath: string;
+  summary: string;
+}
+
+// The summary is the detail and the result joined by a space, both defaulting to
+// empty. A missing, unreadable, or malformed state file leaves both empty rather
+// than failing the run.
+export function parseAgentState(text: string): AgentState {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    return { worktreePath: "", summary: "" };
+  }
+  if (!isRecord(payload)) return { worktreePath: "", summary: "" };
+
+  const output = payload.output;
+  if (output !== undefined && output !== null && !isRecord(output)) {
+    return { worktreePath: asString(payload.worktreePath), summary: "" };
+  }
+  const result = isRecord(output) ? asString(output.result) : "";
+  return {
+    worktreePath: asString(payload.worktreePath),
+    summary: `${asString(payload.detail)} ${result}`,
+  };
+}
+
+interface Capture {
+  status: number;
+  stdout: string;
+}
+
+// The environment goes across explicitly because Bun otherwise resolves a bare
+// command name against the PATH it captured at startup, so a caller that
+// adjusted PATH would reach a different binary than it meant to.
+function capture(cmd: string[], cwd?: string): Capture {
+  try {
+    const child = Bun.spawnSync({
+      cmd,
+      env: process.env,
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    return { status: child.exitCode, stdout: child.stdout.toString() };
+  } catch {
+    // Bun raises where the shell exited 127. A command that could not be run
+    // resolved nothing, which is the failure every caller here already handles.
+    return { status: 127, stdout: "" };
+  }
+}
+
+function lines(text: string): string[] {
+  return text.split("\n").filter((line) => line !== "");
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export interface Forge {
+  // The <owner>/<repo> slug for a repo root, empty when there is none.
+  slug(root: string): string;
+  branchPrs(slug: string, branch: string): Capture;
+  refState(slug: string, number: string): string;
+}
+
+// Slug lookups are memoized for the life of one run, negative results included:
+// the scan hits the same handful of repos repeatedly and each lookup is a
+// subprocess.
+export function ghForge(): Forge {
+  const slugs = new Map<string, string>();
+  return {
+    slug(root: string): string {
+      if (root === "" || !isDirectory(root)) return "";
+      const cached = slugs.get(root);
+      if (cached !== undefined) return cached;
+      const view = capture(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+        root,
+      );
+      const slug = view.stdout.trim();
+      slugs.set(root, slug);
+      return slug;
+    },
+    branchPrs(slug: string, branch: string): Capture {
+      return capture([
+        "gh",
+        "pr",
+        "list",
+        "--repo",
+        slug,
+        "--head",
+        branch,
+        "--state",
+        "all",
+        "--json",
+        "number,state",
+        "--jq",
+        '.[] | "\\(.number)\\t\\(.state)"',
+      ]);
+    },
+    refState(slug: string, number: string): string {
+      const view = capture([
+        "gh", "pr", "view", number, "--repo", slug, "--json", "state", "--jq", ".state",
+      ]);
+      return view.stdout.trim();
+    },
+  };
+}
+
+// Every PR an agent produced, in discovery order: the branch query first, then
+// the summary references. Refs that fail to resolve (issue numbers, another
+// repo's numbering) are dropped rather than treated as blocking.
+export function agentPrs(forge: Forge, slug: string, branch: string, summary: string): Pr[] {
+  const seen = new Set<string>();
+  const prs: Pr[] = [];
+
+  if (slug !== "" && branch !== "") {
+    // The query's exit status is what separates a failed lookup from a branch
+    // that genuinely has no PR. Both are empty output, and treating the failure
+    // as "no PRs" would hide an open PR and let the agent classify as stale.
+    const listing = forge.branchPrs(slug, branch);
+    if (listing.status !== 0) {
+      prs.push({ number: "-", state: "ERROR" });
+    } else {
+      for (const line of lines(listing.stdout)) {
+        const [number, state] = line.split("\t");
+        if (!number) continue;
+        seen.add(`${slug}#${number}`);
+        prs.push({ number, state: state ?? "" });
+      }
+    }
+  }
+
+  for (const ref of summaryPrRefs(summary, slug)) {
+    const key = `${ref.slug}#${ref.number}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const state = forge.refState(ref.slug, ref.number);
+    if (state === "") continue;
+    prs.push({ number: ref.number, state });
+  }
+
+  return prs;
+}
+
+function agentHome(): string {
+  return process.env.HOME || homedir();
+}
+
+function readAgentState(id: string): AgentState {
+  try {
+    const path = join(agentHome(), ".claude", "jobs", id, "state.json");
+    return parseAgentState(readFileSync(path, "utf8"));
+  } catch {
+    return { worktreePath: "", summary: "" };
+  }
+}
+
+export function classifyCandidate(forge: Forge, agent: Candidate, now: number): Row {
+  const state = readAgentState(agent.id);
+
+  // The worktree path is the branch signal, not cwd: a finished agent reports
+  // cwd as the repo root even when it worked in a worktree.
+  const worktree = splitWorktreePath(state.worktreePath || agent.cwd);
+  const root = worktree ? worktree.root : agent.cwd;
+  const branch = worktree ? worktree.branch : "";
+
+  const prs = agentPrs(forge, forge.slug(root), branch, state.summary);
+  const decision = classifyAgent(prs.map((pr) => pr.state));
+
+  return {
+    id: agent.id,
+    name: agent.name,
+    age: formatAge(now - Math.trunc(agent.started / 1000)),
+    prs: prDisplay(prs),
+    action: decision.action,
+    reason: decision.reason,
+  };
+}
+
+export function decisionTable(rows: Row[]): string {
+  const table = [["ID", "NAME", "AGE", "PRS", "DECISION", "REASON"]];
+  for (const row of rows) table.push([row.id, row.name, row.age, row.prs, row.action, row.reason]);
+  return columnize(table)
+    .map((line) => `${line}\n`)
+    .join("");
+}
+
+export function summaryLine(
+  counted: number,
+  verb: "removed" | "removable",
+  kept: number,
+  skipped: number,
+  failed: number,
+): string {
+  const notes: string[] = [];
+  if (kept) notes.push(`${kept} kept`);
+  if (skipped) notes.push(`${skipped} skipped: no PRs`);
+  if (failed) notes.push(`${failed} failed`);
+  const summary = `${plural(counted, "agent")} ${verb}`;
+  return notes.length === 0 ? summary : `${summary} (${notes.join(", ")})`;
+}
+
+function haveGum(): boolean {
+  return Bun.which("gum", { PATH: process.env.PATH }) !== null;
+}
+
+const BIN = dirname(realpathSync(import.meta.path));
+
+// A handful of gh calls per agent, so show progress. spin needs a command to
+// wrap and the scan runs in this process, so it wraps a poll on a sentinel this
+// process removes when the scan is done. The spinner is gated on a terminal and
+// on gum being installed, because gum 2 writes its frames to stderr regardless
+// and an unattended run would capture them as control characters.
+//
+// The poll watches this process as well as the sentinel. A `finally` unwinds a
+// throw but not a SIGKILL, and on the sentinel alone that leaves an sh and the
+// spinner wrapped around it repainting a terminal whose owner is gone. The shell
+// polled `kill -0` on the scan's pid and stopped the moment it died, however it
+// died.
+function startSpinner(title: string, sentinel: string): Promise<number> | undefined {
+  try {
+    writeFileSync(sentinel, "");
+    return Bun.spawn({
+      cmd: [
+        join(BIN, "spin"),
+        "--title",
+        title,
+        "--",
+        "/bin/sh",
+        "-c",
+        'while [ -e "$1" ] && kill -0 "$2" 2>/dev/null; do sleep 0.2; done',
+        "sh",
+        sentinel,
+        String(process.pid),
+      ],
+      env: process.env,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).exited;
+  } catch {
+    return undefined;
+  }
+}
+
+async function withSpinner<T>(title: string, scan: () => T): Promise<T> {
+  const sentinel = join(tmpdir(), `claude-prune-agents.${process.pid}.spin`);
+  const spinner = startSpinner(title, sentinel);
+  try {
+    return scan();
+  } finally {
+    // Progress is the only thing at stake, so a spinner that never started
+    // leaves the scan to run without one.
+    rmSync(sentinel, { force: true });
+    await spinner;
+  }
+}
+
+// The stale set as a preselected checklist: enter accepts the batch, individual
+// rows can be deselected, and esc removes nothing. gum's exit status is not
+// checked, so an escape and a gum that could not run both come back as no
+// selection.
+function chooseStale(rows: Row[]): string[] {
+  const labels = columnize(rows.map((row) => [row.id, row.name, row.age, row.prs]));
+  const idByLabel = new Map(labels.map((label, index) => [label, rows[index].id]));
+
+  let chosen: string;
+  try {
+    chosen = Bun.spawnSync({
+      cmd: ["gum", "choose", "--no-limit", "--selected=*", "--header", "Select agents to remove"],
+      env: process.env,
+      stdin: Buffer.from(`${labels.join("\n")}\n`),
+      stdout: "pipe",
+      stderr: "inherit",
+    }).stdout.toString();
+  } catch {
+    return [];
+  }
+
+  const ids: string[] = [];
+  for (const line of lines(chosen)) {
+    const id = idByLabel.get(line);
+    if (id !== undefined) ids.push(id);
+  }
+  return ids;
+}
+
+interface Removal {
+  removed: number;
+  failed: number;
+  warnings: string[];
+}
+
+// `claude rm` owns the worktree and refuses when there are unpushed commits, so
+// it is the guard against destroying work. Its stdin is closed so it cannot
+// consume the caller's input or block on a prompt.
+function removeAgents(ids: string[]): Removal {
+  const removal: Removal = { removed: 0, failed: 0, warnings: [] };
+  const gum = Bun.which("gum", { PATH: process.env.PATH });
+
+  for (const id of ids) {
+    let status: number;
+    try {
+      status = Bun.spawnSync({
+        cmd: ["claude", "rm", id],
+        env: process.env,
+        stdio: ["ignore", "ignore", "ignore"],
+      }).exitCode;
+    } catch {
+      status = 127;
+    }
+    if (status === 0) {
+      removal.removed += 1;
+      continue;
+    }
+
+    removal.failed += 1;
+    const warning = `claude rm ${id} failed, likely unpushed commits`;
+    // The warning belongs on stderr whether or not gum is installed. Calling gum
+    // unconditionally answers a failed removal with `command not found` on a
+    // machine that has none.
+    if (gum) {
+      Bun.spawnSync({
+        cmd: [gum, "log", "--level", "warn", warning],
+        env: process.env,
+        stdio: ["ignore", "ignore", "inherit"],
+      });
+    } else {
+      removal.warnings.push(warning);
+    }
+  }
+  return removal;
+}
+
+interface Flags {
+  dryRun: boolean;
+  force: boolean;
+}
+
+type Arguments =
+  | { kind: "run"; flags: Flags }
+  | { kind: "help" }
+  | { kind: "unknown"; arg: string };
+
+// Hand-rolled rather than parseArgs: help is answered in argument order, there
+// is no `--` terminator, no clustering, and no --flag=value form.
+export function parseArguments(args: string[]): Arguments {
+  const flags: Flags = { dryRun: false, force: false };
+  for (const arg of args) {
+    switch (arg) {
+      case "-n":
+      case "--dry-run":
+        flags.dryRun = true;
+        break;
+      case "-f":
+      case "--force":
+        flags.force = true;
+        break;
+      case "-h":
+      case "--help":
+        return { kind: "help" };
+      default:
+        return { kind: "unknown", arg };
+    }
+  }
+  return { kind: "run", flags };
+}
+
+export async function run(
+  args: string[],
+  terminal = process.stderr.isTTY === true,
+): Promise<Outcome> {
+  const parsed = parseArguments(args);
+  if (parsed.kind === "help") return { status: 0, stdout: `${USAGE}\n`, stderr: "" };
+  if (parsed.kind === "unknown") {
+    return {
+      status: 1,
+      stdout: "",
+      stderr: `claude-prune-agents: unknown option: ${parsed.arg}\n`,
+    };
+  }
+  const { dryRun, force } = parsed.flags;
+
+  const listing = capture(["claude", "agents", "--json", "--all"]).stdout.replace(/\n+$/, "");
+  // A claude that is missing, broken, or unauthenticated produces empty output,
+  // which is indistinguishable here from a machine with no agents.
+  if (listing === "" || listing === "[]") return { status: 0, stdout: "no agents\n", stderr: "" };
+
+  const candidates = parseAgents(listing);
+  if (candidates === undefined) {
+    return {
+      status: 0,
+      stdout: "no completed agents\n",
+      stderr: "claude-prune-agents: could not read the agent list as JSON\n",
+    };
+  }
+  if (candidates.length === 0) return { status: 0, stdout: "no completed agents\n", stderr: "" };
+
+  const forge = ghForge();
+  const now = Math.floor(Date.now() / 1000);
+  const scan = () => candidates.map((agent) => classifyCandidate(forge, agent, now));
+  const rows =
+    terminal && haveGum()
+      ? await withSpinner(`Resolving PRs for ${candidates.length} agents`, scan)
+      : scan();
+
+  const stale = rows.filter((row) => row.action === "stale");
+  const kept = rows.filter((row) => row.action === "keep").length;
+  const skipped = rows.filter((row) => row.action === "skip").length;
+
+  let stdout = dryRun ? decisionTable(rows) : "";
+
+  let removeIds: string[] = [];
+  if (stale.length === 0 || dryRun) {
+    removeIds = [];
+  } else if (force) {
+    removeIds = stale.map((row) => row.id);
+  } else {
+    // Without a checklist there is no way to approve the batch, and silently
+    // removing nothing would read as "nothing was stale". Name the two flags
+    // that work without one instead.
+    if (!haveGum()) {
+      return {
+        status: 1,
+        stdout,
+        stderr:
+          "claude-prune-agents: gum is required to select interactively; use --force or --dry-run\n",
+      };
+    }
+    if (!terminal) {
+      return {
+        status: 1,
+        stdout,
+        stderr:
+          "claude-prune-agents: interactive selection needs a terminal; use --force or --dry-run\n",
+      };
+    }
+    removeIds = chooseStale(stale);
+  }
+
+  const removal = removeAgents(removeIds);
+
+  stdout += `${
+    dryRun
+      ? summaryLine(stale.length, "removable", kept, skipped, removal.failed)
+      : summaryLine(removal.removed, "removed", kept, skipped, removal.failed)
+  }\n`;
+
+  return {
+    status: 0,
+    stdout,
+    stderr: removal.warnings.map((warning) => `claude-prune-agents: ${warning}\n`).join(""),
+  };
+}
+
+// A decision table is unbounded in length, and through a real pipeline a write
+// takes only what fits in the buffer while process.exit discards what is queued
+// behind it.
+function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let written = 0;
+  try {
+    while (written < bytes.length) written += writeSync(fd, bytes, written);
+  } catch (error) {
+    // A reader that stops early, as `| head` does, closes the pipe under us.
+    // The shell died on SIGPIPE and said nothing; raising here would print a
+    // stack trace where it printed nothing and exit 1 where it exited 0.
+    if (isBrokenPipe(error)) return;
+    throw error;
+  }
+}
+
+function isBrokenPipe(error: unknown): boolean {
+  return isRecord(error) && (error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED");
+}
+
+if (import.meta.main) {
+  const outcome = await run(process.argv.slice(2));
+  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
+  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
+  process.exit(outcome.status);
+}
