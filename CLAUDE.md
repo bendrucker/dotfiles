@@ -64,7 +64,7 @@ Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`).
 
 Plugins are declared in `neovim/config/init.lua` with `vim.pack.add` and no `version`, so each tracks its default branch. The pin lives in `neovim/config/nvim-pack-lock.json`. That lockfile is authoritative when present, and `vim.pack` takes every revision from it while ignoring `version`. This is what lets a fresh machine reproduce an existing one.
 
-Updates are manual. Run `:lua vim.pack.update()`, review the confirmation buffer, `:write` to apply, then commit the lockfile diff. Renovate is not a fallback here, because nvim-treesitter publishes no tags on `main` (its tags sit on the diverged `master` branch) and lualine and vim-tmux-navigator publish no version tags at all.
+Updates are manual. Run `:lua vim.pack.update()`, review the confirmation buffer, `:write` to apply, then commit the lockfile diff. Renovate is not a fallback here, because nvim-treesitter publishes no tags on `main` (its tags sit on the diverged `master` branch) and lualine publishes no version tags at all.
 
 Treesitter parsers are built against a specific nvim-treesitter revision. They break when the plugin moves ahead of them. A `PackChanged` autocommand in `neovim/config/lua/config/treesitter.lua` re-runs `treesitter.update()` on every plugin change, and `neovim/spec/` asserts that each declared language ends up with a parser that attaches a highlighter.
 
@@ -93,7 +93,7 @@ Config and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev
 
 - **`dotfiles test`** — replaces the current shell with one using the dev working tree (temporary, session-only)
 - **`dotfiles dev enable`** — persistently repoints all symlinks (home and XDG) to the dev working tree and sets a flag so new shells load dev `.zsh` files. Undo with `dotfiles dev disable`.
-- **Source directly from the worktree** — for configs like tmux that support runtime reload, source the worktree file explicitly (e.g., `tmux source-file /path/to/worktree/tmux/tmux.conf`). Do **not** suggest `prefix+r` or `tmux source-file ~/.config/tmux/tmux.conf` — those follow the symlink to `~/.dotfiles`, not the worktree.
+- **Point the tool at the worktree file** — for a config the tool can reload at runtime, name the worktree path explicitly. A reload that names the installed path follows the symlink to `~/.dotfiles` and picks up the wrong copy.
 - Test dependencies: `bin/dotf` installs/updates packages
 
 ### Topic Integration Tests
@@ -152,7 +152,6 @@ This repo is public and installs identically on every machine. Anything specific
 | `~/Brewfile.local` | root `Brewfile`, last line | Employer-mandated and machine-specific packages |
 | `~/.config/git/config.local` | `git/config` `[include]` | Identity, credential helper, per-org `includeIf` identities. Template in `git/config.local.example` |
 | `~/.ssh/config.local` | `ssh/config` `Include` | Work hosts, jump hosts, the Secretive `Host *` fallback |
-| `~/.config/tmux/tmux.conf.local` | `tmux/tmux.conf` `source-file -q` | Per-machine tmux overrides |
 
 The two zsh hooks load at opposite ends. `~/.zshenv.local` comes after every `path.zsh` and can override `$PATH`. `~/.localrc` and `~/.zshrc.local` come before the topic `.zsh` files, so a topic file wins over anything they set.
 
@@ -218,15 +217,13 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 
 ### Config Reloads
 
-`bin/dotfiles-reload` runs every `<topic>/reload.sh`, so a config change reaches a program that has been running for weeks instead of waiting for a restart. `scripts/install` and `dotfiles dev enable|disable` call it directly. `bin/dotfiles-sync` calls it only when the pull moved the tree, and its `--bootstrap` path reaches it through `scripts/install` instead. `herdr/`, `tmux/`, and `terminal/` are the topics that have one.
+`bin/dotfiles-reload` runs every `<topic>/reload.sh`, so a config change reaches a program that has been running for weeks instead of waiting for a restart. `scripts/install` and `dotfiles dev enable|disable` call it directly. `bin/dotfiles-sync` calls it only when the pull moved the tree, and its `--bootstrap` path reaches it through `scripts/install` instead. `herdr/` and `terminal/` are the topics that have one.
 
 Every reload is in place. The program re-reads its config and keeps its state, sessions, and child processes. Nothing here may restart a server, kill a session, or drop in-flight work. This runs unattended from the 3am job, where a restart takes live work down with it, so a tool whose only path to new config is a restart gets no `reload.sh` and picks the change up on its next start.
 
 A `reload.sh` self-gates. Exit 0 without work when the tool isn't installed or isn't running, since a fresh machine and CI hit both cases. Assume roughly a minute of runtime: the dispatcher caps each script there so a wedged peer can't hang the nightly job.
 
 A failing `reload.sh` is contained on purpose. The dispatcher logs it and carries on to the rest, and both callers downgrade its exit status to a warning, so a broken reload never fails an install or the nightly job. Leave that alone. The install it follows has already succeeded, and stale in-memory config resolves itself the next time the program starts.
-
-Re-sourcing `tmux.conf` runs `theme-sync-tmux` near the end, so a tmux reload and a theme flip collide. Both take the lock in `scripts/lib/tmux-source-lock.sh`, and `tmux/reload.sh` additionally publishes its pid in `@tmux_config_reloading` so the nested run stands down rather than waiting out the lock timeout and stealing a lock still in use. Route any new re-source trigger through one of those two scripts.
 
 ## Stacked PRs
 
@@ -253,7 +250,7 @@ Shell startup time is CI-gated (<1s). Follow these rules to avoid regressions:
 - **All completions are deferred** — `completion.zsh` files are sourced via a one-shot `precmd` hook after the first prompt, not during startup. Put completion registrations (e.g., `eval "$(tool completion)"`, `compdef`) in `completion.zsh`, never in regular `.zsh` files.
 - **Use `compinit -C`** — skips the security audit on every startup (directory permission check). The full audit runs during `dotfiles-upgrade`.
 - **`path.zsh` is sourced only in `zshenv`** — `.zshrc` sources `.zshenv` when `DOTFILES_ZSHENV_RAN` is unset, and nothing else re-sources a path file. zsh reads its per-user `.zshenv` from `$ZDOTDIR`, `.zshenv` exports `ZDOTDIR`, and only `.zshrc` is installed there, so every zsh below the first one skips `.zshenv` and inherits a frozen `$PATH` that can predate a topic. Keep the marker unexported, or a child shell reads its parent's startup as its own. Installing a second `.zshenv` under `$ZDOTDIR` would fix the same thing by charging every `#!/usr/bin/env zsh` script ~110ms against the ~6ms a nested zsh costs now
-- **File naming matters** — the zshrc filter matches `completion.zsh` (singular). Files named `completions.zsh` (plural) will be sourced eagerly in the main loop, bypassing deferral. CI enforces this via `lint-completion-names`.
+- **File naming matters** — the zshrc filter matches `completion.zsh` (singular). Files named `completions.zsh` (plural) will be sourced eagerly in the main loop, bypassing deferral. CI enforces this in the `lint` job's completion-naming check.
 - **Defer everything interactive** — anything not needed before the first prompt (completions, key bindings that shell out, etc.) should run in the `precmd` deferred hook, not during startup
 - **Benchmarking**: `bench-startup` measures the current worktree; `bench-startup /path/to/other` compares two worktrees. Uses `ZDOTDIR` + `DOTFILES_USE_DEV` to isolate each worktree's rc files without modifying symlinks. Use `ZPROF=1 zsh -i -c exit` for per-file breakdown.
 

@@ -34,7 +34,7 @@ Describe "terminal glyphs"
   }
 
   It "reports an undeclared glyph in a file this repo renders"
-    When call scratch_repo rendered terminal/tmux.conf
+    When call scratch_repo rendered terminal/ghostty.config
     The status should be failure
     The output should include "U+F0A9F"
   End

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Open Claude Code's background-agent view, folding CLAUDE_AGENTS_ADD_DIR
+# (colon-separated) into repeated --add-dir flags so sessions dispatched from
+# the view inherit the curated tool-access dirs. Run by the popup binding in
+# config.toml.
+#
+# herdr's sidebar lists pane agents, which is a different population: a
+# background agent occupies no pane and never appears there.
+
+command -v claude >/dev/null 2>&1 || {
+  echo "herdr-claude-agents: claude is not on PATH" >&2
+  exit 1
+}
+
+args=()
+if [[ -n "${CLAUDE_AGENTS_ADD_DIR:-}" ]]; then
+  IFS=':' read -ra dirs <<< "$CLAUDE_AGENTS_ADD_DIR"
+  for d in "${dirs[@]}"; do
+    [[ -n "$d" ]] && args+=(--add-dir "$d")
+  done
+fi
+
+exec claude agents ${args[@]+"${args[@]}"}

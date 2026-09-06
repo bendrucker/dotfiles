@@ -45,7 +45,7 @@ wheels = [
 ]
 
 [[package]]
-name = "fzflinks"
+name = "herdr-links"
 version = "0"
 source = { virtual = "." }
 dependencies = [

@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Resolve the CGWindowID of the terminal window hosting a herdr workspace.
+#
+# herdr's server owns every pane, and it reparents to PID 1, so walking a pane's
+# ancestors stops at the server rather than reaching the terminal app. The window
+# title is what survives that: Ghostty renders "<host>: <workspace label>", so the
+# label from the snapshot identifies the window.
+#
+# Usage: find-herdr-window [workspace]
+#   find-herdr-window            # the focused workspace
+#   find-herdr-window w36        # by workspace id
+#   find-herdr-window dotfiles   # by label
+
+set -euo pipefail
+
+target="${1:-}"
+
+snapshot=$(herdr api snapshot) || {
+  echo "find-herdr-window: herdr is not running" >&2
+  exit 1
+}
+
+# Ghostty titles a window from the foreground program, which for a herdr pane is
+# "<host>: <cwd basename>" rather than the workspace label. The two coincide for
+# a worktree workspace and diverge otherwise, so both are match keys.
+read -r workspace_id label <<<"$(jq -r --arg t "$target" '
+  .result.snapshot as $s
+  | ( if $t == "" then
+        ($s.workspaces[] | select(.workspace_id == $s.focused_workspace_id))
+      else
+        ($s.workspaces[] | select(.workspace_id == $t or .label == $t))
+      end )
+  | [.workspace_id, .label] | @tsv
+  ' <<<"$snapshot" | head -n 1)"
+
+if [[ -z "${label:-}" || "$label" == "null" ]]; then
+  echo "find-herdr-window: no workspace matching '${target:-<focused>}'" >&2
+  exit 1
+fi
+
+# Every cwd basename under the workspace, so a window titled after any of its
+# panes still resolves.
+cwds=$(jq -r --arg w "$workspace_id" '
+  .result.snapshot as $s
+  | [$s.tabs[] | select(.workspace_id == $w) | .tab_id] as $tabs
+  | $s.panes[] | select(.tab_id as $t | $tabs | index($t)) | (.cwd // "")
+  | select(. != "") | split("/") | last
+  ' <<<"$snapshot" | sort -u | paste -sd '|' -)
+
+# Enumeration, the layer filter, and the set of terminal apps live in
+# list-terminal-windows. Scoring the JSON it already emits keeps one copy of all
+# three, and its output stays in front-to-back order, which is the tiebreak.
+windows=$("$(dirname "$0")/list-terminal-windows") || {
+  echo "find-herdr-window: could not enumerate terminal windows" >&2
+  exit 3
+}
+
+# A title equal to a key, or ending in ": <key>", is a real match. A substring
+# hit is weaker. Neither means the frontmost window is only a guess.
+result=$(jq -r --arg label "$label" --arg cwds "$cwds" '
+  ($cwds | split("|") | map(select(. != ""))) as $cwdlist
+  | (if $label == "" then $cwdlist else [$label] + $cwdlist end) as $keys
+  | def score:
+      . as $n
+      | if any($keys[]; . as $k | $n == $k or ($n | endswith(": " + $k))) then 2
+        elif any($keys[]; . as $k | $n | contains($k)) then 1
+        else 0 end;
+    [.[] | {id, score: (.name | score)}]
+  | if length == 0 then ""
+    else
+      (max_by(.score) | .score) as $top
+      | [.[] | select(.score == $top)] as $tied
+      | "\($tied[0].id) \($top) \($tied | length)"
+    end
+  ' <<<"$windows")
+
+if [[ -z "$result" ]]; then
+  echo "find-herdr-window: no on-screen terminal window found" >&2
+  exit 3
+fi
+
+read -r window_id matched tied <<<"$result"
+
+# A zero score means nothing in the title tied the window to this workspace, so
+# the answer is whichever terminal window happened to be frontmost. A tie at a
+# nonzero score means several windows match equally, which is what two checkouts
+# of the same repository produce. Say so either way rather than letting a
+# screenshot of the wrong window pass as the right one.
+if [[ "$matched" == "0" ]]; then
+  echo "find-herdr-window: no window title matches '$label'; guessing the frontmost terminal" >&2
+elif [[ "$tied" -gt 1 ]]; then
+  echo "find-herdr-window: $tied windows match '$label' equally; taking the frontmost" >&2
+fi
+
+echo "$window_id"

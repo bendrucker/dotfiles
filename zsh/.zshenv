@@ -9,7 +9,6 @@ source "${${(%):-%N}:A:h}/active-root.zsh"
 _dotfiles_resolve_root
 export ZSH="$REPLY"
 
-export DOTFILES_TMUX="$ZSH/tmux"
 
 export PROJECTS="$HOME/src"
 

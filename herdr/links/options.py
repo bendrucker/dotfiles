@@ -1,3 +1,5 @@
+# tmux is gone, so `get` now always takes the exception path and returns "",
+# which drops every scheme that needs an option.
 import functools
 import subprocess
 

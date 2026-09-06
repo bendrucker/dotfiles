@@ -29,6 +29,8 @@ Dispatch and monitor background agents (`claude --bg` / `claude agents`).
 
 `ca` opens the agent view. From there, logs, stop, and attach are a keypress away. Launch new agents with the `claude-launch` command below.
 
+herdr reaches the same view on `prefix+alt+a`, in a popup, through `herdr-claude-agents`. Its sidebar is no substitute: that lists the agent occupying each pane, and a background agent occupies none, so the view is the only place they appear.
+
 ### Launcher
 
 `claude-launch` walks you through a launch:
@@ -38,10 +40,6 @@ Dispatch and monitor background agents (`claude --bg` / `claude agents`).
 3. Write the task in an editor, pre-filled from the pasteboard when it looks like a task or URL.
 
 The agent is dispatched detached and its id is logged. Monitoring and attach happen in the built-in view, so the launcher stops there.
-
-### Tmux Popup and Status Chip
-
-`prefix a` opens the agent view in a popup, near-fullscreen on a narrow client. A  pill appears in the status bar while a background agent is waiting on your input, and disappears when none remain.
 
 ### Pruning
 

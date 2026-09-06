@@ -6,7 +6,7 @@ Describe "PATH"
 
   # Read out of the path.zsh files rather than listed here, so a topic added
   # later is covered without touching this spec. The set spans mise on both
-  # sides: herdr sorts before it, theme and tmux after.
+  # sides: herdr sorts before it, theme after.
   topic_bins() {
     grep -ho '\$ZSH/[A-Za-z0-9_.-]*/bin' "$root"/*/path.zsh | sort -u | sed "s|\\\$ZSH|$root|"
   }

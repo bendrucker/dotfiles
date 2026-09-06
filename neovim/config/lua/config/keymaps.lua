@@ -17,3 +17,9 @@ vim.keymap.set("x", "p", "P", { desc = "Paste over selection" })
 -- Only yanks reach the + register (see config.clipboard), so reading the system
 -- clipboard back is explicit. Insert-mode Cmd-V still works through the terminal.
 vim.keymap.set({ "n", "x" }, "<leader>p", '"+p', { desc = "Paste from clipboard" })
+
+-- herdr has no counterpart to these, so they move within nvim only. Leaving a
+-- split for a neighbouring pane goes through herdr's prefix.
+for _, key in ipairs({ "h", "j", "k", "l" }) do
+  vim.keymap.set("n", "<C-" .. key .. ">", "<C-w>" .. key, { desc = "Go to the split " .. key })
+end

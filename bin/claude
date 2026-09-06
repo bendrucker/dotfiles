@@ -26,17 +26,20 @@ fi
 
 # Function to check if we're truly in a remote session
 is_remote_session() {
-  # If we're in tmux, we need to be more careful
-  if [ -n "${TMUX:-}" ]; then
-    # In tmux, only consider it remote if SSH_TTY exists and matches current tty
+  # A multiplexer pane inherits the server's environment, not the attaching
+  # client's, so SSH_CLIENT and friends can be stale or absent regardless of how
+  # the user reached the pane. Require SSH_TTY to name this shell's own tty,
+  # which a pane's server-owned pty does not, so a pane is treated as local
+  # however the user reached it.
+  if [ -n "${HERDR_ENV:-}" ]; then
     current_tty="$(tty 2>/dev/null || echo "")"
     if [ -n "${SSH_TTY:-}" ] && [ -n "$current_tty" ] && [ "${SSH_TTY}" = "$current_tty" ]; then
       return 0  # true - remote session
     fi
-    return 1  # false - local tmux session
+    return 1  # false - local pane
   fi
 
-  # Not in tmux - use standard checks
+  # Outside a multiplexer the standard checks are reliable.
   if [ -n "${SSH_CLIENT:-}" ] || [ -n "${SSH_CONNECTION:-}" ] || [ -n "${SSH_TTY:-}" ] || \
      [ -n "${MOSH:-}" ] || [ -n "${MOSH_SERVER:-}" ] || \
      [ "${LC_IDENTIFICATION:-}" != "${LC_IDENTIFICATION#*mosh}" ]; then

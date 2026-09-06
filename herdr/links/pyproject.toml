@@ -1,5 +1,5 @@
 [project]
-name = "fzflinks"
+name = "herdr-links"
 version = "0"
 requires-python = ">=3.14"
 dependencies = [
