@@ -1,785 +1,811 @@
-#!/usr/bin/env zsh
-#
-# Install herdr's agent detection manifests with this repo's extra rules
-# appended.
-#
-# A local override at ~/.config/herdr/agent-detection/<agent>.toml replaces the
-# manifest herdr fetched rather than merging into it, so an override holding
-# only the extra rules would drop every upstream rule along with them. The
-# overlays under herdr/agent-detection therefore hold the extra rules alone,
-# and this composes them onto whatever herdr has cached, at install time.
-#
-#   sync    compose, install what changed, reload herdr
-#   check   report an install that has fallen behind its base manifest, a base
-#           manifest whose own working rules have moved, or a screen the overlay
-#           no longer scores the way it records
-#   verify  score every screen under herdr/agent-detection/screens/<agent>
-#           against the composed manifest and report the ones that disagree
-#   ablate  take each overlay rule out in turn and report which screens move,
-#           which is what says whether the rule is still worth carrying
-#
-# `sync` also files a to-do when a base manifest's working rules move, since an
-# upstream rule that reads the screen retires the overlay standing in for one.
-# Deleting an overlay is the whole removal: `sync` takes the file it generated
-# back out and herdr falls through to the manifest it fetched.
-#
-# The base is the manifest herdr cached from herdr.dev. herdr also carries a
-# bundled copy it prefers when the cache is behind it, and that one lives in the
-# binary with no path to read it from. So an override written in the window
-# between a herdr release and the matching remote publish holds the older rules.
-# herdr's own remote check closes the window without anyone doing anything.
+#!/usr/bin/env bun
+//
+// Install herdr's agent detection manifests with this repo's extra rules
+// appended.
+//
+// A local override at ~/.config/herdr/agent-detection/<agent>.toml replaces the
+// manifest herdr fetched rather than merging into it, so an override holding
+// only the extra rules would drop every upstream rule along with them. The
+// overlays under herdr/agent-detection therefore hold the extra rules alone,
+// and this composes them onto whatever herdr has cached, at install time.
+//
+//   sync    compose, install what changed, reload herdr
+//   check   report an install that has fallen behind its base manifest, a base
+//           manifest whose own working rules have moved, or a screen the overlay
+//           no longer scores the way it records
+//   verify  score every screen under herdr/agent-detection/screens/<agent>
+//           against the composed manifest and report the ones that disagree
+//   ablate  take each overlay rule out in turn and report which screens move,
+//           which is what says whether the rule is still worth carrying
+//
+// `sync` also files a to-do when a base manifest's working rules move, since an
+// upstream rule that reads the screen retires the overlay standing in for one.
+// Deleting an overlay is the whole removal: `sync` takes the file it generated
+// back out and herdr falls through to the manifest it fetched.
+//
+// The base is the manifest herdr cached from herdr.dev. herdr also carries a
+// bundled copy it prefers when the cache is behind it, and that one lives in the
+// binary with no path to read it from. So an override written in the window
+// between a herdr release and the matching remote publish holds the older rules.
+// herdr's own remote check closes the window without anyone doing anything.
+//
+// There are no flags, so the argument handling is a switch over one positional
+// rather than parseArgs: strict parsing would throw on `--help` where this has
+// always answered with the usage line and status 2.
+//
+// herdr is the only binary this still spawns, because it is the scorer and
+// nothing else can say what it does with a manifest. yq and jq are gone: see
+// scripts/lib/herdr-agent-manifest.ts for why parsing TOML in process is a
+// stricter guard than the yq call it replaces, not a looser one.
 
-set -uo pipefail
+import {
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { type Finding, finding, fingerprintOf } from "../scripts/lib/herdr-agent-findings.ts";
+import {
+  compose,
+  composeText,
+  isGenerated,
+  manifestVersion,
+  overlayWithout,
+  parseManifest,
+  recordedWorkingRuleIds,
+  ruleIdsOf,
+  stripTrailingNewlines,
+  versionOf,
+  workingRuleIds,
+} from "../scripts/lib/herdr-agent-manifest.ts";
+import {
+  malformedScreens,
+  readScreen,
+  screenField,
+  screenFiles,
+  screenName,
+  screensBehindClaude,
+  screensDir,
+} from "../scripts/lib/herdr-agent-screens.ts";
+import {
+  type ManifestUnderTest,
+  type Scoring,
+  scoreScreens,
+  servedManifest,
+} from "../scripts/lib/herdr-agent-scoring.ts";
+import { reportFailure, reportSuccess } from "../scripts/lib/report-failure.ts";
 
-dotfiles="${0:A:h:h}"
-overlay_dir="$dotfiles/herdr/agent-detection"
-cache_dir="${XDG_STATE_HOME:-$HOME/.local/state}/herdr/agent-detection/remote"
-install_dir="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/agent-detection"
-
-generated_marker="# Generated by bin/herdr-agent-detection"
-
-source "$dotfiles/scripts/lib/report-failure.sh"
-
-# Every reading of a manifest goes through yq. Without it the working rules come
-# back empty, which is indistinguishable from herdr having dropped them, and
-# both paths below would act on that: `sync` by filing a to-do saying herdr
-# changed, `check` by reporting the same.
-if ! command -v yq >/dev/null 2>&1; then
-  print -u2 -- "yq not found; cannot read herdr's agent manifests"
-  exit 1
-fi
-
-# jq reads herdr's own report of which manifest it ended up using. Missing, that
-# check cannot run, and a check that cannot run has to be loud for the same
-# reason as the one above rather than pass by default.
-if ! command -v jq >/dev/null 2>&1; then
-  print -u2 -- "jq not found; cannot read herdr's agent manifest status"
-  exit 1
-fi
-
-manifest_version () {
-  yq -p toml -r '.version // "unknown"' "$1" 2>/dev/null || print -r -- unknown
+// stdout and stderr both land in one launchd log, in the order the writes
+// happen, so lines go out as they are produced rather than being collected and
+// replayed in two blocks.
+export interface Writer {
+  out(line: string): void;
+  err(line: string): void;
 }
 
-# Both sides of the drift comparison sort here rather than one sorting in yq
-# and one in zsh. yq orders by codepoint and zsh by the locale's collation, and
-# the two disagree the moment an id carries an uppercase letter.
-sorted_words () {
-  local -a ids
-  ids=(${=1})
-  # Unquoted: quoting joins the array before (o) sees it, and sorting one
-  # element is a no-op. Nothing here can word-split or glob.
-  print -r -- ${(o)ids}
-}
+// ~/.dotfiles may be a symlink to the checkout, and the repo is the parent of
+// this file's directory, so the path has to be resolved rather than taken as
+// invoked.
+const REPO = dirname(dirname(realpathSync(import.meta.path)));
+const OVERLAY_DIR = join(REPO, "herdr", "agent-detection");
 
-# The ids of every rule in a manifest that can score `working`. Returns nonzero
-# when the manifest cannot be read, which callers must keep distinct from a
-# manifest that genuinely lists none: treating a parse failure as an empty set
-# reports it as herdr having dropped every working rule.
-manifest_working_rules () {
-  local ids
-  ids=$(yq -p toml -r '[.rules[] | select(.state == "working") | .id] | join(" ")' "$1" 2>/dev/null) || return 1
-  [[ "$ids" == "null" ]] && return 1
-  sorted_words "$ids"
-}
+const TODO_COMMAND = "herdr-agent-detection check";
 
-# The same set as the overlay recorded when it was written.
-overlay_working_rules () {
-  sorted_words "$(sed -n 's/^# base-working-rules: *//p' "$1" | head -1)"
-}
+// Whether a judgement landed, and what it found if it did. An unjudged
+// comparison is not a clean one: two empty score sets compare equal and would
+// report the overlay as dead.
+type Judgement = { judged: false } | { judged: true; finding?: Finding };
 
-compose () {
-  local agent="$1" base="$2" overlay="$3"
-  local base_text overlay_text
+// How far `sync` got with one agent. A break is an overlay that is not installed,
+// which is what the `did not install` to-do exists to surface.
+type Install = "unchanged" | "changed" | "broken";
 
-  # Read both before emitting anything, and fail the whole compose if either
-  # read fails. Streaming them straight to stdout would let a base that
-  # disappears or turns unreadable after the caller's existence check produce an
-  # overlay-only manifest: valid TOML, installs cleanly, and silently drops
-  # every upstream rule including the blocked-prompt ones. Composing exists to
-  # keep those, so anything less than both halves is not a manifest to install.
-  base_text=$(cat "$base") || return 1
-  overlay_text=$(cat "$overlay") || return 1
-  [[ -n "$base_text" && -n "$overlay_text" ]] || return 1
-
-  print -r -- "$generated_marker: herdr's cached $agent manifest"
-  print -r -- "# $(manifest_version "$base"), with herdr/agent-detection/$agent.toml appended. A local"
-  print -r -- '# override replaces the remote manifest rather than merging with it, so the whole'
-  print -r -- '# manifest has to be here. Edit the overlay in the dotfiles repo. Edits to this'
-  print -r -- '# file are overwritten by the next `herdr-agent-detection sync`.'
-  print
-  print -r -- "$base_text"
-  print
-  print -r -- "$overlay_text"
-}
-
-# Prints a line when herdr's own manifest no longer scores `working` from the
-# rules the overlay was written against, and nothing when it still does.
-# Returns nonzero when the manifest could not be read at all, which is a broken
-# install rather than a herdr that changed its mind, and reads identically if
-# they are allowed to share a code path.
-working_rule_drift () {
-  local agent="$1" base="$2" overlay="$3"
-  local recorded current
-
-  current=$(manifest_working_rules "$base") || return 1
-  recorded=$(overlay_working_rules "$overlay")
-  [[ "$recorded" == "$current" ]] && return 0
-
-  print -r -- "$agent: overlay was written against [$recorded], manifest $(manifest_version "$base") scores working from [$current]"
-}
-
-# Composing onto herdr's cache covers one of the two paths this script knows
-# only by convention. This covers the other: the directory it installs into.
-# A file written where herdr no longer looks composes, validates, and installs
-# without complaint, and herdr goes on reading the manifest it fetched, so the
-# detection gap comes back looking like herdr never had the rule.
-#
-# Prints a line when herdr reports it is reading something else, nothing when it
-# reports ours, and returns nonzero when herdr cannot be asked at all. The
-# server is not running during every install, and no answer must not read as a
-# bad one.
-override_not_served () {
-  local agent="$1"
-  local installed="$install_dir/$agent.toml"
-  local serving
-
-  serving=$(herdr server agent-manifests --json 2>/dev/null |
-    jq -er --arg agent "$agent" \
-      '.result.manifests[] | select(.agent == $agent) | .source' 2>/dev/null) || return 1
-
-  [[ "$serving" == "$installed" ]] && return 0
-  print -r -- "$agent: herdr is reading $serving, not $installed"
-}
-
-# A screen is a pane capture with every line prefixed `|>`, under `# key: value`
-# metadata. The prefix is not decoration: without it these files hold spinner
-# lines and agent-tree rows at column 0, which is exactly what the rules match,
-# so opening one in a pane would pin that pane at working while it sat idle. Two
-# characters rather than one, because a bare `|` reproduces the
-# `<non-space><space>` opening the spinner rule keys on.
-#
-# They sit per agent, since a screen only means anything against the CLI that
-# drew it. An agent with no screens scores nothing, which every caller below
-# treats as an answer it could not get rather than as a clean result.
-screens_dir () {
-  print -r -- "$dotfiles/herdr/agent-detection/screens/$1"
-}
-
-fixture_screen () {
-  sed -n 's/^|>//p' "$1"
-}
-
-fixture_field () {
-  sed -n "s/^# $2: *//p" "$1" | head -1
-}
-
-# Prints a line per screen whose shape the harness cannot trust, and nothing
-# when every one is well formed.
-#
-# Both failures below score without complaint, and both report as a rule that
-# stopped matching. A line missing its `|>` is dropped rather than kept, so the
-# screen loses a row and every line-counted region under it shifts; a missing
-# `# state:` compares against the empty string and names the screen in a
-# mismatch that reads exactly like a real regression.
-malformed_screens () {
-  local agent="$1" screen key
-
-  for screen in "$(screens_dir "$agent")"/*.txt(N); do
-    for key in state claude-code; do
-      [[ -n "$(fixture_field "$screen" "$key")" ]] ||
-        print -r -- "$agent: ${screen:t} has no \`# $key:\` line"
-    done
-    grep -qv '^|>' -- "$screen" &&
-      grep -v '^|>' -- "$screen" | grep -qv '^#' &&
-      print -r -- "$agent: ${screen:t} has a line that is neither \`|>\` screen text nor \`#\` metadata"
-  done
-}
-
-# `<name> <state>` a line, for every screen scored against `manifest`.
-#
-# herdr reads an agent manifest out of $XDG_CONFIG_HOME, so a throwaway one puts
-# the manifest under test in front of herdr without touching what is installed.
-score_screens () {
-  local agent="$1" manifest="$2" sandbox screen name output served st
-
-  sandbox=$(mktemp -d "${TMPDIR:-/tmp}/herdr-detection.XXXXXX") || return 1
-  mkdir -p "$sandbox/herdr/agent-detection" &&
-    cp "$manifest" "$sandbox/herdr/agent-detection/$agent.toml" || {
-      rm -rf "$sandbox"
-      return 1
-    }
-
-  for screen in "$(screens_dir "$agent")"/*.txt(N); do
-    name="${screen:t:r}"
-    fixture_screen "$screen" >"$sandbox/screen.txt"
-    output=$(XDG_CONFIG_HOME="$sandbox" herdr agent explain \
-      --file "$sandbox/screen.txt" --agent "$agent" 2>/dev/null)
-    served=$(print -r -- "$output" | sed -n 's/^manifest: //p')
-    st=$(print -r -- "$output" | sed -n 's/^state: //p')
-
-    # herdr ignores an override it cannot parse and reads the manifest it
-    # fetched instead, which scores every screen against upstream while reading
-    # as a result for the manifest under test. Taking a rule out to find what it
-    # is worth is precisely the operation that produces unparseable TOML, so
-    # every score below is worthless without this. herdr marks the fallback by
-    # prefixing the path it reports with `remote:`.
-    if [[ "$served" == remote:* ]]; then
-      print -u2 -- "herdr fell back to its own manifest; $manifest did not load"
-      rm -rf "$sandbox"
-      return 1
-    fi
-
-    # A herdr that answered nothing at all, because its server is down or the
-    # binary is broken. Emitting the empty state would let every caller compare
-    # empty against empty: the redundancy check would find both sides equal and
-    # report the overlay dead, and ablation would report every rule as moving
-    # nothing. A scorer that failed must not read as evidence a rule is unused.
-    if [[ -z "$st" ]]; then
-      print -u2 -- "herdr scored no state for $name against $manifest"
-      rm -rf "$sandbox"
-      return 1
-    fi
-
-    print -r -- "$name $st"
-  done
-
-  rm -rf "$sandbox"
-}
-
-# Fills the caller's `scores` associative array, and returns nonzero unless
-# every screen came back with a state. zsh scopes dynamically, so the caller
-# declaring `local -A scores` is the array this writes.
-#
-# Every caller goes through here rather than reading `score_with_overlay`
-# itself, because the check is easy to leave out and silent when it is missing.
-# `score_screens` gives up partway through the moment herdr stops answering, so
-# a short read is a scorer that failed rather than screens that scored nothing,
-# and the difference decides whether `ablate` is naming a rule that can go or
-# reporting a herdr that was not running. The exit status cannot say so here,
-# since a process substitution discards it, which is why the count is what this
-# compares.
-read_scores () {
-  local agent="$1" overlay="$2" name st
-  local -a screens
-
-  screens=("$(screens_dir "$agent")"/*.txt(N))
-  scores=()
-  while read -r name st; do
-    scores[$name]=$st
-  done < <(score_with_overlay "$agent" "$overlay")
-
-  (( ${#scores} == ${#screens} ))
-}
-
-# The same, for the base manifest with `overlay` appended. An empty overlay
-# scores the base alone, which is what herdr would report with nothing installed.
-score_with_overlay () {
-  local agent="$1" overlay="$2" manifest rc
-
-  manifest=$(mktemp "${TMPDIR:-/tmp}/herdr-manifest.XXXXXX") || return 1
-  if [[ -n "$overlay" ]]; then
-    compose "$agent" "$cache_dir/$agent.toml" "$overlay" >"$manifest"
-  else
-    cat "$cache_dir/$agent.toml" >"$manifest"
-  fi || { rm -f "$manifest"; return 1 }
-
-  score_screens "$agent" "$manifest"
-  rc=$?
-  rm -f "$manifest"
-  return $rc
-}
-
-# The overlay with one rule taken out. Splitting the text rather than
-# round-tripping through yq is what keeps the rule documentation: yq parses TOML
-# into a data model that has no place for a comment and emits none, and this
-# file is mostly comments. Losing them changes nothing about how the remaining
-# rules score, and it makes the ablated overlay unreadable when a run wants
-# looking at.
-overlay_without () {
-  awk -v target="$2" '
-    /^\[\[rules\]\]/ {
-      if (inblock && !drop) printf "%s", buf
-      inblock = 1; drop = 0; buf = $0 "\n"; next
-    }
-    {
-      if (!inblock) { print; next }
-      if ($0 == "id = \"" target "\"") drop = 1
-      buf = buf $0 "\n"
-    }
-    END { if (inblock && !drop) printf "%s", buf }
-  ' "$1"
-}
-
-# Prints a line per screen the overlay scores differently from what it records,
-# and nothing when every one agrees.
-verify_agent () {
-  local agent="$1" screen name expected failed=0
-  local -a screens
-  local -A scores
-
-  # An agent with no screens has nothing to verify, which is the same answer
-  # `overlay_redundant` gives it. An overlay arrives before its captures do.
-  screens=("$(screens_dir "$agent")"/*.txt(N))
-  (( ${#screens} )) || return 0
-
-  if ! read_scores "$agent" "$overlay_dir/$agent.toml"; then
-    print -r -- "$agent: herdr scored only ${#scores} of ${#screens} screens, so none of them can be judged"
-    return 1
-  fi
-
-  for screen in $screens; do
-    name="${screen:t:r}"
-    expected=$(fixture_field "$screen" state)
-    [[ "${scores[$name]}" == "$expected" ]] && continue
-    print -r -- "$agent: $name scores ${scores[$name]}, and records $expected"
-    failed=1
-  done
-
-  return $failed
-}
-
-# What each overlay rule is still worth, measured by taking it out and rescoring
-# every screen. Nothing else answers it: a rule goes dead because herdr started
-# scoring the same screen itself, or because a sibling rule grew to cover it, and
-# reading the manifest shows neither. A rule that moves no screen is deletable,
-# and deleting it is the whole removal, since `sync` composes what is left.
-ablate_agent () {
-  local agent="$1"
-  local overlay="$overlay_dir/$agent.toml"
-  local rule name reduced moved label
-  local -a rules
-  local -A baseline scores
-
-  if ! read_scores "$agent" "$overlay"; then
-    print -u2 -- "$agent: herdr scored only ${#scores} screens, so nothing can be ablated"
-    return 1
-  fi
-  baseline=(${(kv)scores})
-
-  print -r -- "$agent: ${#baseline} screens, manifest $(manifest_version "$cache_dir/$agent.toml")"
-
-  # The empty id stands for the overlay as a whole, which is the question the
-  # drift check only approximates: herdr may score these screens without any of
-  # it. Quoted expansion, or the for loop drops the empty element.
-  rules=(${(f)"$(yq -p toml -r '.rules[].id' "$overlay" 2>/dev/null)"} '')
-  for rule in "${rules[@]}"; do
-    if [[ -n "$rule" ]]; then
-      label="without $rule"
-      reduced=$(mktemp "${TMPDIR:-/tmp}/herdr-overlay.XXXXXX") || return 1
-      overlay_without "$overlay" "$rule" >"$reduced"
-    else
-      label="without the overlay"
-      reduced=''
-    fi
-
-    if ! read_scores "$agent" "$reduced"; then
-      [[ -n "$reduced" ]] && rm -f "$reduced"
-      print -u2 -- "$agent: herdr scored only ${#scores} screens $label, so it cannot be judged"
-      return 1
-    fi
-    [[ -n "$reduced" ]] && rm -f "$reduced"
-
-    print -r -- "  $label"
-    moved=0
-    for name in ${(ok)baseline}; do
-      [[ "${scores[$name]}" == "${baseline[$name]}" ]] && continue
-      moved=1
-      print -r -- "    $name: ${baseline[$name]} → ${scores[$name]}"
-    done
-    (( moved )) || print -r -- "    no screen moves; it earns nothing the rest do not"
-  done
-}
-
-# Prints a line when herdr scores every screen the same with the overlay and
-# without it, and nothing while the overlay still moves one.
-#
-# This is what the working-rule drift check only approximates. herdr can start
-# scoring these screens correctly without adding a rule, by fixing how an
-# existing one matches, and the set of working rule ids does not move when it
-# does. Left to the id set alone the overlay would go on shadowing the fix.
-#
-# Returns nonzero when either side could not be scored, which callers keep
-# distinct from a judged answer for the same reason as the drift check: two
-# empty score sets compare equal and would report the overlay as dead.
-overlay_redundant () {
-  local agent="$1" name
-  local -a screens
-  local -A with scores
-
-  # An agent with no screens has nothing to measure, which is not the same as a
-  # measurement that failed. Reporting it as unjudgeable would pin the drift
-  # latch open for good the first time an overlay arrives without captures.
-  screens=("$(screens_dir "$agent")"/*.txt(N))
-  (( ${#screens} )) || return 0
-
-  read_scores "$agent" "$overlay_dir/$agent.toml" || return 1
-  with=(${(kv)scores})
-  read_scores "$agent" '' || return 1
-
-  for name in ${(k)with}; do
-    [[ "${with[$name]}" == "${scores[$name]}" ]] || return 0
-  done
-
-  print -r -- "$agent: herdr scores every screen under $(screens_dir "$agent") the same with the overlay and without it"
-}
-
-# The screens are pane captures, so they age with the CLI that drew them. Claude
-# Code moving past all of them is the signal to recapture, because the rules may
-# be matching chrome it no longer draws.
-#
-# Compared at minor version. Claude Code ships patches most days and its chrome
-# does not move on that cadence, so comparing the full version would file a to-do
-# nightly and teach whoever reads it to close this one unread.
-#
-# Only claude, since the version has to come from the CLI itself and this is the
-# one whose command is known. Another agent's screens age the same way and go
-# unwatched until someone writes the probe for it.
-screens_behind_claude () {
-  local agent="$1" installed newest screen
-  local -a versions
-
-  [[ "$agent" == claude ]] || return 0
-  command -v claude >/dev/null 2>&1 || return 0
-  installed=$(claude --version 2>/dev/null | awk '{print $1}')
-  [[ -n "$installed" ]] || return 0
-
-  for screen in "$(screens_dir "$agent")"/*.txt(N); do
-    versions+=("$(fixture_field "$screen" claude-code)")
-  done
-  (( ${#versions} )) || return 0
-
-  # Only when Claude Code is ahead. A machine pinned to an older release than the
-  # screens were taken on has nothing to recapture, and an equality test would
-  # send it the same to-do with the sentence pointing the wrong way.
-  newest=${${(On)versions}[1]}
-  autoload -Uz is-at-least
-  is-at-least "${installed%.*}" "${newest%.*}" && return 0
-  print -r -- "screens were captured under Claude Code $newest, this machine runs $installed"
-}
-
-screens_explanation='The screens under `herdr/agent-detection/screens/claude` are pane captures, and Claude
+const SCREENS_EXPLANATION = `The screens under \`herdr/agent-detection/screens/claude\` are pane captures, and Claude
 Code has drawn a new minor version since the newest of them. The overlay reads
 the screen, so chrome that moved is a rule that silently stopped matching.
 
 ## What to do
 
-Capture the cases again with `herdr pane read <pane> --source detection` and
-refresh the files, keeping the `|>` prefix and the `# claude-code:` line. Then
-run `herdr-agent-detection ablate`: a rule that no longer moves any screen is
-one to delete rather than to repair.'
+Capture the cases again with \`herdr pane read <pane> --source detection\` and
+refresh the files, keeping the \`|>\` prefix and the \`# claude-code:\` line. Then
+run \`herdr-agent-detection ablate\`: a rule that no longer moves any screen is
+one to delete rather than to repair.`;
 
-drift_explanation='The overlays under `herdr/agent-detection` carry detection rules herdr'\''s own
+const DRIFT_EXPLANATION = `The overlays under \`herdr/agent-detection\` carry detection rules herdr's own
 manifests are missing. Something about herdr has moved, so an overlay may now be
 redundant.
 
 ## What to do
 
-Run `herdr-agent-detection ablate`. It takes each overlay rule out in turn and
+Run \`herdr-agent-detection ablate\`. It takes each overlay rule out in turn and
 names the screens that change state, so a rule that moves none is one to delete.
 Deleting it is the whole removal: the next install composes what is left, and a
 whole overlay removed takes its installed file with it.
 
 A finding that says herdr scores every screen the same either way means the
 overlay is dead outright. A finding naming a changed set of working rule ids
-means only that the ids moved, which `ablate` will say is a real overlap or not.
-When it is not, update the `# base-working-rules:` line to the new set. Either
-way the to-do clears on the next install.'
+means only that the ids moved, which \`ablate\` will say is a real overlap or not.
+When it is not, update the \`# base-working-rules:\` line to the new set. Either
+way the to-do clears on the next install.`;
 
-broken_explanation='`herdr-agent-detection sync` could not install an overlay, so herdr is reading
+const BROKEN_EXPLANATION = `\`herdr-agent-detection sync\` could not install an overlay, so herdr is reading
 whatever it composed last, however old that is. Nothing else reports this:
-`install.sh` prints the failure and carries on so one broken overlay cannot
+\`install.sh\` prints the failure and carries on so one broken overlay cannot
 abort the dotfiles install.
 
 ## What to do
 
-Run the command above. It names the agent and the reason. The usual causes are
-a cached manifest herdr wrote in a shape yq cannot read, and an unwritable
-`~/.config/herdr/agent-detection`.'
+Run the command above. It names the agent and the reason. The usual causes are a
+cached manifest herdr wrote in a shape no TOML parser can read, an unwritable
+\`~/.config/herdr/agent-detection\`, and a hand-written override sitting where the
+composed one goes, which this refuses to overwrite every run until someone moves
+it.`;
 
-# Two to-dos on two latches rather than one on either. A compose failure and a
-# herdr that changed its rules want different things done about them, and a
-# shared latch would let whichever fired first suppress the other.
-report_job () {
-  local job="$1" title="$2" explanation="$3" findings="$4" revision
-
-  if [[ -z "$findings" ]]; then
-    report_success "$job"
-    return 0
-  fi
-
-  revision=$(git -C "$dotfiles" rev-parse --short HEAD 2>/dev/null || print -r -- unknown)
-  report_failure "$job" \
-    "$title" \
-    "herdr-agent-detection check" \
-    "$findings" \
-    "$revision" \
-    "$explanation" \
-    "Findings"
+function cacheDir(): string {
+  const state =
+    process.env.XDG_STATE_HOME || join(process.env.HOME || homedir(), ".local", "state");
+  return join(state, "herdr", "agent-detection", "remote");
 }
 
-sync_agent () {
-  local agent="$1"
-  local base="$cache_dir/$agent.toml" installed="$install_dir/$agent.toml"
-  local composed
-
-  if [[ ! -s "$base" ]]; then
-    # Nothing cached and nothing installed is a machine that has not run herdr
-    # yet, and the first run fixes it. Nothing cached with a generated file
-    # already in place is the opposite: herdr is reading a composed manifest
-    # that can no longer be rebuilt, from a cache path this script only knows
-    # by convention. Every other path here would leave that quiet, so it has to
-    # be a failure, or the to-do that exists to report it clears as success.
-    if [[ -f "$installed" ]] && is_generated "$installed"; then
-      print -u2 -- "herdr has no cached $agent manifest, so $installed can no longer be recomposed"
-      return 1
-    fi
-    print -u2 -- "herdr has no cached $agent manifest; nothing to compose"
-    return 0
-  fi
-
-  # `remove_orphans` will not delete a file this script did not write, so
-  # neither should this overwrite one. A hand-written override is someone's
-  # deliberate work, and silently replacing it is the same data loss either way.
-  if [[ -f "$installed" ]] && ! is_generated "$installed"; then
-    print -u2 -- "$installed was not written by this script; leaving it alone"
-    return 1
-  fi
-
-  if ! composed=$(compose "$agent" "$base" "$overlay_dir/$agent.toml"); then
-    print -u2 -- "could not read the $agent manifest or overlay; leaving $installed as it is"
-    return 1
-  fi
-
-  # herdr ignores an override it cannot parse, which looks from the sidebar
-  # exactly like the detection gap the overlay exists to close.
-  if ! print -r -- "$composed" | yq -p toml >/dev/null 2>&1; then
-    print -u2 -- "composed $agent manifest is not valid TOML; leaving $installed as it is"
-    return 1
-  fi
-
-  [[ -f "$installed" && "$composed" == "$(<"$installed")" ]] && return 0
-
-  mkdir -p "$install_dir"
-  print -r -- "$composed" >"$installed" || return 1
-  print -r -- "› herdr agent-detection: $agent composed from $(manifest_version "$base")"
-  installed_any=1
+function installDir(): string {
+  const config = process.env.XDG_CONFIG_HOME || join(process.env.HOME || homedir(), ".config");
+  return join(config, "herdr", "agent-detection");
 }
 
-is_generated () {
-  [[ "$(head -1 "$1")" == "$generated_marker"* ]]
+// The set of agents is exactly the overlays this repo carries.
+function overlayAgents(): string[] {
+  return tomlNames(OVERLAY_DIR);
 }
 
-# A deleted overlay has to take its installed file with it, or herdr keeps
-# reading a frozen copy of the manifest it fetched the day the overlay went in.
-# Only files this script wrote are eligible: anything hand-written under
-# $install_dir belongs to whoever put it there.
-remove_orphans () {
-  local installed agent
-
-  for installed in "$install_dir"/*.toml(N); do
-    agent="${installed:t:r}"
-    [[ -f "$overlay_dir/$agent.toml" ]] && continue
-    is_generated "$installed" || continue
-
-    rm -f "$installed" || return 1
-    print -r -- "› herdr agent-detection: removed $agent, its overlay is gone"
-    installed_any=1
-  done
+function herdrCommand(): string | null {
+  return Bun.which("herdr", { PATH: process.env.PATH });
 }
 
-check_agent () {
-  local agent="$1"
-  local base="$cache_dir/$agent.toml" installed="$install_dir/$agent.toml"
-  local drift redundant unserved
-
-  if [[ ! -s "$base" ]]; then
-    print -r -- "$agent: herdr has no cached manifest to compose from"
-    return 1
-  fi
-
-  if ! drift=$(working_rule_drift "$agent" "$base" "$overlay_dir/$agent.toml"); then
-    print -r -- "$agent: cached manifest could not be read, so drift cannot be judged"
-    return 1
-  fi
-  [[ -n "$drift" ]] && print -r -- "$drift"
-
-  if [[ ! -f "$installed" ]]; then
-    print -r -- "$agent: nothing installed at $installed"
-    return 1
-  fi
-
-  if [[ "$(compose "$agent" "$base" "$overlay_dir/$agent.toml")" != "$(<"$installed")" ]]; then
-    print -r -- "$agent: $installed is behind manifest $(manifest_version "$base") or the overlay"
-    return 1
-  fi
-
-  if unserved=$(override_not_served "$agent"); then
-    if [[ -n "$unserved" ]]; then
-      print -r -- "$unserved"
-      return 1
-    fi
-  fi
-
-  # Last, because it is the only check here that shells out once per screen, and
-  # because a failure to score would otherwise mask the cheaper findings above.
-  if command -v herdr >/dev/null 2>&1; then
-    if ! redundant=$(overlay_redundant "$agent"); then
-      print -r -- "$agent: screens could not be scored, so redundancy cannot be judged"
-      return 1
-    fi
-    [[ -n "$redundant" ]] && print -r -- "$redundant"
-  fi
-
-  [[ -z "$drift$redundant" ]]
+// The manifest herdr should score against: the cached base with `overlayText`
+// appended.
+function composedManifest(
+  agent: string,
+  overlayText: string,
+  label: string,
+): ManifestUnderTest | undefined {
+  const base = readText(join(cacheDir(), `${agent}.toml`));
+  if (base === undefined) return undefined;
+  const composed = composeText(agent, base, overlayText);
+  return composed === undefined ? undefined : { label, text: `${composed}\n` };
 }
 
-overlays=("$overlay_dir"/*.toml(N))
+// The cached base alone, which is what herdr would read with nothing installed.
+// It is the second reading the redundancy check compares against.
+function baseManifest(agent: string, label: string): ManifestUnderTest | undefined {
+  const base = readText(join(cacheDir(), `${agent}.toml`));
+  return base === undefined ? undefined : { label, text: base };
+}
 
-case "${1:-sync}" in
-  sync)
-    if ! command -v herdr >/dev/null 2>&1; then
-      print -u2 -- "herdr not found; skipping agent detection overlays"
-      exit 0
-    fi
+function readScores(
+  agent: string,
+  screens: string[],
+  manifest: ManifestUnderTest | undefined,
+  io: Writer,
+): Scoring {
+  if (manifest === undefined) return { ok: false, scores: new Map() };
+  return scoreScreens(agent, manifest, screens, (line) => io.err(line));
+}
 
-    # launchd watches this directory to rerun sync the moment herdr fetches a
-    # manifest, and it can only watch a path that exists. herdr creates it on
-    # its first run, which may come after this one on a new machine.
-    mkdir -p "$cache_dir"
+// Whether herdr's own manifest still scores `working` from the rules the overlay
+// was written against. A base that cannot be read is a broken install rather than
+// a herdr that changed its mind, and the two read identically if they share a
+// code path.
+function workingRuleDrift(agent: string): Judgement {
+  const baseText = readText(join(cacheDir(), `${agent}.toml`));
+  if (baseText === undefined) return { judged: false };
 
-    installed_any=0
-    evaluated=0
-    drifts=()
-    breaks=()
-    screen_findings=()
+  const current = workingRuleIds(baseText);
+  if (current === undefined) return { judged: false };
 
-    for overlay in $overlays; do
-      agent="${overlay:t:r}"
-      sync_agent "$agent" ||
-        breaks+=("$agent: could not compose or install, see the run output")
+  const recorded = recordedWorkingRuleIds(readText(join(OVERLAY_DIR, `${agent}.toml`)) ?? "");
+  if (recorded.join(" ") === current.join(" ")) return { judged: true };
 
-      [[ -s "$cache_dir/$agent.toml" ]] || continue
-      drift_judged=0
-      redundancy_judged=0
-      if drift=$(working_rule_drift "$agent" "$cache_dir/$agent.toml" "$overlay"); then
-        drift_judged=1
-        [[ -n "$drift" ]] && drifts+=("$drift")
-      else
-        breaks+=("$agent: cached manifest could not be read, so drift cannot be judged")
-      fi
+  // Keyed on the two rule id sets that disagree. The manifest version says which
+  // fetch to look at and belongs in the message, but it moves on every fetch
+  // whether or not the disagreement changed, so it stays out of the key.
+  return {
+    judged: true,
+    finding: finding(
+      `${agent}: overlay was written against [${recorded.join(" ")}], ` +
+        `manifest ${versionOf(baseText)} scores working from [${current.join(" ")}]`,
+      `${agent}: overlay [${recorded.join(" ")}] vs manifest [${current.join(" ")}]`,
+    ),
+  };
+}
 
-      # A herdr that cannot score is not an install that failed, and `breaks`
-      # files the to-do that says it was. `score_screens` has already said so on
-      # stderr. What this owes is to leave the latch alone.
-      if redundant=$(overlay_redundant "$agent"); then
-        redundancy_judged=1
-        [[ -n "$redundant" ]] && drifts+=("$redundant")
-      fi
+// Whether herdr scores every screen the same with the overlay and without it.
+//
+// This is what the working-rule drift check only approximates. herdr can start
+// scoring these screens correctly without adding a rule, by fixing how an
+// existing one matches, and the set of working rule ids does not move when it
+// does. Left to the id set alone the overlay would go on shadowing the fix.
+function overlayRedundant(agent: string, io: Writer): Judgement {
+  const dir = screensDir(REPO, agent);
+  const screens = screenFiles(dir);
+  // An agent with no screens has nothing to measure, which is not the same as a
+  // measurement that failed. Reporting it as unjudgeable would pin the drift
+  // latch open for good the first time an overlay arrives without captures.
+  if (screens.length === 0) return { judged: true };
 
-      # Both comparisons have to land before the latch clears. Clearing it on a
-      # run that could judge neither would retire a standing to-do without
-      # anyone having looked at it.
-      (( drift_judged && redundancy_judged )) && evaluated=1
+  const overlayText = readText(join(OVERLAY_DIR, `${agent}.toml`));
+  if (overlayText === undefined) return { judged: false };
 
-      # Both describe a corpus that needs a person, so they share a to-do.
-      # Empty elements are dropped, since a command that found nothing prints an
-      # empty line and an empty finding would file the to-do on its own.
-      screen_findings+=(${(f)"$(malformed_screens "$agent")"})
-      screen_findings+=(${(f)"$(screens_behind_claude "$agent")"})
-    done
+  const withOverlay = readScores(
+    agent,
+    screens,
+    composedManifest(agent, overlayText, `the composed ${agent} manifest`),
+    io,
+  );
+  if (!withOverlay.ok) return { judged: false };
 
-    remove_orphans || breaks+=("could not remove a generated file whose overlay is gone")
+  const without = readScores(
+    agent,
+    screens,
+    baseManifest(agent, `herdr's cached ${agent} manifest`),
+    io,
+  );
+  if (!without.ok) return { judged: false };
 
-    (( installed_any )) &&
-      { herdr server reload-agent-manifests >/dev/null 2>&1 ||
-        print -u2 -- "could not reload herdr agent manifests; they load on its next start" }
+  for (const [name, state] of withOverlay.scores) {
+    if (without.scores.get(name) !== state) return { judged: true };
+  }
 
-    # After the reload, so this reads what herdr settled on rather than what it
-    # was holding before this run.
-    for overlay in $overlays; do
-      agent="${overlay:t:r}"
-      [[ -f "$install_dir/$agent.toml" ]] || continue
-      if unserved=$(override_not_served "$agent"); then
-        if [[ -n "$unserved" ]]; then
-          print -u2 -- "$unserved"
-          breaks+=("$unserved")
-        fi
-      fi
-    done
+  return {
+    judged: true,
+    finding: finding(
+      `${agent}: herdr scores every screen under ${dir} the same with the overlay and without it`,
+    ),
+  };
+}
 
-    # Nothing to compose from is not the same as nothing to report, and
-    # clearing the drift latch on it would swallow the next real drift.
-    (( evaluated )) &&
-      report_job herdr-agent-detection \
-        "herdr changed how it detects a working agent" \
-        "$drift_explanation" "${(F)drifts}"
+function syncAgent(agent: string, io: Writer): Install {
+  const basePath = join(cacheDir(), `${agent}.toml`);
+  const installPath = join(installDir(), `${agent}.toml`);
 
-    # Its own latch rather than a finding on either above. This one moves when
-    # Claude Code ships, with nobody having touched herdr or this repo, and the
-    # thing to do about it is to recapture screens rather than to read a rule.
-    report_job herdr-agent-detection-screens \
-      "herdr agent detection screens need attention" \
-      "$screens_explanation" "${(F)screen_findings}"
+  if (!isNonEmpty(basePath)) {
+    // Nothing cached and nothing installed is a machine that has not run herdr
+    // yet, and the first run fixes it. Nothing cached with a generated file
+    // already in place is the opposite: herdr is reading a composed manifest
+    // that can no longer be rebuilt, from a cache path this program only knows
+    // by convention. Every other path here would leave that quiet, so it has to
+    // be a failure, or the to-do that exists to report it clears as success.
+    if (isFile(installPath) && isGenerated(installPath)) {
+      io.err(`herdr has no cached ${agent} manifest, so ${installPath} can no longer be recomposed`);
+      return "broken";
+    }
+    io.err(`herdr has no cached ${agent} manifest; nothing to compose`);
+    return "unchanged";
+  }
 
-    # Unconditional, because a run that composed nothing is exactly the run this
-    # to-do exists to surface. `install.sh` only prints the failure.
-    report_job herdr-agent-detection-broken \
-      "herdr agent detection overlays did not install" \
-      "$broken_explanation" "${(F)breaks}"
+  // Orphan removal will not delete a file this program did not write, so neither
+  // may this overwrite one. A hand-written override is someone's deliberate work,
+  // and silently replacing it is the same data loss either way.
+  if (isFile(installPath) && !isGenerated(installPath)) {
+    io.err(`${installPath} was not written by this script; leaving it alone`);
+    return "broken";
+  }
 
-    (( ${#breaks} == 0 )) && exit 0
-    exit 1
-    ;;
+  const composed = compose(agent, basePath, join(OVERLAY_DIR, `${agent}.toml`));
+  if (composed === undefined) {
+    io.err(`could not read the ${agent} manifest or overlay; leaving ${installPath} as it is`);
+    return "broken";
+  }
 
-  check)
-    failed=0
-    for overlay in $overlays; do
-      agent="${overlay:t:r}"
-      check_agent "$agent" || failed=1
+  // herdr ignores an override it cannot parse, which looks from the sidebar
+  // exactly like the detection gap the overlay exists to close.
+  if (parseManifest(composed) === undefined) {
+    io.err(`composed ${agent} manifest is not valid TOML; leaving ${installPath} as it is`);
+    return "broken";
+  }
 
-      screen_findings=(${(f)"$(malformed_screens "$agent")"})
-      screen_findings+=(${(f)"$(screens_behind_claude "$agent")"})
-      if (( ${#screen_findings} )); then
-        print -rl -- $screen_findings
-        failed=1
-      fi
+  const installed = readText(installPath);
+  if (installed !== undefined && composed === stripTrailingNewlines(installed)) return "unchanged";
 
-      # A malformed screen scores without complaint and reports as a rule that
-      # stopped matching, so verifying one would name the wrong culprit.
-      (( ${#screen_findings} )) && continue
-      command -v herdr >/dev/null 2>&1 || continue
-      verify_agent "$agent" || failed=1
-    done
-    exit $failed
-    ;;
+  try {
+    mkdirSync(installDir(), { recursive: true });
+    writeFileSync(installPath, `${composed}\n`);
+  } catch {
+    return "broken";
+  }
 
-  verify)
-    if ! command -v herdr >/dev/null 2>&1; then
-      print -u2 -- "herdr not found; nothing can score a screen"
-      exit 1
-    fi
-    failed=0
-    for overlay in $overlays; do
-      verify_agent "${overlay:t:r}" || failed=1
-    done
-    exit $failed
-    ;;
+  io.out(`› herdr agent-detection: ${agent} composed from ${manifestVersion(basePath)}`);
+  return "changed";
+}
 
-  ablate)
-    if ! command -v herdr >/dev/null 2>&1; then
-      print -u2 -- "herdr not found; nothing can score a screen"
-      exit 1
-    fi
-    failed=0
-    for overlay in $overlays; do
-      ablate_agent "${overlay:t:r}" || failed=1
-    done
-    exit $failed
-    ;;
+// A deleted overlay has to take its installed file with it, or herdr keeps
+// reading a frozen copy of the manifest it fetched the day the overlay went in.
+// Only files this program wrote are eligible: anything hand-written under the
+// install directory belongs to whoever put it there.
+function removeOrphans(io: Writer): { removed: boolean; ok: boolean } {
+  let removed = false;
 
-  *)
-    print -u2 -- "usage: ${0:t} [sync|check|verify|ablate]"
-    exit 2
-    ;;
-esac
+  for (const agent of tomlNames(installDir())) {
+    if (isFile(join(OVERLAY_DIR, `${agent}.toml`))) continue;
+    const path = join(installDir(), `${agent}.toml`);
+    if (!isGenerated(path)) continue;
+
+    try {
+      rmSync(path);
+    } catch {
+      return { removed, ok: false };
+    }
+    io.out(`› herdr agent-detection: removed ${agent}, its overlay is gone`);
+    removed = true;
+  }
+
+  return { removed, ok: true };
+}
+
+// A line per screen the overlay scores differently from what it records.
+function verifyAgent(agent: string, io: Writer): boolean {
+  const screens = screenFiles(screensDir(REPO, agent));
+  // An agent with no screens has nothing to verify, which is the same answer the
+  // redundancy check gives it. An overlay arrives before its captures do.
+  if (screens.length === 0) return true;
+
+  const overlayText = readText(join(OVERLAY_DIR, `${agent}.toml`));
+  const scoring = readScores(
+    agent,
+    screens,
+    overlayText === undefined
+      ? undefined
+      : composedManifest(agent, overlayText, `the composed ${agent} manifest`),
+    io,
+  );
+  if (!scoring.ok) {
+    io.out(
+      `${agent}: herdr scored only ${scoring.scores.size} of ${screens.length} screens, ` +
+        "so none of them can be judged",
+    );
+    return false;
+  }
+
+  let clean = true;
+  for (const screen of screens) {
+    const name = screenName(screen);
+    const expected = screenField(readScreen(screen), "state");
+    const actual = scoring.scores.get(name) ?? "";
+    if (actual === expected) continue;
+    io.out(`${agent}: ${name} scores ${actual}, and records ${expected}`);
+    clean = false;
+  }
+  return clean;
+}
+
+// What each overlay rule is still worth, measured by taking it out and rescoring
+// every screen. Nothing else answers it: a rule goes dead because herdr started
+// scoring the same screen itself, or because a sibling rule grew to cover it, and
+// reading the manifest shows neither. A rule that moves no screen is deletable,
+// and deleting it is the whole removal, since `sync` composes what is left.
+function ablateAgent(agent: string, io: Writer): boolean {
+  const screens = screenFiles(screensDir(REPO, agent));
+  // The same no-screens guard verification and the redundancy check carry.
+  // Without it the baseline is empty, every rule prints the sentence that says
+  // delete it, and the run exits clean.
+  if (screens.length === 0) return true;
+
+  const overlayText = readText(join(OVERLAY_DIR, `${agent}.toml`)) ?? "";
+  const baseline = readScores(
+    agent,
+    screens,
+    composedManifest(agent, overlayText, `the composed ${agent} manifest`),
+    io,
+  );
+  if (!baseline.ok) {
+    io.err(`${agent}: herdr scored only ${baseline.scores.size} screens, so nothing can be ablated`);
+    return false;
+  }
+
+  io.out(
+    `${agent}: ${baseline.scores.size} screens, ` +
+      `manifest ${manifestVersion(join(cacheDir(), `${agent}.toml`))}`,
+  );
+
+  // The trailing undefined stands for the overlay as a whole, which is the
+  // question the drift check only approximates: herdr may score these screens
+  // without any of it.
+  for (const rule of [...ruleIdsOf(overlayText), undefined]) {
+    const label = rule === undefined ? "without the overlay" : `without ${rule}`;
+
+    let manifest: ManifestUnderTest | undefined;
+    if (rule === undefined) {
+      manifest = baseManifest(agent, `herdr's cached ${agent} manifest`);
+    } else {
+      const reduced = overlayWithout(overlayText, rule);
+      // The cut keys on one exact spelling of the id line, so an overlay written
+      // `id="x"` or with a trailing space loses nothing and the rule then
+      // reports as moving no screen, which is the sentence that says delete it.
+      // Reformatting the overlay is enough to reach this.
+      if (ruleIdsOf(reduced).includes(rule)) {
+        io.err(`${agent}: ${rule} could not be cut out of the overlay, so it cannot be judged`);
+        return false;
+      }
+      manifest = composedManifest(agent, reduced, `the composed ${agent} manifest ${label}`);
+    }
+
+    const scoring = readScores(agent, screens, manifest, io);
+    if (!scoring.ok) {
+      io.err(
+        `${agent}: herdr scored only ${scoring.scores.size} screens ${label}, so it cannot be judged`,
+      );
+      return false;
+    }
+
+    io.out(`  ${label}`);
+    let moved = false;
+    for (const name of [...baseline.scores.keys()].sort(byCodeUnit)) {
+      const now = scoring.scores.get(name);
+      if (now === baseline.scores.get(name)) continue;
+      moved = true;
+      io.out(`    ${name}: ${baseline.scores.get(name)} → ${now}`);
+    }
+    if (!moved) io.out("    no screen moves; it earns nothing the rest do not");
+  }
+
+  return true;
+}
+
+function checkAgent(agent: string, io: Writer): boolean {
+  const basePath = join(cacheDir(), `${agent}.toml`);
+  const installPath = join(installDir(), `${agent}.toml`);
+
+  if (!isNonEmpty(basePath)) {
+    io.out(`${agent}: herdr has no cached manifest to compose from`);
+    return false;
+  }
+
+  const drift = workingRuleDrift(agent);
+  if (!drift.judged) {
+    io.out(`${agent}: cached manifest could not be read, so drift cannot be judged`);
+    return false;
+  }
+  if (drift.finding !== undefined) io.out(drift.finding.message);
+
+  if (!isFile(installPath)) {
+    io.out(`${agent}: nothing installed at ${installPath}`);
+    return false;
+  }
+
+  const composed = compose(agent, basePath, join(OVERLAY_DIR, `${agent}.toml`)) ?? "";
+  if (composed !== stripTrailingNewlines(readText(installPath) ?? "")) {
+    io.out(`${agent}: ${installPath} is behind manifest ${manifestVersion(basePath)} or the overlay`);
+    return false;
+  }
+
+  const serving = servedManifest(agent);
+  if (serving.asked && serving.source !== installPath) {
+    io.out(`${agent}: herdr is reading ${serving.source}, not ${installPath}`);
+    return false;
+  }
+
+  // Last, because it is the only check here that spawns once per screen, and
+  // because a failure to score would otherwise mask the cheaper findings above.
+  let redundant: Judgement = { judged: true };
+  if (herdrCommand() !== null) {
+    redundant = overlayRedundant(agent, io);
+    if (!redundant.judged) {
+      io.out(`${agent}: screens could not be scored, so redundancy cannot be judged`);
+      return false;
+    }
+    if (redundant.finding !== undefined) io.out(redundant.finding.message);
+  }
+
+  return drift.finding === undefined && redundant.finding === undefined;
+}
+
+// Three to-dos on three latches rather than one on any of them. A compose
+// failure, a herdr that changed its rules, and a screen corpus that has aged
+// want different things done about them, and a shared latch would let whichever
+// fired first suppress the others.
+function reportJob(job: string, title: string, explanation: string, findings: Finding[]): void {
+  // A command that found nothing prints an empty line, and an empty finding
+  // would file the to-do on its own.
+  const named = findings.filter((found) => found.message !== "");
+  if (named.length === 0) {
+    reportSuccess(job);
+    return;
+  }
+
+  reportFailure({
+    job,
+    title,
+    command: TODO_COMMAND,
+    output: named.map((found) => found.message).join("\n"),
+    revision: revision(),
+    extraMeta: explanation,
+    outputHeading: "Findings",
+    // Keyed on the finding set rather than on the fact of a finding. Without it
+    // a standing to-do suppresses every finding that appears after it, and this
+    // job merges drift findings and redundancy findings into one list, so a
+    // standing drift finding would silence a newly dead overlay indefinitely.
+    fingerprint: fingerprintOf(named),
+  });
+}
+
+function sync(io: Writer): number {
+  if (herdrCommand() === null) {
+    io.err("herdr not found; skipping agent detection overlays");
+    return 0;
+  }
+
+  // launchd watches this directory to rerun sync the moment herdr fetches a
+  // manifest, and it can only watch a path that exists. herdr creates it on its
+  // first run, which may come after this one on a new machine.
+  try {
+    mkdirSync(cacheDir(), { recursive: true });
+  } catch {
+    // The directory is a convenience for the watcher. Everything below reads
+    // what is in it, and reports for itself when there is nothing.
+  }
+
+  const agents = overlayAgents();
+  const drifts: Finding[] = [];
+  const breaks: Finding[] = [];
+  const screenFindings: Finding[] = [];
+  let changed = false;
+  let examined = 0;
+  let judged = 0;
+
+  for (const agent of agents) {
+    const outcome = syncAgent(agent, io);
+    if (outcome === "broken") {
+      breaks.push(finding(`${agent}: could not compose or install, see the run output`));
+    }
+    if (outcome === "changed") changed = true;
+
+    if (!isNonEmpty(join(cacheDir(), `${agent}.toml`))) continue;
+    examined += 1;
+
+    const drift = workingRuleDrift(agent);
+    if (drift.judged) {
+      if (drift.finding !== undefined) drifts.push(drift.finding);
+    } else {
+      breaks.push(finding(`${agent}: cached manifest could not be read, so drift cannot be judged`));
+    }
+
+    // A herdr that cannot score is not an install that failed, and the breaks
+    // list files the to-do that says it was. The scorer has already said so on
+    // stderr. What this owes is to leave the latch alone.
+    const redundant = overlayRedundant(agent, io);
+    if (redundant.judged && redundant.finding !== undefined) drifts.push(redundant.finding);
+
+    if (drift.judged && redundant.judged) judged += 1;
+
+    // Both describe a corpus that needs a person, so they share a to-do.
+    const dir = screensDir(REPO, agent);
+    screenFindings.push(...malformedScreens(agent, dir));
+    screenFindings.push(...screensBehindClaude(agent, dir));
+  }
+
+  const orphans = removeOrphans(io);
+  if (!orphans.ok) breaks.push(finding("could not remove a generated file whose overlay is gone"));
+  if (orphans.removed) changed = true;
+
+  if (changed && !reloadManifests()) {
+    io.err("could not reload herdr agent manifests; they load on its next start");
+  }
+
+  // After the reload, so this reads what herdr settled on rather than what it was
+  // holding before this run.
+  for (const agent of agents) {
+    const installPath = join(installDir(), `${agent}.toml`);
+    if (!isFile(installPath)) continue;
+    const serving = servedManifest(agent);
+    if (!serving.asked || serving.source === installPath) continue;
+    const message = `${agent}: herdr is reading ${serving.source}, not ${installPath}`;
+    io.err(message);
+    breaks.push(finding(message));
+  }
+
+  // Every agent that had a cache to judge has to have landed both comparisons
+  // before the latch clears. Clearing it on a run that could judge neither would
+  // retire a standing to-do without anyone having looked at it, and clearing it
+  // on one agent's success would retire another agent's standing finding.
+  if (judged > 0 && judged === examined) {
+    reportJob(
+      "herdr-agent-detection",
+      "herdr changed how it detects a working agent",
+      DRIFT_EXPLANATION,
+      drifts,
+    );
+  }
+
+  // Its own latch rather than a finding on either above. This one moves when
+  // Claude Code ships, with nobody having touched herdr or this repo, and the
+  // thing to do about it is to recapture screens rather than to read a rule.
+  reportJob(
+    "herdr-agent-detection-screens",
+    "herdr agent detection screens need attention",
+    SCREENS_EXPLANATION,
+    screenFindings,
+  );
+
+  // Unconditional, because a run that composed nothing is exactly the run this
+  // to-do exists to surface. install.sh only prints the failure.
+  reportJob(
+    "herdr-agent-detection-broken",
+    "herdr agent detection overlays did not install",
+    BROKEN_EXPLANATION,
+    breaks,
+  );
+
+  return breaks.length === 0 ? 0 : 1;
+}
+
+function check(io: Writer): number {
+  let failed = false;
+
+  for (const agent of overlayAgents()) {
+    if (!checkAgent(agent, io)) failed = true;
+
+    const dir = screensDir(REPO, agent);
+    const malformed = malformedScreens(agent, dir);
+    const findings = [...malformed, ...screensBehindClaude(agent, dir)];
+    for (const found of findings) io.out(found.message);
+    if (findings.length > 0) failed = true;
+
+    // A malformed screen scores without complaint and reports as a rule that
+    // stopped matching, so verifying one would name the wrong culprit. The
+    // version-age notice earns no such skip: a corpus a minor behind is the
+    // moment the rules are most likely to have stopped matching, which is when
+    // verification is worth the most.
+    if (malformed.length > 0) continue;
+    if (herdrCommand() === null) continue;
+    if (!verifyAgent(agent, io)) failed = true;
+  }
+
+  return failed ? 1 : 0;
+}
+
+function verify(io: Writer): number {
+  if (herdrCommand() === null) {
+    io.err("herdr not found; nothing can score a screen");
+    return 1;
+  }
+
+  let failed = false;
+  for (const agent of overlayAgents()) {
+    if (!verifyAgent(agent, io)) failed = true;
+  }
+  return failed ? 1 : 0;
+}
+
+function ablate(io: Writer): number {
+  if (herdrCommand() === null) {
+    io.err("herdr not found; nothing can score a screen");
+    return 1;
+  }
+
+  let failed = false;
+  for (const agent of overlayAgents()) {
+    if (!ablateAgent(agent, io)) failed = true;
+  }
+  return failed ? 1 : 0;
+}
+
+export function run(
+  args: string[],
+  io: Writer,
+  program = basename(process.argv[1] ?? "herdr-agent-detection"),
+): number {
+  // Positionals past the first have never meant anything here.
+  switch (args[0] ?? "sync") {
+    case "sync":
+      return sync(io);
+    case "check":
+      return check(io);
+    case "verify":
+      return verify(io);
+    case "ablate":
+      return ablate(io);
+    default:
+      io.err(`usage: ${program} [sync|check|verify|ablate]`);
+      return 2;
+  }
+}
+
+function reloadManifests(): boolean {
+  const herdr = herdrCommand();
+  if (herdr === null) return false;
+  try {
+    const run = Bun.spawnSync({
+      cmd: [herdr, "server", "reload-agent-manifests"],
+      env: process.env,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return run.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+// The to-do names the revision the findings were taken at. Purely local, so the
+// locked-Mac signing refusal that breaks other nightly jobs does not reach it.
+function revision(): string {
+  const git = Bun.which("git", { PATH: process.env.PATH });
+  if (git === null) return "unknown";
+  try {
+    const run = Bun.spawnSync({
+      cmd: [git, "-C", REPO, "rev-parse", "--short", "HEAD"],
+      env: process.env,
+      stdin: "ignore",
+      stderr: "ignore",
+    });
+    const revision = run.stdout.toString().trim();
+    return run.exitCode === 0 && revision !== "" ? revision : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function tomlNames(dir: string): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((name) => name.endsWith(".toml"))
+    .sort(byCodeUnit)
+    .map((name) => basename(name, ".toml"));
+}
+
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function readText(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isNonEmpty(path: string): boolean {
+  try {
+    return statSync(path).size > 0;
+  } catch {
+    return false;
+  }
+}
+
+// A write followed by process.exit delivers one pipe buffer and drops the rest,
+// which is how a report read over a pipe arrived cut mid-line. The launchd log is
+// a redirect and scripts/install output is teed, so both callers can reach it.
+function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let written = 0;
+  while (written < bytes.length) written += writeSync(fd, bytes, written);
+}
+
+const STREAM: Writer = {
+  out: (line) => writeAll(1, `${line}\n`),
+  err: (line) => writeAll(2, `${line}\n`),
+};
+
+if (import.meta.main) {
+  process.exit(run(process.argv.slice(2), STREAM));
+}
