@@ -239,4 +239,3 @@ jobs:
 
       - name: Check spinners degrade without a terminal
         run: scripts/lint-spinners
-

@@ -83,9 +83,9 @@ Describe "herdr-grab-scrollback"
       chmod +x "$dir/bin/herdr"
       echo "previous contents" > "$dir/clipboard"
       PATH="$dir/bin:$PATH" bash "$launcher" 2>/dev/null
-      local status=$?
+      local rc=$?
       cat "$dir/clipboard"
-      return $status
+      return $rc
     }
     When call keep_clipboard
     The status should be failure
