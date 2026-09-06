@@ -3,8 +3,7 @@
 # Re-read config.toml in the running herdr server. Workspaces, tabs, panes, and
 # the agents in them keep running.
 #
-# Only config.toml. The agent detection overlays have their own reload, which
-# bin/herdr-agent-detection fires when it installs one, and herdr exposes
+# Only config.toml. herdr fetches its own agent detection manifests and exposes
 # nothing for the plugin configs under plugins/config.
 set -uo pipefail
 
