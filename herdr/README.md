@@ -38,6 +38,8 @@ to go when the point is to read it rather than move it.
 printed, so a path, branch, or container id that is already on screen gets
 completed instead of retyped. It reads the same `recent-unwrapped` source, which
 rejoins soft wraps, so a path the pane broke across rows comes back as one word.
+The pick is inserted as a quoted shell word, since pane output is arbitrary text
+and a word carrying `*` or `$(` would otherwise reach the parser as syntax.
 
 herdr exposes no word-separator setting, so a double-click takes a word by its
 own rules and a path or a flag comes back in pieces

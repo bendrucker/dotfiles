@@ -15,7 +15,13 @@ if [[ -n "$HERDR_PANE_ID" ]]; then
     selected=$(herdr pane read "$HERDR_PANE_ID" --source recent-unwrapped --lines 10000 2>/dev/null \
       | awk 'BEGIN { RS = "[ \t\n]" } length($0) > 2 && !seen[$0]++' \
       | fzf --no-sort --exact +i --tac --height 40%)
-    LBUFFER="${LBUFFER}${selected}"
+    # (q-) quotes only what would otherwise parse as syntax, so an ordinary
+    # path or branch name inserts unchanged and a word carrying *, ;, or $(
+    # arrives as the literal word that was on screen. Pane output is arbitrary
+    # text, and a completion that lets it reach the parser is a completion that
+    # runs something other than what was picked. The cost is that a leading ~
+    # comes back quoted, so a picked ~/path stops expanding.
+    LBUFFER="${LBUFFER}${(q-)selected}"
     zle redisplay
   }
   zle -N __herdr_fzf_autocomplete
