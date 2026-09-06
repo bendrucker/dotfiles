@@ -1,434 +1,737 @@
-#!/usr/bin/env zsh
-#/ Usage: claude-plugin-audit
-#/ Report installed Claude Code plugins whose payload no longer matches what
-#/ their marketplace offers. Exits non-zero when anything has drifted.
-#
-# `claude plugin update` reports success in cases where it changed nothing: a
-# plugin that declares a fixed `version` string is "already at the latest
-# version" however far its source has moved, and an id the updater never
-# enumerated is never attempted at all. Neither case is distinguishable from a
-# real update by its exit status, so the updater's own success is not evidence
-# that an install is current. This checks the outcome instead.
-#
-# Where the marketplace carries the plugin in its own tree, the check compares
-# content rather than reading the recorded gitCommitSha, because a forced
-# refresh (rm -rf the payload, reinstall) restores current content while leaving
-# that field at its old value. A plugin sourced from its own repo has no local
-# copy of that repo to compare against, so it falls back to the commits Claude
-# Code recorded for the install.
+#!/usr/bin/env bun
+//
+// Report installed Claude Code plugins whose payload no longer matches what
+// their marketplace offers. Exits non-zero when anything has drifted.
+//
+// `claude plugin update` reports success in cases where it changed nothing: a
+// plugin that declares a fixed `version` string is "already at the latest
+// version" however far its source has moved, and an id the updater never
+// enumerated is never attempted at all. Neither case is distinguishable from a
+// real update by its exit status, so the updater's own success is not evidence
+// that an install is current. This checks the outcome instead.
+//
+// Where the marketplace carries the plugin in its own tree, the check compares
+// content rather than reading the recorded gitCommitSha, because a forced
+// refresh (rm -rf the payload, reinstall) restores current content while leaving
+// that field at its old value. A plugin sourced from its own repo has no local
+// copy of that repo to compare against, so it falls back to the commits Claude
+// Code recorded for the install.
 
-set -uo pipefail
-setopt typeset_silent
+import { readFileSync, statSync, writeSync } from "node:fs";
+import { join } from "node:path";
+import { claudePluginsDir, pluginInventory, pluginSource } from "../scripts/lib/claude-plugins.ts";
 
-source "${0:A:h}/../scripts/lib/claude-plugins.sh"
+const USAGE = [
+  "Usage: claude-plugin-audit",
+  "Report installed Claude Code plugins whose payload no longer matches what",
+  "their marketplace offers. Exits non-zero when anything has drifted.",
+].join("\n");
 
-# Captured at file scope: inside a function $0 is the function name, so --help
-# could not find the usage header to print.
-typeset -g script_path=${0:A}
+//   current   the payload matches
+//   stale     the payload differs, or was never installed
+//   pinned    the payload differs, but its source still offers the version
+//             already installed, so no update reaches it and the fix is a
+//             forced reinstall
+//   orphaned  the marketplace no longer offers the plugin, so nothing can
+//             update it and the fix is to uninstall
+//   unknown   the comparison could not be made
+export type Verdict = "current" | "stale" | "pinned" | "orphaned" | "unknown";
 
-# Neither side of the comparison owns these. .in_use and .orphaned_at are
-# runtime markers Claude Code writes into a payload, node_modules is an
-# install-time artifact, and .git and .gcs-sha are the provenance markers of a
-# marketplace whose whole tree is the plugin.
-typeset -gra payload_noise=(.in_use .orphaned_at node_modules .git .gcs-sha)
-
-# Where compare_payload leaves what diff could not read. Named off the pid
-# rather than mktemp, which ignores TMPDIR on macOS and so fails under a sandbox
-# that only grants it.
-typeset -g diff_errors=${TMPDIR:-/tmp}/claude-plugin-audit.$$.err
-trap 'rm -f "$diff_errors"' EXIT
-
-compare_payload () {
-  local payload=$1 source_dir=$2
-  local -a excludes
-  local marker
-
-  for marker in $payload_noise; do
-    excludes+=(--exclude="$marker")
-  done
-
-  # Claude Code synthesizes .claude-plugin/plugin.json for a plugin that ships
-  # none, so on those the directory exists only on the payload side and is not
-  # drift. A plugin that does ship one stays covered.
-  [[ -d "$source_dir/.claude-plugin" ]] || excludes+=(--exclude=.claude-plugin)
-
-  # stderr is kept off stdout because a path diff could not read is not a
-  # difference. Folding the two together made an unreadable file report as
-  # drift, which no update can clear.
-  : >"$diff_errors"
-  diff -rq $excludes "$payload" "$source_dir" 2>"$diff_errors"
+export interface Check {
+  verdict: Verdict;
+  detail: string;
 }
 
-# Reduce diff -rq's output to the paths it names, relative to the payload. The
-# absolute pair diff prints is noise beside the plugin id the row already
-# carries, and a bare count leaves the reader nothing to go and look at.
-differing_paths () {
-  local payload=$1 source_dir=$2
-  local line dir name
-
-  while IFS= read -r line; do
-    case $line in
-      "Files $payload/"*)
-        line=${line#Files $payload/}
-        print -r -- "${line%% and $source_dir/*}"
-        ;;
-      "Only in "*": "*)
-        dir=${line#Only in }
-        name=${dir#*: }
-        dir=${dir%%: *}
-        dir=${dir#$payload}
-        dir=${dir#$source_dir}
-        print -r -- "${${dir#/}:+${dir#/}/}$name"
-        ;;
-      # Anything else diff can say about a pair (a fifo against a regular file,
-      # a symlink it would not follow) already names the paths in its own words.
-      *) print -r -- "$line" ;;
-    esac
-  done
+export interface Outcome {
+  status: number;
+  stdout: string;
+  stderr: string;
 }
 
-resolve_ref () {
-  local url=$1 ref=$2 refs peeled
+const CURRENT: Check = { verdict: "current", detail: "" };
 
-  [[ "$ref" =~ '^[0-9a-f]{40}$' ]] && { print -r -- "$ref"; return }
+// Neither side of the comparison owns these. .in_use and .orphaned_at are
+// runtime markers Claude Code writes into a payload, node_modules is an
+// install-time artifact, and .git and .gcs-sha are the provenance markers of a
+// marketplace whose whole tree is the plugin.
+const PAYLOAD_NOISE = [".in_use", ".orphaned_at", "node_modules", ".git", ".gcs-sha"];
 
-  refs=$(git ls-remote "$url" "$ref" 2>/dev/null) || return 1
-  [[ -n "$refs" ]] || return 1
+// Both shapes are matched without regard to case, because a commit that arrived
+// spelled any other way is the same commit, and every one of them is lowercased
+// at the boundary so the comparisons downstream never straddle two spellings.
+const FULL_COMMIT = /^[0-9a-f]{40}$/i;
+const ABBREVIATED_COMMIT = /^[0-9a-f]{7,40}$/i;
 
-  # An annotated tag resolves to a tag object; its peeled ^{} line carries the
-  # commit the install would actually hold.
-  peeled=$(print -r -- "$refs" | awk '$2 ~ /\^\{\}$/ { print $1; exit }')
-  [[ -n "$peeled" ]] && { print -r -- "$peeled"; return }
+// Long enough for a raw-content GET on a working connection, short enough that a
+// host that has gone away cannot hold up the nightly job behind it.
+const MANIFEST_TIMEOUT_MS = 5000;
 
-  print -r -- "$refs" | awk 'NR == 1 { print $1 }'
+interface Comparison {
+  same: boolean;
+  differences: string[];
+  // Kept apart from the message, because a comparison can fail without diff
+  // saying anything. Reading the message alone reported a payload as differing
+  // at no paths at all, which is a finding no update can clear.
+  failed: boolean;
+  error: string;
 }
 
-# The commit an install holds.
-#
-# Claude Code records `version` and `gitCommitSha` and keeps only `version`
-# current. `gitCommitSha` is written at install and not rewritten, so a plugin
-# updated in place keeps the commit it first arrived at, and reading that field
-# reported a current plugin stale every night.
-#
-# `version` holds the installed commit for a plugin that declares no version of
-# its own, and the declared version string otherwise. The payload's own manifest
-# decides which, rather than the shape of the string, so a calendar version
-# spelled entirely in hex digits is not read as an abbreviated commit. Only one
-# field is consulted, because a gitCommitSha left behind by an in-place update
-# would otherwise match a ref that came back to it.
-recorded_commit () {
-  local payload=$1 version
-  version=$(installed_version "$payload")
+function comparePayload(payload: string, sourceDir: string): Comparison {
+  const excludes = PAYLOAD_NOISE.map((marker) => `--exclude=${marker}`);
 
-  if [[ "$version" =~ '^[0-9a-f]{7,40}$' &&
-        "$version" != "$(declared_version "$payload")" ]]; then
-    print -r -- "$version"
-    return
-  fi
+  // Claude Code synthesizes .claude-plugin/plugin.json for a plugin that ships
+  // none, so on those the directory exists only on the payload side and is not
+  // drift. A plugin that does ship one stays covered.
+  if (!isDirectory(join(sourceDir, ".claude-plugin"))) excludes.push("--exclude=.claude-plugin");
 
-  installed_field "$payload" gitCommitSha
-}
-
-# The version string each side of an install declares. `claude plugin update`
-# compares these, so a plugin whose source still offers the version already
-# installed is "already at the latest version" however far the tree behind that
-# version has moved, and no update can reach it.
-declared_version () {
-  jq -r '.version // empty' "$1/.claude-plugin/plugin.json" 2>/dev/null
-}
-
-installed_version () {
-  installed_field "$1" version
-}
-
-# One field of the record Claude Code keeps for the install at <payload>. The
-# array form is an older shape of installed_plugins.json that is still in the
-# wild.
-installed_field () {
-  local payload=$1 field=$2
-  jq -r --arg payload "$payload" --arg field "$field" '
-    (if type == "array" then (.[] | select(.key == "plugins") | .value) else .plugins end)
-    | to_entries[] | .value[]
-    | select(.installPath == $payload) | .[$field] // empty
-  ' "$(claude_plugins_dir)/installed_plugins.json" 2>/dev/null | head -1
-}
-
-# Compare a plugin's installed payload against the source its marketplace
-# currently offers. Prints "<verdict>\t<detail>", where verdict is one of:
-#   current   the payload matches
-#   stale     the payload differs, or was never installed
-#   pinned    the payload differs, but its source still offers the version
-#             already installed, so no update reaches it and the fix is a forced
-#             reinstall
-#   orphaned  the marketplace no longer offers the plugin, so nothing can update
-#             it and the fix is to uninstall
-#   unknown   the comparison could not be made
-audit_plugin () {
-  local id=$1 payload=$2
-  local marketplace=${id##*@} name=${id%@*}
-  local source source_rc=0
-
-  source=$(plugin_source "$id") || source_rc=$?
-  case $source_rc in
-    "$PLUGIN_SOURCE_UNREADABLE")
-      print -r -- "unknown"$'\t'"marketplace $marketplace does not say where $name comes from"
-      return
-      ;;
-    "$PLUGIN_SOURCE_ABSENT")
-      print -r -- "orphaned"$'\t'"marketplace $marketplace no longer offers $name"
-      return
-      ;;
-  esac
-
-  if [[ $(print -r -- "$source" | jq -r 'type') == string ]]; then
-    audit_relative_plugin "$marketplace" "$(print -r -- "$source" | jq -r '.')" "$payload"
-  else
-    audit_external_plugin "$source" "$payload"
-  fi
-}
-
-audit_relative_plugin () {
-  local marketplace=$1 relative=$2 payload=$3
-  local source_dir="$(claude_plugins_dir)/marketplaces/$marketplace/${relative#./}"
-  local differences diff_rc=0
-
-  [[ -d "$source_dir" ]] || {
-    print -r -- "unknown"$'\t'"marketplace source $relative is missing"
-    return
-  }
-  if [[ -z "$payload" || ! -d "$payload" ]]; then
-    print -r -- "stale"$'\t'"no payload installed"
-    return
-  fi
-
-  differences=$(compare_payload "$payload" "$source_dir") || diff_rc=$?
-
-  # Both signals are needed. diff exits 2 on a path it could not read, but on
-  # macOS a dangling symlink gets it an error on stderr and exit 0, so a status
-  # check alone would call the payload current over a file nothing compared.
-  if (( diff_rc > 1 )) || [[ -s "$diff_errors" ]]; then
-    print -r -- "unknown"$'\t'"could not compare against $relative: $(head -1 "$diff_errors")"
-    return
-  fi
-  (( diff_rc == 0 )) && { print -r -- "current"$'\t'; return }
-
-  local -a paths
-  paths=("${(@f)$(differing_paths "$payload" "$source_dir" <<< "$differences")}")
-
-  # Enough paths to recognize what moved, without a wholesale divergence
-  # filling the report with the contents of a plugin.
-  local named=${(j:, :)paths[1,3]}
-  (( ${#paths} > 3 )) && named+=", and $(( ${#paths} - 3 )) more"
-
-  # Separated from plain staleness because the two need different hands. Stale
-  # clears on the next nightly update. Pinned never does, and reporting it as
-  # stale left a finding that reappeared every night with nothing to do about it.
-  local installed
-  installed=$(installed_version "$payload")
-  if [[ -n "$installed" && "$installed" == "$(declared_version "$source_dir")" ]]; then
-    print -r -- "pinned"$'\t'"still offered as $installed, so no update reaches it; differs from $relative at $(plural ${#paths} path): $named"
-    return
-  fi
-
-  print -r -- "stale"$'\t'"differs from $relative at $(plural ${#paths} path): $named"
-}
-
-audit_external_plugin () {
-  local source=$1 payload=$2
-  local url ref expected actual
-
-  if [[ -z "$payload" || ! -d "$payload" ]]; then
-    print -r -- "stale"$'\t'"no payload installed"
-    return
-  fi
-
-  # `.repo // empty` inside the concatenation, because jq treats null as the
-  # identity for +: a source carrying neither field would otherwise build the
-  # string "https://github.com/" and send the audit off to fetch it.
-  url=$(print -r -- "$source" | jq -r '.url // ("https://github.com/" + (.repo // empty)) // empty')
-  [[ -n "$url" ]] || { print -r -- "unknown"$'\t'"source names no repository"; return }
-
-  ref=$(print -r -- "$source" | jq -r '.sha // .ref // "HEAD"')
-  expected=$(resolve_ref "$url" "$ref") || {
-    print -r -- "unknown"$'\t'"$url has no $ref"
-    return
+  let run;
+  try {
+    run = Bun.spawnSync({
+      cmd: ["diff", "-rq", ...excludes, payload, sourceDir],
+      env: process.env,
+      stdin: "ignore",
+    });
+  } catch (error) {
+    return { same: false, differences: [], failed: true, error: describe(error) };
   }
 
-  actual=$(recorded_commit "$payload")
-  [[ -n "$actual" ]] || { print -r -- "stale"$'\t'"no commit recorded for the install"; return }
+  // Both signals are needed. diff exits 2 on a path it could not read, but on
+  // macOS a dangling symlink gets it an error on stderr and exit 0, so a status
+  // check alone would call the payload current over a file nothing compared.
+  // What it could not read is kept off the differences either way: folding the
+  // two together made an unreadable file report as drift, which no update can
+  // clear.
+  const said = run.stderr.toString();
+  // A signalled diff reports no status of its own, and it compared no more of
+  // the tree than one that exited over a failure it could name.
+  const status = run.exitCode ?? 2;
+  if (status > 1 || said !== "") {
+    return { same: false, differences: [], failed: true, error: firstLine(said) };
+  }
 
-  # Abbreviated on one side and full on the other, so the recorded commit is
-  # matched as a prefix of what the ref resolves to.
-  [[ "$expected" == "$actual"* ]] && { print -r -- "current"$'\t'; return }
-
-  print -r -- "stale"$'\t'"installed ${actual[1,12]}, $url $ref is ${expected[1,12]}"
+  return {
+    same: status === 0,
+    differences: run.stdout.toString().split("\n").filter((line) => line !== ""),
+    failed: false,
+    error: "",
+  };
 }
 
-# Compare a marketplace tree against the ref its source pins. Every other check
-# reads these trees as ground truth, and `claude plugin marketplace update`
-# warns rather than fails, so a tree that quietly stopped advancing would match
-# a stale install and hide the drift from both sides.
-#
-# Claude Code no longer clones every marketplace. Some it materializes from GCS,
-# recording the commit it built the tree from in a .gcs-sha file at the root
-# instead of a .git directory. Either marker answers the same question.
-audit_marketplace () {
-  local location=$1 url=$2 ref=$3
-  local held expected origin
+// Reduce diff -rq's output to the paths it names, relative to the payload. The
+// absolute pair diff prints is noise beside the plugin id the row already
+// carries, and a bare count leaves the reader nothing to go and look at.
+export function differingPaths(lines: string[], payload: string, sourceDir: string): string[] {
+  const pair = `Files ${payload}/`;
+  const only = "Only in ";
 
-  [[ -n "$url" ]] || { print -r -- "unknown"$'\t'"source names no repository"; return }
-
-  if [[ -d "$location/.git" ]]; then
-    origin=cloned
-    held=$(git -C "$location" rev-parse HEAD 2>/dev/null) || {
-      print -r -- "unknown"$'\t'"clone has no HEAD"
-      return
+  return lines.map((line) => {
+    if (line.startsWith(pair)) {
+      const rest = line.slice(pair.length);
+      // The first occurrence, deliberately: a filename that contains the source
+      // path in its own right stays whole up to the separator diff wrote.
+      const separator = rest.indexOf(` and ${sourceDir}/`);
+      return separator === -1 ? rest : rest.slice(0, separator);
     }
-  elif [[ -f "$location/.gcs-sha" ]]; then
-    origin=materialized
-    # Written without a trailing newline, so $(<) reads it whole, and the trim
-    # covers a copy that picked one up. stderr is dropped because a file the
-    # audit cannot read leaves $held empty, which the shape check below already
-    # reports. Anything that is not a commit is unverifiable rather than stale:
-    # a truncated or half-written marker says nothing about the tree.
-    { held=${$(<"$location/.gcs-sha")//[[:space:]]/} } 2>/dev/null
-    [[ "$held" =~ '^[0-9a-f]{40}$' ]] || {
-      print -r -- "unknown"$'\t'"records no readable source commit"
-      return
+
+    const label = line.startsWith(only) ? line.indexOf(": ", only.length) : -1;
+    if (label !== -1) {
+      const name = line.slice(label + 2);
+      let dir = line.slice(only.length, label);
+      if (dir.startsWith(payload)) dir = dir.slice(payload.length);
+      if (dir.startsWith(sourceDir)) dir = dir.slice(sourceDir.length);
+      const relative = dir.startsWith("/") ? dir.slice(1) : dir;
+      // A one-sided entry at the top level leaves nothing in front of the name,
+      // and a leading slash there would read as an absolute path.
+      return relative === "" ? name : `${relative}/${name}`;
     }
-  else
-    print -r -- "unknown"$'\t'"neither a git clone nor GCS-materialized, so freshness is unverifiable"
-    return
-  fi
 
-  expected=$(resolve_ref "$url" "$ref") || {
-    print -r -- "unknown"$'\t'"$url has no $ref"
-    return
+    // Anything else diff can say about a pair (a fifo against a regular file, a
+    // symlink it would not follow) already names the paths in its own words.
+    return line;
+  });
+}
+
+// Enough paths to recognize what moved, without a wholesale divergence filling
+// the report with the contents of a plugin.
+export function namedPaths(paths: string[]): string {
+  const named = paths.slice(0, 3).join(", ");
+  return paths.length > 3 ? `${named}, and ${paths.length - 3} more` : named;
+}
+
+export function plural(count: number, noun: string): string {
+  return count === 1 ? `${count} ${noun}` : `${count} ${noun}s`;
+}
+
+// The commit a ref resolves to, taken from the first peeled line of ls-remote's
+// output. An annotated tag resolves to a tag object, and only its ^{} line
+// carries the commit the install would actually hold.
+export function peeledCommit(output: string): string {
+  const lines = output.split("\n").filter((line) => line.trim() !== "");
+  for (const line of lines) {
+    const [sha, name] = line.trim().split(/\s+/);
+    if (name !== undefined && name.endsWith("^{}")) return sha.toLowerCase();
+  }
+  return (lines[0]?.trim().split(/\s+/)[0] ?? "").toLowerCase();
+}
+
+function resolveRef(url: string, ref: string): string | undefined {
+  if (FULL_COMMIT.test(ref)) return ref.toLowerCase();
+
+  const run = spawn(["git", "ls-remote", url, ref]);
+  if (run === undefined || run.exitCode !== 0) return undefined;
+
+  const resolved = peeledCommit(run.stdout.toString());
+  return resolved === "" ? undefined : resolved;
+}
+
+// `version` holds the installed commit for a plugin that declares no version of
+// its own, and the declared version string otherwise. The payload's own manifest
+// decides which, rather than the shape of the string, so a calendar version
+// spelled entirely in hex digits is not read as an abbreviated commit.
+function versionIsCommit(installedVersion: string, declaredVersion: string): boolean {
+  return ABBREVIATED_COMMIT.test(installedVersion) && installedVersion !== declaredVersion;
+}
+
+// The commit an install holds.
+//
+// Claude Code records `version` and `gitCommitSha` and keeps only `version`
+// current. `gitCommitSha` is written at install and not rewritten, so a plugin
+// updated in place keeps the commit it first arrived at, and reading that field
+// reported a current plugin stale every night. Only one field is consulted,
+// because a gitCommitSha left behind by an in-place update would otherwise match
+// a ref that came back to it.
+export function recordedCommit(
+  installedVersion: string,
+  declaredVersion: string,
+  gitCommitSha: string,
+): string {
+  return versionIsCommit(installedVersion, declaredVersion)
+    ? installedVersion.toLowerCase()
+    : gitCommitSha.toLowerCase();
+}
+
+// The version string each side of an install declares. `claude plugin update`
+// compares these, so a plugin whose source still offers the version already
+// installed is "already at the latest version" however far the tree behind that
+// version has moved, and no update can reach it.
+function declaredVersion(dir: string): string {
+  const parsed = readJson(join(dir, ".claude-plugin", "plugin.json"));
+  return isRecord(parsed) ? scalar(parsed.version) : "";
+}
+
+// One field of the record Claude Code keeps for the install at <payload>. A
+// plugin id can hold several records for one path, and a record carrying
+// nothing under the field answers for none of them: the value comes from the
+// first record that has one.
+function installedField(payload: string, field: string): string {
+  const held = installedRecords();
+  if (!isRecord(held)) return "";
+
+  for (const records of Object.values(held)) {
+    if (!Array.isArray(records)) continue;
+    for (const record of records) {
+      if (!isRecord(record) || record.installPath !== payload) continue;
+      const value = record[field];
+      if (value === undefined || value === null || value === false) continue;
+      return scalar(value);
+    }
+  }
+  return "";
+}
+
+// The array form is an older shape of installed_plugins.json that is still in
+// the wild.
+function installedRecords(): unknown {
+  const parsed = readJson(join(claudePluginsDir(), "installed_plugins.json"));
+  if (Array.isArray(parsed)) {
+    const entry = parsed.find((item) => isRecord(item) && item.key === "plugins");
+    return isRecord(entry) ? entry.value : undefined;
+  }
+  return isRecord(parsed) ? parsed.plugins : undefined;
+}
+
+// Compare a plugin's installed payload against the source its marketplace
+// currently offers.
+export async function auditPlugin(id: string, payload: string): Promise<Check> {
+  // The marketplace is whatever follows the final separator, matching how the
+  // shared library splits the same id: a plugin name may carry an @ of its own.
+  const separator = id.lastIndexOf("@");
+  const marketplace = separator === -1 ? id : id.slice(separator + 1);
+  const name = separator === -1 ? id : id.slice(0, separator);
+
+  const lookup = pluginSource(id);
+  if (!lookup.ok) {
+    // Only a marketplace that stopped listing the plugin is beyond updating. One
+    // that lists it without saying where it comes from still carries it.
+    return lookup.reason === "absent"
+      ? { verdict: "orphaned", detail: `marketplace ${marketplace} no longer offers ${name}` }
+      : {
+          verdict: "unknown",
+          detail: `marketplace ${marketplace} does not say where ${name} comes from`,
+        };
   }
 
-  [[ "$held" == "$expected" ]] && { print -r -- "current"$'\t'; return }
-  print -r -- "stale"$'\t'"$origin at ${held[1,12]}, $url $ref is ${expected[1,12]}"
+  return typeof lookup.source === "string"
+    ? auditRelativePlugin(marketplace, lookup.source, payload)
+    : auditExternalPlugin(lookup.source, payload);
 }
 
-marketplace_inventory () {
-  jq -r '
-    to_entries[]
-    | [ .key,
-        (.value.installLocation // ""),
-        (.value.source.url // ("https://github.com/" + (.value.source.repo // empty)) // ""),
-        (.value.source.ref // "HEAD") ]
-    | @tsv
-  ' "$(claude_plugins_dir)/known_marketplaces.json" 2>/dev/null
-}
+function auditRelativePlugin(marketplace: string, relative: string, payload: string): Check {
+  // A single-plugin marketplace whose whole tree is the plugin declares `.`,
+  // which carries no `./` to strip and so resolves to the marketplace root.
+  const sourceDir = join(
+    claudePluginsDir(),
+    "marketplaces",
+    marketplace,
+    relative.replace(/^\.\//, ""),
+  );
 
-plural () {
-  local n=$1 noun=$2
-  (( n == 1 )) && { print -r -- "$n $noun"; return }
-  print -r -- "$n ${noun}s"
-}
-
-main () {
-  [[ "${1:-}" == -h || "${1:-}" == --help ]] && {
-    grep '^#/' "$script_path" | cut -c4-
-    return 0
+  if (!isDirectory(sourceDir)) {
+    return { verdict: "unknown", detail: `marketplace source ${relative} is missing` };
   }
-  (( $# )) && { print -u2 -- "claude-plugin-audit: unknown option $1"; return 1 }
-
-  local -a drifted unverified
-  local -A vouched marketplace_verdict marketplace_detail folded
-  local name location url ref id payload verdict detail marketplace current=0
-  local marketplaces inventory
-
-  # Same reasoning as the plugin inventory below: an unreadable marketplace list
-  # vouches for nothing, and every plugin check downstream reads `vouched` as
-  # proof its tree was fresh.
-  if ! marketplaces=$(marketplace_inventory); then
-    print -u2 -- "claude-plugin-audit: could not enumerate marketplaces"
-    return 2
-  fi
-
-  # Held rather than recorded, because a marketplace the audit cannot vouch for
-  # takes the plugins riding on it onto its own line below.
-  while IFS=$'\t' read -r name location url ref; do
-    [[ -n "$name" ]] || continue
-    IFS=$'\t' read -r verdict detail <<< "$(audit_marketplace "$location" "$url" "$ref")"
-    [[ "$verdict" == current ]] && vouched[$name]=1
-    marketplace_verdict[$name]=$verdict
-    marketplace_detail[$name]=$detail
-  done <<< "$marketplaces"
-
-  # An inventory that could not be read is not an empty one, and reporting
-  # "everything current" over it would be the silence this tool exists to break.
-  if ! inventory=$(plugin_inventory); then
-    print -u2 -- "claude-plugin-audit: could not enumerate installed plugins"
-    return 2
-  fi
-
-  while IFS=$'\t' read -r id payload; do
-    [[ -n "$id" ]] || continue
-    marketplace=${id##*@}
-    IFS=$'\t' read -r verdict detail <<< "$(audit_plugin "$id" "$payload")"
-    # A payload is only as current as the tree it was compared against. A match
-    # with a marketplace the audit could not vouch for proves nothing, and
-    # calling it current is how a stale clone hides every stale install under it.
-    if [[ "$verdict" == current && -z "${vouched[$marketplace]:-}" ]]; then
-      # The marketplace's own row already says why. Repeating it once per
-      # plugin restated one stale marketplace as four more rows that read like
-      # findings and carried nothing the marketplace line did not. A plugin
-      # whose own check failed keeps its row: that is a separate answer.
-      if [[ -n "${marketplace_verdict[$marketplace]:-}" ]]; then
-        folded[$marketplace]=$(( ${folded[$marketplace]:-0} + 1 ))
-        continue
-      fi
-      verdict=unknown
-      detail="matches marketplace $marketplace, which is itself unverified"
-    fi
-    record_verdict "$id" "$verdict" "$detail"
-  done <<< "$inventory"
-
-  for name in ${(k)marketplace_verdict}; do
-    detail=${marketplace_detail[$name]}
-    (( ${folded[$name]:-0} )) &&
-      detail="$detail; $(plural ${folded[$name]} plugin) unverified with it"
-    record_verdict "marketplace/$name" "${marketplace_verdict[$name]}" "$detail"
-  done
-
-  # Unlabelled, the two blocks were one flat list separated by a blank line, so
-  # a plain-text report read every row as something to act on.
-  (( ${#unverified} )) && print_block "Unverified (could not check):" $unverified
-
-  (( ${#drifted} )) || {
-    print -r -- "$(plural $current check) current"
-    return 0
+  if (payload === "" || !isDirectory(payload)) {
+    return { verdict: "stale", detail: "no payload installed" };
   }
 
-  print_block "Findings (act on these):" $drifted
-  print -r -- "$(plural ${#drifted} finding) to act on ($current current)"
-  return 1
+  const comparison = comparePayload(payload, sourceDir);
+  if (comparison.failed) {
+    return {
+      verdict: "unknown",
+      detail: `could not compare against ${relative}: ${comparison.error}`,
+    };
+  }
+  if (comparison.same) return CURRENT;
+
+  const paths = differingPaths(comparison.differences, payload, sourceDir);
+  const where = `differs from ${relative} at ${plural(paths.length, "path")}: ${namedPaths(paths)}`;
+
+  // Separated from plain staleness because the two need different hands. Stale
+  // clears on the next nightly update. Pinned never does, and reporting it as
+  // stale left a finding that reappeared every night with nothing to do about it.
+  const installed = installedField(payload, "version");
+  if (installed !== "" && installed === declaredVersion(sourceDir)) {
+    return { verdict: "pinned", detail: pinnedDetail(installed, where) };
+  }
+
+  return { verdict: "stale", detail: where };
 }
 
-# Rows under a header, indented so the grouping survives a plain-text note.
-print_block () {
-  local header=$1
-  shift
-  print -r -- "$header"
-  print -rl -- "$@" | sort | column -t -s $'\t' | sed 's/^/  /'
-  print -r -- ""
+async function auditExternalPlugin(source: unknown, payload: string): Promise<Check> {
+  if (payload === "" || !isDirectory(payload)) {
+    return { verdict: "stale", detail: "no payload installed" };
+  }
+
+  const url = repositoryUrl(source);
+  if (url === "") return { verdict: "unknown", detail: "source names no repository" };
+
+  const ref = repositoryRef(source);
+  const expected = resolveRef(url, ref);
+  if (expected === undefined) return { verdict: "unknown", detail: `${url} has no ${ref}` };
+
+  const installed = installedField(payload, "version");
+  const declared = declaredVersion(payload);
+  const held = recordedCommit(installed, declared, installedField(payload, "gitCommitSha"));
+  // Unlike a failed ls-remote, this is a local fact about the install record
+  // that no retry changes, so it belongs with the findings.
+  if (held === "") return { verdict: "stale", detail: "no commit recorded for the install" };
+
+  // Abbreviated on one side and full on the other, so the recorded commit is
+  // matched as a prefix of what the ref resolves to.
+  if (expected.startsWith(held)) return CURRENT;
+
+  const moved = `installed ${held.slice(0, 12)}, ${url} ${ref} is ${expected.slice(0, 12)}`;
+
+  // A repo-backed install reaches the same unreachable-by-update state as a
+  // pinned marketplace-relative one, and it needs the same forced reinstall. The
+  // version the source offers is the one its manifest declares at the commit the
+  // ref resolves to, read a file at a time rather than by cloning every plugin's
+  // repo nightly. A version that cannot be read leaves the verdict where the
+  // commits put it, because an unreachable host says nothing about what the
+  // source offers.
+  if (installed !== "" && !versionIsCommit(installed, declared)) {
+    if ((await offeredVersion(url, expected)) === installed) {
+      return { verdict: "pinned", detail: pinnedDetail(installed, moved) };
+    }
+  }
+
+  return { verdict: "stale", detail: moved };
 }
 
-# Sort a verdict into the two piles main reports on. A comparison that could not
-# be made is not evidence of drift: at 3am an ls-remote loses to a flaky network
-# far more often than to a real change, and failing on one would file a to-do
-# that the next run clears. It still prints, so a standing one is visible.
-record_verdict () {
-  local subject=$1 verdict=$2 detail=$3
-  case $verdict in
-    current)  (( ++current )) ;;
-    unknown)  unverified+=("$subject"$'\t'"unverified"$'\t'"$detail") ;;
-    *)        drifted+=("$subject"$'\t'"$verdict"$'\t'"$detail") ;;
-  esac
+function pinnedDetail(installed: string, where: string): string {
+  return `still offered as ${installed}, so no update reaches it; ${where}`;
 }
 
-# Run only when executed directly. When sourced (tests), ZSH_EVAL_CONTEXT gains
-# a ":file" suffix, so the functions are defined without running the audit.
-[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"
+// GitHub's raw-content host is the one route to a single file that needs no
+// clone, so a plugin served from anywhere else keeps the verdict its commits
+// gave it.
+export function rawManifestUrl(url: string, commit: string): string | undefined {
+  const repo = url.match(
+    /^(?:https?:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)(?:\.git)?\/?$/,
+  )?.[1];
+  if (repo === undefined) return undefined;
+  return `https://raw.githubusercontent.com/${repo}/${commit}/.claude-plugin/plugin.json`;
+}
+
+async function offeredVersion(url: string, commit: string): Promise<string> {
+  const manifest = rawManifestUrl(url, commit);
+  if (manifest === undefined) return "";
+
+  try {
+    const response = await fetch(manifest, { signal: AbortSignal.timeout(MANIFEST_TIMEOUT_MS) });
+    if (!response.ok) return "";
+    const parsed: unknown = JSON.parse(await response.text());
+    return isRecord(parsed) ? scalar(parsed.version) : "";
+  } catch {
+    return "";
+  }
+}
+
+// A source carrying neither field names no repository at all. Building
+// "https://github.com/" out of the prefix alone would send the audit off to
+// fetch it.
+function repositoryUrl(source: unknown): string {
+  if (!isRecord(source)) return "";
+  if (typeof source.url === "string") return source.url;
+  return typeof source.repo === "string" && source.repo !== ""
+    ? `https://github.com/${source.repo}`
+    : "";
+}
+
+function repositoryRef(source: unknown): string {
+  if (!isRecord(source)) return "HEAD";
+  if (typeof source.sha === "string") return source.sha;
+  if (typeof source.ref === "string") return source.ref;
+  return "HEAD";
+}
+
+// A marketplace tree is checked against the ref it follows. A `sha` recorded
+// beside that ref does not stand in for it: the tree is meant to advance with
+// the ref, so measuring it against a fixed commit reports a marketplace that
+// advanced as stale, and folds away every plugin under it.
+function marketplaceRef(source: unknown): string {
+  return isRecord(source) && typeof source.ref === "string" ? source.ref : "HEAD";
+}
+
+// Compare a marketplace tree against the ref its source pins. Every other check
+// reads these trees as ground truth, and `claude plugin marketplace update`
+// warns rather than fails, so a tree that quietly stopped advancing would match
+// a stale install and hide the drift from both sides.
+//
+// Claude Code no longer clones every marketplace. Some it materializes from GCS,
+// recording the commit it built the tree from in a .gcs-sha file at the root
+// instead of a .git directory. Either marker answers the same question.
+export function auditMarketplace(location: string, url: string, ref: string): Check {
+  if (url === "") return { verdict: "unknown", detail: "source names no repository" };
+
+  let origin: string;
+  let held: string;
+
+  if (isDirectory(join(location, ".git"))) {
+    origin = "cloned";
+    const run = spawn(["git", "-C", location, "rev-parse", "HEAD"]);
+    if (run === undefined || run.exitCode !== 0) {
+      return { verdict: "unknown", detail: "clone has no HEAD" };
+    }
+    held = run.stdout.toString().trim().toLowerCase();
+  } else if (isFile(join(location, ".gcs-sha"))) {
+    origin = "materialized";
+    // Written without a trailing newline, so the whole file is the marker and
+    // stripping whitespace covers a copy that picked one up. A file that cannot
+    // be read leaves nothing, which fails the same shape check: a truncated or
+    // half-written marker says nothing about the tree, so it is unverifiable
+    // rather than drifted.
+    held = readText(join(location, ".gcs-sha")).replace(/\s+/g, "").toLowerCase();
+    if (!FULL_COMMIT.test(held)) {
+      return { verdict: "unknown", detail: "records no readable source commit" };
+    }
+  } else {
+    return {
+      verdict: "unknown",
+      detail: "neither a git clone nor GCS-materialized, so freshness is unverifiable",
+    };
+  }
+
+  const expected = resolveRef(url, ref);
+  if (expected === undefined) return { verdict: "unknown", detail: `${url} has no ${ref}` };
+
+  // Both sides are full commits here, so this is equality where the plugin path
+  // needs a prefix match.
+  if (held === expected) return CURRENT;
+
+  return {
+    verdict: "stale",
+    detail: `${origin} at ${held.slice(0, 12)}, ${url} ${ref} is ${expected.slice(0, 12)}`,
+  };
+}
+
+interface MarketplaceRow {
+  name: string;
+  location: string;
+  url: string;
+  ref: string;
+}
+
+function marketplaceInventory(): MarketplaceRow[] | undefined {
+  const parsed = readJson(join(claudePluginsDir(), "known_marketplaces.json"));
+  if (!isRecord(parsed)) return undefined;
+
+  return Object.entries(parsed).map(([name, value]) => {
+    const entry = isRecord(value) ? value : {};
+    const source = entry.source;
+    return {
+      name,
+      location: typeof entry.installLocation === "string" ? entry.installLocation : "",
+      url: repositoryUrl(source),
+      ref: marketplaceRef(source),
+    };
+  });
+}
+
+export type Pile = "current" | "unverified" | "drifted";
+
+// Sort a verdict into the piles the report is built from. A comparison that
+// could not be made is not evidence of drift: at 3am an ls-remote loses to a
+// flaky network far more often than to a real change, and failing on one would
+// file a to-do that the next run clears. It still prints, so a standing one is
+// visible.
+export function pileFor(verdict: Verdict): Pile {
+  if (verdict === "current") return "current";
+  return verdict === "unknown" ? "unverified" : "drifted";
+}
+
+// bin/claude-upgrade's drift fingerprint matches the second field against
+// stale|pinned|orphaned, which is what keeps this bucket out of the latch.
+export function verdictWord(verdict: Verdict): string {
+  return verdict === "unknown" ? "unverified" : verdict;
+}
+
+// A tab or a newline in a detail would add a phantom column, and the subject and
+// the verdict are read out of the row by position.
+function row(subject: string, check: Check): string {
+  return [subject, verdictWord(check.verdict), check.detail.replace(/\s+/g, " ").trim()].join("\t");
+}
+
+export type Folding = { fold: true } | { fold: false; check: Check };
+
+// A payload is only as current as the tree it was compared against. A match with
+// a marketplace the audit could not vouch for proves nothing, and calling it
+// current is how a stale clone hides every stale install under it.
+//
+// The marketplace's own row already says why, so a folded plugin drops out
+// entirely: repeating the reason once per plugin restated one unverifiable
+// marketplace as four more rows that read like findings and carried nothing the
+// marketplace line did not. Folding needs a marketplace row to fold into, and a
+// marketplace the list never named has none. A plugin whose own check said
+// something else keeps its row: that is a separate answer.
+export function foldUnderMarketplace(
+  check: Check,
+  marketplace: string,
+  vouched: boolean,
+  listed: boolean,
+): Folding {
+  if (check.verdict !== "current" || vouched) return { fold: false, check };
+  if (listed) return { fold: true };
+  return {
+    fold: false,
+    check: {
+      verdict: "unknown",
+      detail: `matches marketplace ${marketplace}, which is itself unverified`,
+    },
+  };
+}
+
+// Rows under a header, aligned into columns and indented so the grouping
+// survives a plain-text note.
+function block(header: string, rows: string[]): string[] {
+  const cells = [...rows].sort().map((line) => line.split("\t"));
+  const widths: number[] = [];
+  for (const line of cells) {
+    line.forEach((cell, column) => {
+      widths[column] = Math.max(widths[column] ?? 0, cell.length);
+    });
+  }
+
+  const aligned = cells.map((line) =>
+    line
+      .map((cell, column) => (column === line.length - 1 ? cell : cell.padEnd(widths[column])))
+      .join("  ")
+      .trimEnd(),
+  );
+
+  return [header, ...aligned.map((line) => `  ${line}`), ""];
+}
+
+export async function audit(): Promise<Outcome> {
+  // Same reasoning as the plugin inventory below: an unreadable marketplace list
+  // vouches for nothing, and every plugin check downstream reads a vouched
+  // marketplace as proof its tree was fresh.
+  const marketplaces = marketplaceInventory();
+  if (marketplaces === undefined) {
+    return {
+      status: 2,
+      stdout: "",
+      stderr: "claude-plugin-audit: could not enumerate marketplaces\n",
+    };
+  }
+
+  const marketplaceChecks = new Map<string, Check>();
+  for (const entry of marketplaces) {
+    if (entry.name === "") continue;
+    marketplaceChecks.set(entry.name, auditMarketplace(entry.location, entry.url, entry.ref));
+  }
+
+  // An inventory that could not be read is not an empty one, and reporting
+  // "everything current" over it would be the silence this tool exists to break.
+  // Nothing computed above is printed, because a partial report is
+  // indistinguishable from a complete one.
+  const inventory = pluginInventory();
+  if (!inventory.ok) {
+    return {
+      status: 2,
+      stdout: "",
+      stderr: "claude-plugin-audit: could not enumerate installed plugins\n",
+    };
+  }
+
+  let current = 0;
+  const unverified: string[] = [];
+  const drifted: string[] = [];
+  const folded = new Map<string, number>();
+
+  const record = (subject: string, check: Check): void => {
+    const pile = pileFor(check.verdict);
+    if (pile === "current") current += 1;
+    else if (pile === "unverified") unverified.push(row(subject, check));
+    else drifted.push(row(subject, check));
+  };
+
+  for (const plugin of inventory.plugins) {
+    if (plugin.id === "") continue;
+    const separator = plugin.id.lastIndexOf("@");
+    const marketplace = separator === -1 ? plugin.id : plugin.id.slice(separator + 1);
+    const check = await auditPlugin(plugin.id, plugin.installPath);
+
+    const marketplaceCheck = marketplaceChecks.get(marketplace);
+    const folding = foldUnderMarketplace(
+      check,
+      marketplace,
+      marketplaceCheck?.verdict === "current",
+      marketplaceCheck !== undefined,
+    );
+    if (folding.fold) {
+      folded.set(marketplace, (folded.get(marketplace) ?? 0) + 1);
+      continue;
+    }
+    record(plugin.id, folding.check);
+  }
+
+  for (const [name, check] of marketplaceChecks) {
+    const count = folded.get(name) ?? 0;
+    const detail =
+      count > 0 ? `${check.detail}; ${plural(count, "plugin")} unverified with it` : check.detail;
+    record(`marketplace/${name}`, { verdict: check.verdict, detail });
+  }
+
+  // Unlabelled, the two blocks were one flat list separated by a blank line, so
+  // a plain-text report read every row as something to act on.
+  const out: string[] = [];
+  if (unverified.length > 0) out.push(...block("Unverified (could not check):", unverified));
+
+  if (drifted.length === 0) {
+    out.push(`${plural(current, "check")} current`);
+    return { status: 0, stdout: `${out.join("\n")}\n`, stderr: "" };
+  }
+
+  out.push(...block("Findings (act on these):", drifted));
+  out.push(`${plural(drifted.length, "finding")} to act on (${current} current)`);
+  return { status: 1, stdout: `${out.join("\n")}\n`, stderr: "" };
+}
+
+export async function run(args: string[]): Promise<Outcome> {
+  if (args[0] === "-h" || args[0] === "--help") {
+    return { status: 0, stdout: `${USAGE}\n`, stderr: "" };
+  }
+  if (args.length > 0) {
+    return { status: 1, stdout: "", stderr: `claude-plugin-audit: unknown option ${args[0]}\n` };
+  }
+  return audit();
+}
+
+function spawn(cmd: string[]) {
+  try {
+    return Bun.spawnSync({ cmd, env: process.env, stdin: "ignore", stderr: "ignore" });
+  } catch {
+    return undefined;
+  }
+}
+
+// jq's `// empty` drops null and false, and -r prints anything else as its own
+// text.
+function scalar(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || value === true) return String(value);
+  return "";
+}
+
+// A plugin whose payload ships no manifest is normal, not an error, so a file
+// that is missing or unparseable reads as a field nothing declared.
+function readJson(path: string): unknown {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function readText(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function firstLine(text: string): string {
+  return text.split("\n")[0] ?? "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// bin/claude-upgrade reads the report over a pipe, where a write can only take
+// what fits in the buffer and process.exit discards whatever is still queued
+// behind it. A report longer than the buffer arrived cut mid-row, with the
+// summary line the caller reads gone.
+function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let written = 0;
+  while (written < bytes.length) written += writeSync(fd, bytes, written);
+}
+
+if (import.meta.main) {
+  const outcome = await run(process.argv.slice(2));
+  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
+  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
+  process.exit(outcome.status);
+}
