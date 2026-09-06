@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+#
+# Report every workspace's git and pull request state to herdr as workspace
+# metadata. The spaces rows in config.toml render the tokens; the comment there
+# says what each one means.
+#
+# herdr's own git_status token is ahead and behind against the upstream, which
+# it never fetches, so the behind count is however stale the last fetch left
+# it. This reports what changes by working here instead: work not yet
+# committed, commits not yet pushed, and where the branch's pull requests
+# stand, on GitHub through gh and on GitLab through glab.
+#
+# The glyphs are Nerd Font octicons, which the terminal font carries. Each is
+# named here by its nf-oct-* entry so a codepoint can be checked against
+# glyphnames.json rather than eyeballed.
+set -uo pipefail
+
+SOURCE=workspace-status
+
+# Reports repeat on the tab bar interval in config.toml. A token that outlives
+# its reporter by this much is stale, and a blank row says so where a stale
+# value would lie.
+TTL_MS=600000
+
+# The status token's color, which is its name in config.toml.
+COLORS=(red yellow green plain mauve dim)
+
+GLYPH_DIRTY=''      # diff_modified
+GLYPH_UNPUSHED=''   # arrow_up
+GLYPH_PR_OPEN=''    # git_pull_request
+GLYPH_PR_DRAFT=''   # git_pull_request_draft
+GLYPH_PR_MERGED=''  # git_merge
+GLYPH_PR_CLOSED=''  # git_pull_request_closed
+GLYPH_PR_STACKED='' # stack
+
+for tool in herdr git jq; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "herdr-workspace-status: $tool is not on PATH" >&2
+    exit 1
+  }
+done
+
+# The branch the remote checks out, then the two names it usually is.
+default_branch() {
+  local path=$1 name
+  name=$(git -C "$path" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) && {
+    echo "${name#origin/}"
+    return
+  }
+  for name in main master; do
+    git -C "$path" rev-parse --quiet --verify "refs/remotes/origin/$name" >/dev/null 2>&1 && {
+      echo "$name"
+      return
+    }
+  done
+}
+
+# The host in a remote URL, whichever of the ssh and https shapes it takes.
+remote_host() {
+  local url=$1
+  url=${url#*://}
+  url=${url#*@}
+  echo "${url%%[/:]*}"
+}
+
+# Both forges reduce to the same shape: number, state (OPEN, MERGED, CLOSED),
+# draft, conflicting, checks (ok, fail, pending, none), updated, head, and
+# stacked. What follows never asks which forge answered.
+
+github_prs() {
+  local path=$1 branch=$2 default=$3 prs number stack=()
+  prs=$(cd "$path" && gh pr list --head "$branch" --state all --limit 20 \
+    --json number,state,isDraft,mergeable,statusCheckRollup,updatedAt,headRefOid,baseRefName 2>/dev/null) || return 1
+  # `gh pr list` does not carry GitHub's stack field, so each open pull request
+  # is asked for it directly. The bottom of a stack has the default branch as
+  # its base and is only known this way.
+  for number in $(jq -r '.[] | select(.state == "OPEN") | .number' <<<"$prs"); do
+    if [ -n "$(cd "$path" && gh api "repos/{owner}/{repo}/pulls/$number" --jq '.stack // empty' 2>/dev/null)" ]; then
+      stack+=("$number")
+    fi
+  done
+  jq --arg default "$default" \
+    --argjson stack "$(jq -cn '$ARGS.positional | map(tonumber)' --args ${stack[@]+"${stack[@]}"})" '
+    def checks:
+      (.statusCheckRollup // []) as $checks
+      | if ($checks | length) == 0 then "none"
+        elif any($checks[]; (.conclusion // .state // "")
+            | IN("FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE")) then "fail"
+        elif any($checks[]; ((.status // "COMPLETED") != "COMPLETED")
+            or ((.state // "") | IN("PENDING", "EXPECTED"))) then "pending"
+        else "ok" end;
+    map({
+      number,
+      state,
+      draft: .isDraft,
+      conflicting: (.mergeable == "CONFLICTING"),
+      checks: checks,
+      updated: .updatedAt,
+      head: .headRefOid,
+      stacked: ((.number | IN($stack[])) or .baseRefName != $default),
+    })' <<<"$prs"
+}
+
+gitlab_prs() {
+  local path=$1 branch=$2 default=$3 mrs iid detail details='[]'
+  mrs=$(cd "$path" && glab mr list --source-branch "$branch" --all --per-page 20 -F json 2>/dev/null) || return 1
+  # The list omits the pipeline, so each open merge request is fetched for
+  # it. GitLab has no stack field; a stack is a target that is not the
+  # default branch, which is what glab stack makes.
+  for iid in $(jq -r '.[] | select(.state == "opened") | .iid' <<<"$mrs"); do
+    detail=$(cd "$path" && glab api "projects/:id/merge_requests/$iid" 2>/dev/null) || continue
+    details=$(jq -c --argjson detail "$detail" '. + [$detail]' <<<"$details")
+  done
+  jq --arg default "$default" --argjson details "$details" '
+    def pipeline:
+      .iid as $iid
+      | [$details[] | select(.iid == $iid) | .head_pipeline.status // empty] | first // "";
+    def checks:
+      pipeline as $status
+      | if $status == "" or $status == "skipped" then "none"
+        elif $status == "success" then "ok"
+        elif $status | IN("failed", "canceled") then "fail"
+        else "pending" end;
+    map({
+      number: .iid,
+      state: (if .state == "merged" then "MERGED" elif .state == "closed" then "CLOSED" else "OPEN" end),
+      draft: (.draft // .work_in_progress // false),
+      conflicting: ((.has_conflicts // false) or .detailed_merge_status == "conflict"),
+      checks: checks,
+      updated: .updated_at,
+      head: .sha,
+      stacked: (.target_branch != $default),
+    })' <<<"$mrs"
+}
+
+# One line, `<bucket>\t<glyph>`, or nothing without a pull request. The open
+# pull requests are what count. With none open, the one most recently touched
+# stands in, so a merged branch reads as merged until its worktree goes. The
+# bucket is the worst of them, and the glyph is the pull request's shape:
+# open, draft, merged, closed, or in a stack. More than one open pull request
+# is a stack layer, since that is the only way a branch gets two, and the
+# stack glyph says so on its own.
+classify_prs() {
+  jq -r \
+    --arg open "$GLYPH_PR_OPEN" --arg draft "$GLYPH_PR_DRAFT" \
+    --arg merged "$GLYPH_PR_MERGED" --arg closed "$GLYPH_PR_CLOSED" \
+    --arg stacked "$GLYPH_PR_STACKED" '
+    def bucket:
+      if .state == "MERGED" then "merged"
+      elif .state == "CLOSED" then "closed"
+      elif .conflicting then "fail"
+      elif .draft then "draft"
+      else {ok: "ok", fail: "fail", pending: "pending", none: "open"}[.checks] end;
+    def glyph:
+      if .state == "MERGED" then $merged
+      elif .state == "CLOSED" then $closed
+      elif .stacked then $stacked
+      elif .draft then $draft
+      else $open end;
+    ["fail", "pending", "ok", "open", "draft", "merged", "closed"] as $worst_first
+    | map(select(.state == "OPEN")) as $open_prs
+    | (if ($open_prs | length) > 0 then $open_prs else [max_by(.updated)] end)
+    | map(select(. != null))
+    | select(length > 0)
+    | (map(bucket) | min_by(. as $b | $worst_first | index($b))) as $bucket
+    | (if length > 1 then $stacked else .[0] | glyph end) as $glyph
+    | "\($bucket)\t\($glyph)"
+  '
+}
+
+report_workspace() {
+  local id=$1 path=$2 label=$3
+  local branch default base upstream host n
+  local t_branch='' local_glyph=''
+
+  branch=$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null) ||
+    branch="@$(git -C "$path" rev-parse --short HEAD 2>/dev/null)"
+  default=$(default_branch "$path")
+  base=
+  [ -n "$default" ] && base="origin/$default"
+
+  # The workspace label is the branch for a worktree, and the default branch
+  # is where a root checkout sits. Either way the name says nothing. Any other
+  # branch is worth a row.
+  if [ "$branch" != "$label" ] && [ "$branch" != "$default" ]; then
+    t_branch=$branch
+  fi
+
+  # github.com goes to gh and every other host to glab, which is where a
+  # self-hosted GitLab lands. Neither being installed, or a host neither
+  # knows, leaves the pull request glyph off rather than the row.
+  local prs='[]' pr_head='' pr_bucket='' pr_glyph=''
+  host=$(remote_host "$(git -C "$path" config --get remote.origin.url 2>/dev/null)")
+  if [ -n "$default" ] && [ "$branch" != "$default" ] && [ "${branch#@}" = "$branch" ]; then
+    case "$host" in
+      "") ;;
+      github.com) command -v gh >/dev/null 2>&1 && prs=$(github_prs "$path" "$branch" "$default") ;;
+      *) command -v glab >/dev/null 2>&1 && prs=$(gitlab_prs "$path" "$branch" "$default") ;;
+    esac
+    prs=${prs:-[]}
+  fi
+  IFS=$'\t' read -r pr_bucket pr_glyph < <(classify_prs <<<"$prs")
+  pr_head=$(jq -r '
+    (map(select(.state == "OPEN")) | .[0]) // (max_by(.updated)) | .head // empty' <<<"$prs")
+
+  # Commits the forge has not seen. A pull request says exactly where its
+  # copy of the branch is, which covers a branch pushed with a URL for its
+  # upstream, where git keeps no tracking ref to compare against, and a
+  # merged one whose remote branch is gone. Failing that, the upstream, then
+  # origin's copy of the branch, then the whole branch when it has never been
+  # pushed.
+  n=0
+  if [ -n "$pr_head" ] && git -C "$path" cat-file -e "$pr_head^{commit}" 2>/dev/null; then
+    n=$(git -C "$path" rev-list --count "$pr_head..HEAD" 2>/dev/null || echo 0)
+  elif upstream=$(git -C "$path" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null); then
+    n=$(git -C "$path" rev-list --count "$upstream..HEAD" 2>/dev/null || echo 0)
+  elif git -C "$path" rev-parse --quiet --verify "refs/remotes/origin/$branch" >/dev/null 2>&1; then
+    n=$(git -C "$path" rev-list --count "origin/$branch..HEAD" 2>/dev/null || echo 0)
+  elif [ -n "$base" ] && [ "$branch" != "$default" ]; then
+    n=$(git -C "$path" rev-list --count "$base..HEAD" 2>/dev/null || echo 0)
+  fi
+
+  # One glyph for where the branch is locally. Uncommitted work, tracked or
+  # not, comes before unpushed commits: committing turns the one into the
+  # other and pushing clears it, so the slot walks that progression rather
+  # than showing two stages at once.
+  if [ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]; then
+    local_glyph=$GLYPH_DIRTY
+  elif [ "$n" -gt 0 ]; then
+    local_glyph=$GLYPH_UNPUSHED
+  fi
+
+  # One token carries the cluster, since herdr draws a divider between tokens
+  # and right-aligns them at the label's expense, and its name carries the
+  # color. An open pull request's checks color the row: failing or
+  # conflicting red, running yellow, passing green, plain with no checks or
+  # as a draft. A merged pull request is mauve and a closed one dim, unless
+  # work has landed on top since, which is pending work and reads yellow the
+  # way it does with no pull request at all.
+  local cluster="${local_glyph}${local_glyph:+${pr_glyph:+ }}${pr_glyph}" color=plain
+  case $pr_bucket in
+    fail) color=red ;;
+    pending) color=yellow ;;
+    ok) color=green ;;
+    open | draft) color=plain ;;
+    merged) color=mauve ;;
+    closed) color=dim ;;
+  esac
+  case "$pr_bucket:$local_glyph" in
+    merged:? | closed:? | :?) color=yellow ;;
+  esac
+
+  local args=("$id" --source "$SOURCE" --ttl-ms "$TTL_MS") name
+  token() { if [ -n "$2" ]; then args+=(--token "$1=$2"); else args+=(--clear-token "$1"); fi; }
+  token branch "$t_branch"
+  for name in "${COLORS[@]}"; do
+    if [ "$name" = "$color" ]; then token "status_$name" "$cluster"; else token "status_$name" ''; fi
+  done
+  herdr workspace report-metadata "${args[@]}" >/dev/null 2>&1 ||
+    echo "herdr-workspace-status: could not report $label ($id)" >&2
+}
+
+workspaces=$(herdr workspace list 2>/dev/null | jq -r '
+  .result.workspaces[]?
+  | select(.worktree.checkout_path != null)
+  | [.workspace_id, .worktree.checkout_path, .label]
+  | @tsv') || {
+  echo "herdr-workspace-status: could not list workspaces" >&2
+  exit 1
+}
+
+# Every workspace at once. The forge is the slow part, and a machine full of
+# worktrees should not wait on it one repo at a time. Workspace ids as
+# arguments narrow the run to those.
+while IFS=$'\t' read -r id path label; do
+  [ -n "$id" ] && [ -d "$path" ] || continue
+  if [ "$#" -gt 0 ]; then
+    case " $* " in *" $id "*) ;; *) continue ;; esac
+  fi
+  report_workspace "$id" "$path" "$label" &
+done <<<"$workspaces"
+wait
