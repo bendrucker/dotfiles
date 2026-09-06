@@ -42,4 +42,9 @@ done
 typeset -gU path
 path=("$ZSH/bin" "$HOME/.local/bin" $path)
 
+# Deliberately not exported. .zshrc keys its rebuild on this, and a child shell
+# that inherited it would read its parent's startup as its own and skip the
+# rebuild it needs. See the block at the top of .zshrc.
+typeset -g DOTFILES_ZSHENV_RAN=1
+
 [[ -f ~/.zshenv.local ]] && source ~/.zshenv.local

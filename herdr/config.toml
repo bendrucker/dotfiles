@@ -265,10 +265,16 @@ description = "review the agent's last reply"
 # flock coordinates every other pane, so there is one of it and this is the way
 # back to it. The launcher looks the workspace up by label and builds it on the
 # first run, which keeps the binding working after the workspace is closed.
+#
+# Spelled out rather than named bare. The server holds the environment it
+# started with for as long as it runs, so a bare name resolves against a PATH
+# that can predate herdr/path.zsh and the launcher it puts on PATH. $ZSH is the
+# active root, which keeps the binding pointed at a dev checkout while dev mode
+# is on, and $HOME/.dotfiles is where the symlinks point otherwise.
 [[keys.command]]
 key = "prefix+alt+f"
 type = "shell"
-command = "herdr-flock"
+command = "${ZSH:-$HOME/.dotfiles}/herdr/bin/herdr-flock"
 description = "flock coordinator (focus or create)"
 
 [ui]
