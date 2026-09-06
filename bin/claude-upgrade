@@ -230,7 +230,7 @@ report_drift() {
   # bucket, and hashing them would reopen the latch on any 3am blip.
   local fingerprint
   fingerprint=$(print -r -- "$output" |
-    failure_fingerprint '$2 ~ /^(stale|orphaned)$/ { print $1, $2 }')
+    failure_fingerprint '$2 ~ /^(stale|pinned|orphaned)$/ { print $1, $2 }')
 
   report_failure "claude-plugin-drift" "Claude plugins are stale" "claude-plugin-audit" \
     "$output" "$(upgrade_revision)" "$(upgrade_meta)" "Stale Plugins" "$fingerprint"

@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 #/ Usage: claude-plugin-audit
 #/ Report installed Claude Code plugins whose payload no longer matches what
-#/ their marketplace offers. Exits non-zero when anything is stale.
+#/ their marketplace offers. Exits non-zero when anything has drifted.
 #
 # `claude plugin update` reports success in cases where it changed nothing: a
 # plugin that declares a fixed `version` string is "already at the latest
@@ -14,8 +14,8 @@
 # content rather than reading the recorded gitCommitSha, because a forced
 # refresh (rm -rf the payload, reinstall) restores current content while leaving
 # that field at its old value. A plugin sourced from its own repo has no local
-# copy of that repo to compare against, so it falls back to the recorded commit
-# and inherits that field's inaccuracy.
+# copy of that repo to compare against, so it falls back to the commits Claude
+# Code recorded for the install.
 
 set -uo pipefail
 setopt typeset_silent
@@ -103,8 +103,33 @@ resolve_ref () {
   print -r -- "$refs" | awk 'NR == 1 { print $1 }'
 }
 
+# The commit an install holds.
+#
+# Claude Code records two fields and keeps only one of them current. `version`
+# is what the updater keys on and prints back ("already at the latest version
+# (7e6c36e8)"), and it names the payload directory. `gitCommitSha` is written at
+# install and not rewritten by a later update, so a plugin updated in place
+# keeps the commit it first arrived at. Reading that field reported a current
+# plugin stale every night, and no update could clear it because the updater
+# agreed it was already current.
+#
+# Which field carries the commit depends on the plugin. `version` holds the
+# installed commit for a plugin that declares no version of its own, and the
+# declared version string otherwise. The payload's own manifest decides which,
+# rather than the shape of the string, so a calendar version spelled entirely in
+# hex digits is not read as an abbreviated commit. Only one is consulted: a
+# gitCommitSha left behind by an in-place update would otherwise stand in for a
+# version that has moved on, and match a ref that came back to it.
 recorded_commit () {
-  local payload=$1
+  local payload=$1 version
+  version=$(installed_version "$payload")
+
+  if [[ "$version" =~ '^[0-9a-f]{7,40}$' &&
+        "$version" != "$(declared_version "$payload")" ]]; then
+    print -r -- "$version"
+    return
+  fi
+
   jq -r --arg payload "$payload" '
     (if type == "array" then (.[] | select(.key == "plugins") | .value) else .plugins end)
     | to_entries[] | .value[]
@@ -112,10 +137,30 @@ recorded_commit () {
   ' "$(claude_plugins_dir)/installed_plugins.json" 2>/dev/null | head -1
 }
 
+# The version string each side of an install declares. `claude plugin update`
+# compares these, so a plugin whose source still offers the version already
+# installed is "already at the latest version" however far the tree behind that
+# version has moved, and no update can reach it.
+declared_version () {
+  jq -r '.version // empty' "$1/.claude-plugin/plugin.json" 2>/dev/null
+}
+
+installed_version () {
+  local payload=$1
+  jq -r --arg payload "$payload" '
+    (if type == "array" then (.[] | select(.key == "plugins") | .value) else .plugins end)
+    | to_entries[] | .value[]
+    | select(.installPath == $payload) | .version // empty
+  ' "$(claude_plugins_dir)/installed_plugins.json" 2>/dev/null | head -1
+}
+
 # Compare a plugin's installed payload against the source its marketplace
 # currently offers. Prints "<verdict>\t<detail>", where verdict is one of:
 #   current   the payload matches
 #   stale     the payload differs, or was never installed
+#   pinned    the payload differs, but its source still offers the version
+#             already installed, so no update reaches it and the fix is a forced
+#             reinstall
 #   orphaned  the marketplace no longer offers the plugin, so nothing can update
 #             it and the fix is to uninstall
 #   unknown   the comparison could not be made
@@ -176,6 +221,16 @@ audit_relative_plugin () {
   local named=${(j:, :)paths[1,3]}
   (( ${#paths} > 3 )) && named+=", and $(( ${#paths} - 3 )) more"
 
+  # Separated from plain staleness because the two need different hands. Stale
+  # clears on the next nightly update. Pinned never does, and reporting it as
+  # stale left a finding that reappeared every night with nothing to do about it.
+  local installed
+  installed=$(installed_version "$payload")
+  if [[ -n "$installed" && "$installed" == "$(declared_version "$source_dir")" ]]; then
+    print -r -- "pinned"$'\t'"still offered as $installed, so no update reaches it; differs from $relative at $(plural ${#paths} path): $named"
+    return
+  fi
+
   print -r -- "stale"$'\t'"differs from $relative at $(plural ${#paths} path): $named"
 }
 
@@ -202,7 +257,10 @@ audit_external_plugin () {
 
   actual=$(recorded_commit "$payload")
   [[ -n "$actual" ]] || { print -r -- "stale"$'\t'"no commit recorded for the install"; return }
-  [[ "$actual" == "$expected" ]] && { print -r -- "current"$'\t'; return }
+
+  # Abbreviated on one side and full on the other, so the recorded commit is
+  # matched as a prefix of what the ref resolves to.
+  [[ "$expected" == "$actual"* ]] && { print -r -- "current"$'\t'; return }
 
   print -r -- "stale"$'\t'"installed ${actual[1,12]}, $url $ref is ${expected[1,12]}"
 }
