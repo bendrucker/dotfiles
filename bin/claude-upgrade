@@ -1,277 +1,454 @@
-#!/usr/bin/env zsh
-# Claude configuration sync and plugin upgrade
-# Syncs claude repo, updates marketplaces and plugins
+#!/usr/bin/env bun
+//
+// Claude configuration sync and plugin upgrade, run nightly from launchd.
+//
+// It self-heals the two ways ~/.claude-repo goes dirty on its own, syncs the
+// repo, then refreshes every marketplace and updates every plugin installed at
+// user scope, disabled ones included. `claude plugin enable` does not update, so
+// a plugin skipped while disabled would come back stale months later.
+//
+// The whole run is captured as it happens: a failure files a Things to-do built
+// from that log, on a latch keyed by which steps warned. The audit's own
+// findings go to a second latch, because drift outlives the run that should have
+// fixed it and one stale plugin sharing the upgrade's latch would suppress the
+// to-do for a later upgrade failure.
 
-CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { pluginInventory, pluginSource } from "../scripts/lib/claude-plugins.ts";
+import {
+  httpsEnv,
+  isDirectory,
+  lines,
+  reviewDirty,
+  stripNewlines,
+  syncNotify,
+} from "../scripts/lib/git-diff-review.ts";
+import {
+  type Capture,
+  capturedOutput,
+  log,
+  type Output,
+  type SpawnOptions,
+} from "../scripts/lib/job-output.ts";
+import { byCodeUnit, canonicalJson, parseJson } from "../scripts/lib/sorted-json.ts";
+import { notify, reportFailure, reportSuccess } from "../scripts/lib/report-failure.ts";
 
-# Captured at file scope: inside a function $0 is the function name, so the
-# audit could not be found from there.
-typeset -g bin_dir=${0:A:h}
+const TITLE = "Claude Upgrade";
+const UPGRADE_JOB = "claude-upgrade";
+const DRIFT_JOB = "claude-plugin-drift";
 
-source "${0:A:h}/../scripts/lib/spin.sh"
-source "${0:A:h}/../scripts/lib/claude-plugins.sh"
-source "${0:A:h}/../scripts/lib/git-sync.sh"
-source "${0:A:h}/../scripts/lib/report-failure.sh"
-source "${0:A:h}/../scripts/lib/sync-notify.sh"
-source "${0:A:h}/../scripts/lib/git-diff-review.sh"
+// The command Vibe Island writes into every hook when it takes hook management
+// back. It runs on a remote agent host and is not installed here.
+const VIBE_ISLAND_HOOK = "vibe-island/bin/vibe-island-hook";
 
-revert_cosmetic_json_changes() {
-  local changed_files
-  changed_files=$(git diff HEAD --name-only 2>/dev/null)
+const SETTINGS = "user/settings.json";
 
-  [[ -z "$changed_files" ]] && return
+// ~/.dotfiles is a symlink to the checkout, so the audit is found through the
+// resolved path rather than the invoked one.
+const BIN = dirname(realpathSync(import.meta.path));
 
-  while IFS= read -r file; do
-    [[ "$file" == *.json ]] || continue
-    [[ -f "$file" ]] || continue
-
-    local working_sorted head_sorted
-    working_sorted=$(jq -S . "$file" 2>/dev/null) || continue
-    head_sorted=$(git show "HEAD:$file" 2>/dev/null | jq -S . 2>/dev/null) || continue
-
-    if [[ "$working_sorted" == "$head_sorted" ]]; then
-      gum log --level info "Reverting cosmetic reorder in $file"
-      git checkout HEAD -- "$file"
-    fi
-  done <<< "$changed_files"
+// $HOME is read before the account's own home directory, because that is what
+// the shell expanded and what a spec re-points between examples.
+export function claudeRepoHome(): string {
+  return process.env.CLAUDE_REPO_HOME || join(process.env.HOME || homedir(), ".claude-repo");
 }
 
-# Is every hook in this settings.json Vibe Island's own command? The app
-# replaces all of them at once, so a file where only some match holds something
-# else as well, and reverting the file would take that with it. Scoped to
-# .hooks, so the string appearing elsewhere is not read as a hook.
-#
-# The type test states what an unreadable command means here rather than
-# leaving it to jq. Without it, test() on a non-string raises, and the answer
-# these give comes from a swallowed error rather than from the predicate. It
-# lands on the same decision today, so this is about resting the decision on
-# something other than a redirect. Guard the match rather than filtering ahead
-# of it: filtering drops an unreadable command from the set, which lets the rest
-# of the file answer for it and reverts a hook nothing inspected.
-vibe_island_owns_every_hook() {
-  jq -e '[.hooks // {} | .. | objects | .command? // empty]
-         | length > 0
-           and all(type == "string" and test("vibe-island/bin/vibe-island-hook"))' >/dev/null 2>&1
+// A tracked .json whose parsed form still matches its blob at HEAD is a
+// reformat: an app rewrote the file and changed nothing in it.
+export function revertCosmeticJsonChanges(out: Output, repoDir: string): void {
+  for (const file of lines(gitQuiet(["diff", "HEAD", "--name-only"], repoDir).stdout)) {
+    if (!file.endsWith(".json")) continue;
+    const path = join(repoDir, file);
+    if (!isFile(path)) continue;
+
+    const working = sortedFile(path);
+    const head = sortedBlob(repoDir, file);
+    if (working === undefined || head === undefined) continue;
+
+    if (working === head) {
+      log(out, "info", `Reverting cosmetic reorder in ${file}`);
+      out.run(["git", "-C", repoDir, "checkout", "HEAD", "--", file]);
+    }
+  }
 }
 
-vibe_island_hook_present() {
-  jq -e '[.hooks // {} | .. | objects | .command? // empty]
-         | any(type == "string" and test("vibe-island/bin/vibe-island-hook"))' >/dev/null 2>&1
+// Every `.command` anywhere under `.hooks`, which is where the app writes. A
+// command that is absent, null or false contributes nothing; anything else
+// reaches the predicates below as it was written, so an unreadable command
+// answers for itself rather than being dropped from the set.
+export function hookCommands(settings: unknown): unknown[] {
+  if (!isRecord(settings)) return [];
+
+  const commands: unknown[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (!isRecord(node)) return;
+    const command = node.command;
+    if (command !== undefined && command !== null && command !== false) commands.push(command);
+    for (const value of Object.values(node)) walk(value);
+  };
+
+  const hooks = settings.hooks;
+  walk(hooks === undefined || hooks === null || hooks === false ? {} : hooks);
+  return commands;
 }
 
-# Vibe Island writes ~/.claude/settings.json itself, through the symlink and
-# into the tracked config, replacing every hook with the command it uses on a
-# remote agent host. That binary is not installed here, so every hook event in a
-# new session fails, and the dirty tracked file stalls the sync behind it.
-# Discard it, and say so: a silent revert would leave the app taking hook
-# management back with nothing to show for it.
-revert_vibe_island_hook_rewrite() {
-  local file="user/settings.json"
-
-  [[ -f "$file" ]] || return 0
-
-  local working head
-  working=$(jq -S . "$file" 2>/dev/null) || return 0
-  head=$(git show "HEAD:$file" 2>/dev/null | jq -S . 2>/dev/null) || return 0
-
-  print -r -- "$working" | vibe_island_owns_every_hook || return 0
-  print -r -- "$head" | vibe_island_hook_present && return 0
-
-  # A change reaching outside .hooks is a real edit this must not discard.
-  # git_review_dirty still gets to ask about those.
-  [[ "$(print -r -- "$working" | jq -S 'del(.hooks)')" == \
-     "$(print -r -- "$head" | jq -S 'del(.hooks)')" ]] || return 0
-
-  gum log --level warn "Reverting Vibe Island's hook rewrite in $file"
-  git checkout HEAD -- "$file"
-  notify "Claude Upgrade" "Reverted Vibe Island's hook rewrite in settings.json"
+// The app replaces all the hooks at once, so a file where only some match holds
+// something else as well, and reverting the file would take that with it. A
+// command that is not a string is one nothing here can vouch for, which makes
+// this false rather than raising.
+export function vibeIslandOwnsEveryHook(settings: unknown): boolean {
+  const commands = hookCommands(settings);
+  return commands.length > 0 && commands.every(isVibeIslandCommand);
 }
 
-sync_repo() {
-  gum log --level info "Syncing Claude repository..."
-
-  cd "$CLAUDE_REPO_HOME" || return 1
-
-  revert_cosmetic_json_changes
-  revert_vibe_island_hook_rewrite
-
-  git_review_dirty "$CLAUDE_REPO_HOME" "Claude Upgrade" || return 1
-
-  local new_rev sync_rc=0
-  new_rev=$(git_sync_notify "$CLAUDE_REPO_HOME" "Claude Upgrade") || sync_rc=$?
-  case $sync_rc in
-    "$GIT_SYNC_UPDATED")
-      gum log --level info "Repository updated to $new_rev"
-      ;;
-    "$GIT_SYNC_CURRENT") ;;
-    *)
-      return 1
-      ;;
-  esac
+export function vibeIslandHookPresent(settings: unknown): boolean {
+  return hookCommands(settings).some(isVibeIslandCommand);
 }
 
-update_marketplaces() {
-  gum log --level info "Updating marketplaces..."
-  claude plugin marketplace update || gum log --level warn "marketplace update had issues, continuing"
+function isVibeIslandCommand(command: unknown): boolean {
+  return typeof command === "string" && command.includes(VIBE_ISLAND_HOOK);
 }
 
-# Update every plugin installed at user scope, enabled or not. `claude plugin
-# enable` does not update, so a disabled plugin skipped here comes back stale
-# whenever it is re-enabled.
-update_plugins() {
-  gum log --level info "Updating plugins..."
+// Vibe Island writes ~/.claude/settings.json itself, through the symlink and
+// into the tracked config, replacing every hook with the command it uses on a
+// remote agent host. That binary is not installed here, so every hook event in a
+// new session fails, and the dirty tracked file stalls the sync behind it.
+// Discard it, and say so: a silent revert would leave the app taking hook
+// management back with nothing to show for it.
+export function revertVibeIslandHookRewrite(out: Output, repoDir: string): void {
+  const path = join(repoDir, SETTINGS);
+  if (!isFile(path)) return;
 
-  local inventory
-  # An inventory that could not be read is not an empty one. Treating it as
-  # empty would update nothing and report success, which is the failure this
-  # job exists to make loud.
-  if ! inventory=$(plugin_inventory); then
-    gum log --level warn "Could not enumerate installed plugins"
-    return 1
-  fi
+  const working = parseJson(readText(path));
+  if (working === undefined) return;
 
-  local failed=0 plugin payload source_rc
-  while IFS=$'\t' read -r plugin payload; do
-    [[ -n "$plugin" ]] || continue
+  const blob = gitQuiet(["show", `HEAD:${SETTINGS}`], repoDir);
+  if (blob.status !== 0) return;
+  const head = parseJson(blob.stdout);
+  if (head === undefined) return;
 
-    source_rc=0
-    plugin_source "$plugin" >/dev/null || source_rc=$?
-    # A marketplace that no longer offers the plugin has nothing to update it
-    # to, so `claude plugin update` can only ever fail. claude-plugin-audit
-    # reports these. Counting them here would make every run fail.
-    (( source_rc == PLUGIN_SOURCE_ABSENT )) && continue
+  if (!vibeIslandOwnsEveryHook(working)) return;
+  if (vibeIslandHookPresent(head)) return;
 
-    if [[ -z "$payload" || ! -d "$payload" ]]; then
-      # Installing an id the marketplace cannot vouch for is a guess that fails
-      # every night. The audit names it instead.
-      (( source_rc != 0 )) && continue
+  // A change reaching outside .hooks is a real edit this must not discard. The
+  // sync gate still gets to ask about those, and it cannot ask about a file this
+  // already threw away. Compared on the canonical forms with .hooks deleted, so
+  // the app reformatting the whole file while it rewrites the hooks does not
+  // hide the match.
+  const workingRest = canonicalJson(readText(path), "del(.hooks)");
+  const headRest = canonicalJson(blob.stdout, "del(.hooks)");
+  if (workingRest === undefined || headRest === undefined) return;
+  if (workingRest !== headRest) return;
 
-      gum log --level info "Installing $plugin (not yet installed)..."
-      if ! claude plugin install "$plugin" </dev/null; then
-        gum log --level warn "Failed to install $plugin"
-        (( ++failed ))
-      fi
-      continue
-    fi
-
-    gum log --level info "Updating $plugin..."
-    # </dev/null keeps the CLI from reading the loop's stdin, which is the
-    # inventory: one prompt-happy invocation would swallow the rest of it and
-    # leave every plugin after this one silently unattempted.
-    if ! claude plugin update "$plugin" </dev/null; then
-      gum log --level warn "Failed to update $plugin"
-      (( ++failed ))
-    fi
-  done <<< "$inventory"
-
-  if ((failed > 0)); then
-    gum log --level warn "$failed plugin(s) failed to update"
-    return 1
-  fi
+  log(out, "warn", `Reverting Vibe Island's hook rewrite in ${SETTINGS}`);
+  out.run(["git", "-C", repoDir, "checkout", "HEAD", "--", SETTINGS]);
+  notify(TITLE, "Reverted Vibe Island's hook rewrite in settings.json");
 }
 
-# Check what the update pass actually produced, and report drift on a latch of
-# its own. Drift outlives the run that should have fixed it, so sharing the
-# claude-upgrade latch would let one persistent stale plugin suppress the to-do
-# for a later upgrade failure.
-audit_plugins() {
-  gum log --level info "Auditing plugin payloads..."
+export function syncRepo(out: Output, repoDir: string): boolean {
+  log(out, "info", "Syncing Claude repository...");
 
-  local output rc=0
-  output=$("$bin_dir/claude-plugin-audit" </dev/null 2>&1) || rc=$?
-  print -r -- "$output"
+  if (!isDirectory(repoDir)) return false;
 
-  case $rc in
-    0) report_success "claude-plugin-drift" ;;
-    1) report_drift "$output" ;;
-    # The audit could not run at all: missing, not executable, or unable to read
-    # the inventory. Filing that as drift would name plugins it never checked
-    # and would leave the upgrade reporting success over a check that never ran.
-    *)
-      gum log --level warn "Plugin audit did not run"
-      return 1
-      ;;
-  esac
+  // Both reverts run before the gate, so a tree dirtied only by them is clean by
+  // the time it looks. A dirty tracked file stalls the sync behind it every
+  // night.
+  revertCosmeticJsonChanges(out, repoDir);
+  revertVibeIslandHookRewrite(out, repoDir);
+
+  if (!reviewDirty(out, repoDir, TITLE)) return false;
+
+  const sync = syncNotify(out, repoDir, TITLE);
+  if (sync.status === "failed") return false;
+  if (sync.status === "updated") log(out, "info", `Repository updated to ${sync.rev}`);
+  return true;
 }
 
-upgrade_revision() {
-  git -C "$CLAUDE_REPO_HOME" rev-parse --short HEAD 2>/dev/null || print -r -- "unknown"
+// Never contributes to the run's status: a marketplace refresh that had trouble
+// is not a reason to leave the plugins unattempted.
+export function updateMarketplaces(out: Output, env: Record<string, string | undefined>): void {
+  log(out, "info", "Updating marketplaces...");
+  if (claude(out, ["plugin", "marketplace", "update"], env) !== 0) {
+    log(out, "warn", "marketplace update had issues, continuing");
+  }
 }
 
-upgrade_meta() {
-  print -r -- "- **Claude:** $(claude --version </dev/null 2>/dev/null || print -r -- unknown)"
+export function updatePlugins(out: Output, env: Record<string, string | undefined>): boolean {
+  log(out, "info", "Updating plugins...");
+
+  // An inventory that could not be read is not an empty one. Treating it as
+  // empty would update nothing and report success, which is the failure this job
+  // exists to make loud.
+  const inventory = pluginInventory();
+  if (!inventory.ok) {
+    log(out, "warn", "Could not enumerate installed plugins");
+    out.write(2, `claude-plugins: ${inventory.reason}\n`);
+    return false;
+  }
+
+  let failed = 0;
+  for (const plugin of inventory.plugins) {
+    if (plugin.id === "") continue;
+
+    const source = pluginSource(plugin.id);
+    // A marketplace that no longer offers the plugin has nothing to update it
+    // to, so `claude plugin update` can only ever fail. claude-plugin-audit
+    // reports these. Counting them here would make every run fail.
+    if (!source.ok && source.reason === "absent") continue;
+
+    if (plugin.installPath === "" || !isDirectory(plugin.installPath)) {
+      // Installing an id the marketplace cannot vouch for is a guess that fails
+      // every night. The audit names it instead.
+      if (!source.ok) continue;
+
+      log(out, "info", `Installing ${plugin.id} (not yet installed)...`);
+      if (claude(out, ["plugin", "install", plugin.id], env) !== 0) {
+        log(out, "warn", `Failed to install ${plugin.id}`);
+        failed += 1;
+      }
+      continue;
+    }
+
+    log(out, "info", `Updating ${plugin.id}...`);
+    if (claude(out, ["plugin", "update", plugin.id], env) !== 0) {
+      log(out, "warn", `Failed to update ${plugin.id}`);
+      failed += 1;
+    }
+  }
+
+  if (failed > 0) {
+    log(out, "warn", `${failed} plugin(s) failed to update`);
+    return false;
+  }
+  return true;
 }
 
-# Reduce a job's output to what is wrong with it, so the latch reopens when that
-# changes. Everything after the first two fields is detail that moves on its own.
-failure_fingerprint() {
-  awk "$1" | sort | shasum | cut -c1-12
+// Denied the job's stdin, so a prompt-happy CLI cannot swallow what the job is
+// working through and leave every plugin after it silently unattempted.
+function claude(out: Output, args: string[], env: Record<string, string | undefined>): number {
+  return out.run(["claude", ...args], { env, stdin: "ignore" });
 }
 
-report_upgrade_failure() {
-  local output="$1"
-
-  # Keyed on which steps warned, so a sync that keeps failing stays quiet while
-  # a plugin failing on top of it reopens the latch.
-  local fingerprint
-  fingerprint=$(print -r -- "$output" |
-    failure_fingerprint '/^(WARN|ERRO)/ { print $2, $3, $4 }')
-
-  report_failure "claude-upgrade" "Claude upgrade failed" "claude-upgrade" "$output" \
-    "$(upgrade_revision)" "$(upgrade_meta)" "Error Output" "$fingerprint"
+export interface AuditOptions extends SpawnOptions {
+  audit?: string;
 }
 
-report_drift() {
-  local output="$1"
+// Check what the update pass actually produced, and report drift on a latch of
+// its own.
+export function auditPlugins(out: Output, repoDir: string, options: AuditOptions = {}): boolean {
+  log(out, "info", "Auditing plugin payloads...");
 
-  # The subject and verdict of each finding, without the detail, so drift that
-  # deepens on a plugin already named stays quiet while a newly affected plugin
-  # reopens the latch. Unverified rows are left out: they are the flaky-network
-  # bucket, and hashing them would reopen the latch on any 3am blip.
-  local fingerprint
-  fingerprint=$(print -r -- "$output" |
-    failure_fingerprint '$2 ~ /^(stale|pinned|orphaned)$/ { print $1, $2 }')
+  const audit = mergedOutput([options.audit ?? join(BIN, "claude-plugin-audit")], options.env);
+  // Reprinted so the findings reach the captured log the to-do is built from. A
+  // clean audit prints nothing, and a bare newline is not a finding.
+  if (audit.output !== "") out.write(1, `${audit.output}\n`);
 
-  report_failure "claude-plugin-drift" "Claude plugins are stale" "claude-plugin-audit" \
-    "$output" "$(upgrade_revision)" "$(upgrade_meta)" "Stale Plugins" "$fingerprint"
+  if (audit.status === 0) {
+    reportSuccess(DRIFT_JOB);
+    return true;
+  }
+  if (audit.status === 1) return reportDrift(audit.output, repoDir) === 0;
+
+  // The audit could not run at all: missing, not executable, or unable to read
+  // the inventory. Filing that as drift would name plugins it never checked, and
+  // would leave the upgrade reporting success over a check that never ran.
+  log(out, "warn", "Plugin audit did not run");
+  return false;
 }
 
-main() {
-  local output
-  output=$(mktemp)
-  # shellcheck disable=SC2064
-  trap "rm -f $output" EXIT
-
-  {
-    if ! sync_repo; then
-      exit 1
-    fi
-
-    # Claude Code clones marketplaces and plugins from `git@github.com:` and
-    # re-clones them on every update, so those remotes are not ours to rewrite.
-    # git_sync moves $CLAUDE_REPO_HOME itself, and leaving these exports out of
-    # sync_repo keeps its PR push on the SSH pushurl.
-    git_https_env
-    update_marketplaces
-
-    local plugins_rc=0
-    update_plugins || plugins_rc=1
-    # The audit runs whatever the update pass did, since a failed update is the
-    # case most likely to have left something stale. Its own findings go to a
-    # separate latch, so only a broken audit reaches this status.
-    audit_plugins || plugins_rc=1
-    exit $plugins_rc
-  } 2>&1 | tee "$output"
-
-  if [[ ${pipestatus[1]} -ne 0 ]]; then
-    report_upgrade_failure "$(cat "$output")"
-    exit 1
-  fi
-
-  report_success "claude-upgrade"
-  gum log --level info "All Claude upgrades completed successfully"
+export function upgradeRevision(repoDir: string): string {
+  const rev = stripNewlines(gitQuiet(["rev-parse", "--short", "HEAD"], repoDir).stdout);
+  return rev === "" ? "unknown" : rev;
 }
 
-# Run only when executed directly. When sourced (tests), ZSH_EVAL_CONTEXT gains
-# a ":file" suffix, so the functions are defined without running the upgrade.
-[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"
+// One markdown bullet, opening with a dash, which is why every value reaching
+// report-failure travels in the --flag=value form.
+export function upgradeMeta(): string {
+  const version = mergedOutput(["claude", "--version"], undefined, "ignore");
+  return `- **Claude:** ${version.status === 0 ? version.output : "unknown"}`;
+}
+
+// Reduce a job's output to what is wrong with it, so the latch reopens when that
+// changes and stays shut while the same thing is wrong. The first 12 hex
+// characters of the SHA-1 over the sorted extracted lines, which is what the
+// shell's `awk | sort | shasum | cut -c1-12` produced. An empty extraction still
+// yields a stable value.
+export function failureFingerprint(extracted: string[]): string {
+  const sorted = [...extracted].sort(byCodeUnit);
+  const digest = createHash("sha1")
+    .update(sorted.map((line) => `${line}\n`).join(""))
+    .digest("hex");
+  return digest.slice(0, 12);
+}
+
+// Fields 2, 3 and 4 of every line gum logged at warn or error level. Keyed on
+// which steps warned, so a sync that keeps failing stays quiet while a plugin
+// failing on top of it reopens the latch.
+export function upgradeFields(output: string): string[] {
+  return output
+    .split("\n")
+    .filter((line) => line.startsWith("WARN") || line.startsWith("ERRO"))
+    .map((line) => {
+      const fields = awkFields(line);
+      return [fields[1] ?? "", fields[2] ?? "", fields[3] ?? ""].join(" ");
+    });
+}
+
+// The subject and verdict of each finding, without the detail, so drift that
+// deepens on a plugin already named stays quiet while a newly affected plugin
+// reopens the latch. Unverified rows are left out: they are the flaky-network
+// bucket, and hashing them would reopen the latch on any 3am blip.
+export function driftFields(output: string): string[] {
+  return output
+    .split("\n")
+    .map(awkFields)
+    .filter((fields) => fields[1] === "stale" || fields[1] === "pinned" || fields[1] === "orphaned")
+    .map((fields) => `${fields[0]} ${fields[1]}`);
+}
+
+// awk's default splitting: leading and trailing blanks ignored, runs of blanks
+// and tabs separating the fields.
+function awkFields(line: string): string[] {
+  const trimmed = line.trim();
+  return trimmed === "" ? [] : trimmed.split(/[ \t]+/);
+}
+
+export function reportUpgradeFailure(output: string, repoDir: string): number {
+  return reportFailure({
+    job: UPGRADE_JOB,
+    title: "Claude upgrade failed",
+    command: UPGRADE_JOB,
+    output,
+    revision: upgradeRevision(repoDir),
+    extraMeta: upgradeMeta(),
+    outputHeading: "Error Output",
+    fingerprint: failureFingerprint(upgradeFields(output)),
+  });
+}
+
+export function reportDrift(output: string, repoDir: string): number {
+  return reportFailure({
+    job: DRIFT_JOB,
+    title: "Claude plugins are stale",
+    command: "claude-plugin-audit",
+    output,
+    revision: upgradeRevision(repoDir),
+    extraMeta: upgradeMeta(),
+    outputHeading: "Stale Plugins",
+    fingerprint: failureFingerprint(driftFields(output)),
+  });
+}
+
+export function upgrade(out: Output, repoDir: string, options: AuditOptions = {}): number {
+  if (!syncRepo(out, repoDir)) return 1;
+
+  // Claude Code clones marketplaces and plugins from `git@github.com:` and
+  // re-clones them on every update, so those remotes are not ours to rewrite.
+  // The rewrite outranks a pushurl, so it goes to these steps alone: bin/git-sync
+  // moves the repo itself, and its PR push has to stay on the SSH pushurl.
+  const env = { ...process.env, ...httpsEnv() };
+
+  updateMarketplaces(out, env);
+
+  let status = 0;
+  if (!updatePlugins(out, env)) status = 1;
+  // The audit runs whatever the update pass did, since a failed update is the
+  // case most likely to have left something stale. Its own findings go to a
+  // separate latch, so only a broken audit reaches this status.
+  if (!auditPlugins(out, repoDir, { ...options, env })) status = 1;
+  return status;
+}
+
+export function main(out: Capture = capturedOutput()): number {
+  const repoDir = claudeRepoHome();
+
+  if (upgrade(out, repoDir) !== 0) {
+    reportUpgradeFailure(stripNewlines(out.captured()), repoDir);
+    return 1;
+  }
+
+  reportSuccess(UPGRADE_JOB);
+  log(out, "info", "All Claude upgrades completed successfully");
+  return 0;
+}
+
+function sortedFile(path: string): string | undefined {
+  return canonicalJson(readText(path));
+}
+
+function sortedBlob(repoDir: string, file: string): string | undefined {
+  const blob = gitQuiet(["show", `HEAD:${file}`], repoDir);
+  if (blob.status !== 0) return undefined;
+  return canonicalJson(blob.stdout);
+}
+
+// A git command whose stdout is the answer and whose complaints the shell
+// discarded.
+function gitQuiet(args: string[], cwd: string): { status: number; stdout: string } {
+  try {
+    const run = Bun.spawnSync({
+      cmd: ["git", ...args],
+      cwd,
+      env: process.env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    return { status: run.exitCode, stdout: run.stdout.toString() };
+  } catch {
+    return { status: 127, stdout: "" };
+  }
+}
+
+// Both streams, so a diagnostic the child wrote reaches the note built from this.
+function mergedOutput(
+  cmd: string[],
+  env?: Record<string, string | undefined>,
+  stderr: "pipe" | "ignore" = "pipe",
+): { status: number; output: string } {
+  try {
+    const run = Bun.spawnSync({
+      cmd,
+      env: env ?? process.env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr,
+    });
+    // A stream that was not piped leaves no buffer behind to read.
+    const captured = `${run.stdout.toString()}${run.stderr ? run.stderr.toString() : ""}`;
+    return { status: run.exitCode, output: stripNewlines(captured) };
+  } catch {
+    return { status: 127, output: "" };
+  }
+}
+
+function readText(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+if (import.meta.main) {
+  process.exit(main());
+}

@@ -1,49 +1,103 @@
-#!/usr/bin/env zsh
-# shellcheck shell=bash
-# Sync installed dotfiles from remote
-# Safe to run manually or via launchd (idempotent)
+#!/usr/bin/env bun
+//
+// Sync the installed dotfiles from the remote. Safe to run by hand or from
+// launchd, which runs it through bin/dotfiles-upgrade at 3am.
+//
+//   dotfiles-sync              fast-forward, then hand the new config to
+//                              bin/dotfiles-reload
+//   dotfiles-sync --bootstrap  fast-forward, then re-run scripts/bootstrap,
+//                              which reaches the same reload through
+//                              scripts/install once its own changes are in place
+//
+// Exits 0 when the checkout was already current, or when it moved and everything
+// after that succeeded, reload failures included. Exits 1 when the gate refused,
+// the sync failed, or the submodules did. A failing bootstrap exits with its own
+// status.
 
-set -e
+import { accessSync, constants, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { reviewDirty, syncNotify } from "../scripts/lib/git-diff-review.ts";
+import { log, type Output, streamOutput } from "../scripts/lib/job-output.ts";
+import { notify } from "../scripts/lib/report-failure.ts";
 
-DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
+const TITLE = "Dotfiles Sync";
 
-source "${0:A:h}/../scripts/lib/spin.sh"
-source "${0:A:h}/../scripts/lib/git-sync.sh"
-source "${0:A:h}/../scripts/lib/report-failure.sh"
-source "${0:A:h}/../scripts/lib/sync-notify.sh"
-source "${0:A:h}/../scripts/lib/git-diff-review.sh"
+// ~/.dotfiles is a symlink to the checkout, so the sibling commands are found
+// through the resolved path rather than the invoked one.
+const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
 
-git_review_dirty "$DOTFILES_HOME" "Dotfiles Sync" || exit 1
+export function run(args: string[], out: Output): number {
+  // $HOME is read before the account's own home directory, because that is what
+  // the shell expanded and what a spec re-points between examples.
+  const home = process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles");
 
-sync_rc=0
-new_rev=$(git_sync_notify "$DOTFILES_HOME" "Dotfiles Sync") || sync_rc=$?
-case $sync_rc in
-  "$GIT_SYNC_CURRENT")
-    exit 0
-    ;;
-  "$GIT_SYNC_FAILED")
-    exit 1
-    ;;
-esac
+  if (!reviewDirty(out, home, TITLE)) return 1;
 
-if ! spin --show-error --title "Updating submodules" -- \
-  git -C "$DOTFILES_HOME" submodule update --init; then
-  gum log --level error "Submodule update failed"
-  notify "Dotfiles Sync" "Failed: submodules"
-  exit 1
-fi
+  const sync = syncNotify(out, home, TITLE);
+  // The failure has already notified, and nothing after this ran.
+  if (sync.status === "failed") return 1;
+  if (sync.status === "current") return 0;
 
-gum log --level info "Successfully updated to $new_rev"
-notify "Dotfiles Sync" "Updated to $new_rev" "Glass"
+  const submodules = out.run([
+    SPIN,
+    "--show-error",
+    "--title",
+    "Updating submodules",
+    "--",
+    "git",
+    "-C",
+    home,
+    "submodule",
+    "update",
+    "--init",
+  ]);
+  if (submodules !== 0) {
+    log(out, "error", "Submodule update failed");
+    notify(TITLE, "Failed: submodules");
+    return 1;
+  }
 
-# Symlink refresh is opt-in; the launchd job skips it.
-if [[ "$1" == "--bootstrap" ]] && [[ -x "$DOTFILES_HOME/scripts/bootstrap" ]]; then
-  gum log --level info "Running bootstrap..."
-  "$DOTFILES_HOME/scripts/bootstrap" --no-prompt
-else
-  # The symlinks didn't move, but the files they point at just did, so anything
-  # holding the old config is now behind. Only on this branch: bootstrap
-  # reaches the same reload through scripts/install, once its own changes are
-  # in place.
-  "$DOTFILES_HOME/bin/dotfiles-reload" || gum log --level warn "some config reloads had issues"
-fi
+  log(out, "info", `Successfully updated to ${sync.rev}`);
+  notify(TITLE, `Updated to ${sync.rev}`, "Glass");
+
+  // The symlink refresh is opt-in; the launchd job skips it. Unknown arguments
+  // have never meant anything here.
+  if (args[0] === "--bootstrap") return bootstrap(out, home);
+
+  // The symlinks didn't move, but the files they point at just did, so anything
+  // holding the old config is now behind. A reload that had trouble is a
+  // warning: the sync it follows has already succeeded, and stale in-memory
+  // config resolves itself the next time the program starts.
+  if (out.run([join(home, "bin", "dotfiles-reload")]) !== 0) {
+    log(out, "warn", "some config reloads had issues");
+  }
+  return 0;
+}
+
+// The shell fell through to the reload when the bootstrap script was not
+// executable, so a caller that asked for a symlink refresh got a config reload
+// and was told it had succeeded.
+function bootstrap(out: Output, home: string): number {
+  const script = join(home, "scripts", "bootstrap");
+  if (!isExecutable(script)) {
+    log(out, "error", `${script} is not executable - cannot bootstrap`);
+    return 1;
+  }
+
+  log(out, "info", "Running bootstrap...");
+  return out.run([script, "--no-prompt"]);
+}
+
+function isExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+if (import.meta.main) {
+  process.exit(run(process.argv.slice(2), streamOutput()));
+}
