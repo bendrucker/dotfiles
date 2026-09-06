@@ -139,6 +139,11 @@ function pushIgnoreRule(rule: string): void {
   const upstream = join(sandbox, "upstream");
   rmSync(upstream, { recursive: true, force: true });
   run(["git", "clone", "-q", origin, upstream]);
+  // Its own identity and signing setting: the clone inherits neither from the
+  // fixture repo, and a runner with no global gitconfig cannot commit at all.
+  run(["git", "-C", upstream, "config", "user.email", "spec@example.test"]);
+  run(["git", "-C", upstream, "config", "user.name", "Spec"]);
+  run(["git", "-C", upstream, "config", "commit.gpgsign", "false"]);
   writeFileSync(join(upstream, ".gitignore"), `${rule}\n`);
   run(["git", "-C", upstream, "add", ".gitignore"]);
   run(["git", "-C", upstream, "commit", "-q", "-m", `ignore ${rule}`]);
@@ -159,9 +164,9 @@ beforeEach(() => {
   origin = join(sandbox, "origin.git");
   mkdirSync(stubs);
 
-  // gum spin runs its command. gum log echoes the message to stderr, where the
-  // real gum writes it. gum choose answers with whatever the example wants
-  // picked, standing in for the keypress.
+  // The spin branch runs the command after the separator, and log echoes the
+  // message to stderr, where the real gum writes it. choose answers with
+  // whatever the example wants picked, standing in for the keypress.
   writeStub(
     "gum",
     [

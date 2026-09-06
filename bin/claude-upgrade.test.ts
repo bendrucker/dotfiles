@@ -225,8 +225,8 @@ beforeEach(() => {
   mkdirSync(stubs);
 
   writeScript(join(stubs, "claude"), claudeStub);
-  // gum spin runs its command. gum log echoes the message to stderr, where the
-  // real gum writes it.
+  // The spin branch runs the command after the separator, and log echoes the
+  // message to stderr, where the real gum writes it.
   writeScript(
     join(stubs, "gum"),
     [
