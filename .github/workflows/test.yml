@@ -124,86 +124,6 @@ jobs:
           echo "shellspec $dir"
           (cd "$dir" && shellspec) || exit 1
         done
-    - name: Test tmux
-      shell: zsh {0}
-      run: |
-        tmux_stderr=$(mktemp)
-        trap 'tmux kill-server 2>/dev/null; rm -f "$tmux_stderr"' EXIT
-
-        tmux_exit=0
-        tmux new-session -d -s test 2>"$tmux_stderr" || tmux_exit=$?
-        if [[ $tmux_exit -ne 0 ]]; then
-          echo "FAIL: tmux new-session exited with code $tmux_exit"
-          cat "$tmux_stderr"
-          exit 1
-        fi
-        if [[ -s "$tmux_stderr" ]]; then
-          echo "FAIL: tmux new-session wrote to stderr:"
-          cat "$tmux_stderr"
-          exit 1
-        fi
-
-        # tmux = catppuccin/tmux (TPM uses repo name as directory)
-        plugin_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/plugins"
-        for plugin in tpm tmux-resurrect tmux-continuum tmux tmux-fzf-links; do
-          if [[ ! -d "$plugin_dir/$plugin" ]]; then
-            echo "FAIL: plugin directory missing: $plugin_dir/$plugin"
-            exit 1
-          fi
-          echo "OK: $plugin_dir/$plugin"
-        done
-
-        tmux_assert_opt() {
-          local key=$1 expected=$2 val
-          if ! val=$(tmux show-options -gv "$key" 2>&1); then
-            echo "FAIL: tmux show-options $key failed: $val"
-            return 1
-          fi
-          if [[ -n "$expected" ]] && [[ "$val" != "$expected" ]]; then
-            echo "FAIL: $key=$val, expected $expected"
-            return 1
-          fi
-          if [[ -z "$val" ]]; then
-            echo "FAIL: $key is empty"
-            return 1
-          fi
-          echo "OK: $key=$val"
-        }
-
-        tmux_assert_opt @thm_surface_2 || exit 1
-        tmux_assert_opt prefix C-s || exit 1
-
-        # tmux/reload.sh re-sources tmux.conf into this live server. It must
-        # leave the sessions alone: sourcing re-runs TPM, which re-runs
-        # tmux-continuum, which restores the whole saved session set into a
-        # server it reads as freshly started. Zeroing the restore window is what
-        # continuum reads as an aged server, and it is also what puts this
-        # server past reload.sh's own skip, so this exercises the source path.
-        tmux set -g @continuum-restore-max-delay 0
-        until (( $(date +%s) - $(tmux display-message -p -F '#{start_time}') >= 1 )); do
-          sleep 1
-        done
-
-        sessions_before=$(tmux list-sessions -F '#S' | sort | tr '\n' ' ')
-        reload_stderr=$(mktemp)
-        reload_exit=0
-        "$GITHUB_WORKSPACE/tmux/reload.sh" 2>"$reload_stderr" || reload_exit=$?
-        if [[ $reload_exit -ne 0 ]]; then
-          echo "FAIL: tmux/reload.sh exited with code $reload_exit"
-          cat "$reload_stderr"
-          exit 1
-        fi
-
-        sessions_after=$(tmux list-sessions -F '#S' | sort | tr '\n' ' ')
-        if [[ "$sessions_before" != "$sessions_after" ]]; then
-          echo "FAIL: reload changed the sessions: [$sessions_before] -> [$sessions_after]"
-          exit 1
-        fi
-        echo "OK: reload left sessions at [$sessions_after]"
-
-        # The config the reload just re-read is still in effect.
-        tmux_assert_opt @thm_surface_2 || exit 1
-        tmux_assert_opt prefix C-s || exit 1
     - name: Benchmark shell startup
       run: |
         hyperfine --warmup 3 --runs 10 --shell=none \
@@ -234,15 +154,15 @@ jobs:
             sys.exit(1)
         print(f'OK: median startup {median:.3f}s')
         "
-  fzf-links:
-    name: fzf-links schemes
+  links:
+    name: link schemes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
       - name: Test schemes
         run: uv run --frozen pytest
-        working-directory: tmux/search/fzf-links
+        working-directory: herdr/links
   bun:
     name: bun tests
     runs-on: ubuntu-latest
@@ -320,13 +240,3 @@ jobs:
       - name: Check spinners degrade without a terminal
         run: scripts/lint-spinners
 
-      - name: Check tmux/bin aggregate is in sync
-        run: |
-          # tmux/bin holds a symlink to every topic-bin script (see tmux/bin-sync).
-          # Regenerate and fail if the committed tree drifts.
-          tmux/bin-sync
-          if [ -n "$(git status --porcelain tmux/bin)" ]; then
-            echo "ERROR: tmux/bin is out of sync. Run tmux/bin-sync and commit."
-            git status --porcelain tmux/bin
-            exit 1
-          fi

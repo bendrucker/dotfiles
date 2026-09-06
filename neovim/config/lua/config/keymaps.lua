@@ -17,3 +17,11 @@ vim.keymap.set("x", "p", "P", { desc = "Paste over selection" })
 -- Only yanks reach the + register (see config.clipboard), so reading the system
 -- clipboard back is explicit. Insert-mode Cmd-V still works through the terminal.
 vim.keymap.set({ "n", "x" }, "<leader>p", '"+p', { desc = "Paste from clipboard" })
+
+-- Split navigation, previously supplied by vim-tmux-navigator. That plugin's
+-- draw was crossing the multiplexer boundary: the same chord moved between nvim
+-- splits and tmux panes. herdr has no counterpart, so these move within nvim
+-- only, and leaving a split for a neighbouring pane goes through herdr's prefix.
+for _, key in ipairs({ "h", "j", "k", "l" }) do
+  vim.keymap.set("n", "<C-" .. key .. ">", "<C-w>" .. key, { desc = "Go to the split " .. key })
+end

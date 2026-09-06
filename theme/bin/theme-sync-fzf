@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Apply the active catppuccin flavor to fzf by writing the opts cache file.
-# Shells and tmux popups read it via FZF_DEFAULT_OPTS_FILE (set once to this
-# constant path), so they pick up the new palette on their next launch without
-# any per-process environment push.
+# Shells and the fzf pickers herdr plugins launch read it via
+# FZF_DEFAULT_OPTS_FILE (set once to this constant path), so they pick up the
+# new palette on their next launch without any per-process environment push.
 set -euo pipefail
 
 bin_dir="$(cd "$(dirname "$0")" && pwd)"

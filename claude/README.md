@@ -39,10 +39,6 @@ Dispatch and monitor background agents (`claude --bg` / `claude agents`).
 
 The agent is dispatched detached and its id is logged. Monitoring and attach happen in the built-in view, so the launcher stops there.
 
-### Tmux Popup and Status Chip
-
-`prefix a` opens the agent view in a popup, near-fullscreen on a narrow client. A  pill appears in the status bar while a background agent is waiting on your input, and disappears when none remain.
-
 ### Pruning
 
 `claude-prune-agents` clears completed agents whose work has landed. An agent is

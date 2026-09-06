@@ -17,7 +17,7 @@ shopt -s nullglob
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Every reload talks to a running program, over a socket or a tmux command, and
+# Every reload talks to a running program, over a socket or its own CLI, and
 # a wedged one would otherwise hang here forever. The nightly upgrade runs
 # unattended and reports failures by creating a Things task, so a hang is worse
 # than a failure: it never reports, and it holds the job open under every later

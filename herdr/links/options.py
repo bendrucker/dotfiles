@@ -1,3 +1,6 @@
+# The old host's option store. tmux is gone, so `get` now always takes the
+# exception path and returns "", which drops every scheme that needs an option.
+# A port replaces this module with its host's equivalent.
 import functools
 import subprocess
 

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Dump a structured snapshot of the running herdr server: workspaces, tabs,
+# panes, agents, and each pane's visible buffer. Pairs with capture-window
+# output so the rendered chrome and the textual contents are inspectable
+# side-by-side.
+# Usage: herdr-snapshot [out-dir]   (default: tmp/herdr-snapshot)
+
+set -euo pipefail
+
+out="${1:-tmp/herdr-snapshot}"
+mkdir -p "$out/panes"
+
+herdr api snapshot | jq '.result.snapshot' > "$out/snapshot.json"
+
+jq -r '.workspaces[] | [.workspace_id, .number, .label, .tab_count, .pane_count, .focused] | @tsv' \
+  "$out/snapshot.json" > "$out/workspaces.tsv"
+
+jq -r '.tabs[] | [.tab_id, .workspace_id, (.label // ""), (.active // false)] | @tsv' \
+  "$out/snapshot.json" > "$out/tabs.tsv"
+
+jq -r '.panes[] | [.pane_id, .tab_id, (.cwd // ""), (.title // "")] | @tsv' \
+  "$out/snapshot.json" > "$out/panes.tsv"
+
+jq -r '.agents[] | [.pane_id, .agent, .agent_status, (.agent_session.value // "")] | @tsv' \
+  "$out/snapshot.json" > "$out/agents.tsv"
+
+# Visible buffer per pane. `--source visible` rather than `recent`, which returns
+# nothing for a pane created moments ago.
+while IFS=$'\t' read -r pane_id _; do
+  herdr pane read "$pane_id" --source visible \
+    > "$out/panes/${pane_id//:/-}.txt" 2>/dev/null || true
+done < "$out/panes.tsv"
+
+cat <<INFO
+$out/
+  snapshot.json   full server state
+  workspaces.tsv  $(wc -l < "$out/workspaces.tsv" | tr -d ' ') workspace(s)
+  tabs.tsv        $(wc -l < "$out/tabs.tsv" | tr -d ' ') tab(s)
+  panes.tsv       $(wc -l < "$out/panes.tsv" | tr -d ' ') pane(s)
+  agents.tsv      $(wc -l < "$out/agents.tsv" | tr -d ' ') agent(s)
+  panes/          per-pane visible buffer
+INFO

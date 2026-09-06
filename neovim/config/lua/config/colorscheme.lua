@@ -1,6 +1,6 @@
 -- Drive catppuccin's "auto" flavour off the system appearance, the same source
 -- the theme-sync watcher uses. This is deterministic, unlike relying on terminal
--- background detection, which is unreliable through tmux. When theme-flavor is
+-- background detection, which is unreliable through a multiplexer. When theme-flavor is
 -- not on PATH, fall back to neovim's own background detection.
 local function apply_system_background()
   if vim.fn.executable("theme-flavor") ~= 1 then

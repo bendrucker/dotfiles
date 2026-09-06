@@ -1,29 +1,29 @@
 ---
 name: screenshot-terminal
-description: Capture screenshots of the user's tmux/terminal setup so the model can see what it actually looks like. Use when the user asks for a visual review of their terminal, tmux status bar, prompt, fonts, or pane chrome, or any case where text introspection (capture-pane, list-panes) loses styling, color, glyph, or layout fidelity.
+description: Capture screenshots of the user's herdr/terminal setup so the model can see what it actually looks like. Use when the user asks for a visual review of their terminal, herdr sidebar, prompt, fonts, or pane chrome, or any case where text introspection (pane read, api snapshot) loses styling, color, glyph, or layout fidelity.
 ---
 
 # screenshot-terminal
 
-This skill is for situations where seeing the rendered terminal matters more than reading its contents. tmux's status bar styling, Catppuccin pills, Nerd Font glyphs, powerline separators, pane chrome, and Ghostty's tab/title bar only render correctly in pixels; `tmux capture-pane` strips all of that.
+This skill is for situations where seeing the rendered terminal matters more than reading its contents. herdr's sidebar, Catppuccin theming, Nerd Font glyphs, agent state icons, pane chrome, and Ghostty's tab/title bar only render correctly in pixels. `herdr pane read` strips all of that.
 
 ## Modes
 
 Pick a mode based on what the user is asking for:
 
-- **peek-current** (default for review questions): read-only snapshot of the user's existing tmux session. No `send-keys`, no window switches that disturb the user. Capture the visible Ghostty window, dump structured tmux state (sessions/windows/panes/titles), and read both into context.
-- **drive-current**: send keys to the user's session to set up a specific scene (open fzf, cycle a window, etc.) and capture. Confirm with the user before driving. `tmux/CLAUDE.md` is explicit that you should not send keys to a working pane just to demo.
-- **fresh**: spawn a new detached tmux session, attach it in a new Ghostty window via `open -na Ghostty`, drive it programmatically, capture, and tear down. Use when reproducibility matters or the user's live session would be too noisy.
+- **peek-current** (default for review questions): read-only snapshot of the user's existing herdr session. No `send-keys`, no focus changes that disturb the user. Capture the visible Ghostty window, dump structured herdr state (workspaces/tabs/panes/agents), and read both into context.
+- **drive-current**: send keys to the user's session to set up a specific scene (open a picker, switch a tab, etc.) and capture. Confirm with the user before driving. Never send keys to a working pane just to demo.
+- **fresh**: spawn a scratch herdr workspace, drive it programmatically, capture, and tear down. Use when reproducibility matters or the user's live session would be too noisy.
 
 ## Capture pipeline
 
 All modes share the same primitives:
 
 1. `scripts/list-terminal-windows [pattern]`: JXA enumerator over `CGWindowListCopyWindowInfo`. Returns JSON of `{ owner, id, name, bounds }` for Ghostty/iTerm/Terminal/Alacritty/WezTerm/Kitty windows, optionally filtered by a regex against the window name. No focus stealing.
-2. `scripts/find-tmux-window [client-target]`: resolves the CGWindowID hosting the active tmux client. Walks the client's process tree to a terminal app PID; falls back to title scoring (`tmux` / `mosh` / session name) when the chain is broken (mosh, ssh, etc., reparent to PID 1 and break ancestor walking).
+2. `scripts/find-herdr-window [workspace]`: resolves the CGWindowID hosting a herdr workspace, defaulting to the focused one. herdr's server reparents to PID 1, so ancestor walking from a pane never reaches the terminal app. Scores window titles against the workspace label and its panes' cwd basenames instead, and warns on stderr when nothing matched and it fell back to the frontmost window.
 3. `scripts/capture-window <window-id> <out.png>`: wraps `screencapture -x -o -l <id>`. `-x` silences the shutter, `-o` omits window shadow.
 4. `scripts/crop-png <src> <dst> <x> <y> <w> <h>`: crops via `NSBitmapImageRep`. The `sips` CLI fails under Claude Code's sandbox because it writes to a hardcoded `/var/folders` scratch path. Coordinates are in physical pixels (Retina is 2x point coords).
-5. `scripts/tmux-snapshot [out-dir]`: dumps `sessions.tsv`, `windows.tsv`, `panes.tsv`, plus `pane-<id>.txt` per pane. Pairs with the screenshot so the rendered chrome and the textual contents are inspectable side-by-side.
+5. `scripts/herdr-snapshot [out-dir]`: dumps `snapshot.json` plus `workspaces.tsv`, `tabs.tsv`, `panes.tsv`, `agents.tsv`, and `panes/<pane-id>.txt` per pane. Pairs with the screenshot so the rendered chrome and the textual contents are inspectable side-by-side.
 
 ## Gotchas
 
@@ -35,7 +35,7 @@ When the screen is locked, Quartz shows `loginwindow` and the `Window Server`'s 
 
 #### Sandbox kills JXA in child scripts
 
-The Claude Code sandbox segfaults JXA's access to AppKit/Quartz when `osascript -l JavaScript` runs from a child shell script, and blocks the tmux unix socket from scripts. Inline JXA (heredoc inside a Bash tool call) works fine. Helper scripts in `scripts/` must be invoked with `dangerouslyDisableSandbox: true` on the Bash call. The sandbox does not cover Write/Edit tool calls, so editing this skill is unaffected. The sandbox also blocks writes to `.claude/skills/` itself; pass the same flag when modifying skill files.
+The Claude Code sandbox segfaults JXA's access to AppKit/Quartz when `osascript -l JavaScript` runs from a child shell script. Inline JXA (heredoc inside a Bash tool call) works fine. Helper scripts in `scripts/` must be invoked with `dangerouslyDisableSandbox: true` on the Bash call. The sandbox does not cover Write/Edit tool calls, so editing this skill is unaffected. The sandbox also blocks writes to `.claude/skills/` itself; pass the same flag when modifying skill files.
 
 #### `sips` cannot crop under the sandbox
 
@@ -51,11 +51,11 @@ When writing JXA helpers, do not call `$.exit(N)`; it is undefined and throws. P
 
 #### Don't drive the user's working pane
 
-Per `tmux/CLAUDE.md`: "Don't `send-keys` to their working pane to 'demonstrate'. That defeats the point." Use `fresh` mode for any scene the user shouldn't have to clean up.
+Sending keys to a pane the user is working in to demonstrate something defeats the point of the capture. Use `fresh` mode for any scene the user shouldn't have to clean up.
 
 #### Permissions JXA does not need
 
-`osascript -l JavaScript` calls into `CGWindowListCopyWindowInfo` do *not* require Accessibility permission as long as enumeration stays read-only. Sending keys via `tmux send-keys` is just a local socket, so no Accessibility needed there either.
+`osascript -l JavaScript` calls into `CGWindowListCopyWindowInfo` do *not* require Accessibility permission as long as enumeration stays read-only. Sending keys via `herdr pane send-keys` goes over herdr's own socket, so no Accessibility needed there either.
 
 ## Workflow: peek-current
 
@@ -63,36 +63,35 @@ Default flow when the user asks "what does my setup look like" or "review my sta
 
 ```sh
 mkdir -p tmp
-.claude/skills/screenshot-terminal/scripts/tmux-snapshot tmp/snapshot
-window_id=$(.claude/skills/screenshot-terminal/scripts/find-tmux-window)
+.claude/skills/screenshot-terminal/scripts/herdr-snapshot tmp/snapshot
+window_id=$(.claude/skills/screenshot-terminal/scripts/find-herdr-window)
 .claude/skills/screenshot-terminal/scripts/capture-window "$window_id" tmp/snapshot/full.png
 ```
 
-`find-tmux-window` is preferred over hand-rolled `jq` against `list-terminal-windows`. Terminal titles do not reliably contain the tmux session name (it depends on `set-titles-string`), and the process-tree walk handles the common case where you are SSHed or moshed into a host running tmux.
+`find-herdr-window` is preferred over hand-rolled `jq` against `list-terminal-windows`. It reads the workspace label and cwds out of `herdr api snapshot` rather than assuming the title format, and it tells you when it could not match rather than returning a confident wrong window.
 
-Then `Read` the PNG and the TSVs together. The TSVs let you map pane IDs visible in the chrome (`%27`, `%28`) back to current commands and pane titles.
+Then `Read` the PNG and the TSVs together. The TSVs let you map pane IDs visible in the chrome (`wC5:p1`) back to cwds, titles, and the agent running in each.
 
 For closer inspection of specific UI regions, status bar at top, prompt at bottom, or a single pane, crop with `scripts/crop-png`. Status bar on this user's setup is approximately the second row of pixels at `y=58, height=50` in a 3870px-wide image (1935 logical px times 2 Retina). Re-measure if the screenshot dimensions differ.
 
 ## Workflow: fresh
 
 ```sh
-tmux new-session -d -s screenshot-skill -x 120 -y 30 'zsh -i'
-open -na Ghostty --args -e tmux attach -t screenshot-skill
-sleep 1   # wait for the new window to register in CGWindowListCopyWindowInfo
-window_id=$(.claude/skills/screenshot-terminal/scripts/list-terminal-windows | jq -r '
-  [.[] | select(.name | test("screenshot-skill"))] | .[0].id')
-tmux send-keys -t screenshot-skill 'ls -la' Enter
-sleep 0.3
+ws=$(herdr workspace create --label screenshot-skill --cwd "$PWD" --focus | jq -r '.result.workspace.workspace_id')
+pane=$(herdr api snapshot | jq -r --arg w "$ws" '
+  .result.snapshot as $s
+  | [$s.tabs[] | select(.workspace_id == $w) | .tab_id] as $tabs
+  | [$s.panes[] | select(.tab_id as $t | $tabs | index($t)) | .pane_id] | .[0]')
+herdr pane run "$pane" 'ls -la'
+window_id=$(.claude/skills/screenshot-terminal/scripts/find-herdr-window "$ws")
 .claude/skills/screenshot-terminal/scripts/capture-window "$window_id" tmp/fresh.png
-tmux kill-session -t screenshot-skill
-osascript -e 'tell application "Ghostty" to close (every window whose name contains "screenshot-skill")'
+herdr workspace close "$ws"
 ```
 
-`open -na` forces a new app instance; Ghostty's `-e` flag runs a command in the new window. Adjust if the user's terminal is iTerm or Alacritty.
+The workspace has to be focused for its window to be the one on screen, which is why `--focus` is passed. Restore the user's workspace afterwards with `herdr workspace focus`.
 
 ## What this skill does *not* do
 
-- Render terminal output to images headlessly via `freeze` / `termshot` / `silicon`. Those are useful for ANSI-to-PNG but lose tmux chrome and depend on font config, so they don't help with the styling questions this skill exists for.
+- Render terminal output to images headlessly via `freeze` / `termshot` / `silicon`. Those are useful for ANSI-to-PNG but lose herdr's chrome and depend on font config, so they don't help with the styling questions this skill exists for.
 - Write reports. The skill produces images and TSVs in `tmp/`. Analysis goes back into the conversation, not into markdown files.
-- Drive the user's working pane without confirmation. See `tmux/CLAUDE.md`.
+- Drive the user's working pane without confirmation.

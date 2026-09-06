@@ -15,8 +15,8 @@ channel = "stable"
 version_check = false
 
 [keys]
-# Match tmux's C-s so muscle memory carries over; when nested, double the
-# prefix (tmux send-prefix) to reach herdr.
+# C-s, carried over from the tmux config this replaced. Ghostty maps Hyper+A to
+# the same byte (terminal/ghostty.config) for a chord that misses readline.
 prefix = "ctrl+s"
 
 # Native worktree creation lands in ~/.herdr/worktrees, outside the worktrunk

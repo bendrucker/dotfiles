@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Resolve the CGWindowID of the terminal window hosting a herdr workspace.
+#
+# herdr's server owns every pane, and it reparents to PID 1, so walking a pane's
+# ancestors stops at the server rather than reaching the terminal app. The window
+# title is what survives that: Ghostty renders "<host>: <workspace label>", so the
+# label from the snapshot identifies the window.
+#
+# Usage: find-herdr-window [workspace]
+#   find-herdr-window            # the focused workspace
+#   find-herdr-window w36        # by workspace id
+#   find-herdr-window dotfiles   # by label
+
+set -euo pipefail
+
+target="${1:-}"
+
+snapshot=$(herdr api snapshot) || {
+  echo "find-herdr-window: herdr is not running" >&2
+  exit 1
+}
+
+# Ghostty titles a window from the foreground program, which for a herdr pane is
+# "<host>: <cwd basename>" rather than the workspace label. The two coincide for
+# a worktree workspace and diverge otherwise, so both are match keys.
+read -r workspace_id label <<<"$(jq -r --arg t "$target" '
+  .result.snapshot as $s
+  | ( if $t == "" then
+        ($s.workspaces[] | select(.workspace_id == $s.focused_workspace_id))
+      else
+        ($s.workspaces[] | select(.workspace_id == $t or .label == $t))
+      end )
+  | [.workspace_id, .label] | @tsv
+  ' <<<"$snapshot" | head -n 1)"
+
+if [[ -z "${label:-}" || "$label" == "null" ]]; then
+  echo "find-herdr-window: no workspace matching '${target:-<focused>}'" >&2
+  exit 1
+fi
+
+# Every cwd basename under the workspace, so a window titled after any of its
+# panes still resolves.
+cwds=$(jq -r --arg w "$workspace_id" '
+  .result.snapshot as $s
+  | [$s.tabs[] | select(.workspace_id == $w) | .tab_id] as $tabs
+  | $s.panes[] | select(.tab_id as $t | $tabs | index($t)) | (.cwd // "")
+  | select(. != "") | split("/") | last
+  ' <<<"$snapshot" | sort -u | paste -sd '|' -)
+
+result=$(LABEL="$label" CWDS="$cwds" osascript -l JavaScript <<'JXA'
+ObjC.import('CoreGraphics');
+ObjC.import('Foundation');
+const env = $.NSProcessInfo.processInfo.environment;
+const label = ObjC.unwrap(env.objectForKey('LABEL')) || '';
+const cwds = (ObjC.unwrap(env.objectForKey('CWDS')) || '').split('|').filter(Boolean);
+const TERM_RE = /ghostty|iterm|terminal|alacritty|wezterm|kitty/i;
+
+const opts = $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements;
+const cf = $.CGWindowListCopyWindowInfo(opts, $.kCGNullWindowID);
+const count = $.CFArrayGetCount(cf);
+const all = [];
+for (let i = 0; i < count; i++) {
+  const w = ObjC.deepUnwrap(ObjC.castRefToObject($.CFArrayGetValueAtIndex(cf, i)));
+  if ((w.kCGWindowLayer || 0) !== 0) continue;
+  if (!TERM_RE.test(w.kCGWindowOwnerName || '')) continue;
+  all.push({ id: w.kCGWindowNumber, name: w.kCGWindowName || '', zorder: i });
+}
+
+// A title ending in the workspace label or one of its cwd basenames is a real
+// match. Anything else is the topmost terminal window and only a guess.
+const score = w => {
+  const n = w.name;
+  const keys = label ? [label].concat(cwds) : cwds;
+  for (const k of keys) {
+    if (n === k || n.endsWith(': ' + k)) return 2;
+  }
+  for (const k of keys) {
+    if (n.indexOf(k) !== -1) return 1;
+  }
+  return 0;
+};
+all.sort((a, b) => score(b) - score(a) || a.zorder - b.zorder);
+all[0] ? String(all[0].id) + ' ' + score(all[0]) : '';
+JXA
+)
+
+if [[ -z "$result" ]]; then
+  echo "find-herdr-window: no on-screen terminal window found" >&2
+  exit 3
+fi
+
+read -r window_id matched <<<"$result"
+
+# A zero score means nothing in the title tied the window to this workspace, so
+# the answer is whichever terminal window happened to be frontmost. Say so
+# rather than letting a screenshot of the wrong window pass as the right one.
+if [[ "$matched" == "0" ]]; then
+  echo "find-herdr-window: no window title matches '$label'; guessing the frontmost terminal" >&2
+fi
+
+echo "$window_id"
