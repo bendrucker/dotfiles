@@ -42,5 +42,6 @@ offenders=$(printf '%s\n' "$matches" | report)
 
 echo "ERROR: these call gum directly instead of spin, so the spinner renders where nothing is watching:" >&2
 printf '%s\n' "$offenders" >&2
-echo "  Source scripts/lib/spin.sh and call spin with the same arguments." >&2
+echo "  Source scripts/lib/spin.sh and call spin with the same arguments," >&2
+echo "  or run bin/spin with them where sourcing is not an option." >&2
 exit 1
