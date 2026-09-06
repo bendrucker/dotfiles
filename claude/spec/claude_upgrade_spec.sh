@@ -98,6 +98,16 @@ GIT
 
   printf '#!/usr/bin/env bash\nexit 0\n' >"$stubdir/gum"
   chmod +x "$stubdir/gum"
+
+  # A to-do is filed by handing a things:/// URL to `open`, so a logged line is
+  # the whole observation of whether the drift latch let one through.
+  export XDG_STATE_HOME="$sandbox/state"
+  export TODO_LOG="$sandbox/todos.log"
+  : >"$TODO_LOG"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "todo\n" >>"$TODO_LOG"' \
+    >"$stubdir/open"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$stubdir/osascript"
+  chmod +x "$stubdir/open" "$stubdir/osascript"
 }
 
 # Record a plugin's install metadata. Extra arguments are either further
@@ -166,6 +176,48 @@ write_plugin_list() {
     printf "%s\"%s@%s\":[{\"installPath\":\"%s\",\"gitCommitSha\":\"%s\"}]\n",
       (NR > 1 ? "," : ""), $1, $2, $3, sha
   } END { print "}}]" }' "$sandbox/plugins.tsv" >"$plugins/installed_plugins.json"
+}
+
+# The `version` an install records, which Claude Code keeps current. It holds an
+# abbreviated commit for a plugin tracked by commit and a version string for one
+# that declares a version.
+set_installed_version() {
+  set_installed_field "$1" version "$2"
+}
+
+# The commit an install first arrived at. A later update does not rewrite it.
+set_installed_commit() {
+  set_installed_field "$1" gitCommitSha "$2"
+}
+
+set_installed_field() {
+  local id="$1" field="$2" value="$3" file="$plugins/installed_plugins.json"
+  jq --arg id "$id" --arg field "$field" --arg value "$value" '
+    map(if .key == "plugins"
+        then .value[$id] |= map(.[$field] = $value)
+        else . end)
+  ' "$file" >"$file.next" && mv "$file.next" "$file"
+}
+
+# The version a payload's own manifest declares, which is what says whether the
+# recorded `version` is a version string or the commit it holds.
+declare_payload_version() {
+  local name="$1" marketplace="$2" dir="$3" version="$4"
+  local payload="$plugins/cache/$marketplace/$name/$dir"
+  mkdir -p "$payload/.claude-plugin"
+  printf '{"name":"%s","version":"%s"}\n' "$name" "$version" \
+    >"$payload/.claude-plugin/plugin.json"
+}
+
+# A plugin whose source still offers the version already installed. `claude
+# plugin update` compares those two strings, so it changes nothing however far
+# the tree behind the version has moved.
+pin_alpha_at() {
+  local version="$1"
+  printf '{"name":"alpha","version":"%s"}\n' "$version" \
+    >"$plugins/marketplaces/first/plugins/alpha/.claude-plugin/plugin.json"
+  declare_payload_version alpha first 1.0.0 "$version"
+  set_installed_version alpha@first "$version"
 }
 
 # An installed plugin its marketplace stopped offering. Nothing can update it,
@@ -501,6 +553,79 @@ Describe "claude-plugin-audit"
     The output should include "222222222222"
   End
 
+  # Reading only the lagging gitCommitSha reported a current plugin stale every
+  # night, and no update cleared it. The updater agreed it was already current.
+  It "reads the commit from the version Claude Code keeps current"
+    set_installed_commit delta@third "3333333333333333333333333333333333333333"
+    set_installed_version delta@third "111111111111"
+    When call run_audit
+    The status should be success
+    The output should include "6 checks current"
+  End
+
+  It "flags a payload when neither recorded commit matches"
+    set_installed_commit delta@third "3333333333333333333333333333333333333333"
+    set_installed_version delta@third "444444444444"
+    When call run_audit
+    The status should be failure
+    The output should include "delta@third"
+    The output should include "installed 444444444444"
+  End
+
+  # Reading a declared version as a commit would match a payload against a
+  # number that says nothing about which commit it holds.
+  It "does not read a version string as a commit"
+    set_installed_version delta@third "1.0.0"
+    When call run_audit
+    The status should be success
+    The output should include "6 checks current"
+  End
+
+  # A version spelled entirely in hex digits is still a version, and the
+  # payload's own manifest is what separates the two.
+  It "does not read a declared hex-shaped version as a commit"
+    declare_payload_version delta third 1.0.0 "20260601"
+    set_installed_version delta@third "20260601"
+    When call run_audit
+    The status should be success
+    The output should include "6 checks current"
+  End
+
+  # gitCommitSha lags an in-place update, so a ref that came back to the commit
+  # an install first arrived at would match it while the payload sits elsewhere.
+  It "does not let the install commit stand in for a version that moved on"
+    set_installed_version delta@third "222222222222"
+    When call run_audit
+    The status should be failure
+    The output should include "delta@third"
+    The output should include "installed 222222222222"
+  End
+
+  # Stale clears on the next nightly update. This does not, so reporting it as
+  # stale left a finding that came back every night with nothing to do about it.
+  It "separates a payload no update can reach from one that is merely stale"
+    pin_alpha_at 1.0.0
+    printf 'changed\n' >"$plugins/cache/first/alpha/1.0.0/README.md"
+    When call run_audit
+    The status should be failure
+    The output should include "alpha@first"
+    The output should include "pinned"
+    The output should include "still offered as 1.0.0"
+  End
+
+  # A source offering a version the install does not hold is what an update
+  # acts on, so it stays plain staleness.
+  It "calls a payload whose source moved past the installed version stale"
+    pin_alpha_at 1.0.0
+    printf '{"name":"alpha","version":"2.0.0"}\n' \
+      >"$plugins/marketplaces/first/plugins/alpha/.claude-plugin/plugin.json"
+    When call run_audit
+    The status should be failure
+    The output should include "alpha@first"
+    The output should include "stale"
+    The output should not include "pinned"
+  End
+
   It "flags a plugin its marketplace dropped"
     add_orphan
     When call run_audit
@@ -516,6 +641,30 @@ Describe "claude-plugin-audit"
     The output should include "alpha@first"
     The output should include "unverified"
     The output should not include "orphaned"
+  End
+End
+
+# The fingerprint decides whether a night's findings refile. A verdict left out
+# of it makes two different sets of findings hash the same, and the second set
+# never reaches a to-do at all.
+Describe "drift latch"
+  stale_row() { printf '  alpha@first  stale  differs from ./plugins/alpha at 1 path\n'; }
+  pinned_row() { printf '  beta@third  pinned  still offered as 1.0.0\n'; }
+  file_drift() { call_upgrade report_drift "$1" >/dev/null 2>&1; }
+  todos() { wc -l <"$TODO_LOG" | tr -d ' '; }
+
+  It "files again when a pinned finding joins the stale ones"
+    file_drift "$(stale_row)"
+    file_drift "$(stale_row; pinned_row)"
+    When call todos
+    The output should equal 2
+  End
+
+  It "stays quiet while the same pinned finding stands"
+    file_drift "$(pinned_row)"
+    file_drift "$(pinned_row)"
+    When call todos
+    The output should equal 1
   End
 
   # A file the audit cannot read is not a file that changed. Reporting it as

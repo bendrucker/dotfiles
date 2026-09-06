@@ -22,8 +22,49 @@
 #   appears after it, however long it stands. When the fingerprint changes the
 #   latch reopens and a fresh to-do names the new set.
 #
+#   <output> is trimmed to fit the notes field, keeping its end.
+#
 # report_success <job>
 #   Clear the latch.
+
+# Things stores 10,000 characters of notes and silently drops the rest. It cuts
+# the tail, which is the wrong end to lose, since a job fails at the end of its
+# log.
+things_notes_limit=10000
+
+# Reduce <output> to <budget> characters, keeping its end and saying how much
+# was dropped. What survives resumes at a line boundary, or at a word boundary
+# when the budget lands inside a line longer than itself. A budget too small to
+# hold that accounting yields nothing.
+trim_output() {
+  local output="$1" budget="$2" kept marker
+
+  (( ${#output} <= budget )) && { printf '%s' "$output"; return 0; }
+
+  # The marker spends the budget it introduces, so measure it first, with the
+  # total standing in for the smaller elided count to keep the width an upper
+  # bound. The 1 is the newline that separates the marker from the log.
+  marker=$(elision_marker "${#output}" "${#output}")
+  budget=$(( budget - ${#marker} - 1 ))
+  # Too little room to say even how much was dropped. Saying it anyway is what
+  # pushes the note past the limit the budget was measured against.
+  (( budget < 0 )) && return 0
+
+  kept=$(printf '%s' "$output" | tail -c "$budget")
+  # Resume at a boundary so the log does not open partway through a word. A
+  # final line longer than the budget leaves no newline in what was kept, and
+  # the space is the best boundary that line offers.
+  case $kept in
+    *$'\n'*) kept=${kept#*$'\n'} ;;
+    *' '*) kept=${kept#* } ;;
+  esac
+  elision_marker "$(( ${#output} - ${#kept} ))" "${#output}"
+  printf '\n%s' "$kept"
+}
+
+elision_marker() {
+  printf '[%s of %s characters elided]' "$1" "$2"
+}
 
 notify() {
   local title="$1"
@@ -80,6 +121,10 @@ report_failure() {
 - **Revision:** '"$revision"
   [[ -n "$extra_meta" ]] && notes+='
 '"$extra_meta"
+
+  # The budget is what the limit leaves after the surrounding note.
+  local suffix='
+```'
   notes+='
 
 ```sh
@@ -88,8 +133,9 @@ report_failure() {
 
 ## '"$output_heading"'
 ```
-'"$output"'
-```'
+'
+  notes+=$(trim_output "$output" "$(( things_notes_limit - ${#notes} - ${#suffix} ))")
+  notes+=$suffix
 
   # printf avoids echo's trailing newline, which lands in the to-do title as
   # an encoded %0A.
