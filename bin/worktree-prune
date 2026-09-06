@@ -1,110 +1,35 @@
-#!/usr/bin/env zsh
-# shellcheck shell=bash
-# Nightly worktree prune across all repos.
-# Runs `wt all prune --before`, creates a Things task on failure.
+#!/usr/bin/env bun
+//
+// Nightly worktree prune across every repo, run unattended from launchd.
+//
+// Two fleet-wide passes, each latched under its own job name so one to-do never
+// stands in for another. `wt all prune --before` does the pruning; the tripwire
+// `wt all prune-audit` is an independent oracle that re-derives the survivor set
+// and names any worktree a healthy prune should already have removed. A prune
+// that fails stops the run, because the audit would report drift the prune never
+// had a chance to clear.
+//
+// Raw mode keeps the "<repo>\t<branch>\t<reason>\t<path>" fields intact, so the
+// drift to-do can name each worktree and build a command that jumps straight to
+// it.
 
-set -e
-set -o pipefail
+import { writeSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { reportFailure, reportSuccess } from "../scripts/lib/report-failure.ts";
 
-DOTFILES_HOME="${DOTFILES_HOME:-$HOME/.dotfiles}"
-
-source "${0:A:h}/../scripts/lib/report-failure.sh"
-
-PRUNE_LOG=$(mktemp)
-AUDIT_LOG=$(mktemp)
-AUDIT_ERR=$(mktemp)
-AUDIT_RAW=$(mktemp)
-trap 'rm -f "$PRUNE_LOG" "$AUDIT_LOG" "$AUDIT_ERR" "$AUDIT_RAW"' EXIT
-
-revision=$(git -C "$DOTFILES_HOME" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-
-gum log --level info "Running worktree prune"
-if ! "$DOTFILES_HOME/bin/wt-all" prune --before 2>&1 | tee "$PRUNE_LOG"; then
-  gum log --level error "worktree prune failed"
-
-  output=$(tail -n 100 "$PRUNE_LOG" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')
-  report_failure "worktree-prune" "Nightly worktree prune failed" "wt all prune --before" "$output" "$revision"
-  exit 1
-fi
-
-report_success "worktree-prune"
-gum log --level info "Worktree prune completed successfully"
-
-# Drift tripwire: an independent oracle re-derives the survivor set and flags
-# any worktree a healthy prune should already have removed. It stays silent
-# when clean, so any output means the pruner missed something. Latched under
-# its own job name, so drift files a separate to-do from a prune failure and
-# a green prune with silent drift still surfaces.
-#
-# Raw mode keeps the "<repo>\t<branch>\t<reason>\t<path>" fields intact, so the
-# to-do can name each worktree and build a command that jumps straight to it.
-gum log --level info "Auditing for prune drift"
-# Captured in two steps rather than one pipeline: `|| true` resets $pipestatus,
-# so the audit's own exit status has to be taken before anything else runs.
-audit_rc=0
-WT_ALL_RAW=1 "$DOTFILES_HOME/bin/wt-all" prune-audit \
-  >"$AUDIT_RAW" 2>"$AUDIT_ERR" || audit_rc=$?
-sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g' <"$AUDIT_RAW" \
-  | grep -v '^[[:space:]]*$' >"$AUDIT_LOG" || true
-
-# A nonzero status means repos failed the audit outright, so their worktrees
-# were never examined. Reported on its own, because "the oracle could not look"
-# reads identically to "the oracle found nothing" once it reaches the latch.
-if (( audit_rc != 0 )); then
-  gum log --level error "prune audit failed"
-  report_failure "wt-prune-audit-failed" \
-    "Worktree prune audit could not run" \
-    "wt all prune-audit" \
-    "$(tail -n 100 "$AUDIT_ERR" | sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g')" \
-    "$revision" \
-    '
+// The leading blank line separates each block from the host/time/revision list
+// the reporter emits above it, so the first heading renders as one. The
+// backticks are markdown code spans in the to-do.
+const AUDIT_FAILED_EXPLANATION = `
 The drift tripwire itself failed in one or more repos. Until it runs clean it
-cannot report a leak, so a silent prune regression would go unnoticed.'
-else
-  report_success "wt-prune-audit-failed"
-fi
+cannot report a leak, so a silent prune regression would go unnoticed.`;
 
-if [[ -s "$AUDIT_LOG" ]]; then
-  gum log --level warn "prune drift detected"
+const UNPARSED_EXPLANATION = `
+The audit produced output, but no line of it parsed as a finding. The tripwire
+cannot report a leak until the format matches what the nightly job reads.`;
 
-  # `wt all` reports each repo relative to the discovery root, so rebuild the
-  # absolute path the investigation commands need to cd into.
-  base="${PROJECTS:-$HOME/src}"
-
-  # The guard the nightly run applies, so the commands in the to-do reproduce
-  # what actually happened rather than worktrunk's default.
-  min_age="${WT_PRUNE_MIN_AGE:-1d}"
-
-  finding_rows=()
-  investigate=""
-  while IFS=$'\t' read -r repo branch reason wtpath; do
-    [[ -n "$branch" ]] || continue
-    repo_path="$repo"
-    [[ "$repo_path" == /* ]] || repo_path="$base/$repo"
-
-    finding_rows+=("$repo"$'\t'"$branch"$'\t'"$reason")
-    investigate+="## $repo: $branch ($reason)
-cd '$wtpath' && wt list && git log --oneline -5 && git status -sb
-
-cd '$repo_path'
-# Does the integration pass still see it?
-wt step prune --dry-run --min-age '$min_age'
-# What did wt-prune decide for it, and why?
-wt prune --dry-run --before
-# What does the forge say?
-gh pr view '$branch' --json state,number,url
-# Does the oracle still flag it?
-wt prune-audit
-
-"
-  done <"$AUDIT_LOG"
-
-  # The leading blank line separates this from the host/time/revision list the
-  # reporter emits above it, so the first heading renders as one.
-  # Single-quoted on purpose: the backticks are markdown code spans in the
-  # to-do, and nothing here should expand.
-  # shellcheck disable=SC2016
-  explanation='
+const DRIFT_EXPLANATION = `
 ## What this means
 
 The prune ran green and then failed its own audit. Every worktree below is
@@ -125,41 +50,365 @@ the same shape.
 
 Run the commands below. They open each leaked worktree, then re-run the two
 passes from its repo so you can see which one stopped matching. Common causes
-are `wt step prune` no longer detecting the integration and the forge lookup in
-`bin/wt-prune` returning nothing for the branch.'
+are \`wt step prune\` no longer detecting the integration and the forge lookup in
+\`bin/wt-prune\` returning nothing for the branch.`;
 
-  leaked=${#finding_rows}
-  if (( leaked == 0 )); then
-    # The audit wrote something no field parser recognized. Filing a "leaked 0"
-    # to-do would latch the job and suppress the next real drift, so surface the
-    # unparsed text itself and leave the drift latch alone.
-    gum log --level error "prune audit output could not be parsed"
-    report_failure "wt-prune-audit-failed" \
-      "Worktree prune audit output could not be parsed" \
-      "WT_ALL_RAW=1 wt all prune-audit" \
-      "$(cat "$AUDIT_LOG")" \
-      "$revision" \
-      '
-The audit produced output, but no line of it parsed as a finding. The tripwire
-cannot report a leak until the format matches what the nightly job reads.'
-  else
-    noun="worktrees"
-    (( leaked == 1 )) && noun="worktree"
+// How much of a captured log reaches a to-do. The reporter trims further, to
+// what the notes field holds.
+const LOG_LINES = 100;
 
-    # Command substitution strips the trailing blank line the block accumulator
-    # picks up from its last append.
-    findings=$(print -rl -- "${finding_rows[@]}" | column -t -s $'\t')
-    investigate=$(print -r -- "$investigate")
+// CSI sequences with numeric parameters and an alphabetic final byte, which is
+// what gum's colours and the spinner's erase codes are. Carriage returns and
+// escape forms without '[' are left alone rather than the strip being widened
+// past what gum emits.
+const CSI = /\x1b\[[0-9;]*[a-zA-Z]/g;
 
-    report_failure "wt-prune-drift" \
-      "Worktree prune leaked $leaked $noun" \
-      "$investigate" \
-      "$findings" \
-      "$revision" \
-      "$explanation" \
-      "Leaked worktrees"
-  fi
-else
-  report_success "wt-prune-drift"
-  gum log --level info "No prune drift"
-fi
+export function stripAnsi(text: string): string {
+  return text.replace(CSI, "");
+}
+
+export function lastLines(text: string, count: number): string {
+  if (text === "") return "";
+  const trailing = text.endsWith("\n");
+  const lines = (trailing ? text.slice(0, -1) : text).split("\n");
+  const kept = lines.slice(-count).join("\n");
+  return trailing ? `${kept}\n` : kept;
+}
+
+// What a captured log looks like in a to-do: the tail, uncoloured.
+export function capturedLog(text: string): string {
+  return stripAnsi(lastLines(text, LOG_LINES)).replace(/\n+$/, "");
+}
+
+export interface Finding {
+  repo: string;
+  branch: string;
+  reason: string;
+  path: string;
+}
+
+// A row is "<repo>\t<branch>\t<reason>\t<path>", the composition of `wt all`'s
+// repo key and `wt prune-audit`'s finding. A row with no branch is anything else
+// a repo printed, and is the only validation there is.
+export function parseFinding(line: string): Finding | undefined {
+  const fields = line.split("\t");
+  const branch = fields[1] ?? "";
+  if (branch === "") return undefined;
+  return {
+    repo: fields[0] ?? "",
+    branch,
+    reason: fields[2] ?? "",
+    // A path may hold a tab, so everything past the third field is the path.
+    path: fields.slice(3).join("\t").replace(/\t+$/, ""),
+  };
+}
+
+// The POSIX space class, not JavaScript's \s. `grep -v '^[[:space:]]*$'` does
+// not count U+00A0 or U+2028 as blank, so a line made only of those kept the
+// audit output non-empty and took the could-not-parse branch. Under \s it
+// would read as no output at all, and the drift gate would flip the other way.
+const BLANK_LINE = /^[ \t\n\v\f\r]*$/;
+
+export function auditRows(stdout: string): string[] {
+  return stripAnsi(stdout)
+    .split("\n")
+    .filter((line) => !BLANK_LINE.test(line));
+}
+
+// `column -t -s $'\t'`: every column but the last padded to its widest cell plus
+// two spaces.
+export function findingsTable(findings: Finding[]): string {
+  const rows = findings.map((finding) => [finding.repo, finding.branch, finding.reason]);
+  const widths = rows.reduce(
+    (widest, row) => row.map((cell, index) => Math.max(widest[index] ?? 0, cell.length)),
+    [] as number[],
+  );
+  return rows
+    .map((row) =>
+      row
+        .map((cell, index) => (index === row.length - 1 ? cell : cell.padEnd(widths[index] + 2)))
+        .join("")
+        .replace(/\s+$/, ""),
+    )
+    .join("\n");
+}
+
+// Branch names and worktree paths admit a single quote, and the commands below
+// are pasted into a shell as they stand.
+function quote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+// `wt all` reports each repo relative to the discovery root, so rebuild the
+// absolute path the investigation commands cd into. A repo discovered outside
+// $PROJECTS is already absolute.
+export function repoPath(repo: string, base: string): string {
+  return repo.startsWith("/") ? repo : `${base}/${repo}`;
+}
+
+export function investigationBlock(finding: Finding, base: string, minAge: string): string {
+  return `## ${finding.repo}: ${finding.branch} (${finding.reason})
+cd ${quote(finding.path)} && wt list && git log --oneline -5 && git status -sb
+
+cd ${quote(repoPath(finding.repo, base))}
+# Does the integration pass still see it?
+wt step prune --dry-run --min-age ${quote(minAge)}
+# What did wt-prune decide for it, and why?
+wt prune --dry-run --before
+# What does the forge say?
+gh pr view ${quote(finding.branch)} --json state,number,url
+# Does the oracle still flag it?
+wt prune-audit
+
+`;
+}
+
+export function investigation(findings: Finding[], base: string, minAge: string): string {
+  return findings
+    .map((finding) => investigationBlock(finding, base, minAge))
+    .join("")
+    .replace(/\n+$/, "");
+}
+
+// Drift is a standing finding rather than a break, so the latch keys on the
+// leaked set. An unactioned to-do stays quiet while the same worktrees leak, and
+// one that leaks later reopens it under its own to-do. Sorted, because the fleet
+// scan runs its repos in parallel and their order is not stable.
+export function driftFingerprint(findings: Finding[]): string {
+  return findings
+    .map((finding) => `${finding.repo}:${finding.branch}`)
+    .sort()
+    .join(" ");
+}
+
+export function driftTitle(leaked: number): string {
+  return `Worktree prune leaked ${leaked} ${leaked === 1 ? "worktree" : "worktrees"}`;
+}
+
+function home(): string {
+  return process.env.HOME || homedir();
+}
+
+function dotfilesHome(): string {
+  return process.env.DOTFILES_HOME || join(home(), ".dotfiles");
+}
+
+function revisionOf(repo: string): string {
+  try {
+    const rev = Bun.spawnSync({
+      cmd: ["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+      env: process.env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    if (rev.exitCode !== 0) return "unknown";
+    return rev.stdout.toString().replace(/\n+$/, "") || "unknown";
+  } catch {
+    // Spawning a git that is not installed raises rather than returning a
+    // status, and a machine with no git has no revision to report either way.
+    return "unknown";
+  }
+}
+
+function log(level: "info" | "warn" | "error", message: string): void {
+  Bun.spawnSync({
+    cmd: ["gum", "log", "--level", level, message],
+    env: process.env,
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+}
+
+// stdout is the launchd log, and a write that only takes what the buffer holds
+// loses the rest of a table this long.
+function writeAll(fd: number, bytes: Uint8Array): void {
+  let written = 0;
+  while (written < bytes.length) written += writeSync(fd, bytes, written);
+}
+
+export interface Capture {
+  status: number;
+  output: string;
+}
+
+// The prune's own output is what the to-do carries, so it is captured, and it is
+// also what someone reading /tmp/worktree-prune.log came for, so it is echoed as
+// it arrives. Both streams are pipes: `wt all` redraws a spinner line only onto
+// a terminal, and those escapes would otherwise ride into the to-do.
+export async function runPrune(wtAll: string): Promise<Capture> {
+  const started = startPrune(wtAll);
+  if ("failure" in started) {
+    // Onto stdout as well, because /tmp/worktree-prune.log is where someone
+    // looks first and a status alone leaves it with no stated reason. The
+    // shell's pipeline carried zsh's own complaint into both.
+    writeAll(1, Buffer.from(started.failure.output));
+    return started.failure;
+  }
+  const child = started.child;
+
+  const chunks: Uint8Array[] = [];
+  const drain = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
+    const reader = stream.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      chunks.push(value);
+      writeAll(1, value);
+    }
+  };
+
+  await Promise.all([drain(child.stdout), drain(child.stderr)]);
+  return { status: await child.exited, output: Buffer.concat(chunks).toString() };
+}
+
+function startPrune(wtAll: string) {
+  try {
+    return {
+      child: Bun.spawn({
+        cmd: [wtAll, "prune", "--before"],
+        env: process.env,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    };
+  } catch (error) {
+    // A wt-all that cannot be run has to reach the to-do as text: a status
+    // alone leaves the nightly failure with no stated reason.
+    return { failure: spawnFailure(wtAll, error) };
+  }
+}
+
+export interface AuditCapture {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
+
+// The streams are kept apart here, unlike the prune's: stdout is parsed as
+// findings and anything the audit said about itself would parse as one.
+export function runAudit(wtAll: string): AuditCapture {
+  try {
+    const audit = Bun.spawnSync({
+      cmd: [wtAll, "prune-audit"],
+      env: { ...process.env, WT_ALL_RAW: "1" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return {
+      status: audit.exitCode,
+      stdout: audit.stdout.toString(),
+      stderr: audit.stderr.toString(),
+    };
+  } catch (error) {
+    const failure = spawnFailure(wtAll, error);
+    return { status: failure.status, stdout: "", stderr: failure.output };
+  }
+}
+
+function spawnFailure(wtAll: string, error: unknown): Capture {
+  const reason = error instanceof Error ? error.message : String(error);
+  return { status: 127, output: `worktree-prune: ${wtAll}: ${reason}\n` };
+}
+
+export async function main(): Promise<number> {
+  const wtAll = join(dotfilesHome(), "bin", "wt-all");
+  const revision = revisionOf(dotfilesHome());
+
+  log("info", "Running worktree prune");
+  const prune = await runPrune(wtAll);
+  if (prune.status !== 0) {
+    log("error", "worktree prune failed");
+    reportFailure({
+      job: "worktree-prune",
+      title: "Nightly worktree prune failed",
+      command: "wt all prune --before",
+      output: capturedLog(prune.output),
+      revision,
+      extraMeta: "",
+      outputHeading: "Error Output",
+      fingerprint: "",
+    });
+    // The audit re-derives the survivor set this prune should have produced, so
+    // running it now would report drift the prune never had a chance to clear.
+    return 1;
+  }
+
+  reportSuccess("worktree-prune");
+  log("info", "Worktree prune completed successfully");
+
+  log("info", "Auditing for prune drift");
+  const audit = runAudit(wtAll);
+  const rows = auditRows(audit.stdout);
+
+  // A nonzero status means repos failed the audit outright, so their worktrees
+  // were never examined. Reported on its own, because "the oracle could not
+  // look" reads identically to "the oracle found nothing" once it reaches the
+  // latch. The repos that did answer still emitted their findings, so the run
+  // carries on into the drift analysis below.
+  if (audit.status !== 0) {
+    log("error", "prune audit failed");
+    reportFailure({
+      job: "wt-prune-audit-failed",
+      title: "Worktree prune audit could not run",
+      command: "wt all prune-audit",
+      output: capturedLog(audit.stderr),
+      revision,
+      extraMeta: AUDIT_FAILED_EXPLANATION,
+      outputHeading: "Error Output",
+      fingerprint: "",
+    });
+  } else {
+    reportSuccess("wt-prune-audit-failed");
+  }
+
+  if (rows.length === 0) {
+    reportSuccess("wt-prune-drift");
+    log("info", "No prune drift");
+    return 0;
+  }
+
+  log("warn", "prune drift detected");
+
+  const findings = rows
+    .map(parseFinding)
+    .filter((finding): finding is Finding => finding !== undefined);
+
+  if (findings.length === 0) {
+    // The audit wrote something no field parser recognized. Filing a "leaked 0"
+    // to-do would latch the drift job and suppress the next real drift, so
+    // surface the unparsed text itself and leave that latch alone.
+    log("error", "prune audit output could not be parsed");
+    reportFailure({
+      job: "wt-prune-audit-failed",
+      title: "Worktree prune audit output could not be parsed",
+      command: "WT_ALL_RAW=1 wt all prune-audit",
+      output: rows.join("\n"),
+      revision,
+      extraMeta: UNPARSED_EXPLANATION,
+      outputHeading: "Error Output",
+      fingerprint: "",
+    });
+    return 0;
+  }
+
+  const base = process.env.PROJECTS || join(home(), "src");
+  // The guard the nightly run applies, so the commands in the to-do reproduce
+  // what actually happened rather than worktrunk's default.
+  const minAge = process.env.WT_PRUNE_MIN_AGE || "1d";
+
+  reportFailure({
+    job: "wt-prune-drift",
+    title: driftTitle(findings.length),
+    command: investigation(findings, base, minAge),
+    output: findingsTable(findings),
+    revision,
+    extraMeta: DRIFT_EXPLANATION,
+    outputHeading: "Leaked worktrees",
+    fingerprint: driftFingerprint(findings),
+  });
+  return 0;
+}
+
+if (import.meta.main) process.exit(await main());
