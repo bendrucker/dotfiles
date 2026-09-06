@@ -1,55 +1,218 @@
-#!/usr/bin/env sh
-# Usage: brew-drift [dotfiles-root]
-#
-# Print the Brewfile entries that would declare what is installed on this
-# machine but declared nowhere. Silence means the machine matches the Brewfile.
-#
-# This reports and never removes. The nightly job runs unattended at 3am, and a
-# package is undeclared for two indistinguishable reasons: it is a leftover, or
-# it was installed deliberately an hour ago and has not been written down yet.
-# Uninstalling on that ambiguity loses work no one asked to lose, so the answer
-# goes to a to-do and the removal stays a decision someone makes awake.
-#
-# `brew bundle cleanup` is what decides "undeclared". Reusing it keeps this
-# honest about the things a hand-rolled comparison gets wrong:
-# renamed casks whose old token survives as a Caskroom symlink, formulae kept
-# alive as another package's dependency, and anything declared in
-# ~/Brewfile.local, which the root Brewfile evaluates and this repo never sees.
-set -e
+#!/usr/bin/env bun
+//
+// Usage: brew-drift [dotfiles-root]
+//
+// Print the Brewfile entries that would declare what is installed on this
+// machine but declared nowhere. Silence means the machine matches the Brewfile.
+//
+// This reports and never removes. The nightly job runs unattended at 3am, and a
+// package is undeclared for two indistinguishable reasons: it is a leftover, or
+// it was installed deliberately an hour ago and has not been written down yet.
+// Uninstalling on that ambiguity loses work no one asked to lose, so the answer
+// goes to a to-do and the removal stays a decision someone makes awake.
+//
+// `brew bundle cleanup` is what decides "undeclared". Reusing it keeps this
+// honest about the things a hand-rolled comparison gets wrong: renamed casks
+// whose old token survives as a Caskroom symlink, formulae kept alive as
+// another package's dependency, and anything declared in ~/Brewfile.local,
+// which the root Brewfile evaluates and this repo never sees.
 
-DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
+import { writeSync } from "node:fs";
+import { resolve } from "node:path";
 
-# shellcheck source=lib/brew-drift.sh
-. "$(dirname "$0")/lib/brew-drift.sh"
+const USAGE = [
+  "Usage: brew-drift [dotfiles-root]",
+  "Print the Brewfile entries that would declare what is installed on this",
+  "machine but declared nowhere. Silence means the machine matches the Brewfile.",
+].join("\n");
 
-command -v brew >/dev/null 2>&1 || exit 0
+export const NO_OUTPUT_DIAGNOSTIC =
+  "brew-drift: brew bundle cleanup produced no output, so undeclared packages would go unnoticed.";
 
-# Without --force the command still uninstalls, it just asks first, and it
-# prints the listing before it asks. Closing stdin is what makes it a read: the
-# prompt cannot be shown, so it exits 1 with the listing already printed and
-# nothing removed. That holds at a terminal too, where a person running this by
-# hand would otherwise be one keystroke from the uninstall this refuses to do.
-#
-# The nonzero status is therefore the normal result of a run that found
-# something. The listing is the signal, so status decides only when there is no
-# output at all to read.
-output=$(brew bundle cleanup --file "$DOTFILES_ROOT/Brewfile" </dev/null 2>/dev/null) || cleanup_failed=1
+// Every kind but `mas` lists a bare token per line. A Brewfile entry for a Mac
+// App Store app needs the name and the id, so both are carried.
+export type Entry =
+  | { kind: "formula" | "cask" | "tap"; token: string }
+  | { kind: "mas"; name: string; id: string };
 
-if [ -n "${cleanup_failed-}" ] && [ -z "$output" ]; then
-  echo "brew-drift: brew bundle cleanup produced no output, so undeclared packages would go unnoticed." >&2
-  exit 1
-fi
+type Kind = Entry["kind"];
 
-# Staged through a variable rather than piped straight into the formatter,
-# because a pipeline reports only its last command's status. A parser that died
-# would exit 0 here and report a clean machine. The command substitution lets
-# set -e see that.
-#
-# A parser that runs but matches nothing is a different case this cannot catch,
-# because a clean machine produces the same empty result. Renaming a header
-# upstream would silence the report rather than break it.
-parsed=$(printf '%s\n' "$output" | brew_drift_parse)
+// The four kinds this repo's Brewfiles declare, each matched by the literal
+// header Homebrew prints for it. Homebrew cleans up VS Code extensions and npm
+// globals under the same output shape, and naming the headers rather than
+// matching the shape is what keeps a package manager this repo adopts later
+// from turning the nightly report into an extension audit. The cost is that a
+// renamed header upstream silences that kind rather than breaking the run,
+// because an empty parse is also what a clean machine produces.
+const SECTIONS: { header: string; kind: Kind }[] = [
+  { header: "Would uninstall formulae:", kind: "formula" },
+  { header: "Would uninstall casks:", kind: "cask" },
+  { header: "Would uninstall Mac App Store apps:", kind: "mas" },
+  { header: "Would untap:", kind: "tap" },
+];
 
-[ -n "$parsed" ] || exit 0
+// The punctuation Homebrew allows in a token: postgresql@17, logi-options+,
+// font-monaspice-nerd-font, agavra/tap/tuicr.
+const TOKEN = /^[A-Za-z0-9][A-Za-z0-9@+._/-]*$/;
 
-printf '%s\n' "$parsed" | brew_drift_format
+// `Name (id)`, where the name may carry spaces and the id is the final
+// parenthesised run of digits.
+const MAC_APP = /^(.+) \(([0-9]+)\)$/;
+
+export function parseCleanupListing(output: string): Entry[] {
+  const entries: Entry[] = [];
+  let open: Kind | undefined;
+
+  for (const line of output.split("\n")) {
+    // A header is recognised whichever section is currently open, so one
+    // section closes when the next opens.
+    const section = SECTIONS.find((candidate) => line.startsWith(candidate.header));
+    if (section) {
+      open = section.kind;
+      continue;
+    }
+
+    if (open === "mas") {
+      const app = MAC_APP.exec(line);
+      if (app) {
+        entries.push({ kind: "mas", name: app[1], id: app[2] });
+        continue;
+      }
+    } else if (open && TOKEN.test(line)) {
+      entries.push({ kind: open, token: line });
+      continue;
+    }
+
+    // A line matching neither a header nor the open section's shape ends the
+    // section rather than being skipped. That is what stops the download-cache
+    // listing, which follows these sections and names paths, from reading as
+    // packages: a bare package name reappears inside it, and a skip rule would
+    // collect it.
+    open = undefined;
+  }
+
+  return entries;
+}
+
+// A Brewfile is Ruby, so a name carrying a quote has to arrive escaped or the
+// line it lands in will not parse. Only a Mac App Store name can carry one,
+// since the token pattern admits no quote, and App Store names with
+// apostrophes exist.
+function rubyString(value: string): string {
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+}
+
+// The action a report leads to is pasting the line into a topic Brewfile, which
+// is why the report is rendered as Brewfile syntax rather than as bare names.
+export function brewfileEntry(entry: Entry): string {
+  switch (entry.kind) {
+    case "formula":
+      return `brew ${rubyString(entry.token)}`;
+    case "cask":
+      return `cask ${rubyString(entry.token)}`;
+    case "tap":
+      return `tap ${rubyString(entry.token)}`;
+    case "mas":
+      return `mas ${rubyString(entry.name)}, id: ${entry.id}`;
+  }
+}
+
+// Homebrew's order is kept. bin/dotfiles-upgrade sorts before fingerprinting,
+// because Homebrew orders the listing by a dependency sort taken over every
+// installed package, so installing something unrelated and declared can
+// reshuffle the undeclared names without changing the set.
+export function report(entries: Entry[]): string {
+  return entries.map((entry) => `${brewfileEntry(entry)}\n`).join("");
+}
+
+export interface CleanupListing {
+  output: string;
+  failed: boolean;
+}
+
+// Without --force the command still uninstalls, it just asks first, and it
+// prints the listing before it asks. Denying the child a stdin is what makes
+// this a read: the prompt cannot be shown, so cleanup exits 1 with the listing
+// already printed and nothing removed. That holds at a terminal too, where a
+// person running this by hand would otherwise be one keystroke from the
+// uninstall this refuses to do. Inheriting this process's stdin would hand that
+// keystroke over.
+//
+// The nonzero status is therefore the normal result of a run that found
+// something. The listing is the signal, so the status decides only when there
+// is no output at all to read.
+//
+// stdout stays a pipe, which is also what keeps Homebrew from colouring the
+// listing. ANSI escapes would break the anchored entry patterns and empty the
+// report without saying so.
+export function cleanupListing(brew: string, root: string): CleanupListing {
+  try {
+    const cleanup = Bun.spawnSync({
+      // The root is a literal prefix, so a trailing slash yields `<root>//Brewfile`,
+      // which Homebrew reads the same way.
+      cmd: [brew, "bundle", "cleanup", "--file", `${root}/Brewfile`],
+      env: process.env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    return { output: cleanup.stdout.toString(), failed: cleanup.exitCode !== 0 };
+  } catch {
+    // Bun raises where the shell exited 127. A brew that resolved and then could
+    // not be run has produced nothing to read, which is the case the diagnostic
+    // below exists for.
+    return { output: "", failed: true };
+  }
+}
+
+export interface Outcome {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
+
+export function run(args: string[]): Outcome {
+  if (args[0] === "-h" || args[0] === "--help") {
+    return { status: 0, stdout: `${USAGE}\n`, stderr: "" };
+  }
+
+  // An empty root argument falls back the way an absent one does, since the one
+  // caller passes neither and a shell caller can produce either.
+  const root = args[0] || resolve(import.meta.dir, "..");
+
+  // Resolving brew rather than reading process.platform is what makes this
+  // testable: a resolution can be shadowed by a directory on PATH and a
+  // platform check cannot. The silent exit is also what lets the check run on
+  // Linux and in CI, at the cost of a machine with no brew being
+  // indistinguishable from a machine that matches its Brewfile.
+  const brew = Bun.which("brew", { PATH: process.env.PATH });
+  if (!brew) return { status: 0, stdout: "", stderr: "" };
+
+  const cleanup = cleanupListing(brew, root);
+  // Trailing newlines do not count as output. The shell read this listing with
+  // $(), which strips them, so a cleanup that printed nothing but blank lines
+  // took the diagnostic rather than being parsed into an empty report.
+  if (cleanup.failed && cleanup.output.replace(/\n+$/, "") === "") {
+    // stdout stays empty here. The caller captures it with $() and would file
+    // anything printed as a finding.
+    return { status: 1, stdout: "", stderr: `${NO_OUTPUT_DIAGNOSTIC}\n` };
+  }
+
+  return { status: 0, stdout: report(parseCleanupListing(cleanup.output)), stderr: "" };
+}
+
+// bin/dotfiles-upgrade reads the report over a pipe, where a write takes only
+// what fits in the buffer and process.exit discards whatever is still queued
+// behind it. A long report would arrive cut mid-line.
+function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let written = 0;
+  while (written < bytes.length) written += writeSync(fd, bytes, written);
+}
+
+if (import.meta.main) {
+  const outcome = run(process.argv.slice(2));
+  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
+  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
+  process.exit(outcome.status);
+}
