@@ -17,7 +17,11 @@ Describe "bin/git-sync"
     repo="$root/repo"
     origin="$root/origin"
 
-    git init -q --bare "$origin"
+    # -b main, because the fixture would otherwise inherit init.defaultBranch
+    # from whoever runs it: on a machine that leaves it at master, the bare
+    # repo's HEAD names a branch nothing ever pushes, the clone below checks
+    # out nothing, and the push has no local main to send.
+    git init -q --bare -b main "$origin"
     git init -q -b main "$repo"
     git -C "$repo" config user.email spec@example.com
     git -C "$repo" config user.name Spec
@@ -52,11 +56,11 @@ Describe "bin/git-sync"
     It "prints the new short rev when the clone moves"
       moved() {
         local scratch="$root/scratch"
-        git clone -q "$origin" "$scratch"
+        git clone -q --branch main "$origin" "$scratch"
         git -C "$scratch" config user.email spec@example.com
         git -C "$scratch" config user.name Spec
         git -C "$scratch" commit -q --allow-empty -m second
-        git -C "$scratch" push -q origin main
+        git -C "$scratch" push -q origin HEAD:main
         PATH="$root:$PATH" "$script" sync "$repo" main
       }
       When run moved
