@@ -220,8 +220,6 @@ describe("the executable", () => {
     expect(runAudit()).toMatchObject({ status: 0, stdout: "" });
   });
 
-  // Shrinking grace to zero must bring the same worktree back, confirming the
-  // skip above came from the age check.
   test("flags that same worktree once the grace period is zero", () => {
     youngSurvivor("empty");
 
@@ -372,8 +370,6 @@ describe("graceSeconds", () => {
     expect(graceSeconds()).toBe(7200);
   });
 
-  // An empty override is no override, which is how the shell's -n test read it
-  // and how minAge reads its own.
   test("ignores an empty override", () => {
     process.env.WT_PRUNE_DRIFT_GRACE = "";
     expect(graceSeconds()).toBe(86400 + 86400);
