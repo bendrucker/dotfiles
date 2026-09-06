@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# git-sync <subcommand> …: scripts/lib/git-sync.sh as a command.
+#
+# The library stays shell because scripts/setup sources it on a fresh machine,
+# before brew bundle has installed bun, and it reaches nearly every function
+# through git_sync. A TypeScript caller reaches it here rather than carrying a
+# second implementation of the transport rules in CLAUDE.md's GitHub Transport
+# section.
+#
+# sync <repo_dir> [branch]
+#   Fast-forward the clone. Prints the new short rev on stdout when it moved.
+#   Exits 0 updated, 2 already current, 1 failed. Same three codes the shell
+#   callers read out of $GIT_SYNC_*, so a caller reads the status and nothing
+#   else.
+#
+# default-branch [repo_dir]
+#   Print the branch git_sync would target.
+#
+# https-env
+#   Print the insteadOf rewrite as KEY=VALUE lines, one per line, for a caller
+#   to merge into the environment of the child processes that need it. The rule
+#   outranks a pushurl, so it is scoped to those commands rather than exported
+#   for a whole script, which is why this prints rather than exports.
+
+# set -e alone, matching bin/dotfiles-sync, which is the shell the library's
+# functions are written against. Under pipefail, git_default_branch's
+# `git symbolic-ref … | sed` aborts the script on a clone whose origin/HEAD is
+# not set, where the library means to fall back to main.
+set -e
+
+lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts/lib" && pwd)"
+# shellcheck source=../scripts/lib/spin.sh
+. "$lib/spin.sh"
+# shellcheck source=../scripts/lib/git-sync.sh
+. "$lib/git-sync.sh"
+
+usage() {
+  echo "usage: git-sync sync <repo_dir> [branch] | default-branch [repo_dir] | https-env" >&2
+  exit 2
+}
+
+[ "$#" -gt 0 ] || usage
+command="$1"
+shift
+
+case "$command" in
+  sync)
+    [ "$#" -ge 1 ] || usage
+    status=0
+    git_sync "$1" "${2:-}" || status=$?
+    exit "$status"
+    ;;
+  default-branch)
+    git_default_branch "${1:-.}"
+    ;;
+  https-env)
+    # In a subshell, because git_https_env exports into whatever called it and
+    # the point here is to report the rewrite rather than to take it on.
+    (
+      git_https_env
+      i=0
+      while [ "$i" -lt "$GIT_CONFIG_COUNT" ]; do
+        key="GIT_CONFIG_KEY_$i"
+        value="GIT_CONFIG_VALUE_$i"
+        printf '%s=%s\n%s=%s\n' "$key" "${!key}" "$value" "${!value}"
+        i=$((i + 1))
+      done
+      printf 'GIT_CONFIG_COUNT=%s\n' "$GIT_CONFIG_COUNT"
+    )
+    ;;
+  *)
+    usage
+    ;;
+esac

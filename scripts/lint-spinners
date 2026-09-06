@@ -23,11 +23,12 @@ report() {
   while IFS=: read -r file line rest; do
     [ -n "$file" ] || continue
 
-    # The wrapper makes the call this forbids. Its spec, the gum stub that
-    # stands in for the real binary, and the skill documenting the rule all
-    # quote the string without calling it.
+    # The wrapper makes the call this forbids, and bin/spin names it in the
+    # usage line describing what it wraps. Its spec, the gum stub that stands
+    # in for the real binary, and the skill documenting the rule all quote the
+    # string without calling it.
     case "$file" in
-      scripts/lib/spin.sh | scripts/lint-spinners) continue ;;
+      scripts/lib/spin.sh | bin/spin | scripts/lint-spinners) continue ;;
       scripts/spec/spin_spec.sh | scripts/spec/spec_helper.sh) continue ;;
       .claude/*) continue ;;
     esac
@@ -42,5 +43,6 @@ offenders=$(printf '%s\n' "$matches" | report)
 
 echo "ERROR: these call gum directly instead of spin, so the spinner renders where nothing is watching:" >&2
 printf '%s\n' "$offenders" >&2
-echo "  Source scripts/lib/spin.sh and call spin with the same arguments." >&2
+echo "  Source scripts/lib/spin.sh and call spin with the same arguments," >&2
+echo "  or run bin/spin with them where sourcing is not an option." >&2
 exit 1

@@ -1,0 +1,14 @@
+#!/bin/sh
+# spin <gum spin flags>… -- <command>…: scripts/lib/spin.sh as a command.
+#
+# The library stays shell because scripts/setup and bin/dotf source it on a
+# fresh machine, before brew bundle has installed bun. A TypeScript caller
+# reaches it here rather than carrying a second copy of the same branch.
+#
+# The terminal test the library makes is on its own stderr, which a spawned
+# child inherits, so the branch answers for the caller as it would inline.
+
+# shellcheck source=../scripts/lib/spin.sh
+. "$(dirname "$0")/../scripts/lib/spin.sh"
+
+spin "$@"

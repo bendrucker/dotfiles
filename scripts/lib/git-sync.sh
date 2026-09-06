@@ -46,7 +46,10 @@ git_default_branch() {
   branch=$(git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
 
   if [[ -z "$branch" ]]; then
-    git -C "$repo_dir" remote set-head origin --auto 2>/dev/null || true
+    # stdout too: set-head announces "'origin/HEAD' is now created and points
+    # to 'main'" on the stream this function's own answer travels on, and every
+    # caller reads that answer through command substitution.
+    git -C "$repo_dir" remote set-head origin --auto >/dev/null 2>&1 || true
     branch=$(git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
   fi
 
