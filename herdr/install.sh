@@ -69,7 +69,12 @@ fi
 "$lazy" update || echo "✗ herdr-lazy update did not run; plugins may be stale" >&2
 
 # Pinned entries, which update skips, plus anything sitting at the wrong commit.
-"$lazy" sync || echo "✗ herdr-lazy sync did not run; some plugins may be missing" >&2
+# --prune makes the list authoritative in both directions, so dropping an entry
+# uninstalls the plugin instead of leaving it behind. It removes only a github
+# plugin whose owner/repo no entry claims, and reports rather than removes
+# anything else: a local link, herdr-lazy itself, and a plugin whose id matches
+# an entry its source does not confirm.
+"$lazy" sync --prune || echo "✗ herdr-lazy sync did not run; plugins may be missing or unlisted" >&2
 
 # With this on, a plugin added to the list later installs on the next herdr
 # start instead of waiting for someone to re-run this script.
