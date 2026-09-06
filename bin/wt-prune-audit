@@ -1,127 +1,176 @@
-#!/usr/bin/env zsh
-# wt prune-audit: an independent oracle that catches a prune that silently
-# stopped removing what it should. It re-derives the survivor set from a fresh
-# `wt list` and applies the minimal landed-work invariant, so it fires whatever
-# the cause of the miss (a truncated forge query, a detection regression, a
-# skipped pass). It is deliberately simpler than the pruner and does not share
-# its decision code: it reuses only the shared worktree facts (pr_state and
-# the age and duration helpers).
-#
-# Prints "<branch>\t<reason>\t<path>" for each linked, non-current worktree that
-# a healthy prune should already have removed:
-#   - main_state is empty/integrated and the worktree has outlived the grace
-#     period: `wt list` already knows the work landed into the default branch,
-#     so no forge call is needed.
-#   - otherwise the branch has a MERGED PR that outlived the prune.
-# Prints nothing when there is no drift. Dispatched fleet-wide via
-# `wt all prune-audit`, so a clean repo emits nothing and is skipped.
-#
-# The grace period is what keeps the oracle honest about the pruner's own
-# rules. `wt step prune` declines to touch a worktree younger than
-# $WT_PRUNE_MIN_AGE, so anything created since the last nightly run is a
-# deliberate deferral. Grace covers that guard plus one run interval, so a
-# worktree only counts as drift once a run that could have removed it has come
-# and gone. Without it every same-day worktree files a to-do that resolves
-# itself overnight, and the signal stops meaning anything.
-#
-# The MERGED rule needs no grace: the pruner's forge pass removes a merged
-# worktree at any age, so one that survives is a genuine miss.
-#
-# A worktree holding the default branch is excluded outright, since no prune
-# pass can remove it.
+#!/usr/bin/env bun
+//
+// wt prune-audit: an independent oracle that catches a prune that silently
+// stopped removing what it should. It re-derives the survivor set from a fresh
+// `wt list` and applies the minimal landed-work invariant, so it fires whatever
+// the cause of the miss (a truncated forge query, a detection regression, a
+// skipped pass). It is deliberately simpler than the pruner and does not share
+// its decision code: it reuses only the shared worktree facts.
+//
+// Prints "<branch>\t<reason>\t<path>" for each linked, non-current worktree that
+// a healthy prune should already have removed:
+//   - main_state is empty/integrated and the worktree has outlived the grace
+//     period: `wt list` already knows the work landed into the default branch,
+//     so no forge call is needed.
+//   - otherwise the branch has a MERGED PR that outlived the prune.
+// Prints nothing when there is no drift. Dispatched fleet-wide via
+// `wt all prune-audit`, so a clean repo emits nothing and is skipped.
+//
+// The grace period is what keeps the oracle honest about the pruner's own
+// rules. `wt step prune` declines to touch a worktree younger than
+// $WT_PRUNE_MIN_AGE, so anything created since the last nightly run is a
+// deliberate deferral. Grace covers that guard plus one run interval, so a
+// worktree only counts as drift once a run that could have removed it has come
+// and gone. Without it every same-day worktree files a to-do that resolves
+// itself overnight, and the signal stops meaning anything.
+//
+// The MERGED rule needs no grace: the pruner's forge pass removes a merged
+// worktree at any age, so one that survives is a genuine miss.
+//
+// A worktree holding the default branch is excluded outright, since no prune
+// pass can remove it.
 
-set -uo pipefail
+import { writeSync } from "node:fs";
+import {
+  defaultBranch,
+  listWorktrees,
+  minAge,
+  parseDuration,
+  prState,
+  remoteHost,
+  type Worktree,
+  worktreeAgeSecs,
+} from "../scripts/lib/worktree-state.ts";
 
-# Defines pr_state, worktree_age_secs, parse_duration, default_branch, and
-# WT_PRUNE_MIN_AGE. The pruner is TypeScript and imports the same module
-# directly, so the two read one implementation of every fact they both decide
-# on. $0 is this script's path even when invoked by `wt`.
-source "${0:A:h}/../scripts/lib/worktree-state.sh"
+// What `wt list` says when it has already resolved the work into the default
+// branch. "empty" is a worktree carrying no commits of its own.
+const INTEGRATED = new Set(["empty", "integrated"]);
 
-# Grace, in seconds. $WT_PRUNE_DRIFT_GRACE overrides it and takes the same
-# duration grammar as $WT_PRUNE_MIN_AGE (2h, 1d, 1w, 1mo, 1y); the default is
-# the pruner's guard plus one nightly run interval. Prints nothing and returns
-# nonzero on a spec parse_duration does not understand, because a silently
-# wrong grace either buries real drift or restores the false positives the
-# grace period exists to stop.
-grace_secs () {
-  local secs
-  if [[ -n "${WT_PRUNE_DRIFT_GRACE:-}" ]]; then
-    parse_duration "$WT_PRUNE_DRIFT_GRACE"
-    return
-  fi
-  secs=$(parse_duration "$WT_PRUNE_MIN_AGE") || return 1
-  print -r -- $(( secs + 86400 ))
+// One nightly run, added to the pruner's own age floor.
+const RUN_INTERVAL = 86400;
+
+export interface Outcome {
+  status: number;
+  stdout: string;
+  stderr: string;
 }
 
-main () {
-  local grace
-  # A misconfigured duration returns nonzero, which flags the repo as failed
-  # under `wt all` and puts the reason in front of someone. Every other exit
-  # from this script is 0 so that findings, not status, signal drift.
-  if ! grace=$(grace_secs); then
-    print -u2 -- "wt prune-audit: cannot parse WT_PRUNE_MIN_AGE=${WT_PRUNE_MIN_AGE} WT_PRUNE_DRIFT_GRACE=${WT_PRUNE_DRIFT_GRACE:-}"
-    return 1
-  fi
-
-  local list_json
-  list_json=$(wt list --format=json 2>/dev/null)
-  [[ -n "$list_json" && "$list_json" != "[]" ]] || return 0
-
-  # Only linked, non-main, non-current worktrees with a branch are candidates.
-  # Skip the forge entirely when none survive, matching the pruner's gating so
-  # most repos in a fan-out cost nothing.
-  local has_candidate
-  has_candidate=$(jq -r 'any(.[];
-    .kind == "worktree" and (.is_main | not) and (.is_current | not) and ((.branch // "") != ""))' <<<"$list_json")
-  [[ "$has_candidate" == true ]] || return 0
-
-  local remote_host default_br
-  # `git config --get`, never `git remote get-url`: the latter resolves insteadOf
-  # rules, so an org that rewrites github.com reports a host the stored URL does
-  # not name and routes the branch to the wrong forge CLI. bin/wt-prune reads the
-  # same remote the same way, and the two have to agree on what forge this is.
-  remote_host=$(git config --get remote.origin.url 2>/dev/null | sed -E 's|^[^@]*@||; s|^https?://||; s|[:/].*||')
-  default_br=$(default_branch)
-
-  local branch main_state wtpath age pr_out pr_st
-  while IFS=$'\t' read -r branch main_state wtpath; do
-    # A worktree holding the default branch reads as integrated because the
-    # branch is the integration target. Nothing the pruner does can clear it,
-    # so reporting it files the same to-do every night forever.
-    [[ -n "$default_br" && "$branch" == "$default_br" ]] && continue
-
-    # Free signal: `wt list` already resolved this as integrated into the
-    # default branch, so a healthy prune would have removed it, once the
-    # worktree is old enough for the pruner to consider it at all. An age the
-    # filesystem cannot report counts as old enough, so an unreadable clock
-    # never hides drift.
-    if [[ "$main_state" == empty || "$main_state" == integrated ]]; then
-      age=$(worktree_age_secs "$wtpath") || age=$grace
-      if (( age >= grace )); then
-        print -r -- "$branch"$'\t'"integrated ($main_state)"$'\t'"$wtpath"
-        continue
-      fi
-      # Still inside grace on the integration rule. Fall through to the forge:
-      # a merged PR is removed at any age, so grace does not apply to it and a
-      # young merged worktree that survived the prune is still a real miss.
-    fi
-
-    # One forge lookup: a MERGED PR that still has a worktree is exactly the
-    # historical backlog this tripwire guards against.
-    pr_out=$(pr_state "$branch" "$remote_host")
-    IFS=$'\t' read -r pr_st _ <<<"$pr_out"
-    [[ "$pr_st" == MERGED ]] \
-      && print -r -- "$branch"$'\t'"merged PR survived"$'\t'"$wtpath"
-  done < <(jq -r '
-    .[]
-    | select(.kind == "worktree" and (.is_main | not) and (.is_current | not) and ((.branch // "") != ""))
-    | [ .branch, (.main_state // ""), .path ] | @tsv' <<<"$list_json")
-
-  # Drift is signalled by the printed violator lines, not by exit status: under
-  # `wt all`, a nonzero return would flag the repo as failed rather than as
-  # merely having output.
-  return 0
+export interface Finding {
+  branch: string;
+  reason: string;
+  path: string;
 }
 
-[[ "$ZSH_EVAL_CONTEXT" == toplevel ]] && main "$@"
+// Grace in seconds. $WT_PRUNE_DRIFT_GRACE overrides it and takes the same
+// duration grammar as $WT_PRUNE_MIN_AGE (2h, 1d, 1w, 1mo, 1y). Undefined on a
+// spec the grammar does not cover, because a silently wrong grace either buries
+// real drift or restores the false positives the grace period exists to stop.
+export function graceSeconds(): number | undefined {
+  // An empty override is no override, matching how minAge reads its own.
+  const override = process.env.WT_PRUNE_DRIFT_GRACE ?? "";
+  if (override !== "") return parseDuration(override);
+
+  const floor = parseDuration(minAge());
+  return floor === undefined ? undefined : floor + RUN_INTERVAL;
+}
+
+export interface Facts {
+  mainState: string;
+  grace: number;
+  // Seconds since the worktree was created. Resolved only when the integration
+  // rule applies, since it costs a git call per worktree.
+  age: () => number | undefined;
+  // The branch's PR/MR state, empty when the forge has none. Resolved only when
+  // the integration rule did not already answer, since it costs a network round
+  // trip per survivor and most repos in a fan-out have no survivors at all.
+  forge: () => string;
+}
+
+// The reason this worktree is drift, or undefined when a healthy prune had no
+// call to remove it. Pure given its two resolvers, which is what lets the rules
+// be exercised without a repo, a clock, or a forge.
+export function classify(facts: Facts): string | undefined {
+  if (INTEGRATED.has(facts.mainState)) {
+    // An age the filesystem cannot report counts as old enough, so an
+    // unreadable clock never hides drift.
+    if ((facts.age() ?? facts.grace) >= facts.grace) return `integrated (${facts.mainState})`;
+    // Still inside grace on the integration rule. Fall through to the forge: a
+    // merged PR is removed at any age, so grace does not apply to it and a
+    // young merged worktree that survived the prune is still a real miss.
+  }
+
+  return facts.forge() === "MERGED" ? "merged PR survived" : undefined;
+}
+
+// Linked, non-current worktrees with a branch. Everything else is either the
+// checkout the audit is standing in or something no prune pass acts on.
+function isCandidate(worktree: Worktree): boolean {
+  return (
+    worktree.kind === "worktree" && !worktree.isMain && !worktree.isCurrent && worktree.branch !== ""
+  );
+}
+
+export function audit(): Outcome {
+  const grace = graceSeconds();
+  // A misconfigured duration returns nonzero, which flags the repo as failed
+  // under `wt all` and puts the reason in front of someone. Every other exit
+  // from here is 0 so that findings, not status, signal drift.
+  if (grace === undefined) {
+    const drift = process.env.WT_PRUNE_DRIFT_GRACE ?? "";
+    return {
+      status: 1,
+      stdout: "",
+      stderr: `wt prune-audit: cannot parse WT_PRUNE_MIN_AGE=${minAge()} WT_PRUNE_DRIFT_GRACE=${drift}\n`,
+    };
+  }
+
+  // Skip the forge entirely when no candidate survives, matching the pruner's
+  // gating so most repos in a fan-out cost nothing.
+  const candidates = (listWorktrees() ?? []).filter(isCandidate);
+  if (candidates.length === 0) return { status: 0, stdout: "", stderr: "" };
+
+  const host = remoteHost();
+  const defaultName = defaultBranch();
+
+  const findings: Finding[] = [];
+  for (const worktree of candidates) {
+    // A worktree holding the default branch reads as integrated because the
+    // branch is the integration target. Nothing the pruner does can clear it,
+    // so reporting it files the same to-do every night forever.
+    if (defaultName !== "" && worktree.branch === defaultName) continue;
+
+    const reason = classify({
+      mainState: worktree.mainState,
+      grace,
+      age: () => worktreeAgeSecs(worktree.path),
+      forge: () => prState(worktree.branch, host)?.state ?? "",
+    });
+    if (reason !== undefined) {
+      findings.push({ branch: worktree.branch, reason, path: worktree.path });
+    }
+  }
+
+  // Drift is signalled by the printed violator lines, not by exit status: under
+  // `wt all`, a nonzero return would flag the repo as failed rather than as
+  // merely having output.
+  return {
+    status: 0,
+    stdout: findings.map(({ branch, reason, path }) => `${branch}\t${reason}\t${path}\n`).join(""),
+    stderr: "",
+  };
+}
+
+// A write followed by process.exit delivers only one pipe buffer, and `wt all`
+// reads this through a pipe.
+function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let written = 0;
+  while (written < bytes.length) written += writeSync(fd, bytes, written);
+}
+
+if (import.meta.main) {
+  const outcome = audit();
+  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
+  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
+  process.exit(outcome.status);
+}

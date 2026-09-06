@@ -4,9 +4,6 @@
 // scripts decide what to remove from these, and the audit exists to catch the
 // pruner missing something, so a disagreement between them about a fact would
 // read as drift in the pruner.
-//
-// bin/worktree-state is the CLI over this, and scripts/lib/worktree-state.sh
-// the shim bin/wt-prune-audit sources while it is still zsh.
 
 import { statSync } from "node:fs";
 import { join } from "node:path";
