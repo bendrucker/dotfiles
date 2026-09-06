@@ -45,11 +45,6 @@ install_launch_agent com.user.theme-sync.plist "theme-sync watcher"
 # autostart, so leave AW's built-in login item disabled to avoid a double launch.
 install_launch_agent com.user.activitywatch.plist "ActivityWatch capture"
 
-# Recompose the agent detection overrides when herdr fetches a manifest, rather
-# than leaving a new one shadowed until the nightly install. The job no-ops on a
-# machine without herdr, so it installs in every mode like the watcher above.
-install_launch_agent com.user.herdr-agent-detection.plist "herdr agent detection watcher"
-
 # The Screen Time import agent is installed by activitywatch/install.sh, which
 # is where its binary comes from.
 
