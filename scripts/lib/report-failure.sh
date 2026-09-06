@@ -4,7 +4,8 @@
 # they were written against.
 #
 # notify <title> <message> [sound]
-#   Darwin-guarded osascript notification (default sound: Basso).
+#   Raise a notification through osascript, where there is one to raise it
+#   (default sound: Basso).
 #
 # report_failure <job> <title> <command> <output> <revision> [extra_meta] [output_heading] [fingerprint]
 #   File a Things to-do describing the failure and notify, but only on the

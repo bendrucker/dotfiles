@@ -8,6 +8,7 @@ import {
   elisionMarker,
   latchValue,
   notificationScript,
+  notify,
   readLatch,
   reportFailure,
   reportSuccess,
@@ -33,7 +34,7 @@ beforeEach(() => {
   // is the whole observation: a line means a to-do was filed, no line means the
   // latch held.
   writeStub(join(stubs, "open"), `printf '%s\\n' "$1" >> "${join(sandbox, "todos")}"`);
-  writeStub(join(stubs, "osascript"), "exit 0");
+  writeStub(join(stubs, "osascript"), `printf '%s\\n' "$2" >> "${join(sandbox, "notifications")}"`);
   writeStub(join(stubs, "gum"), "exit 0");
 
   // Nothing but the stubs is reachable, so a call that escapes one fails loudly
@@ -73,6 +74,14 @@ function fail(output: string, fingerprint = ""): number {
 function todos(): string[] {
   try {
     return readFileSync(join(sandbox, "todos"), "utf8").split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function notifications(): string[] {
+  try {
+    return readFileSync(join(sandbox, "notifications"), "utf8").split("\n").filter(Boolean);
   } catch {
     return [];
   }
@@ -331,6 +340,36 @@ describe("notificationScript", () => {
     expect(notificationScript('a "b" c', "back\\slash", "Basso")).toBe(
       'display notification "back\\\\slash" with title "a \\"b\\" c" sound name "Basso"',
     );
+  });
+});
+
+// The notification is the only part of a failure report that reaches someone who
+// is not reading the Things list, and osascript discards its own errors, so a
+// broken call would go unnoticed on the one platform that has it.
+describe("notify", () => {
+  test("hands osascript the script for the notification", () => {
+    notify("Dotfiles Sync", "Updated to abc123", "Glass");
+    expect(notifications()).toEqual([
+      'display notification "Updated to abc123" with title "Dotfiles Sync" sound name "Glass"',
+    ]);
+  });
+
+  test("defaults the sound", () => {
+    notify("Dotfiles Sync", "Updated to abc123");
+    expect(notifications()[0]).toContain('sound name "Basso"');
+  });
+
+  // Every Linux run reaches this, CI included, under callers that abort on a
+  // nonzero status.
+  test("does nothing where osascript is absent", () => {
+    process.env.PATH = join(sandbox, "empty");
+    expect(() => notify("Dotfiles Sync", "Updated to abc123")).not.toThrow();
+    expect(notifications()).toEqual([]);
+  });
+
+  test("notifies alongside the to-do it files", () => {
+    fail("one plugin stale");
+    expect(notifications()[0]).toContain('display notification "drift failed - see Things to-do"');
   });
 });
 

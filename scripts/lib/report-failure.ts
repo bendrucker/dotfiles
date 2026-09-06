@@ -217,11 +217,16 @@ function appleScriptString(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+// Nothing notifies where osascript is absent, which is every Linux run and CI.
+// Resolving the binary rather than reading process.platform is what makes that
+// observable: a caller that puts its own osascript on PATH sees the call, and
+// the check answers the question the call actually depends on. The callers here
+// abort on any nonzero status, so the resolution failure has to be caught before
+// the spawn, and osascript's own failure stays discarded.
 export function notify(title: string, message: string, sound = "Basso"): void {
-  // CI and Linux run these paths under a caller that aborts on any nonzero
-  // status, so the guard and the discarded osascript failure both matter.
-  if (process.platform !== "darwin") return;
-  run(["osascript", "-e", notificationScript(title, message, sound)], "ignore");
+  const osascript = Bun.which("osascript", { PATH: process.env.PATH });
+  if (!osascript) return;
+  run([osascript, "-e", notificationScript(title, message, sound)], "ignore");
 }
 
 // gum writes its log lines to stderr, where a caller capturing stdout with $()
