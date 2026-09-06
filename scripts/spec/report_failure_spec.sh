@@ -125,7 +125,6 @@ Describe "report_failure output trimming"
   End
 
   big_log() {
-    # A long preamble the failure has nothing to do with, then the error.
     for _ in $(seq 400); do printf ' plugins/some/path.ts | 12 ++++\n'; done
     printf 'WARN the actual failure\n'
   }
