@@ -27,12 +27,10 @@ setup() {
   # `open` is the only way a to-do is created, so logging it is the whole
   # observation: a line means a to-do was filed, no line means the latch held.
   #
-  # The notes field is unpacked back out of the URL so the trimming cases can
-  # read what Things would store. jq's @uri leaves no literal & or % behind, so
-  # the field splits on & and decodes by turning each escape into printf's.
-  #
-  # sed does the rewrite because bash 3.2's global substitution is quadratic,
-  # and a note at the size these cases exercise took it minutes.
+  # The trimming cases read the note back out of the URL. jq's @uri leaves no
+  # literal & or % behind, so the field splits on & and decodes by turning each
+  # escape into printf's. sed does that rewrite because bash 3.2's global
+  # substitution is quadratic, and took minutes on a note of this size.
   printf '%s\n' '#!/usr/bin/env bash' \
     'printf "todo\n" >>"$TODO_LOG"' \
     'notes="${1#*&notes=}"; notes="${notes%%&*}"' \
@@ -103,7 +101,7 @@ Describe "report_failure output trimming"
     The output should equal "short log"
   End
 
-  long_log() { seq -f 'drop-%02g' 1 20; printf 'keep me'; }
+  long_log() { seq --format 'drop-%02g' 1 20; printf 'keep me'; }
 
   It "keeps the end of an output that does not fit"
     When call trim_output "$(long_log)" 60
@@ -119,9 +117,23 @@ Describe "report_failure output trimming"
   # A cut taken at the budget alone lands mid-line, and the note then opens on
   # the tail end of a word.
   It "resumes at a line boundary rather than mid-word"
-    When call trim_output "$(seq -f 'line-%02g-padding' 1 20)" 100
+    When call trim_output "$(seq --format 'line-%02g-padding' 1 20)" 100
     The line 1 of output should include "characters elided"
     The line 2 of output should start with "line-"
+  End
+
+  # The motivating log ends in one long unwrapped error line, which leaves no
+  # newline inside the budget to resume at.
+  It "resumes at a word boundary inside a line longer than the budget"
+    When call trim_output "short$(printf ' word-%03d' $(seq 40))" 60
+    The line 2 of output should start with "word-"
+  End
+
+  # The marker is what says the log was cut, and it spends budget of its own. A
+  # budget too small for it overran the note it was measured to fit inside.
+  It "yields nothing when the budget cannot hold the marker"
+    When call trim_output "$(long_log)" 10
+    The output should equal ""
   End
 
   big_log() {

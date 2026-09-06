@@ -105,21 +105,17 @@ resolve_ref () {
 
 # The commit an install holds.
 #
-# Claude Code records two fields and keeps only one of them current. `version`
-# is what the updater keys on and prints back ("already at the latest version
-# (7e6c36e8)"), and it names the payload directory. `gitCommitSha` is written at
-# install and not rewritten by a later update, so a plugin updated in place
-# keeps the commit it first arrived at. Reading that field reported a current
-# plugin stale every night, and no update could clear it because the updater
-# agreed it was already current.
+# Claude Code records `version` and `gitCommitSha` and keeps only `version`
+# current. `gitCommitSha` is written at install and not rewritten, so a plugin
+# updated in place keeps the commit it first arrived at, and reading that field
+# reported a current plugin stale every night.
 #
-# Which field carries the commit depends on the plugin. `version` holds the
-# installed commit for a plugin that declares no version of its own, and the
-# declared version string otherwise. The payload's own manifest decides which,
-# rather than the shape of the string, so a calendar version spelled entirely in
-# hex digits is not read as an abbreviated commit. Only one is consulted: a
-# gitCommitSha left behind by an in-place update would otherwise stand in for a
-# version that has moved on, and match a ref that came back to it.
+# `version` holds the installed commit for a plugin that declares no version of
+# its own, and the declared version string otherwise. The payload's own manifest
+# decides which, rather than the shape of the string, so a calendar version
+# spelled entirely in hex digits is not read as an abbreviated commit. Only one
+# field is consulted, because a gitCommitSha left behind by an in-place update
+# would otherwise match a ref that came back to it.
 recorded_commit () {
   local payload=$1 version
   version=$(installed_version "$payload")
@@ -130,11 +126,7 @@ recorded_commit () {
     return
   fi
 
-  jq -r --arg payload "$payload" '
-    (if type == "array" then (.[] | select(.key == "plugins") | .value) else .plugins end)
-    | to_entries[] | .value[]
-    | select(.installPath == $payload) | .gitCommitSha // empty
-  ' "$(claude_plugins_dir)/installed_plugins.json" 2>/dev/null | head -1
+  installed_field "$payload" gitCommitSha
 }
 
 # The version string each side of an install declares. `claude plugin update`
@@ -146,11 +138,18 @@ declared_version () {
 }
 
 installed_version () {
-  local payload=$1
-  jq -r --arg payload "$payload" '
+  installed_field "$1" version
+}
+
+# One field of the record Claude Code keeps for the install at <payload>. The
+# array form is an older shape of installed_plugins.json that is still in the
+# wild.
+installed_field () {
+  local payload=$1 field=$2
+  jq -r --arg payload "$payload" --arg field "$field" '
     (if type == "array" then (.[] | select(.key == "plugins") | .value) else .plugins end)
     | to_entries[] | .value[]
-    | select(.installPath == $payload) | .version // empty
+    | select(.installPath == $payload) | .[$field] // empty
   ' "$(claude_plugins_dir)/installed_plugins.json" 2>/dev/null | head -1
 }
 

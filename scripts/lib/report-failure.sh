@@ -22,39 +22,48 @@
 #   appears after it, however long it stands. When the fingerprint changes the
 #   latch reopens and a fresh to-do names the new set.
 #
-#   <output> is trimmed to fit the notes field, keeping its end. See
-#   things_notes_limit.
+#   <output> is trimmed to fit the notes field, keeping its end.
 #
 # report_success <job>
 #   Clear the latch.
 
-# Things stores 10,000 characters of notes and drops the rest, so a to-do longer
-# than this arrives with its tail cut off. That is the wrong end to lose: a job
-# fails at the end of its log, and everything before is the run that got there.
-# claude-upgrade opens with a repository sync whose diffstat alone ran past the
-# limit, and filed to-dos that held the diffstat and not one line of the error.
+# Things stores 10,000 characters of notes and silently drops the rest. It cuts
+# the tail, which is the wrong end to lose, since a job fails at the end of its
+# log.
 things_notes_limit=10000
 
 # Reduce <output> to <budget> characters, keeping its end and saying how much
-# was dropped. The first surviving line is discarded so the log resumes at a
-# line boundary rather than mid-word.
+# was dropped. What survives resumes at a line boundary, or at a word boundary
+# when the budget lands inside a line longer than itself. A budget too small to
+# hold that accounting yields nothing.
 trim_output() {
   local output="$1" budget="$2" kept marker
 
   (( ${#output} <= budget )) && { printf '%s' "$output"; return 0; }
 
-  # The marker introduces the kept text and so spends the same budget. Measured
-  # with the total standing in for the elided count, which can only be smaller,
-  # so the marker measured here is never narrower than the one printed below.
-  # The trailing x stands in for the newline, which command substitution strips.
-  marker=$(printf '[%s of %s characters elided]x' "${#output}" "${#output}")
-  budget=$(( budget - ${#marker} ))
-  (( budget < 0 )) && budget=0
+  # The marker spends the budget it introduces, so measure it first, with the
+  # total standing in for the smaller elided count to keep the width an upper
+  # bound. The 1 is the newline that separates the marker from the log.
+  marker=$(elision_marker "${#output}" "${#output}")
+  budget=$(( budget - ${#marker} - 1 ))
+  # Too little room to say even how much was dropped. Saying it anyway is what
+  # pushes the note past the limit the budget was measured against.
+  (( budget < 0 )) && return 0
 
   kept=$(printf '%s' "$output" | tail -c "$budget")
-  kept=${kept#*$'\n'}
-  printf '[%s of %s characters elided]\n%s' \
-    "$(( ${#output} - ${#kept} ))" "${#output}" "$kept"
+  # Resume at a boundary so the log does not open partway through a word. A
+  # final line longer than the budget leaves no newline in what was kept, and
+  # the space is the best boundary that line offers.
+  case $kept in
+    *$'\n'*) kept=${kept#*$'\n'} ;;
+    *' '*) kept=${kept#* } ;;
+  esac
+  elision_marker "$(( ${#output} - ${#kept} ))" "${#output}"
+  printf '\n%s' "$kept"
+}
+
+elision_marker() {
+  printf '[%s of %s characters elided]' "$1" "$2"
 }
 
 notify() {
@@ -113,8 +122,7 @@ report_failure() {
   [[ -n "$extra_meta" ]] && notes+='
 '"$extra_meta"
 
-  # Built around the output so the budget is what the limit leaves after the
-  # surrounding note, rather than a constant that drifts as the header grows.
+  # The budget is what the limit leaves after the surrounding note.
   local suffix='
 ```'
   notes+='

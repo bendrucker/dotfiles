@@ -178,16 +178,14 @@ write_plugin_list() {
   } END { print "}}]" }' "$sandbox/plugins.tsv" >"$plugins/installed_plugins.json"
 }
 
-# Set the `version` an install records. Claude Code writes it alongside
-# gitCommitSha and, unlike that field, keeps it current: it is what the updater
-# keys on and prints back. It holds an abbreviated commit for a plugin tracked by
-# commit and a version string for one that declares a version.
+# The `version` an install records, which Claude Code keeps current. It holds an
+# abbreviated commit for a plugin tracked by commit and a version string for one
+# that declares a version.
 set_installed_version() {
   set_installed_field "$1" version "$2"
 }
 
-# The commit an install first arrived at. Claude Code does not rewrite it when a
-# later update moves the payload on.
+# The commit an install first arrived at. A later update does not rewrite it.
 set_installed_commit() {
   set_installed_field "$1" gitCommitSha "$2"
 }
@@ -201,8 +199,8 @@ set_installed_field() {
   ' "$file" >"$file.next" && mv "$file.next" "$file"
 }
 
-# The version a payload's own manifest declares. It is what says whether the
-# `version` an install records is a version string or the commit it holds.
+# The version a payload's own manifest declares, which is what says whether the
+# recorded `version` is a version string or the commit it holds.
 declare_payload_version() {
   local name="$1" marketplace="$2" dir="$3" version="$4"
   local payload="$plugins/cache/$marketplace/$name/$dir"
@@ -212,14 +210,13 @@ declare_payload_version() {
 }
 
 # A plugin whose source still offers the version already installed. `claude
-# plugin update` compares those two strings, so it reports success and changes
-# nothing however far the tree behind the version has moved.
+# plugin update` compares those two strings, so it changes nothing however far
+# the tree behind the version has moved.
 pin_alpha_at() {
   local version="$1"
   printf '{"name":"alpha","version":"%s"}\n' "$version" \
     >"$plugins/marketplaces/first/plugins/alpha/.claude-plugin/plugin.json"
-  cp "$plugins/marketplaces/first/plugins/alpha/.claude-plugin/plugin.json" \
-    "$plugins/cache/first/alpha/1.0.0/.claude-plugin/plugin.json"
+  declare_payload_version alpha first 1.0.0 "$version"
   set_installed_version alpha@first "$version"
 }
 
@@ -556,10 +553,8 @@ Describe "claude-plugin-audit"
     The output should include "222222222222"
   End
 
-  # Claude Code updates a plugin in place and leaves gitCommitSha at the commit
-  # the install first arrived at, while `version` names the commit it now holds.
-  # Reading only the stale field reported a current plugin stale every night,
-  # and no update cleared it: the updater agreed the plugin was already current.
+  # Reading only the lagging gitCommitSha reported a current plugin stale every
+  # night, and no update cleared it. The updater agreed it was already current.
   It "reads the commit from the version Claude Code keeps current"
     set_installed_commit delta@third "3333333333333333333333333333333333333333"
     set_installed_version delta@third "111111111111"
@@ -577,9 +572,8 @@ Describe "claude-plugin-audit"
     The output should include "installed 444444444444"
   End
 
-  # `version` carries a version string for a plugin that declares one, and a
-  # version is not an abbreviated commit. Reading it as one would match a
-  # payload against a number that says nothing about which commit it holds.
+  # Reading a declared version as a commit would match a payload against a
+  # number that says nothing about which commit it holds.
   It "does not read a version string as a commit"
     set_installed_version delta@third "1.0.0"
     When call run_audit
@@ -587,9 +581,8 @@ Describe "claude-plugin-audit"
     The output should include "6 checks current"
   End
 
-  # A version spelled entirely in hex digits is still a version. The payload's
-  # own manifest separates the two, so a calendar version is not matched against
-  # the source as though it named a commit.
+  # A version spelled entirely in hex digits is still a version, and the
+  # payload's own manifest is what separates the two.
   It "does not read a declared hex-shaped version as a commit"
     declare_payload_version delta third 1.0.0 "20260601"
     set_installed_version delta@third "20260601"
