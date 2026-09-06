@@ -61,6 +61,8 @@ zsh startup is a glob-driven loader split across two files, following zsh's own 
    done
    ```
 
+`.zshenv` runs on every shell only from the top of a process tree. zsh reads its per-user `.zshenv` from `$ZDOTDIR` and falls back to `~/.zshenv` only when `ZDOTDIR` is unset, and `.zshenv` exports `ZDOTDIR` while `zsh/symlinks.conf` installs just `.zshrc` there. Every zsh below the first one therefore finds no `.zshenv`, skips the `path.zsh` loop, and keeps whatever `$PATH` its parent froze. `.zshrc` sources `.zshenv` itself when a marker shows it has not run, so an interactive shell under a server started weeks ago still sees a topic added since. Non-interactive nested shells stay on the inherited `$PATH`, which is what keeps a `#!/usr/bin/env zsh` script at ~6ms rather than ~110ms.
+
 Completions are the expensive part of startup. They don't run before the first prompt. `.zshrc` registers a one-shot `precmd` hook that sources every `completion.zsh` after the prompt is already interactive, then removes itself:
 
 ```zsh

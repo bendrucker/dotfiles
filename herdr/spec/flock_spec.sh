@@ -33,11 +33,36 @@ Describe "herdr-flock"
     The status should be success
   End
 
-  It "binds the launcher by the name PATH exports"
-    # The binding names the command bare, so it fires only while this entry and
-    # the PATH export above agree.
-    When call grep -q 'command = "herdr-flock"' "$config"
+  binding() {
+    sed -n '/key = "prefix+alt+f"/,/^$/p' "$config" |
+      sed -n 's/^command = "\(.*\)"$/\1/p'
+  }
+
+  It "binds the launcher by a path rather than a name PATH has to resolve"
+    # The server holds the environment it started with for as long as it runs,
+    # so a bare name resolves against a PATH that can predate herdr/path.zsh.
+    # Expanded here the way herdr expands it, with herdr/bin off PATH.
+    resolves() {
+      local root resolved
+      root=$(cd "$SHELLSPEC_PROJECT_ROOT/.." && pwd)
+      resolved=$(ZSH="$root" PATH=/usr/bin:/bin sh -c "echo $(binding)")
+      if [[ ! "$resolved" -ef "$launcher" ]]; then
+        echo "resolved $resolved, expected $launcher"
+        return 1
+      fi
+    }
+    When call resolves
     The status should be success
+  End
+
+  It "falls back to the installed root when the server carries no \$ZSH"
+    # A prefix that can expand to nothing would leave an absolute path rooted at
+    # /, which is the same silent miss in a new disguise.
+    fallback() {
+      env -u ZSH sh -c "echo $(binding)"
+    }
+    When call fallback
+    The output should equal "$HOME/.dotfiles/herdr/bin/herdr-flock"
   End
 
   It "refuses without herdr on PATH"
