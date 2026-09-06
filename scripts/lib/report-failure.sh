@@ -1,5 +1,7 @@
 # shellcheck shell=bash
-# Sourceable failure reporting for unattended jobs.
+# Sourceable failure reporting for unattended jobs. bin/report-failure holds the
+# logic. These functions exist so the shell callers keep the positional contract
+# they were written against.
 #
 # notify <title> <message> [sound]
 #   Darwin-guarded osascript notification (default sound: Basso).
@@ -27,123 +29,41 @@
 # report_success <job>
 #   Clear the latch.
 
-# Things stores 10,000 characters of notes and silently drops the rest. It cuts
-# the tail, which is the wrong end to lose, since a job fails at the end of its
-# log.
-things_notes_limit=10000
+# Sourced by both zsh and bash callers, so the file's own path comes from
+# whichever of the two records it: bash keeps it in BASH_SOURCE, zsh puts it in
+# $0 for the duration of the source. Resolved here rather than in the functions,
+# because neither name survives into a call.
+if [ -n "${BASH_SOURCE:-}" ]; then
+  _report_failure_lib="${BASH_SOURCE[0]}"
+else
+  _report_failure_lib="$0"
+fi
+_report_failure_bin="$(cd "$(dirname "$_report_failure_lib")/../../bin" && pwd)/report-failure"
 
-# Reduce <output> to <budget> characters, keeping its end and saying how much
-# was dropped. What survives resumes at a line boundary, or at a word boundary
-# when the budget lands inside a line longer than itself. A budget too small to
-# hold that accounting yields nothing.
-trim_output() {
-  local output="$1" budget="$2" kept marker
-
-  (( ${#output} <= budget )) && { printf '%s' "$output"; return 0; }
-
-  # The marker spends the budget it introduces, so measure it first, with the
-  # total standing in for the smaller elided count to keep the width an upper
-  # bound. The 1 is the newline that separates the marker from the log.
-  marker=$(elision_marker "${#output}" "${#output}")
-  budget=$(( budget - ${#marker} - 1 ))
-  # Too little room to say even how much was dropped. Saying it anyway is what
-  # pushes the note past the limit the budget was measured against.
-  (( budget < 0 )) && return 0
-
-  kept=$(printf '%s' "$output" | tail -c "$budget")
-  # Resume at a boundary so the log does not open partway through a word. A
-  # final line longer than the budget leaves no newline in what was kept, and
-  # the space is the best boundary that line offers.
-  case $kept in
-    *$'\n'*) kept=${kept#*$'\n'} ;;
-    *' '*) kept=${kept#* } ;;
-  esac
-  elision_marker "$(( ${#output} - ${#kept} ))" "${#output}"
-  printf '\n%s' "$kept"
-}
-
-elision_marker() {
-  printf '[%s of %s characters elided]' "$1" "$2"
-}
-
+# Every value travels in the --flag=value form. A value beginning with a dash is
+# otherwise taken for the next flag and the CLI aborts before it has filed
+# anything: claude-upgrade's extra metadata opens with a markdown bullet, and a
+# captured log can open with anything at all.
 notify() {
-  local title="$1"
-  local message="$2"
-  local sound="${3:-Basso}"
-
-  [[ "$(uname)" == "Darwin" ]] || return 0
-  osascript -e "display notification \"$message\" with title \"$title\" sound name \"$sound\"" 2>/dev/null || true
-}
-
-report_status_file() {
-  local job="$1"
-  local dir="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles"
-  mkdir -p "$dir"
-  echo "$dir/$job.status"
+  if [ -n "${3:-}" ]; then
+    "$_report_failure_bin" notify --title="$1" --message="$2" --sound="$3"
+  else
+    "$_report_failure_bin" notify --title="$1" --message="$2"
+  fi
 }
 
 report_success() {
-  local job="$1"
-  echo ok >"$(report_status_file "$job")"
+  "$_report_failure_bin" success --job="$1"
 }
 
 report_failure() {
-  local job="$1"
-  local title="$2"
-  local command="$3"
-  local output="$4"
-  local revision="$5"
-  local extra_meta="$6"
-  local output_heading="${7:-Error Output}"
-  local fingerprint="${8:-}"
-
-  local status_file prior latch="failed"
-  [[ -n "$fingerprint" ]] && latch="failed $fingerprint"
-  status_file=$(report_status_file "$job")
-  # `|| true` keeps a missing latch (first-ever failure) from killing
-  # `set -e` callers before the to-do is filed.
-  prior=$(cat "$status_file" 2>/dev/null || true)
-  echo "$latch" >"$status_file"
-
-  if [[ "$prior" == "$latch" ]]; then
-    gum log --level info "$job still failing - to-do already filed, staying quiet"
-    return 0
-  fi
-
-  gum log --level info "Creating Things to-do for $job failure"
-
-  local host time
-  host=$(hostname -s)
-  time=$(date "+%Y-%m-%d %H:%M:%S %Z")
-
-  local notes='- **Host:** '"$host"'
-- **Time:** '"$time"'
-- **Revision:** '"$revision"
-  [[ -n "$extra_meta" ]] && notes+='
-'"$extra_meta"
-
-  # The budget is what the limit leaves after the surrounding note.
-  local suffix='
-```'
-  notes+='
-
-```sh
-'"$command"'
-```
-
-## '"$output_heading"'
-```
-'
-  notes+=$(trim_output "$output" "$(( things_notes_limit - ${#notes} - ${#suffix} ))")
-  notes+=$suffix
-
-  # printf avoids echo's trailing newline, which lands in the to-do title as
-  # an encoded %0A.
-  local encoded_notes encoded_title
-  encoded_notes=$(printf '%s' "$notes" | jq -sRr @uri)
-  encoded_title=$(printf '%s' "$title" | jq -sRr @uri)
-
-  open "things:///add?title=${encoded_title}&notes=${encoded_notes}&when=today"
-
-  notify "$title" "$job failed - see Things to-do"
+  "$_report_failure_bin" failure \
+    --job="$1" \
+    --title="$2" \
+    --command="$3" \
+    --output="$4" \
+    --revision="$5" \
+    --extra-meta="${6:-}" \
+    --output-heading="${7:-Error Output}" \
+    --fingerprint="${8:-}"
 }
