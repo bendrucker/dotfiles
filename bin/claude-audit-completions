@@ -1,248 +1,579 @@
-#!/usr/bin/env bash
-#
-# claude-audit-completions: detect drift between the installed `claude` CLI and
-# claude/completion.zsh.
-#
-# Surfaces three kinds of drift:
-#   1. Commands the CLI has that the completion is missing. This includes HIDDEN
-#      commands absent from `claude --help` by design (e.g. `attach`), found by
-#      scraping the binary and confirming each with `claude <cmd> --help`.
-#   2. Top-level flags present in one but not the other.
-#   3. Choice-value drift for flags that enumerate their values.
-#
-# Reports drift without editing. Exits non-zero when any drift is found, so it
-# can gate a regeneration pass. Targets the INSTALLED binary. Docs run ahead of
-# it, so the binary is the source of truth for what completes on this machine.
+#!/usr/bin/env bun
+//
+// claude-audit-completions: detect drift between the installed `claude` CLI and
+// claude/completion.zsh.
+//
+// Surfaces three kinds of drift:
+//   - Commands the CLI has that the completion is missing. This includes HIDDEN
+//     commands absent from `claude --help` by design (e.g. `attach`), found by
+//     scraping the binary and confirming each with `claude <cmd> --help`.
+//   - Top-level flags present in one but not the other.
+//   - Choice-value drift for flags that enumerate their values.
+//
+// Reports drift without editing. Targets the INSTALLED binary. Docs run ahead of
+// it, so the binary is the source of truth for what completes on this machine.
+//
+// Exit 1 means drift and nothing else. A shapeless completion file and a
+// `claude --help` that declares no options are input errors, and exit 2 naming
+// the cause. Folded into exit 1 they arrive as a status a caller reads as
+// ordinary drift, over a report that was never printed.
 
-set -euo pipefail
+import { readFileSync, realpathSync, statSync, writeSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { parseArgs } from "node:util";
 
-# --- locate inputs ---------------------------------------------------------
+const USAGE = [
+  "Usage: claude-audit-completions",
+  "Report drift between the installed claude CLI and its zsh completion.",
+  "Audits $CLAUDE_COMPLETION_FILE, defaulting to <repo>/claude/completion.zsh.",
+].join("\n");
 
-resolve_symlink() {
-  # Portable `readlink -f` (macOS lacks GNU readlink -f).
-  local path="$1" dir
-  while [ -L "$path" ]; do
-    dir="$(cd "$(dirname "$path")" && pwd)"
-    path="$(readlink "$path")"
-    case "$path" in
-      /*) : ;;
-      *) path="$dir/$path" ;;
-    esac
-  done
-  printf '%s\n' "$path"
+// The currently-known hidden commands, added to the candidate set every run so a
+// command the CLI drops surfaces as stale rather than quietly staying confirmed
+// by a scrape that no longer finds it.
+const SEED_HIDDEN = ["attach", "daemon", "logs", "stop", "rm", "respawn", "kill", "remote-control"];
+
+// `claude remote-control --help` prints an empty first line, so the oracle below
+// cannot judge it, and spawning it would start a server. Confirming it by name
+// instead is a permanent blind spot: were the CLI to drop the command, the
+// completion would keep declaring it and this audit would stay green.
+const ORACLE_BLIND = ["remote-control"];
+
+export interface Outcome {
+  status: number;
+  stdout: string;
+  stderr: string;
 }
 
-script_path="$(resolve_symlink "${BASH_SOURCE[0]}")"
-repo_root="$(cd "$(dirname "$script_path")/.." && pwd)"
-completion_file="${CLAUDE_COMPLETION_FILE:-$repo_root/claude/completion.zsh}"
-
-if ! command -v claude >/dev/null 2>&1; then
-  echo "claude not found on PATH" >&2
-  exit 2
-fi
-if [ ! -f "$completion_file" ]; then
-  echo "completion file not found: $completion_file" >&2
-  exit 2
-fi
-
-claude_bin="$(resolve_symlink "$(command -v claude)")"
-help_text="$(claude --help 2>&1 || true)"
-
-# Server-style commands that are real but whose `--help` prints no clean
-# `Usage: claude <cmd>` line, so the oracle below cannot confirm them.
-oracle_blind_allowlist=(remote-control)
-
-# --- helpers ---------------------------------------------------------------
-
-# The `Options:` block, with wrapped continuation lines folded so each flag
-# occupies a single line. Used for both flag names and choice extraction.
-options_block() {
-  printf '%s\n' "$help_text" | awk '
-    /^Options:/ { inopt = 1; next }
-    /^Commands:/ { if (cur != "") print cur; inopt = 0; cur = ""; next }
-    inopt && /^  -/ { if (cur != "") print cur; cur = $0; next }
-    inopt && cur != "" { line = $0; sub(/^ +/, " ", line); cur = cur line }
-    END { if (cur != "") print cur }
-  '
+export interface OptionEntry {
+  // The option spec, taken from the entry's first physical line and cut at the
+  // gap that separates it from the description. The cut has to happen before
+  // the wrapped lines are folded in: a description that began on the following
+  // line joins with a single space and leaves no gap to cut at, so cutting
+  // afterwards scans the prose too and counts `--system-prompt`, named only in
+  // the description of `--exclude-dynamic-system-prompt-sections`, as a flag.
+  spec: string;
+  // The whole entry with its continuation lines joined, which is where a choice
+  // list that wrapped can still be read.
+  folded: string;
 }
 
-# Visible top-level commands from the Commands: section (alias|forms split).
-visible_commands() {
-  printf '%s\n' "$help_text" \
-    | awk '/^Commands:/ { f = 1; next } f && /^  [a-z]/ { print $1 }' \
-    | sed 's/|.*//' \
-    | sort -u
+// Fold the `Options:` block so each flag occupies one entry.
+export function optionEntries(help: string): OptionEntry[] {
+  const entries: OptionEntry[] = [];
+  let inOptions = false;
+  let first = "";
+  let folded = "";
+
+  const flush = (): void => {
+    if (folded !== "") entries.push({ spec: specOf(first), folded });
+    first = "";
+    folded = "";
+  };
+
+  for (const line of help.split("\n")) {
+    if (line.startsWith("Options:")) {
+      inOptions = true;
+      continue;
+    }
+    if (line.startsWith("Commands:")) {
+      flush();
+      inOptions = false;
+      continue;
+    }
+    if (!inOptions) continue;
+    if (/^ {2}-/.test(line)) {
+      flush();
+      first = line;
+      folded = line;
+      continue;
+    }
+    // A continuation keeps one space where its indent was, so the description
+    // reads as prose and a choice list broken across lines closes up.
+    if (folded !== "") folded += line.replace(/^ +/, " ");
+  }
+  flush();
+  return entries;
 }
 
-# Is <cmd> a real top-level command? `claude <cmd> --help` prints a
-# `Usage: claude <cmd> ...` line for a real one (or `Usage: claude <target> ...`
-# for an alias like `kill`), and falls back to `Usage: claude [options] ...` for
-# a non-command. Accepting any non-fallback usage line handles aliases.
-is_real_command() {
-  local cmd="$1" first
-  first="$(claude "$cmd" --help 2>&1 | head -1 || true)"
-  [[ "$first" == "Usage: claude "* && "$first" != "Usage: claude [options]"* ]]
+function specOf(line: string): string {
+  return line.replace(/ {3,}.*$/, "");
 }
 
-# Long flags declared in the completion's top-level main_options array.
-completion_flags() {
-  awk '
-    /local -a main_options=\(/ { f = 1; next }
-    f && /^  \)/ { f = 0 }
-    f { print }
-  ' "$completion_file" \
-    | grep -oE "'--[a-z][a-z-]+" \
-    | tr -d "'" \
-    | sort -u
+// Only long flags are compared. Short ones live in the completion deliberately
+// and have no counterpart worth diffing.
+//
+// A flag is truncated at the first character outside [a-z-], so `--allowedTools`
+// arrives as `--allowed`. The completion side truncates identically, so the two
+// cancel and a camelCase flag never reads as drift.
+export function cliFlags(entries: OptionEntry[]): string[] {
+  const found = new Set<string>();
+  for (const entry of entries) {
+    for (const match of entry.spec.matchAll(/--[a-z][a-z-]+/g)) found.add(match[0]);
+  }
+  return sortedUnique(found);
 }
 
-# Top-level subcommand names declared in the completion's subcommands array.
-completion_commands() {
-  awk '
-    /local -a subcommands=\(/ { f = 1; next }
-    f && /^  \)/ { f = 0 }
-    f { print }
-  ' "$completion_file" \
-    | grep -oE "'[a-z][a-z-]+:" \
-    | tr -d "':" \
-    | sort -u
+// Top-level commands the help lists, with alias forms split off. `stop|kill`
+// contributes `stop` alone, which is why `kill` has to reach the confirmed set
+// through the hidden-command path below.
+export function visibleCommands(help: string): string[] {
+  const names = new Set<string>();
+  let inCommands = false;
+
+  for (const line of help.split("\n")) {
+    if (line.startsWith("Commands:")) {
+      inCommands = true;
+      continue;
+    }
+    // Wrapped description lines are indented far past column three, so they are
+    // not read as commands.
+    if (!inCommands || !/^ {2}[a-z]/.test(line)) continue;
+    const field = line.trim().split(/\s+/)[0] ?? "";
+    names.add(field.replace(/\|.*/, ""));
+  }
+  return sortedUnique(names);
 }
 
-# From a parenthesized help fragment, echo a value list if it looks like an
-# enum: comma- or space-separated single-word tokens (>=2). Rejects prose
-# asides like "(only works with --print)". Normalizes to sorted space-joined.
-extract_enum() {
-  local cleaned field
-  local -a raw toks
-  cleaned="$(printf '%s' "$1" | sed -E 's/^choices:[[:space:]]*//' | tr -d '"')"
-  # A value list is comma-separated. Prose asides like "(only works with
-  # --print)" have no internal comma, so bail unless one is present.
-  case "$cleaned" in
-    *,*) : ;;
-    *) return 1 ;;
-  esac
-  local IFS=','
-  read -ra raw <<< "$cleaned"
-  toks=()
-  for field in "${raw[@]}"; do
-    field="${field#"${field%%[![:space:]]*}"}"   # trim leading space
-    field="${field%"${field##*[![:space:]]}"}"   # trim trailing space
-    [[ "$field" =~ ^[A-Za-z0-9-]+$ ]] || return 1
-    toks+=("$field")
-  done
-  [ "${#toks[@]}" -ge 2 ] || return 1
-  printf '%s\n' "${toks[@]}" | sort | tr '\n' ' '
+// `claude <cmd> --help` prints a `Usage: claude <cmd> ...` line for a real
+// command, and `Usage: claude <target> ...` for an alias such as `kill`. A name
+// that is no command at all falls back to the top-level `Usage: claude [options]`
+// line, so accepting any other usage line confirms aliases too.
+export function confirmsCommand(firstLine: string): boolean {
+  return firstLine.startsWith("Usage: claude ") && !firstLine.startsWith("Usage: claude [options]");
 }
 
-# CLI enum for <flag>, or empty if it has no unambiguous value list.
-cli_flag_enum() {
-  local flag="$1" line group
-  # Match the flag only in the option-spec (before the description gap of 3+
-  # spaces), so a flag named in another flag's prose can't select the wrong
-  # line. Keep the full line, since the choice list lives in the description.
-  line="$(options_block | awk -v f="$flag" '
-    { spec = $0; sub(/   +.*/, "", spec); if (index(spec, f)) { print; exit } }')"
-  [ -n "$line" ] || return 0
-  # Try each parenthesized group; first that parses as an enum wins.
-  while IFS= read -r group; do
-    [ -n "$group" ] || continue
-    if enum="$(extract_enum "$group" 2>/dev/null)"; then
-      printf '%s' "$enum"
-      return 0
-    fi
-  done < <(printf '%s\n' "$line" | grep -oE '\([^)]*\)' | sed -E 's/^\(|\)$//g')
+export function scrapedUsageNames(text: string): string[] {
+  return [...text.matchAll(/"claude ([a-z][a-z-]+)/g)].map((match) => match[1]);
 }
 
-# Completion enum for <flag> from its `:(...)` action, normalized like above.
-completion_flag_enum() {
-  local flag="$1" group
-  group="$(grep -oE "'$flag\[[^]]*\][^']*:\([^)]*\)" "$completion_file" \
-    | grep -oE ':\([^)]*\)' | head -1 | sed -E 's/^:\(|\)$//g' || true)"
-  [ -n "$group" ] || return 0
-  printf '%s\n' "$group" | tr -s ' ' '\n' | grep -vx '' | sort | tr '\n' ' '
+export function scrapedCommandNames(text: string): string[] {
+  return [...text.matchAll(/\.command\("([a-z][a-z-]+)"/g)].map((match) => match[1]);
 }
 
-# --- gather ----------------------------------------------------------------
+// `unparsed` is a list the CLI declares as choices and this cannot read, which is
+// a different answer from a flag that declares no choices at all. Collapsing the
+// two reports no drift for either, which is how `--prompt-suggestions` passed
+// with two spellings against the CLI's eight.
+export type ChoiceList =
+  | { kind: "values"; values: string[] }
+  | { kind: "unparsed"; text: string }
+  | { kind: "none" };
 
-visible="$(visible_commands)"
+const CHOICES_PREFIX = /^choices:\s*/;
 
-# Hidden-command candidates: usage-string scrape + .command() scrape + a seed
-# baseline of the currently-known hidden set (so known commands are re-verified
-# and removals surface). strings on a ~200MB binary takes a few seconds.
-seed_hidden=(attach daemon logs stop rm respawn kill remote-control)
-candidates="$(
-  {
-    strings -n 8 "$claude_bin" 2>/dev/null | grep -oE '"claude [a-z][a-z-]+' | sed 's/"claude //' || true
-    strings -n 4 "$claude_bin" 2>/dev/null | grep -oE '\.command\("[a-z][a-z-]+"' | sed -E 's/\.command\("//; s/"$//' || true
-    printf '%s\n' "${seed_hidden[@]}"
-  } | sort -u
-)"
+// A field naming the default rather than a choice (`default: "host"`,
+// `preset: "true"`). Left in, it fails the token test below and takes the whole
+// list down with it.
+const NAMED_DEFAULT = /^[A-Za-z][A-Za-z0-9_-]*:\s/;
 
-# Confirmed real top-level commands = visible ∪ (candidates that pass the
-# oracle) ∪ allowlisted oracle-blind commands.
-confirmed="$visible"
-while IFS= read -r cand; do
-  [ -n "$cand" ] || continue
-  printf '%s\n' "$visible" | grep -qxF "$cand" && continue
-  if printf '%s\n' "${oracle_blind_allowlist[@]}" | grep -qxF "$cand"; then
-    confirmed+=$'\n'"$cand"
-  elif is_real_command "$cand"; then
-    confirmed+=$'\n'"$cand"
-  fi
-done <<< "$candidates"
-confirmed="$(printf '%s\n' "$confirmed" | grep -vx '' | sort -u)"
+const VALUE_TOKEN = /^[A-Za-z0-9-]+$/;
 
-comp_cmds="$(completion_commands)"
-# Take flags from each option-spec only (strip the description at the 3+ space
-# gap), so flags merely named in prose don't inflate the CLI flag set.
-cli_flags="$(options_block | sed -E 's/   +.*//' | grep -oE '\-\-[a-z][a-z-]+' | sort -u)"
-comp_flags="$(completion_flags)"
+// Read a parenthesized help fragment as a value list, or say why it is not one.
+// Prose asides ("only works with --print", "auto, or 100k-1M tokens") have to be
+// rejected, so the rule stays deliberately narrow: comma-separated single-word
+// tokens, at least two of them.
+export function parseChoiceGroup(group: string): ChoiceList {
+  const text = group.trim();
+  const declared = CHOICES_PREFIX.test(text);
+  const rejected: ChoiceList = declared ? { kind: "unparsed", text } : { kind: "none" };
 
-# --- report ----------------------------------------------------------------
+  // Both quote styles go. The CLI spells a choice list `"text", "stream-json"`
+  // and an example `'opus', or 'sonnet'`, and only the token test separates them.
+  const cleaned = text.replace(CHOICES_PREFIX, "").replace(/["']/g, "");
+  if (!cleaned.includes(",")) return rejected;
 
-drift=0
+  const fields = cleaned
+    .split(",")
+    .map((field) => field.trim())
+    .filter((field) => !NAMED_DEFAULT.test(field));
+  if (fields.length < 2 || !fields.every((field) => VALUE_TOKEN.test(field))) return rejected;
 
-# Print a titled section over a newline-separated list. Indents each entry,
-# prints "(none)" when empty, and sets `drift` when non-empty.
-report() {
-  printf '\n%s\n' "$1"
-  if [ -n "$2" ]; then
-    printf '%s\n' "$2" | sed 's/^/  /'
-    drift=1
-  else
-    echo "  (none)"
-  fi
+  return { kind: "values", values: [...fields].sort(byCodeUnit) };
 }
 
-missing_cmds="$(comm -23 <(printf '%s\n' "$confirmed") <(printf '%s\n' "$comp_cmds"))"
-stale_cmds="$(comm -13 <(printf '%s\n' "$confirmed") <(printf '%s\n' "$comp_cmds"))"
-missing_flags="$(comm -23 <(printf '%s\n' "$cli_flags") <(printf '%s\n' "$comp_flags"))"
-stale_flags="$(comm -13 <(printf '%s\n' "$cli_flags") <(printf '%s\n' "$comp_flags"))"
+// The flag has to be named in the spec as a whole token. A substring match
+// accepts the first spec containing the flag anywhere, so `--debug` takes
+// `--debug-file`'s choices wherever the longer flag is listed first.
+export function specNamesFlag(spec: string, flag: string): boolean {
+  return new RegExp(`(^|[\\s,])${escapeRegExp(flag)}(?![A-Za-z0-9-])`).test(spec);
+}
 
-report "Commands in CLI but missing from completion.zsh:" "$missing_cmds"
-report "Commands in completion.zsh but not confirmed in the CLI:" "$stale_cmds"
-report "Flags in CLI but missing from completion.zsh:" "$missing_flags"
-report "Flags in completion.zsh but not in current CLI --help:" "$stale_flags"
+// The CLI's choices for <flag>. The list lives in the description rather than the
+// spec, so the match is made against the spec and the whole folded entry is then
+// walked group by group.
+export function cliChoices(entries: OptionEntry[], flag: string): ChoiceList {
+  const entry = entries.find((candidate) => specNamesFlag(candidate.spec, flag));
+  if (entry === undefined) return { kind: "none" };
 
-printf '\n%s\n' "Choice-value drift:"
-value_drift=0
-while IFS= read -r flag; do
-  [ -n "$flag" ] || continue
-  comp_enum="$(completion_flag_enum "$flag")"
-  [ -n "$comp_enum" ] || continue
-  cli_enum="$(cli_flag_enum "$flag")"
-  [ -n "$cli_enum" ] || continue
-  if [ "$comp_enum" != "$cli_enum" ]; then
-    printf '  %s  cli=(%s) completion=(%s)\n' "$flag" "${cli_enum% }" "${comp_enum% }"
-    value_drift=1
-    drift=1
-  fi
-done <<< "$comp_flags"
-[ "$value_drift" -eq 0 ] && echo "  (none)"
+  let unparsed: ChoiceList | undefined;
+  for (const match of entry.folded.matchAll(/\(([^)]*)\)/g)) {
+    const parsed = parseChoiceGroup(match[1]);
+    if (parsed.kind === "values") return parsed;
+    if (parsed.kind === "unparsed" && unparsed === undefined) unparsed = parsed;
+  }
+  return unparsed ?? { kind: "none" };
+}
 
-echo
-if [ "$drift" -ne 0 ]; then
-  echo "Drift found. Reconcile $completion_file and re-run."
-  exit 1
-fi
-echo "No drift. completion.zsh matches the installed claude CLI."
+// The lines a top-level `local -a <name>=(` array holds, or undefined when the
+// file declares no such array. Nested per-subcommand arrays are out of scope:
+// only the top-level ones are audited.
+export function arrayBody(source: string, name: string): string[] | undefined {
+  const lines = source.split("\n");
+  const opener = new RegExp(`local -a ${escapeRegExp(name)}=\\(`);
+  const start = lines.findIndex((line) => opener.test(line));
+  if (start === -1) return undefined;
+
+  const body: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^ {2}\)/.test(line)) break;
+    body.push(line);
+  }
+  return body;
+}
+
+export function declaredFlags(source: string): string[] | undefined {
+  const body = arrayBody(source, "main_options");
+  if (body === undefined) return undefined;
+  return sortedUnique([...body.join("\n").matchAll(/'(--[a-z][a-z-]+)/g)].map((m) => m[1]));
+}
+
+// A name of one character is never matched, which keeps a description's stray
+// `'word:` from injecting a phantom command. The nested `plugin` array's `i`
+// alias would be missed were it ever promoted to the top level.
+export function declaredCommands(source: string): string[] | undefined {
+  const body = arrayBody(source, "subcommands");
+  if (body === undefined) return undefined;
+  return sortedUnique([...body.join("\n").matchAll(/'([a-z][a-z-]+):/g)].map((m) => m[1]));
+}
+
+// The value list a flag's completion action offers. Searched over the whole file
+// rather than the top-level array, and the first textual occurrence wins, which
+// puts `main_options` ahead of the helper functions below it.
+export function declaredChoices(source: string, flag: string): string[] {
+  const entry = source.match(new RegExp(`'${escapeRegExp(flag)}\\[[^\\]]*\\][^']*:\\([^)]*\\)`));
+  if (entry === null) return [];
+  const group = entry[0].match(/:\(([^)]*)\)/);
+  if (group === null) return [];
+  return group[1]
+    .split(/ +/)
+    .filter((value) => value !== "")
+    .sort(byCodeUnit);
+}
+
+export function difference(left: string[], right: string[]): string[] {
+  const other = new Set(right);
+  return left.filter((value) => !other.has(value));
+}
+
+export interface ChoiceRow {
+  flag: string;
+  cli: string[];
+  completion: string[];
+}
+
+export interface ChoiceComparison {
+  rows: ChoiceRow[];
+  unchecked: string[];
+}
+
+// Only flags the completion declares are compared. A CLI flag missing from the
+// completion is already reported as a missing flag, and a completion flag whose
+// CLI counterpart declares no choices has nothing to be measured against.
+export function choiceDrift(
+  entries: OptionEntry[],
+  completion: string,
+  completionFlags: string[],
+): ChoiceComparison {
+  const rows: ChoiceRow[] = [];
+  const unchecked: string[] = [];
+
+  for (const flag of completionFlags) {
+    const declared = declaredChoices(completion, flag);
+    if (declared.length === 0) continue;
+
+    const offered = cliChoices(entries, flag);
+    if (offered.kind === "unparsed") {
+      unchecked.push(`${flag}: CLI declares choices this audit cannot read: (${offered.text})`);
+      continue;
+    }
+    if (offered.kind === "none") continue;
+    if (offered.values.join(" ") !== declared.join(" ")) {
+      rows.push({ flag, cli: offered.values, completion: declared });
+    }
+  }
+  return { rows, unchecked };
+}
+
+export interface Drift {
+  missingCommands: string[];
+  staleCommands: string[];
+  missingFlags: string[];
+  staleFlags: string[];
+  choices: ChoiceRow[];
+  // Things the audit could not check rather than things that drifted. They
+  // print, so a standing one is visible, and they leave the exit status alone.
+  notes: string[];
+}
+
+function section(title: string, entries: string[]): string[] {
+  const body = entries.length > 0 ? entries.map((entry) => `  ${entry}`) : ["  (none)"];
+  return ["", title, ...body];
+}
+
+function choiceLine(row: ChoiceRow): string {
+  return `${row.flag}  cli=(${row.cli.join(" ")}) completion=(${row.completion.join(" ")})`;
+}
+
+export function render(drift: Drift, completionFile: string): Outcome {
+  const lines = [
+    ...section("Commands in CLI but missing from completion.zsh:", drift.missingCommands),
+    ...section("Commands in completion.zsh but not confirmed in the CLI:", drift.staleCommands),
+    ...section("Flags in CLI but missing from completion.zsh:", drift.missingFlags),
+    ...section("Flags in completion.zsh but not in current CLI --help:", drift.staleFlags),
+    ...section("Choice-value drift:", drift.choices.map(choiceLine)),
+  ];
+  if (drift.notes.length > 0) lines.push(...section("Notes:", drift.notes));
+
+  const found =
+    drift.missingCommands.length +
+      drift.staleCommands.length +
+      drift.missingFlags.length +
+      drift.staleFlags.length +
+      drift.choices.length >
+    0;
+
+  lines.push(
+    "",
+    found
+      ? `Drift found. Reconcile ${completionFile} and re-run.`
+      : "No drift. completion.zsh matches the installed claude CLI.",
+  );
+  return { status: found ? 1 : 0, stdout: `${lines.join("\n")}\n`, stderr: "" };
+}
+
+// Resolved through any install symlink, so an invocation through a link on $PATH
+// audits the completion next to the real script rather than next to the link.
+export function defaultCompletionFile(): string {
+  return join(dirname(realpathSync(import.meta.path)), "..", "claude", "completion.zsh");
+}
+
+export function completionFilePath(): string {
+  return process.env.CLAUDE_COMPLETION_FILE || defaultCompletionFile();
+}
+
+interface Scrape {
+  names: string[];
+  notes: string[];
+}
+
+// Hidden-command candidates scraped out of the resolved `claude`, plus the seed
+// baseline.
+//
+// A scrape that finds nothing is reported rather than passed off as a clean one.
+// This repo ships bin/claude, a shell wrapper that zsh/.zshenv puts ahead of the
+// real CLI on $PATH, and `strings` on a shell script finds no command strings at
+// all. The seed list keeps the already-known hidden commands covered, so the
+// collapse is invisible in the report and costs only commands added since.
+function scrapeCandidates(claudeBin: string): Scrape {
+  const stringsBin = Bun.which("strings", { PATH: process.env.PATH });
+  if (stringsBin === null) {
+    return {
+      names: [],
+      notes: ["strings is not on PATH, so no hidden command was scraped from the binary"],
+    };
+  }
+
+  const names = [
+    ...scrapedUsageNames(capture([stringsBin, "-n", "8", claudeBin])),
+    ...scrapedCommandNames(capture([stringsBin, "-n", "4", claudeBin])),
+  ];
+  if (names.length > 0) return { names, notes: [] };
+
+  const what = isScript(claudeBin) ? "a script rather than a binary" : "no command strings";
+  return {
+    names: [],
+    notes: [`no hidden command was scraped from ${claudeBin}, which holds ${what}`],
+  };
+}
+
+function confirmedCommands(claudeBin: string, visible: string[], candidates: string[]): string[] {
+  const confirmed = new Set(visible);
+  for (const candidate of sortedUnique(candidates)) {
+    if (candidate === "" || confirmed.has(candidate)) continue;
+    if (ORACLE_BLIND.includes(candidate)) {
+      confirmed.add(candidate);
+      continue;
+    }
+    if (confirmsCommand(firstHelpLine(claudeBin, candidate))) confirmed.add(candidate);
+  }
+  return sortedUnique(confirmed);
+}
+
+export function audit(completionFile: string): Outcome {
+  const claudeBin = Bun.which("claude", { PATH: process.env.PATH });
+  if (claudeBin === null) return failed("claude not found on PATH");
+  if (!isFile(completionFile)) return failed(`completion file not found: ${completionFile}`);
+
+  let completion: string;
+  try {
+    completion = readFileSync(completionFile, "utf8");
+  } catch (error) {
+    return failed(`completion file could not be read: ${completionFile}: ${describe(error)}`);
+  }
+
+  const completionCommands = declaredCommands(completion);
+  if (completionCommands === undefined) {
+    return failed(`completion file declares no subcommands array: ${completionFile}`);
+  }
+  const completionFlags = declaredFlags(completion);
+  if (completionFlags === undefined) {
+    return failed(`completion file declares no main_options array: ${completionFile}`);
+  }
+
+  const help = claudeHelp(claudeBin);
+  const entries = optionEntries(help);
+  const flags = cliFlags(entries);
+  // What a broken or unauthenticated binary gives. Reporting every completion
+  // flag as stale against it would be worse than saying nothing.
+  if (flags.length === 0) return failed("claude --help declared no options");
+
+  const scrape = scrapeCandidates(claudeBin);
+  const confirmed = confirmedCommands(claudeBin, visibleCommands(help), [
+    ...scrape.names,
+    ...SEED_HIDDEN,
+  ]);
+
+  const choices = choiceDrift(entries, completion, completionFlags);
+  return render(
+    {
+      missingCommands: difference(confirmed, completionCommands),
+      staleCommands: difference(completionCommands, confirmed),
+      missingFlags: difference(flags, completionFlags),
+      staleFlags: difference(completionFlags, flags),
+      choices: choices.rows,
+      notes: [...scrape.notes, ...choices.unchecked],
+    },
+    completionFile,
+  );
+}
+
+export function run(args: string[]): Outcome {
+  // An unrecognized argument exits 2 with the usage. Ignoring it, which is what
+  // a misspelt flag used to get, runs the full audit and reports drift the
+  // caller never asked about.
+  let wantsHelp: boolean;
+  try {
+    const parsed = parseArgs({
+      args,
+      options: { help: { type: "boolean", short: "h" } },
+      strict: true,
+      allowPositionals: false,
+    });
+    wantsHelp = parsed.values.help === true;
+  } catch (error) {
+    return { status: 2, stdout: "", stderr: `${describe(error)}\n${USAGE}\n` };
+  }
+
+  if (wantsHelp) return { status: 0, stdout: `${USAGE}\n`, stderr: "" };
+  return audit(completionFilePath());
+}
+
+function claudeHelp(claudeBin: string): string {
+  const asked = spawn([claudeBin, "--help"]);
+  if (asked === undefined) return "";
+  // The status is discarded: a CLI that prints its help and exits nonzero has
+  // still said what it offers. An empty options block is what the caller checks.
+  return asked.stdout.toString() + asked.stderr.toString();
+}
+
+function firstHelpLine(claudeBin: string, command: string): string {
+  const asked = spawn([claudeBin, command, "--help"]);
+  if (asked === undefined) return "";
+  const stdout = asked.stdout.toString();
+  const said = stdout !== "" ? stdout : asked.stderr.toString();
+  return said.split("\n")[0] ?? "";
+}
+
+function capture(cmd: string[]): string {
+  const scanned = spawn(cmd);
+  // Whatever it managed to emit is still worth scanning, so a nonzero status is
+  // no reason to throw the output away.
+  return scanned === undefined ? "" : scanned.stdout.toString();
+}
+
+// The environment goes across explicitly because Bun otherwise resolves a bare
+// command name against the PATH it captured at startup, and a caller that
+// adjusted PATH afterwards would reach a different binary than it meant to.
+// stdin is inherited rather than withheld. The shell this replaced read every
+// candidate with $(), which passes the caller's stdin down, and one candidate is
+// this repo's own bin/claude: over SSH it branches on `[ ! -t 0 ]`, so handing it
+// /dev/null makes it read an empty prompt and exec the ssh-wrapper instead of
+// printing the help this parses. A candidate that reads stdin can still swallow
+// the terminal's, which is what the shell did too and what makes this hand-run.
+function spawn(cmd: string[]) {
+  try {
+    return Bun.spawnSync({ cmd, env: process.env, stdin: "inherit" });
+  } catch {
+    // Bun throws where the shell returned 127. Nothing here is required to
+    // exist beyond the two binaries already resolved, so a spawn that cannot
+    // start reads as output nobody produced.
+    return undefined;
+  }
+}
+
+function isScript(path: string): boolean {
+  try {
+    const opened = readFileSync(path);
+    return opened[0] === 0x23 && opened[1] === 0x21;
+  } catch {
+    return false;
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function failed(message: string): Outcome {
+  return { status: 2, stdout: "", stderr: `${message}\n` };
+}
+
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// Ordered by code unit, so the report does not move with the ambient locale's
+// collation. Sorting under a locale and then differencing byte-wise disagree on
+// any pair of names where collation ignores a hyphen, and the difference comes
+// out wrong with no warning. Set arithmetic over real sets removes the hazard.
+function sortedUnique(values: Iterable<string>): string[] {
+  return [...new Set(values)].sort(byCodeUnit);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// A report read over a pipe can only take what fits in the buffer, and
+// process.exit discards whatever is still queued behind it.
+function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let written = 0;
+  while (written < bytes.length) written += writeSync(fd, bytes, written);
+}
+
+if (import.meta.main) {
+  const outcome = run(process.argv.slice(2));
+  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
+  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
+  process.exit(outcome.status);
+}
