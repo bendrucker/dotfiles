@@ -78,6 +78,8 @@ A comparison that could not be made is not a finding. At 3am an unreachable remo
 
 The tree comparison is on content rather than the recorded `gitCommitSha`, because a forced refresh restores current content while leaving that field at its old value. A plugin sourced from its own repo has no local copy of that repo to compare against, so it falls back to the recorded commit and inherits the same inaccuracy.
 
+A payload whose source still offers the version already installed is reported as `pinned` rather than stale. `claude plugin update` compares those two version strings, so nothing reaches the install however far the tree behind the version has moved, and the fix is the reinstall below. For a plugin living in its own repo, the offered version comes from the manifest at the commit the ref resolves to, read over GitHub's raw-content route rather than by cloning. A manifest the audit cannot read leaves the verdict at stale.
+
 ### Repairing a Flagged Plugin
 
 `claude plugin uninstall <id>` then `claude plugin install <id>`. Deleting the payload and running `claude plugin update` does not work on the plugins most likely to be flagged: a version-keyed plugin reports `already at the latest version` whether or not the payload is even there, so the delete stands and the plugin ends up uninstalled behind a successful-looking update. Reinstalling also rewrites `gitCommitSha`, which a forced refresh leaves stale and permanently flagged for a plugin sourced from its own repo.
