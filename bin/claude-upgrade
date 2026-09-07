@@ -4,8 +4,9 @@
 //
 // It reverts a cosmetic rewrite of a tracked settings file, syncs the repo,
 // reinstalls the vendor hooks, then refreshes every marketplace and updates
-// every plugin installed at user scope, disabled ones included. `claude plugin enable` does not update, so
-// a plugin skipped while disabled would come back stale months later.
+// every plugin installed at user scope, disabled ones included.
+// `claude plugin enable` does not update, so a plugin skipped while disabled
+// would come back stale months later.
 //
 // The whole run is captured as it happens: a failure files a Things to-do built
 // from that log, on a latch keyed by which steps warned. The audit's own

@@ -176,8 +176,8 @@ Describe "macos/vibe-island.sh"
       The stderr should equal ""
     End
 
-    # An app that ignores the opt-out is not one a relaunch can fix. Only
-    # claude-upgrade's revert defends the config from there, so say so.
+    # An app that ignores the opt-out is not one a relaunch can fix, and nothing
+    # downstream undoes what it writes, so the warning is the whole signal.
     It "warns when hook management is back on after the relaunch"
       export APP_CLOBBERS=1
       When call run_script
