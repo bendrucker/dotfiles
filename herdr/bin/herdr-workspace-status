@@ -74,10 +74,10 @@ github_prs() {
   # `gh pr list` does not carry GitHub's stack field, so each open pull request
   # is asked for it directly. The bottom of a stack has the default branch as
   # its base and is only known this way.
+  local field
   for number in $(jq -r '.[] | select(.state == "OPEN") | .number' <<<"$prs"); do
-    if [ -n "$(cd "$path" && gh api "repos/{owner}/{repo}/pulls/$number" --jq '.stack // empty' 2>/dev/null)" ]; then
-      stack+=("$number")
-    fi
+    field=$(cd "$path" && gh api "repos/{owner}/{repo}/pulls/$number" --jq '.stack // empty' 2>/dev/null) || return 1
+    [ -n "$field" ] && stack+=("$number")
   done
   jq --arg default "$default" \
     --argjson stack "$(jq -cn '$ARGS.positional | map(tonumber)' --args ${stack[@]+"${stack[@]}"})" '
@@ -108,7 +108,7 @@ gitlab_prs() {
   # it. GitLab has no stack field; a stack is a target that is not the
   # default branch, which is what glab stack makes.
   for iid in $(jq -r '.[] | select(.state == "opened") | .iid' <<<"$mrs"); do
-    detail=$(cd "$path" && glab api "projects/:id/merge_requests/$iid" 2>/dev/null) || continue
+    detail=$(cd "$path" && glab api "projects/:id/merge_requests/$iid" 2>/dev/null) || return 1
     details=$(jq -c --argjson detail "$detail" '. + [$detail]' <<<"$details")
   done
   jq --arg default "$default" --argjson details "$details" '
@@ -188,16 +188,22 @@ report_workspace() {
 
   # github.com goes to gh and every other host to glab, which is where a
   # self-hosted GitLab lands. Neither being installed, or a host neither
-  # knows, leaves the pull request glyph off rather than the row.
+  # knows, leaves the pull request glyph off rather than the row. A forge
+  # that does not answer, from a rate limit or a lapsed login or no network,
+  # leaves the last report standing until its TTL runs out, since a report
+  # built without it would say the pull request is gone.
   local prs='[]' pr_head='' pr_bucket='' pr_glyph=''
   host=$(remote_host "$(git -C "$path" config --get remote.origin.url 2>/dev/null)")
   if [ -n "$default" ] && [ "$branch" != "$default" ] && [ "${branch#@}" = "$branch" ]; then
     case "$host" in
       "") ;;
-      github.com) command -v gh >/dev/null 2>&1 && prs=$(github_prs "$path" "$branch" "$default") ;;
-      *) command -v glab >/dev/null 2>&1 && prs=$(gitlab_prs "$path" "$branch" "$default") ;;
+      github.com) command -v gh >/dev/null 2>&1 && { prs=$(github_prs "$path" "$branch" "$default") || prs=; } ;;
+      *) command -v glab >/dev/null 2>&1 && { prs=$(gitlab_prs "$path" "$branch" "$default") || prs=; } ;;
     esac
-    prs=${prs:-[]}
+    if [ -z "$prs" ]; then
+      echo "herdr-workspace-status: $host did not answer for $label ($id), keeping its last report" >&2
+      return 0
+    fi
   fi
   IFS=$'\t' read -r pr_bucket pr_glyph < <(classify_prs <<<"$prs")
   pr_head=$(jq -r '

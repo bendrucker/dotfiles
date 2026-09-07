@@ -151,8 +151,6 @@ Describe "herdr-workspace-status"
   It "shows only the dirty glyph when the branch is both dirty and unpushed"
     dirty_wins() {
       setup_repo
-      stub_gh
-      rm "$stub/gh"
       run_script
     }
     When call dirty_wins
@@ -164,8 +162,6 @@ Describe "herdr-workspace-status"
   It "turns the row yellow for unpushed commits on a branch with no pull request"
     unpushed() {
       setup_repo
-      stub_gh
-      rm "$stub/gh"
       git -C "$dir/repo" checkout -q -- file
       run_script
     }
@@ -211,6 +207,33 @@ Describe "herdr-workspace-status"
     The status should be success
     The output should include "status_yellow= "
     The output should not include "status_mauve="
+  End
+
+  It "keeps the last report when the forge does not answer"
+    forge_down() {
+      setup_repo
+      stub_gh
+      printf '%s\n' '#!/bin/sh' 'exit 1' > "$stub/gh"
+      PATH="$stub:$PATH" bash "$script" 2>/dev/null
+      [ ! -e "$dir/reported" ]
+    }
+    When call forge_down
+    The status should be success
+  End
+
+  It "keeps the last report when a pull request's stack lookup fails"
+    stack_lookup_down() {
+      setup_repo
+      stub_gh
+      printf '%s\n' \
+        '#!/bin/sh' \
+        '[ "$1 $2" = "pr list" ] && exec echo "[{\"number\":7,\"state\":\"OPEN\",\"isDraft\":false,\"mergeable\":\"MERGEABLE\",\"baseRefName\":\"main\",\"headRefOid\":\"0000000\",\"updatedAt\":\"2026-01-01T00:00:00Z\",\"statusCheckRollup\":[]}]"' \
+        'exit 1' > "$stub/gh"
+      PATH="$stub:$PATH" bash "$script" 2>/dev/null
+      [ ! -e "$dir/reported" ]
+    }
+    When call stack_lookup_down
+    The status should be success
   End
 
   It "clears every token for a clean checkout of the default branch"
