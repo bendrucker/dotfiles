@@ -77,6 +77,16 @@ picker over the panes; a pane id, terminal id, or agent name skips it. Detach
 with Ctrl-B q, and pass `--takeover` to reclaim a terminal a dropped link left
 held.
 
+A browser pane is not what a phone gives up by attaching this way, because
+mosh could never have carried one. Its state-synchronization protocol replays a
+grid of cells and attributes rather than a byte stream, and that model has no
+field an image could occupy: mosh's parser recognizes the APC introducer and
+then discards every byte of a kitty graphics payload. Mode 1016 is absent from
+its DEC-mode tables and it answers no DECRQM query at all, so pixel-core's probe
+times out and settles on cell coordinates. Reaching terminal-browser from a
+phone would mean a plain SSH connection instead of mosh, on its own herdr
+session so it keeps a client count of one.
+
 Nothing here needs repairing after the fact. The desktop recovers the moment
 the second client detaches, with no server restart and no pane loss, so a
 session that went in through plain `herdr` costs only the time it stayed
