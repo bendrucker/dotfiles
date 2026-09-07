@@ -32,6 +32,14 @@ Bun resolves `imports` from the root `package.json` alone, with no `node_modules
 
 `scripts/shell/` is the floor underneath. `spin.sh`, `git-sync.sh`, `symlinks.sh`, and `cask-variants.sh` are sourced by `scripts/setup` and `bin/dotf` before bun or gum are installed, so they are POSIX sh sourced by relative path rather than modules resolved by specifier.
 
+### Linting TypeScript
+
+`bunx oxlint@<version> --deny-warnings` runs in the `lint` job and as a pre-commit hook, pinned to an exact version in both places and updated by a Renovate custom manager. bunx resolves it from its own cache, so oxlint stays out of the repo's import graph and out of the 3am jobs' way, and the no-install property above survives.
+
+`.oxlintrc.json` runs the `correctness` category plus a `no-restricted-imports` rule that rejects a path-shaped import of anything under `packages/`. That rule is what makes the specifier table above a boundary rather than a convention, since a deep relative path into another package now fails the build.
+
+oxlint discovers files by extension, so the `bin/` executables are invisible to it: they carry a `#!/usr/bin/env bun` shebang and no `.ts` suffix, and naming one on the command line reports no files to lint. Their `bin/<script>.test.ts` neighbors are linted normally. A rule that has to hold for the executables themselves needs a different mechanism.
+
 ## Common Tasks
 
 ### Adding a New Tool/Topic

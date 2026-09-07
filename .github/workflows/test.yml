@@ -251,6 +251,12 @@ jobs:
       - name: Check private-use glyphs are declared
         run: bin/glyph-scan
 
+      # Pinned rather than tracked to a range, so a release cannot fail an
+      # unrelated PR. bunx runs it from its own cache, which is what keeps the
+      # repo free of a lockfile and an install step.
+      - name: Lint TypeScript
+        run: bunx oxlint@1.82.0 --deny-warnings --format=github
+
       - name: Check for expired migrations
         run: scripts/lint-expired
 

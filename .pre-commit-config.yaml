@@ -40,3 +40,9 @@ repos:
         entry: bun test ./.claude/skills/
         files: ^\.claude/skills/.*\.(sh|ts)$
         pass_filenames: false
+      - id: oxlint
+        name: oxlint
+        language: system
+        entry: bunx oxlint@1.82.0 --deny-warnings
+        types: [ts]
+        pass_filenames: false

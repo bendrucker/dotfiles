@@ -28,20 +28,17 @@ export interface Profile {
   callGraph: string;
 }
 
-// Shell-integration OSC 1337 codes (BEL- or ESC-backslash-terminated) plus any CSI
-// sequence an interactive zsh emits (SGR color, bracketed paste `?2004h`, cursor
-// queries `6n`) leak into the capture. Strip both so the summary is clean text.
-const OSC = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
-const CSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
-
 const ROW =
   /^\s*(\d+)\)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)%\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)%\s+(.+)$/;
 
 const SEPARATOR = /^-{5,}\s*$/;
 const HEADER = /^\s*num\s+calls\b.*\btime\b.*\bself\b.*\bname\s*$/;
 
+// An interactive zsh leaks its shell-integration OSC 1337 codes and the CSI
+// sequences it emits (SGR color, bracketed paste, cursor queries) into the
+// capture, so the summary is built from the text left after they are stripped.
 export function stripControl(raw: string): string {
-  return raw.replace(OSC, "").replace(CSI, "");
+  return Bun.stripANSI(raw);
 }
 
 export function parse(raw: string): Profile {
