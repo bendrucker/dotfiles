@@ -203,6 +203,124 @@ export function reportFailure(report: FailureReport): number {
   return 0;
 }
 
+// A finding is a subject and the verdict standing against it. The pair is the
+// unit, not the subject alone: a plugin that goes from stale to pinned needs a
+// different hand than the one the standing to-do describes, so it is a new
+// finding rather than the same one deepening.
+export interface Finding {
+  subject: string;
+  verdict: string;
+}
+
+// Marks a latch holding a finding set rather than the single-failure ok/failed
+// pair. A latch written in the other shape reads as no findings at all, so a job
+// that changes mode files once and is consistent from there.
+const FINDINGS_LATCH = "standing";
+
+function findingKey(finding: Finding): string {
+  return `${finding.subject}\t${finding.verdict}`;
+}
+
+function encodeFindings(findings: Finding[]): string {
+  const rows = findings.map(findingKey);
+  return [FINDINGS_LATCH, ...[...new Set(rows)].sort()].join("\n");
+}
+
+function decodeFindings(latch: string): Finding[] {
+  const lines = latch.split("\n");
+  if (lines[0] !== FINDINGS_LATCH) return [];
+
+  return lines.slice(1).flatMap((line) => {
+    const [subject, verdict] = line.split("\t");
+    return subject === undefined || verdict === undefined ? [] : [{ subject, verdict }];
+  });
+}
+
+export interface FindingsReport extends Omit<FailureReport, "fingerprint"> {
+  // Every finding standing against the job this run.
+  standing: Finding[];
+  // Subjects the run could not reach a verdict on. Whatever the latch holds for
+  // one of these survives the run.
+  held: string[];
+}
+
+export interface FindingsDecision {
+  fresh: Finding[];
+  latched: Finding[];
+}
+
+// Which findings are newly standing, and what the latch should hold afterwards.
+//
+// A subject the run could not check keeps the verdict already latched for it.
+// Dropping it instead is what let a single 3am network blip re-file a finding
+// that had not changed: the finding fell out of the latch as "resolved", came
+// back the next night, and read as new. Nothing an unreachable host says is
+// evidence a finding was fixed, so only a subject that came back clean, or is
+// gone from the report entirely, clears.
+export function decideFindings(
+  previous: Finding[],
+  standing: Finding[],
+  held: string[],
+): FindingsDecision {
+  const heldSubjects = new Set(held);
+  const standingKeys = new Set(standing.map(findingKey));
+  const previousKeys = new Set(previous.map(findingKey));
+
+  const carried = previous.filter(
+    (finding) => !standingKeys.has(findingKey(finding)) && heldSubjects.has(finding.subject),
+  );
+
+  return {
+    fresh: standing.filter((finding) => !previousKeys.has(findingKey(finding))),
+    latched: [...standing, ...carried],
+  };
+}
+
+// The to-do carries the whole report, so it needs a line saying which part of it
+// is why it was filed tonight. Without one, a report of five findings that fired
+// because a sixth appeared reads as five new things to do.
+function freshMeta(fresh: Finding[]): string {
+  return `- **New:** ${fresh.map((finding) => `${finding.subject} ${finding.verdict}`).join(", ")}`;
+}
+
+// File a Things to-do for a job that reports a set of findings rather than one
+// failure, but only for findings that are newly standing. A finding already
+// latched stays quiet however long it stands and however much the rest of the
+// set churns around it. Returns nonzero only when `open` refused the URL.
+export function reportFindings(report: FindingsReport): number {
+  const decision = decideFindings(
+    decodeFindings(readLatch(report.job)),
+    report.standing,
+    report.held,
+  );
+  // The latch moves before anything is filed, so a filing that fails leaves the
+  // finding quiet rather than retrying it every night.
+  writeLatch(report.job, encodeFindings(decision.latched));
+
+  if (decision.fresh.length === 0) {
+    log(`${report.job} has nothing newly standing - staying quiet`);
+    return 0;
+  }
+
+  log(`Creating Things to-do for new ${report.job} findings`);
+
+  const notes = buildNotes({
+    host: hostname().split(".")[0],
+    time: timestamp(),
+    revision: report.revision,
+    extraMeta: [report.extraMeta, freshMeta(decision.fresh)].filter(Boolean).join("\n"),
+    command: report.command,
+    outputHeading: report.outputHeading,
+    output: report.output,
+  });
+
+  const opened = run(["open", thingsAddUrl(report.title, notes)], "inherit");
+  if (opened !== 0) return opened;
+
+  notify(report.title, `${report.job} has new findings - see Things to-do`);
+  return 0;
+}
+
 export function notificationScript(title: string, message: string, sound: string): string {
   return (
     `display notification ${appleScriptString(message)} ` +

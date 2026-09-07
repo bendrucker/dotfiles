@@ -6,11 +6,14 @@ import {
   THINGS_NOTES_LIMIT,
   buildNotes,
   elisionMarker,
+  type Finding,
+  decideFindings,
   latchValue,
   notificationScript,
   notify,
   readLatch,
   reportFailure,
+  reportFindings,
   reportSuccess,
   statusFile,
   thingsAddUrl,
@@ -156,6 +159,140 @@ describe("reportFailure fingerprint", () => {
   test("treats an empty fingerprint as no fingerprint", () => {
     expect(latchValue("")).toBe("failed");
     expect(latchValue("alpha")).toBe("failed alpha");
+  });
+});
+
+function finding(row: string): Finding {
+  const [subject, verdict] = row.split(" ");
+  return { subject, verdict };
+}
+
+// One night of a findings job: what stands, and what it could not reach a
+// verdict on.
+function night(standing: string[], held: string[] = []): number {
+  return reportFindings({
+    job: "drift",
+    title: "Stale",
+    command: "audit",
+    output: standing.join("\n"),
+    revision: "abc123",
+    extraMeta: "",
+    outputHeading: "Findings",
+    standing: standing.map(finding),
+    held,
+  });
+}
+
+// The set-wide fingerprint this replaced re-filed every finding whenever any one
+// of them joined or left, so a plugin that had been stale for a week filed a
+// fresh to-do each time an unrelated one was fixed.
+describe("reportFindings latch", () => {
+  test("files a to-do for a newly standing finding", () => {
+    night(["alpha stale"]);
+    expect(todos()).toHaveLength(1);
+  });
+
+  test("stays quiet while the same finding stands", () => {
+    night(["alpha stale"]);
+    night(["alpha stale"]);
+    expect(todos()).toHaveLength(1);
+  });
+
+  test("stays quiet for a standing finding while the set churns around it", () => {
+    night(["alpha stale"]);
+    night(["alpha stale", "beta stale"]);
+    night(["alpha stale"]);
+    night(["alpha stale", "gamma pinned"]);
+    // One each for beta and gamma, and none of the three later nights re-filed
+    // alpha.
+    expect(todos()).toHaveLength(3);
+    expect(filedNotes()).toContain("**New:** gamma pinned");
+  });
+
+  test("names only the newly standing findings", () => {
+    night(["alpha stale", "beta stale"]);
+    night(["alpha stale", "beta stale", "gamma orphaned"]);
+    expect(filedNotes()).toContain("**New:** gamma orphaned");
+  });
+
+  test("files again when a subject's verdict changes", () => {
+    night(["alpha stale"]);
+    night(["alpha pinned"]);
+    expect(todos()).toHaveLength(2);
+    expect(filedNotes()).toContain("**New:** alpha pinned");
+  });
+
+  test("files again after a finding is fixed and comes back", () => {
+    night(["alpha stale"]);
+    night([]);
+    night(["alpha stale"]);
+    expect(todos()).toHaveLength(2);
+  });
+
+  test("keeps the latch it wrote when the filing itself fails", () => {
+    writeStub(join(sandbox, "stub", "open"), "exit 3");
+    expect(night(["alpha stale"])).toBe(3);
+    expect(readLatch("drift")).toBe("standing\nalpha\tstale");
+  });
+
+  // A latch left behind by the fingerprint mode, which is what every machine
+  // running this holds the first night after the change.
+  test("files once against a latch written in the fingerprint shape", () => {
+    fail("alpha stale", "alpha");
+    night(["alpha stale"]);
+    night(["alpha stale"]);
+    expect(todos()).toHaveLength(2);
+  });
+});
+
+// The audit reaches most plugins over the network, and at 3am an ls-remote loses
+// to a flaky connection far more often than to a real change. A finding that
+// disappears into that bucket has not been fixed, and treating it as fixed was a
+// second route to the same duplicate to-do: it left the latch on the blip and
+// re-filed as new the next night.
+describe("reportFindings held subjects", () => {
+  test("keeps a latched finding whose subject went unverified", () => {
+    night(["alpha stale"]);
+    night([], ["alpha"]);
+    expect(readLatch("drift")).toBe("standing\nalpha\tstale");
+    expect(todos()).toHaveLength(1);
+  });
+
+  test("files nothing when a held finding comes back unchanged", () => {
+    night(["alpha stale"]);
+    night([], ["alpha"]);
+    night(["alpha stale"]);
+    expect(todos()).toHaveLength(1);
+  });
+
+  test("files nothing for a subject that is only ever unverified", () => {
+    night([], ["alpha"]);
+    expect(todos()).toHaveLength(0);
+    expect(readLatch("drift")).toBe("standing");
+  });
+
+  test("clears a subject that is neither standing nor held", () => {
+    night(["alpha stale", "beta stale"]);
+    night(["alpha stale"], ["gamma"]);
+    expect(readLatch("drift")).toBe("standing\nalpha\tstale");
+  });
+});
+
+describe("decideFindings", () => {
+  test("carries a held finding without calling it fresh", () => {
+    const decision = decideFindings([finding("alpha stale")], [], ["alpha"]);
+    expect(decision.fresh).toEqual([]);
+    expect(decision.latched).toEqual([finding("alpha stale")]);
+  });
+
+  test("drops a finding that came back clean", () => {
+    const decision = decideFindings([finding("alpha stale")], [], []);
+    expect(decision.latched).toEqual([]);
+  });
+
+  test("reports every standing finding as fresh against an empty latch", () => {
+    const decision = decideFindings([], [finding("alpha stale"), finding("beta pinned")], []);
+    expect(decision.fresh).toHaveLength(2);
   });
 });
 
