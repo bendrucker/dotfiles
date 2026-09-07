@@ -39,7 +39,8 @@ test("is reachable on PATH from a login shell", () => {
   expect(resolveOnPath("herdr", "herdr-flock")).toBe(realpathSync(launcher));
 });
 
-// The prefix+alt+f binding is the only [[keys.command]] block naming this launcher.
+// The prefix+alt+f binding is the only [[keys.command]] block naming this
+// launcher.
 function flockBinding(): string {
   const blocks = readFileSync(config, "utf8").split("\n\n");
   const block = blocks.find((b) => b.includes('key = "prefix+alt+f"'));

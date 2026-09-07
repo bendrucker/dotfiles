@@ -262,8 +262,8 @@ describe("syncFingerprint", () => {
   });
 
   // The gate prints the dirty tree's diff to the stream this reads, and the
-  // phrase is tracked text in this repo, so an uncommitted edit to a spec that
-  // carries it would otherwise forge an escalation out of diff content.
+  // phrase is tracked text in this repo, so an uncommitted edit to a test file
+  // that carries it would otherwise forge an escalation out of diff content.
   test("ignores the phrase outside a WARN line the gate logged", () => {
     const diff = [
       "ERRO Local changes present - skipping sync",

@@ -115,7 +115,8 @@ export function sandbox(prefix: string): Sandbox {
     bin,
     path,
     stub(name, body, options = {}) {
-      // A path is for a stub that has to sit somewhere else, such as a second PATH holding fewer commands.
+      // A path is for a stub that has to sit somewhere else, such as a second
+      // PATH holding fewer commands.
       const target = name.includes("/") ? path(name) : join(bin, name);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, `${options.shebang ?? "#!/bin/sh"}\n${body}\n`);

@@ -21,7 +21,9 @@ beforeEach(() => {
   const now = nowSeconds * 1_000_000_000n;
   const old = (nowSeconds - 400n * 86400n) * 1_000_000_000n;
 
-  // Piped rather than fed by here-doc: bash 3.2 stages a here-doc through a temp file in the cwd or /var/tmp, so a read-only cwd breaks an otherwise fine run.
+  // Piped rather than fed by here-doc: bash 3.2 stages a here-doc through a
+  // temp file in the cwd or /var/tmp, so a read-only cwd breaks an otherwise
+  // fine run.
   const sql = [
     "INSTALL sqlite; LOAD sqlite;",
     `ATTACH '${dbPath}' AS fx (TYPE sqlite);`,

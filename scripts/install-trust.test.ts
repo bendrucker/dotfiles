@@ -7,7 +7,7 @@ const script = join(repoRoot, "scripts", "install-trust");
 
 let box: Sandbox;
 let trustJson: string;
-// The fallback spec empties this to exercise the brew --repository path.
+// The fallback case empties this to exercise the brew --repository path.
 let repository: string;
 
 beforeEach(() => {
@@ -19,7 +19,7 @@ beforeEach(() => {
   repository = box.path("repo");
   box.write("repository", `${box.path("repo")}\n`);
 
-  // Each invocation appends one line, so the specs can count calls as well as
+  // Each invocation appends one line, so the tests can count calls as well as
   // check arguments.
   box.stub(
     "brew",

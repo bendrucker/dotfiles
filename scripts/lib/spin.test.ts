@@ -21,7 +21,7 @@ afterEach(() => {
   box.remove();
 });
 
-// These examples run the real gum. Every other spec here stubs it, which is why
+// These examples run the real gum. Every other test here stubs it, which is why
 // gum 2 shipped this repo a regression nothing caught: its spinner renders
 // through Bubble Tea v2, which writes frames to stderr whether or not a
 // terminal is there to interpret them. The unattended jobs all run under
@@ -92,7 +92,7 @@ describe("spin", () => {
       const gumLog = box.path("gum.log");
       box.stub("gum", `printf "%s\\n" "$*" >>${quote(gumLog)}`);
 
-      // The one branch a spec cannot reach by redirecting streams.
+      // The one branch a test cannot reach by redirecting streams.
       const r = shell(`. ${quote(lib)}\nspin_has_terminal() { true; }\nspin "$@"`, {
         args: ["--show-error", "--title", "Pushing branch", "--", "git", "push", "-u", "origin", "branch"],
         path: [box.bin],
