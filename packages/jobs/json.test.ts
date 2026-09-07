@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { byCodeUnit, canonicalJson, parseJson } from "./sorted-json.ts";
+import { byCodeUnit, canonicalJson, parseJson } from "#jobs/json";
 
 describe("parseJson", () => {
   test("reads a document", () => {

@@ -1,15 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  commandExists,
-  must,
-  quote,
-  resolveOnPath,
-  run,
-  sandbox,
-  type Sandbox,
-} from "../../scripts/lib/shell-fixtures.ts";
+import { must, quote, run, sandbox, type Sandbox } from "#harness";
+import { launcherContract } from "#harness/launchers";
 
 const script = join(import.meta.dir, "herdr-workspace-status");
 const config = join(import.meta.dir, "..", "config.toml");
@@ -124,20 +117,7 @@ afterEach(() => {
 });
 
 describe("herdr-workspace-status", () => {
-  test("is executable", () => {
-    expect(run(["test", "-x", script]).status).toBe(0);
-  });
-
-  test.skipIf(!commandExists("shellcheck"))("passes shellcheck", () => {
-    // shellcheck writes its findings to stdout, so asserting on the output is
-    // what puts the finding itself in the failure.
-    const check = run(["shellcheck", script]);
-    expect(check.stdout + check.stderr).toBe("");
-  });
-
-  test("is reachable on PATH from a login shell", () => {
-    expect(resolveOnPath("herdr", "herdr-workspace-status")).toBe(realpathSync(script));
-  });
+  launcherContract("herdr", "herdr-workspace-status");
 
   test("runs on the tab bar interval by the name PATH exports", () => {
     expect(readFileSync(config, "utf8")).toContain('command = "herdr-workspace-status"');

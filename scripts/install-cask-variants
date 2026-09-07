@@ -8,8 +8,8 @@ set -e
 
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 
-# shellcheck source=lib/cask-variants.sh
-. "$(dirname "$0")/lib/cask-variants.sh"
+# shellcheck source=shell/cask-variants.sh
+. "$(dirname "$0")/shell/cask-variants.sh"
 
 [ "$(uname -s)" = "Darwin" ] || exit 0
 command -v brew >/dev/null 2>&1 || exit 0

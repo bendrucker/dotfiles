@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { quote, shell } from "../../scripts/lib/shell-fixtures.ts";
+import { quote, shell } from "#harness";
 
 const lib = join(import.meta.dir, "launch-agent.sh");
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { repoRoot, run, sandbox, stubGum, type Run, type Sandbox } from "../scripts/lib/shell-fixtures.ts";
+import { repoRoot, run, sandbox, stubGum, type Run, type Sandbox } from "#harness";
 
 const dotfilesReload = join(repoRoot, "bin", "dotfiles-reload");
 

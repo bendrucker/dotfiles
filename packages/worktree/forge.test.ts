@@ -14,7 +14,7 @@ import {
   type Request,
   switchTo,
   text,
-} from "./forge-worktree";
+} from "./forge.ts";
 
 // Keeps the rows it was offered so a case can assert what the picker saw, and
 // echoes the line FZF_PICK names. No pick is a dismissal, which real fzf
@@ -54,7 +54,7 @@ const environment = { PATH: process.env.PATH };
 let sandbox: string;
 
 beforeEach(() => {
-  sandbox = mkdtempSync(join(tmpdir(), "forge-worktree-"));
+  sandbox = mkdtempSync(join(tmpdir(), "worktree-forge-"));
 
   const stubs = join(sandbox, "stub");
   mkdirSync(stubs);

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { repoRoot, run } from "../scripts/lib/shell-fixtures.ts";
+import { repoRoot, run } from "#harness";
 
 const script = join(repoRoot, "bin", "glyph-scan");
 

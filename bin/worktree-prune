@@ -16,7 +16,7 @@
 import { writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { reportFailure, reportSuccess } from "../scripts/lib/report-failure.ts";
+import { reportFailure, reportSuccess } from "#jobs/report";
 
 // The leading blank line separates each block from the host/time/revision list
 // the reporter emits above it, so the first heading renders as one. The

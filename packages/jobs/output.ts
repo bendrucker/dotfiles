@@ -15,7 +15,7 @@ import { constants } from "node:os";
 
 export interface SpawnOptions {
   cwd?: string;
-  // Inherited by default: the prompt in git-diff-review reads the terminal the
+  // Inherited by default: the prompt in the sync gate reads the terminal the
   // job was started from. A child that must not eat the job's stdin says so.
   stdin?: "ignore" | "inherit";
   env?: Record<string, string | undefined>;

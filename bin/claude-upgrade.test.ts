@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Capture, SpawnOptions } from "../scripts/lib/job-output.ts";
+import type { Capture, SpawnOptions } from "#jobs/output";
 import {
   auditPlugins,
   claudeRepoHome,
@@ -729,8 +729,6 @@ describe("upgradeRevision", () => {
   });
 });
 
-// One markdown bullet, opening with a dash, which is why every value reaching
-// bin/report-failure travels in the --flag=value form.
 describe("upgradeMeta", () => {
   test("names the installed Claude version in a single bullet", () => {
     expect(upgradeMeta()).toBe("- **Claude:** claude 1.2.3");

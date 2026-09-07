@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { repoRoot, run } from "../scripts/lib/shell-fixtures.ts";
+import { repoRoot, run } from "#harness";
 
 // Read out of the path.zsh files rather than listed here, so a topic added
 // later is covered without touching this test. The set spans mise on both

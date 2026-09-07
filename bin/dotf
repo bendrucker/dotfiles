@@ -3,7 +3,7 @@
 # Install and update dotfiles dependencies; run periodically.
 export ZSH="$HOME/.dotfiles"
 
-. "$ZSH/scripts/lib/spin.sh"
+. "$ZSH/scripts/shell/spin.sh"
 
 "$ZSH/scripts/homebrew.sh"
 if [ -n "$CI" ]; then

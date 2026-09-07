@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { must, quote, repoRoot, run, sandbox, shell, stubGum, type Run, type Sandbox } from "./shell-fixtures.ts";
+import { must, quote, repoRoot, run, sandbox, shell, stubGum, type Run, type Sandbox } from "#harness";
 
-const spinLib = join(repoRoot, "scripts", "lib", "spin.sh");
-const gitSyncLib = join(repoRoot, "scripts", "lib", "git-sync.sh");
+const spinLib = join(repoRoot, "scripts", "shell", "spin.sh");
+const gitSyncLib = join(repoRoot, "scripts", "shell", "git-sync.sh");
 const pinKey = "url.https://github.com/bendrucker/claude.git.insteadOf";
 
 let box: Sandbox;

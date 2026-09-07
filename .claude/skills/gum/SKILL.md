@@ -29,10 +29,10 @@ There is no `success` level. Use `info` for completion messages.
 
 Wrap commands whose output only matters when something goes wrong.
 
-In this repo, call `spin` from `scripts/lib/spin.sh` rather than gum directly. It takes the same arguments and hands them straight through on a terminal. Off one it logs the title and runs the command plainly. gum renders through Bubble Tea, which writes its frames whether or not anything can interpret them. A direct `gum spin` therefore fills an unattended job's log with control characters. `scripts/lint-spinners` enforces this.
+In this repo, call `spin` from `scripts/shell/spin.sh` rather than gum directly. It takes the same arguments and hands them straight through on a terminal. Off one it logs the title and runs the command plainly. gum renders through Bubble Tea, which writes its frames whether or not anything can interpret them. A direct `gum spin` therefore fills an unattended job's log with control characters. `scripts/lint-spinners` enforces this.
 
 ```sh
-. "$ZSH/scripts/lib/spin.sh"
+. "$ZSH/scripts/shell/spin.sh"
 
 spin --show-output --show-error --title "brew bundle" -- brew bundle
 ```

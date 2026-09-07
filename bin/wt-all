@@ -21,7 +21,7 @@
 import { readdirSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { alignColumns } from "../scripts/lib/table.ts";
+import { alignColumns } from "#worktree/table";
 
 const USAGE = [
   "Usage: wt all <cmd> [args]",

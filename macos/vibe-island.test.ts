@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { run, sandbox, stubGum, type Run, type Sandbox } from "../scripts/lib/shell-fixtures.ts";
+import { run, sandbox, stubGum, type Run, type Sandbox } from "#harness";
 
 const script = join(import.meta.dir, "vibe-island.sh");
 

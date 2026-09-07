@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
-import { must, quote, run, sandbox, type Sandbox } from "../../../../scripts/lib/shell-fixtures.ts";
+import { must, quote, run, sandbox, type Sandbox } from "#harness";
 
 const QUERY = join(import.meta.dir, "query.sh");
 

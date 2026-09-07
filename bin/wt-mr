@@ -8,7 +8,7 @@
 // to be the one you are standing in, or cloned at all. clone-repo resolves the
 // checkout and clones it if missing.
 //
-// scripts/lib/forge-worktree.ts holds everything below the query, which is what
+// packages/worktree/forge.ts holds everything below the query, which is what
 // bin/wt-pr shares with this.
 
 import {
@@ -24,7 +24,7 @@ import {
   type Request,
   switchTo,
   text,
-} from "../scripts/lib/forge-worktree.ts";
+} from "#worktree/forge";
 
 const USAGE = [
   "usage: wt mr [--mine|--review] [wt switch options]",

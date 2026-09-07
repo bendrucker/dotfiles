@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { must, repoRoot, run, sandbox, stubGum, type Run, type Sandbox } from "../scripts/lib/shell-fixtures.ts";
+import { must, repoRoot, run, sandbox, stubGum, type Run, type Sandbox } from "#harness";
 
-// bin/git-sync is the command form of scripts/lib/git-sync.sh, for the
+// bin/git-sync is the command form of scripts/shell/git-sync.sh, for the
 // TypeScript callers that cannot source it. These cover the boundary: the
 // three status codes a caller reads instead of $GIT_SYNC_*, and the
 // environment git_https_env would have exported, printed instead so the

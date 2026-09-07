@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { repoRoot, run } from "../scripts/lib/shell-fixtures.ts";
+import { repoRoot, run } from "#harness";
 
 const xdgConfigHome = process.env.XDG_CONFIG_HOME || join(process.env.HOME ?? "", ".config");
 const config = join(xdgConfigHome, "herdr", "config.toml");

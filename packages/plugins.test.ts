@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claudePluginsDir, pluginInventory, pluginSource } from "./claude-plugins.ts";
+import { claudePluginsDir, pluginInventory, pluginSource } from "#plugins";
 
 let sandbox: string;
 let plugins: string;
@@ -22,7 +22,7 @@ exit 0
 `;
 
 beforeEach(() => {
-  sandbox = mkdtempSync(join(tmpdir(), "claude-plugins-"));
+  sandbox = mkdtempSync(join(tmpdir(), "plugins-"));
   plugins = join(sandbox, ".claude", "plugins");
   mkdirSync(plugins, { recursive: true });
 

@@ -19,7 +19,7 @@
 
 import { readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { claudePluginsDir, pluginInventory, pluginSource } from "../scripts/lib/claude-plugins.ts";
+import { claudePluginsDir, pluginInventory, pluginSource } from "#plugins";
 
 const USAGE = [
   "Usage: claude-plugin-audit",

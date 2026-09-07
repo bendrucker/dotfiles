@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { capturedOutput, log, streamOutput } from "./job-output.ts";
+import { capturedOutput, log, streamOutput } from "#jobs/output";
 
 let sandbox: string;
 let stubs: string;
@@ -14,7 +14,7 @@ function writeScript(path: string, body: string): void {
 }
 
 beforeEach(() => {
-  sandbox = mkdtempSync(join(tmpdir(), "job-output-"));
+  sandbox = mkdtempSync(join(tmpdir(), "jobs-output-"));
   stubs = join(sandbox, "stub");
   mkdirSync(stubs);
   writeScript(join(stubs, "gum"), `printf '%s\\n' "$*" >>"${join(sandbox, "gum.log")}"`);
@@ -43,7 +43,7 @@ function tee(body: string[]): { exitCode: number | null; stdout: Buffer } {
   writeFileSync(
     script,
     [
-      `import { capturedOutput } from ${JSON.stringify(join(import.meta.dir, "job-output.ts"))};`,
+      `import { capturedOutput } from ${JSON.stringify(join(import.meta.dir, "output.ts"))};`,
       "const out = capturedOutput();",
       ...body,
     ].join("\n"),

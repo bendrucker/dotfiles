@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { quote, repoRoot, shell } from "./shell-fixtures.ts";
+import { quote, repoRoot, shell } from "#harness";
 
-const lib = join(repoRoot, "scripts", "lib", "cask-variants.sh");
+const lib = join(repoRoot, "scripts", "shell", "cask-variants.sh");
 
 function caskVariantsSuperseded(declared: string, installed: string) {
   return shell(`. ${quote(lib)}\ncask_variants_superseded "$1" "$2"`, { args: [declared, installed] });

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { accessSync, constants, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { run } from "../scripts/lib/shell-fixtures.ts";
+import { run } from "#harness";
 
 function gitConfig(key: string) {
   return run(["git", "config", "--global", "--get", key]);

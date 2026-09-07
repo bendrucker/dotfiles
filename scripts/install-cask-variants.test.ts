@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { repoRoot, run, sandbox, type Sandbox } from "./lib/shell-fixtures.ts";
+import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 
 const script = join(repoRoot, "scripts", "install-cask-variants");
 

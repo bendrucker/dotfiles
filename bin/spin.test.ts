@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { repoRoot, run, sandbox, stubGum, type Run, type Sandbox } from "../scripts/lib/shell-fixtures.ts";
+import { repoRoot, run, sandbox, stubGum, type Run, type Sandbox } from "#harness";
 
-// bin/spin is the command form of scripts/lib/spin.sh, for the TypeScript
+// bin/spin is the command form of scripts/shell/spin.sh, for the TypeScript
 // callers that cannot source it. These cover what the wrapper adds: that the
 // arguments arrive as given and the command's status comes back out.
 

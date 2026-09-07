@@ -26,8 +26,8 @@ import {
   reviewDirty,
   stripNewlines,
   syncNotify,
-} from "./git-diff-review.ts";
-import type { Capture, SpawnOptions } from "./job-output.ts";
+} from "#jobs/sync-gate";
+import type { Capture, SpawnOptions } from "#jobs/output";
 
 let sandbox: string;
 let stubs: string;
@@ -159,7 +159,7 @@ function run(cmd: string[]): void {
 }
 
 beforeEach(() => {
-  sandbox = mkdtempSync(join(tmpdir(), "git-diff-review-"));
+  sandbox = mkdtempSync(join(tmpdir(), "sync-gate-"));
   stubs = join(sandbox, "stub");
   repo = join(sandbox, "repo");
   origin = join(sandbox, "origin.git");

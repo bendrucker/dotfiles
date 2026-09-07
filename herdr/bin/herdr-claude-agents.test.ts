@@ -1,14 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  commandExists,
-  repoRoot,
-  resolveOnPath,
-  run,
-  sandbox,
-  type Sandbox,
-} from "../../scripts/lib/shell-fixtures.ts";
+import { repoRoot, run, sandbox, type Sandbox } from "#harness";
+import { launcherContract } from "#harness/launchers";
 
 const launcher = join(repoRoot, "herdr", "bin", "herdr-claude-agents");
 const config = join(repoRoot, "herdr", "config.toml");
@@ -23,23 +17,7 @@ afterEach(() => {
   box.remove();
 });
 
-test("is executable", () => {
-  expect(statSync(launcher).mode & 0o111).not.toBe(0);
-});
-
-test.skipIf(!commandExists("shellcheck"))("passes shellcheck", () => {
-  // shellcheck writes its findings to stdout, so asserting on the output is
-  // what puts the finding itself in the failure.
-  const check = run(["shellcheck", launcher]);
-  expect(check.stdout + check.stderr).toBe("");
-});
-
-// path.zsh is one of the two files .zshrc skips, so sourcing it under a chosen
-// $ZSH root is what a login shell does to it. -f keeps the installed root out,
-// which is what makes this test the worktree rather than ~/.dotfiles.
-test("is reachable on PATH from a login shell", () => {
-  expect(resolveOnPath("herdr", "herdr-claude-agents")).toBe(realpathSync(launcher));
-});
+launcherContract("herdr", "herdr-claude-agents");
 
 test("binds the launcher by the name PATH exports", () => {
   expect(readFileSync(config, "utf8")).toContain('command = "herdr-claude-agents"');

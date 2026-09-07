@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { lstatSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { quote, repoRoot, sandbox, shell, type Sandbox } from "./shell-fixtures.ts";
+import { quote, repoRoot, sandbox, shell, type Sandbox } from "#harness";
 
-const lib = join(repoRoot, "scripts", "lib", "symlinks.sh");
+const lib = join(repoRoot, "scripts", "shell", "symlinks.sh");
 
 function symlinkCreate(src: string, dst: string) {
   return shell(`. ${quote(lib)}\nsymlink_create "$1" "$2"`, { args: [src, dst] });

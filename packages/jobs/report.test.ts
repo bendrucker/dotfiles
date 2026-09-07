@@ -18,7 +18,7 @@ import {
   statusFile,
   thingsAddUrl,
   trimOutput,
-} from "./report-failure.ts";
+} from "#jobs/report";
 
 let sandbox: string;
 const environment = { PATH: process.env.PATH, XDG_STATE_HOME: process.env.XDG_STATE_HOME };
@@ -29,7 +29,7 @@ function writeStub(path: string, body: string): void {
 }
 
 beforeEach(() => {
-  sandbox = mkdtempSync(join(tmpdir(), "report-failure-"));
+  sandbox = mkdtempSync(join(tmpdir(), "jobs-report-"));
   const stubs = join(sandbox, "stub");
   mkdirSync(stubs);
 

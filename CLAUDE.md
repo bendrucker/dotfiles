@@ -14,6 +14,23 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
   - `Brewfile`: Homebrew packages for the topic
 - **`*/symlinks.conf`**: Per-topic declarative symlink maps (`source:target`) discovered and processed by `scripts/install-symlinks`
 - **scripts/**: Bootstrap and setup scripts
+- **packages/**: Shared TypeScript, imported by specifier rather than by relative path
+- **scripts/shell/**: The POSIX shell libraries that run before bun exists
+
+### Shared Modules
+
+`packages/` holds the TypeScript that `bin/` scripts and tests have in common. The root `package.json` maps each one to a subpath specifier, so an import names `#jobs/report` instead of counting `../` up from wherever it sits.
+
+| Specifier | What it holds |
+| --- | --- |
+| `#harness` | The `bun test` harness for driving shell scripts |
+| `#jobs/*` | What the unattended jobs share: output capture, failure reporting, the sync gate, canonical JSON |
+| `#worktree/*` | Worktrunk state, forge queries, column alignment |
+| `#plugins` | The installed Claude Code plugins |
+
+Bun resolves `imports` from the root `package.json` alone, with no `node_modules`, no lockfile, and no install step. That is what keeps this compatible with the 3am jobs, which run `$HOME/.dotfiles/bin/*` under bun straight from a fast-forwarded clone. Adding a dependency to one of these modules would mean the job could not import it until something had installed it, so `#jobs/*` and everything `bin/dotfiles-sync` reaches stays dependency-free.
+
+`scripts/shell/` is the floor underneath. `spin.sh`, `git-sync.sh`, `symlinks.sh`, and `cask-variants.sh` are sourced by `scripts/setup` and `bin/dotf` before bun or gum are installed, so they are POSIX sh sourced by relative path rather than modules resolved by specifier.
 
 ## Common Tasks
 
@@ -100,7 +117,7 @@ Config and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev
 
 Everything runs under `bun test`. A test sits next to what it covers and is named for it: `scripts/install-trust.test.ts` covers `scripts/install-trust`, `herdr/bin/herdr-flock.test.ts` covers that launcher. Shell scripts and TypeScript modules are tested the same way, so there is one runner and one set of conventions to learn.
 
-`scripts/lib/shell-fixtures.ts` holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners that report a script's status alongside both its streams. `shell()` runs a snippet under bash or zsh, which is how a library function gets called directly. Sourcing inside the snippet is what lets a test redefine one of the library's own functions afterwards and have the redefinition win.
+`#harness` holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners that report a script's status alongside both its streams. `shell()` runs a snippet under bash or zsh, which is how a library function gets called directly. Sourcing inside the snippet is what lets a test redefine one of the library's own functions afterwards and have the redefinition win.
 
 A test's name and where it sits decide which CI job runs it:
 

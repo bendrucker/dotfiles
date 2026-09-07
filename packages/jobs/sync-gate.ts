@@ -23,9 +23,9 @@ import {
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { log, type Output } from "./job-output.ts";
-import { clearLatch, notify, readLatch, writeLatch } from "./report-failure.ts";
-import { canonicalJson } from "./sorted-json.ts";
+import { log, type Output } from "#jobs/output";
+import { clearLatch, notify, readLatch, writeLatch } from "#jobs/report";
+import { canonicalJson } from "#jobs/json";
 
 // ~/.dotfiles is a symlink to the checkout, so the sibling commands are found
 // through the resolved path rather than the invoked one.
@@ -548,7 +548,7 @@ function jsonDiff(repoDir: string, file: string): string | undefined {
 }
 
 function unifiedDiff(file: string, before: string, after: string): string {
-  const scratch = mkdtempSync(join(tmpdir(), "git-diff-review-"));
+  const scratch = mkdtempSync(join(tmpdir(), "sync-gate-"));
   try {
     const left = join(scratch, "before");
     const right = join(scratch, "after");

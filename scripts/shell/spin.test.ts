@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { quote, repoRoot, run, sandbox, shell, type Sandbox } from "./shell-fixtures.ts";
+import { quote, repoRoot, run, sandbox, shell, type Sandbox } from "#harness";
 
-const lib = join(repoRoot, "scripts", "lib", "spin.sh");
+const lib = join(repoRoot, "scripts", "shell", "spin.sh");
 
 const esc = "\x1b";
 

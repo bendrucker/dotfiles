@@ -17,8 +17,8 @@ DOTFILES_DEV="$HOME/src/dotfiles"
 SCRIPT_DIR="${0:A:h}"
 REPO_ROOT="${SCRIPT_DIR:h}"
 
-source "${0:A:h}/lib/spin.sh"
-source "${0:A:h}/lib/git-sync.sh"
+source "${0:A:h}/shell/spin.sh"
+source "${0:A:h}/shell/git-sync.sh"
 
 if [[ -d "$REPO_ROOT/.git" ]]; then
   REPO_URL=$(git -C "$REPO_ROOT" remote get-url origin)

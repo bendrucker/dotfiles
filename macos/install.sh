@@ -11,8 +11,8 @@ do
   bash "$file"
 done
 
-# shellcheck source=lib/launch-agent.sh
-source "$ZSH/macos/lib/launch-agent.sh"
+# shellcheck source=shell/launch-agent.sh
+source "$ZSH/macos/shell/launch-agent.sh"
 
 setup_dotfiles_upgrade() {
   # Remove old sync job (replaced by upgrade job which includes sync)

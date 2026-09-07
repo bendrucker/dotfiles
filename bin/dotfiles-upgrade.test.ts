@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { skipMessage } from "../scripts/lib/git-diff-review.ts";
+import { skipMessage } from "#jobs/sync-gate";
 import {
   currentRevision,
   driftFingerprint,
@@ -121,7 +121,7 @@ const REAL_PATH = process.env.PATH ?? "";
 const GIT = Bun.which("git", { PATH: REAL_PATH });
 // $PATH holds nothing but the stub directory, so the real utilities the
 // wrapper and the stubs shell out to have to be linked into it: bin/spin
-// resolves scripts/lib/spin.sh through `dirname`, and the stubs print their
+// resolves scripts/shell/spin.sh through `dirname`, and the stubs print their
 // fixtures with `cat`. Neither touches anything outside the sandbox.
 const UTILITIES = ["dirname", "cat"].map(
   (name) => Bun.which(name, { PATH: REAL_PATH }) ?? join("/usr/bin", name),
