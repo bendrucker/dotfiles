@@ -57,20 +57,65 @@ enabled = false
 # One row per agent, and nothing in it that changes faster than the agent's
 # state.
 #
-# `terminal_title_stripped` used to sit on a second row, on the theory that
-# Claude Code's title answers "what is each agent doing". It does not survive
-# a 26-column sidebar. The title is `<cwd basename> · <turn summary> ·
-# <session id>`, so the part that fits is the cwd, which `workspace` already
-# says, and the part that would earn the row is truncated away. What does
-# arrive is motion: the summary changes every turn, and Claude Code prefixes a
-# spinner frame while it streams, so the row animates in the corner of the eye
-# for the whole session.
-#
 # `agent` stays because its glyph is per-CLI and changes only when the pane's
 # occupant does. It moves onto the first row so keeping it costs no height.
-# This is `rows` rather than `rows_by_agent` since none of it is Claude-specific.
+#
+# A Claude row drops that glyph for `$title`, the name Claude Code gives the
+# session, which its status line reads out of the transcript and reports as
+# pane metadata (bendrucker/claude, user/scripts/pane-metadata.ts). Five agent
+# rows that all say their workspace name are five rows saying what the spaces
+# list already does, and the title is what tells them apart. It leads the
+# row, with the workspace dimmed beneath it, and it clips at sidebar_max_width
+# rather than widening the panel. The row is bare until the first turn names
+# the session.
 [ui.sidebar.agents]
 rows = [["state_icon", "agent", "workspace", "tab"]]
+
+[ui.sidebar.agents.rows_by_agent]
+claude = [
+  ["state_icon", { token = "$title", bold = true, dim = false }],
+  [{ token = "workspace", bold = false, dim = true }, { token = "tab", dim = true }],
+]
+
+# One row per workspace, then only what is out of the ordinary. herdr's own
+# `branch` and `git_status` are dropped: a root checkout's branch is main and a
+# worktree's branch is its label, so the row said nothing, and the behind count
+# it painted red measured the last fetch rather than the repo, since herdr
+# never fetches. bin/herdr-workspace-status reports these instead, on the tab
+# bar interval under [ui] below, and a row whose tokens are all empty is not
+# drawn, so a clean checkout of main is one word.
+#
+# The status is one token of at most two glyphs, because herdr draws a dot
+# between every custom token and right-aligns them by truncating the label,
+# so every glyph past the second is two more columns off the workspace name.
+# The glyphs are the Nerd Font octicons. The first slot is where the branch
+# is locally: a boxed dot for uncommitted changes, else an up arrow for
+# commits the remote has not seen. The second is the pull request (draft,
+# open, stacked, merged, closed), the open one if there is one, the stack
+# glyph alone if there are two, and otherwise the most recently touched one.
+# Color carries the checks, so it rides on the token name the way `$ctx_*`
+# does: red for failing checks or a conflict, yellow for checks still
+# running, green for passing, plain for an open PR with nothing to say, mauve
+# merged, dim closed. Local work with no open PR is yellow whatever the last
+# PR did. `$branch` shows only when the branch is neither the workspace label
+# nor the default branch, which is a worktree carrying a layer of a stack.
+#
+# Inline token styles take hex only. These are picked to read on both
+# catppuccin flavors, since auto_switch above flips between them.
+[ui.sidebar.spaces]
+rows = [
+  [
+    "state_icon",
+    "workspace",
+    { token = "$status_red", fg = "#e0405a" },
+    { token = "$status_yellow", fg = "#d9a33a" },
+    { token = "$status_green", fg = "#5fb760" },
+    "$status_plain",
+    { token = "$status_mauve", fg = "#a678f0" },
+    { token = "$status_dim", dim = true },
+  ],
+  ["$branch"],
+]
 
 # --- Plugin keybindings ----------------------------------------------------
 # Plugins themselves are installed by install.sh. The command IDs below come
@@ -305,6 +350,17 @@ description = "flock coordinator (focus or create)"
 
 [ui]
 agent_panel_sort = "priority"
+
+# herdr runs a tab bar command entry on an interval and shows its last line of
+# output, and that interval is the only scheduler it offers a script that is
+# not a plugin. herdr-workspace-status prints nothing, so the entry stays
+# blank and the run is what it is for: reporting the $tokens the spaces rows
+# above render. Those carry a ten minute TTL, so a timer that has stopped
+# shows as bare rows rather than a stale green. Each worktree costs one forge
+# list call per run, plus one per open pull request.
+tab_bar_right = [
+  { type = "command", command = "herdr-workspace-status", interval_seconds = 30, timeout_seconds = 25 },
+]
 
 [experimental]
 # Image rendering for attached clients, which terminal-browser needs to paint
