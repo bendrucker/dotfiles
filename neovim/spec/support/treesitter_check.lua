@@ -5,7 +5,9 @@
 -- nvim happened to finish installing the parsers first, which is a race against
 -- the fire-and-forget install in config.treesitter.
 
-local INSTALL_TIMEOUT_MS = 600000
+-- One budget across every attempt, so a stalled download cannot multiply into
+-- the CI job's own timeout and replace these diagnostics with a killed runner.
+local INSTALL_BUDGET_MS = 600000
 local ATTEMPTS = 3
 
 local failures = {}
@@ -31,15 +33,18 @@ else
 end
 
 local languages = require("config.treesitter").languages
-local parser_dir = vim.fs.joinpath(vim.fn.stdpath("data"), "site", "parser")
+local ts_config = require("nvim-treesitter.config")
+local parser_dir = ts_config.get_install_dir("parser")
 
-local function installed(lang)
-  return vim.uv.fs_stat(vim.fs.joinpath(parser_dir, lang .. ".so")) ~= nil
-end
-
+-- get_installed() with no argument also counts a language whose queries linked
+-- but whose parser build failed. "parsers" asks only about the shared objects.
 local function not_installed(langs)
+  local have = {}
+  for _, lang in ipairs(ts_config.get_installed("parsers")) do
+    have[lang] = true
+  end
   return vim.tbl_filter(function(lang)
-    return not installed(lang)
+    return not have[lang]
   end, langs)
 end
 
@@ -47,9 +52,15 @@ end
 -- because nvim-treesitter treats a language as installed when *either* its parser
 -- or its queries are present, so a build that failed after the queries were
 -- linked would otherwise never be attempted again.
+local started = vim.uv.hrtime()
 local pending = languages
 for attempt = 1, ATTEMPTS do
-  require("nvim-treesitter").install(pending, { force = attempt > 1 }):wait(INSTALL_TIMEOUT_MS)
+  local remaining = INSTALL_BUDGET_MS - (vim.uv.hrtime() - started) / 1e6
+  if remaining <= 0 then
+    break
+  end
+
+  require("nvim-treesitter").install(pending, { force = attempt > 1 }):wait(remaining)
   pending = not_installed(pending)
   if #pending == 0 then
     break
@@ -60,7 +71,11 @@ for attempt = 1, ATTEMPTS do
   end
 end
 
+-- A language reported here is not asserted on again below, so one broken parser
+-- yields one FAIL line rather than a second, vaguer one from diagnose().
+local unavailable = {}
 for _, lang in ipairs(pending) do
+  unavailable[lang] = true
   fail("%s: parser missing from %s after %d install attempts", lang, parser_dir, ATTEMPTS)
 end
 
@@ -68,10 +83,6 @@ end
 vim.o.runtimepath = vim.o.runtimepath
 
 local function diagnose(lang)
-  if not installed(lang) then
-    return "parser missing from " .. parser_dir
-  end
-
   local called, added, add_err = pcall(vim.treesitter.language.add, lang)
   if not called then
     return "language.add raised: " .. tostring(added)
@@ -87,17 +98,19 @@ local function diagnose(lang)
 end
 
 for _, lang in ipairs(languages) do
-  local filetype = vim.treesitter.language.get_filetypes(lang)[1]
-  if not filetype then
-    fail("%s: no filetype registered", lang)
-  else
-    local buf = vim.api.nvim_create_buf(true, false)
-    vim.api.nvim_set_option_value("filetype", filetype, { buf = buf })
-
-    if vim.treesitter.highlighter.active[buf] then
-      ok("%s: highlighting active for filetype %s", lang, filetype)
+  if not unavailable[lang] then
+    local filetype = vim.treesitter.language.get_filetypes(lang)[1]
+    if not filetype then
+      fail("%s: no filetype registered", lang)
     else
-      fail("%s: no highlighter attached to a %s buffer: %s", lang, filetype, diagnose(lang))
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_set_option_value("filetype", filetype, { buf = buf })
+
+      if vim.treesitter.highlighter.active[buf] then
+        ok("%s: highlighting active for filetype %s", lang, filetype)
+      else
+        fail("%s: no highlighter attached to a %s buffer: %s", lang, filetype, diagnose(lang))
+      end
     end
   end
 end
