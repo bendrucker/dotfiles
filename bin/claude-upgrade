@@ -2,9 +2,9 @@
 //
 // Claude configuration sync and plugin upgrade, run nightly from launchd.
 //
-// It self-heals the two ways ~/.claude-repo goes dirty on its own, syncs the
-// repo, then refreshes every marketplace and updates every plugin installed at
-// user scope, disabled ones included. `claude plugin enable` does not update, so
+// It reverts a cosmetic rewrite of a tracked settings file, syncs the repo,
+// reinstalls the vendor hooks, then refreshes every marketplace and updates
+// every plugin installed at user scope, disabled ones included. `claude plugin enable` does not update, so
 // a plugin skipped while disabled would come back stale months later.
 //
 // The whole run is captured as it happens: a failure files a Things to-do built
@@ -33,10 +33,9 @@ import {
   type Output,
   type SpawnOptions,
 } from "../scripts/lib/job-output.ts";
-import { byCodeUnit, canonicalJson, parseJson } from "../scripts/lib/sorted-json.ts";
+import { byCodeUnit, canonicalJson } from "../scripts/lib/sorted-json.ts";
 import {
   type Finding,
-  notify,
   reportFailure,
   reportFindings,
   reportSuccess,
@@ -45,10 +44,6 @@ import {
 const TITLE = "Claude Upgrade";
 const UPGRADE_JOB = "claude-upgrade";
 const DRIFT_JOB = "claude-plugin-drift";
-
-// The command Vibe Island writes into every hook when it takes hook management
-// back. It runs on a remote agent host and is not installed here.
-const VIBE_ISLAND_HOOK = "vibe-island/bin/vibe-island-hook";
 
 const SETTINGS = "user/settings.json";
 
@@ -81,93 +76,14 @@ export function revertCosmeticJsonChanges(out: Output, repoDir: string): void {
   }
 }
 
-// Every `.command` anywhere under `.hooks`, which is where the app writes. A
-// command that is absent, null or false contributes nothing; anything else
-// reaches the predicates below as it was written, so an unreadable command
-// answers for itself rather than being dropped from the set.
-export function hookCommands(settings: unknown): unknown[] {
-  if (!isRecord(settings)) return [];
-
-  const commands: unknown[] = [];
-  const walk = (node: unknown): void => {
-    if (Array.isArray(node)) {
-      for (const item of node) walk(item);
-      return;
-    }
-    if (!isRecord(node)) return;
-    const command = node.command;
-    if (command !== undefined && command !== null && command !== false) commands.push(command);
-    for (const value of Object.values(node)) walk(value);
-  };
-
-  const hooks = settings.hooks;
-  walk(hooks === undefined || hooks === null || hooks === false ? {} : hooks);
-  return commands;
-}
-
-// The app replaces all the hooks at once, so a file where only some match holds
-// something else as well, and reverting the file would take that with it. A
-// command that is not a string is one nothing here can vouch for, which makes
-// this false rather than raising.
-export function vibeIslandOwnsEveryHook(settings: unknown): boolean {
-  const commands = hookCommands(settings);
-  return commands.length > 0 && commands.every(isVibeIslandCommand);
-}
-
-export function vibeIslandHookPresent(settings: unknown): boolean {
-  return hookCommands(settings).some(isVibeIslandCommand);
-}
-
-function isVibeIslandCommand(command: unknown): boolean {
-  return typeof command === "string" && command.includes(VIBE_ISLAND_HOOK);
-}
-
-// Vibe Island writes ~/.claude/settings.json itself, through the symlink and
-// into the tracked config, replacing every hook with the command it uses on a
-// remote agent host. That binary is not installed here, so every hook event in a
-// new session fails, and the dirty tracked file stalls the sync behind it.
-// Discard it, and say so: a silent revert would leave the app taking hook
-// management back with nothing to show for it.
-export function revertVibeIslandHookRewrite(out: Output, repoDir: string): void {
-  const path = join(repoDir, SETTINGS);
-  if (!isFile(path)) return;
-
-  const working = parseJson(readText(path));
-  if (working === undefined) return;
-
-  const blob = gitQuiet(["show", `HEAD:${SETTINGS}`], repoDir);
-  if (blob.status !== 0) return;
-  const head = parseJson(blob.stdout);
-  if (head === undefined) return;
-
-  if (!vibeIslandOwnsEveryHook(working)) return;
-  if (vibeIslandHookPresent(head)) return;
-
-  // A change reaching outside .hooks is a real edit this must not discard. The
-  // sync gate still gets to ask about those, and it cannot ask about a file this
-  // already threw away. Compared on the canonical forms with .hooks deleted, so
-  // the app reformatting the whole file while it rewrites the hooks does not
-  // hide the match.
-  const workingRest = canonicalJson(readText(path), "del(.hooks)");
-  const headRest = canonicalJson(blob.stdout, "del(.hooks)");
-  if (workingRest === undefined || headRest === undefined) return;
-  if (workingRest !== headRest) return;
-
-  log(out, "warn", `Reverting Vibe Island's hook rewrite in ${SETTINGS}`);
-  out.run(["git", "-C", repoDir, "checkout", "HEAD", "--", SETTINGS]);
-  notify(TITLE, "Reverted Vibe Island's hook rewrite in settings.json");
-}
-
 export function syncRepo(out: Output, repoDir: string): boolean {
   log(out, "info", "Syncing Claude repository...");
 
   if (!isDirectory(repoDir)) return false;
 
-  // Both reverts run before the gate, so a tree dirtied only by them is clean by
-  // the time it looks. A dirty tracked file stalls the sync behind it every
-  // night.
+  // Before the gate, so a tree dirtied only by a reformat is clean by the time
+  // it looks. A dirty tracked file stalls the sync behind it every night.
   revertCosmeticJsonChanges(out, repoDir);
-  revertVibeIslandHookRewrite(out, repoDir);
 
   if (!reviewDirty(out, repoDir, TITLE)) return false;
 
@@ -534,10 +450,6 @@ function isFile(path: string): boolean {
   } catch {
     return false;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 if (import.meta.main) {
