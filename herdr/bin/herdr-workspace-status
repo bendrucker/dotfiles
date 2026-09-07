@@ -40,16 +40,17 @@ for tool in herdr git jq; do
   }
 done
 
-# The branch the remote checks out, then the two names it usually is.
+# The branch the remote checks out, then the two names it usually is, on the
+# remote and then locally for a repository that has none.
 default_branch() {
   local path=$1 name
   name=$(git -C "$path" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) && {
     echo "${name#origin/}"
     return
   }
-  for name in main master; do
-    git -C "$path" rev-parse --quiet --verify "refs/remotes/origin/$name" >/dev/null 2>&1 && {
-      echo "$name"
+  for name in refs/remotes/origin/main refs/remotes/origin/master refs/heads/main refs/heads/master; do
+    git -C "$path" rev-parse --quiet --verify "$name" >/dev/null 2>&1 && {
+      echo "${name##*/}"
       return
     }
   done
@@ -134,8 +135,9 @@ gitlab_prs() {
 }
 
 # One line, `<bucket>\t<glyph>`, or nothing without a pull request. The open
-# pull requests are what count. With none open, the one most recently touched
-# stands in, so a merged branch reads as merged until its worktree goes. The
+# pull requests are what count. With none open, a merged one stands in, and
+# otherwise the most recently touched, so a merged branch reads as merged
+# until its worktree goes whatever happens to the closed ones beside it. The
 # bucket is the worst of them, and the glyph is the pull request's shape:
 # open, draft, merged, closed, or in a stack. More than one open pull request
 # is a stack layer, since that is the only way a branch gets two, and the
@@ -159,7 +161,8 @@ classify_prs() {
       else $open end;
     ["fail", "pending", "ok", "open", "draft", "merged", "closed"] as $worst_first
     | map(select(.state == "OPEN")) as $open_prs
-    | (if ($open_prs | length) > 0 then $open_prs else [max_by(.updated)] end)
+    | (if ($open_prs | length) > 0 then $open_prs
+       else [(map(select(.state == "MERGED")) | max_by(.updated)) // max_by(.updated)] end)
     | map(select(. != null))
     | select(length > 0)
     | (map(bucket) | min_by(. as $b | $worst_first | index($b))) as $bucket
@@ -177,7 +180,8 @@ report_workspace() {
     branch="@$(git -C "$path" rev-parse --short HEAD 2>/dev/null)"
   default=$(default_branch "$path")
   base=
-  [ -n "$default" ] && base="origin/$default"
+  [ -n "$default" ] && git -C "$path" rev-parse --quiet --verify "refs/remotes/origin/$default" >/dev/null 2>&1 &&
+    base="origin/$default"
 
   # The workspace label is the branch for a worktree, and the default branch
   # is where a root checkout sits. Either way the name says nothing. Any other
@@ -207,7 +211,9 @@ report_workspace() {
   fi
   IFS=$'\t' read -r pr_bucket pr_glyph < <(classify_prs <<<"$prs")
   pr_head=$(jq -r '
-    (map(select(.state == "OPEN")) | .[0]) // (max_by(.updated)) | .head // empty' <<<"$prs")
+    (map(select(.state == "OPEN")) | .[0])
+    // (map(select(.state == "MERGED")) | max_by(.updated))
+    // max_by(.updated) | .head // empty' <<<"$prs")
 
   # Commits the forge has not seen. A pull request says exactly where its
   # copy of the branch is, which covers a branch pushed with a URL for its
@@ -252,9 +258,9 @@ report_workspace() {
     merged) color=mauve ;;
     closed) color=dim ;;
   esac
-  case "$pr_bucket:$local_glyph" in
-    merged:? | closed:? | :?) color=yellow ;;
-  esac
+  if [ -n "$local_glyph" ]; then
+    case $pr_bucket in merged | closed | '') color=yellow ;; esac
+  fi
 
   local args=("$id" --source "$SOURCE" --ttl-ms "$TTL_MS") name
   token() { if [ -n "$2" ]; then args+=(--token "$1=$2"); else args+=(--clear-token "$1"); fi; }

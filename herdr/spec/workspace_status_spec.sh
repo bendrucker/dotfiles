@@ -95,8 +95,10 @@ Describe "herdr-workspace-status"
     chmod +x "$stub/glab"
   }
 
+  # The herdr server runs the script from `/bin/sh -lc` with no locale set,
+  # where a glob `?` matches one byte and a glyph is three.
   run_script() {
-    PATH="$stub:$PATH" bash "$script" || return 1
+    LC_ALL=C PATH="$stub:$PATH" bash "$script" || return 1
     cat "$dir/reported"
   }
 
@@ -234,6 +236,39 @@ Describe "herdr-workspace-status"
     }
     When call stack_lookup_down
     The status should be success
+  End
+
+  It "reads a merged pull request as merged when a closed one was touched later"
+    merged_then_closed_touched() {
+      setup_repo
+      stub_gh
+      git -C "$dir/repo" checkout -q -- file
+      printf '[{"number":8,"state":"MERGED","isDraft":false,"baseRefName":"main","headRefOid":"%s","updatedAt":"2026-01-01T00:00:00Z","statusCheckRollup":[]},{"number":3,"state":"CLOSED","isDraft":false,"baseRefName":"main","headRefOid":"0000000","updatedAt":"2026-02-01T00:00:00Z","statusCheckRollup":[]}]\n' \
+        "$(git -C "$dir/repo" rev-parse HEAD)" > "$dir/prs.json"
+      printf '%s\n' \
+        '#!/bin/sh' \
+        "[ \"\$1 \$2\" = \"pr list\" ] && exec cat $dir/prs.json" \
+        'exit 1' > "$stub/gh"
+      run_script
+    }
+    When call merged_then_closed_touched
+    The status should be success
+    The output should include "status_mauve="
+    The output should not include "status_dim="
+  End
+
+  It "shows no branch row for a repository with no remote sitting on main"
+    no_remote() {
+      setup_repo
+      git -C "$dir/repo" checkout -q -- file
+      git -C "$dir/repo" switch -q main
+      git -C "$dir/repo" remote remove origin
+      run_script
+    }
+    When call no_remote
+    The status should be success
+    The output should not include "branch="
+    The output should include "--clear-token"
   End
 
   It "clears every token for a clean checkout of the default branch"
