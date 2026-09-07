@@ -805,9 +805,8 @@ describe("end to end", () => {
     );
   });
 
-  // The repo ships bin/claude, a shell wrapper that zsh puts ahead of the real
-  // CLI. `strings` finds nothing in it, and the bash reported that as a clean
-  // scrape.
+  // A shell script shadowing the real CLI on $PATH yields nothing from `strings`,
+  // and the bash reported that as a clean scrape.
   test("says when the scrape came back empty off a script", () => {
     writeFixture("strings-8.txt", "");
     writeFixture("strings-4.txt", "");

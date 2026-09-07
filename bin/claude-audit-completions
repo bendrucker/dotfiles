@@ -371,10 +371,10 @@ interface Scrape {
 // baseline.
 //
 // A scrape that finds nothing is reported rather than passed off as a clean one.
-// This repo ships bin/claude, a shell wrapper that zsh/.zshenv puts ahead of the
-// real CLI on $PATH, and `strings` on a shell script finds no command strings at
-// all. The seed list keeps the already-known hidden commands covered, so the
-// collapse is invisible in the report and costs only commands added since.
+// Anything that shadows the real CLI on $PATH with a shell script leaves
+// `strings` with no command strings at all. The seed list keeps the already-known
+// hidden commands covered, so the collapse is invisible in the report and costs
+// only commands added since.
 function scrapeCandidates(claudeBin: string): Scrape {
   const stringsBin = Bun.which("strings", { PATH: process.env.PATH });
   if (stringsBin === null) {
@@ -506,11 +506,11 @@ function capture(cmd: string[]): string {
 // command name against the PATH it captured at startup, and a caller that
 // adjusted PATH afterwards would reach a different binary than it meant to.
 // stdin is inherited rather than withheld. The shell this replaced read every
-// candidate with $(), which passes the caller's stdin down, and one candidate is
-// this repo's own bin/claude: over SSH it branches on `[ ! -t 0 ]`, so handing it
-// /dev/null makes it read an empty prompt and exec the ssh-wrapper instead of
-// printing the help this parses. A candidate that reads stdin can still swallow
-// the terminal's, which is what the shell did too and what makes this hand-run.
+// candidate with $(), which passes the caller's stdin down, and a script
+// shadowing the CLI may branch on whether stdin is a tty, so handing it /dev/null
+// makes it take the piped-input path instead of printing the help this parses. A
+// candidate that reads stdin can still swallow the terminal's, which is what the
+// shell did too and what makes this hand-run.
 function spawn(cmd: string[]) {
   try {
     return Bun.spawnSync({ cmd, env: process.env, stdin: "inherit" });
