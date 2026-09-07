@@ -83,4 +83,4 @@ pkill -f 'ghostty -e env .*herdr --session preview'
 
 ## Tests
 
-A script in `bin/` gets a `bun test` file beside it, `bin/<script>.test.ts`, checking that it is executable, passes `shellcheck`, resolves on `PATH` through `path.zsh`, and is bound in `config.toml` by its bare name. Stub `herdr`, `gh`, and `glab` on `PATH` rather than talking to the live server. `scripts/lib/shell-fixtures.ts` holds the sandbox, the stub writer, and `resolveOnPath`, which is what does the `path.zsh` lookup.
+A script in `bin/` gets a `bun test` file beside it, `bin/<script>.test.ts`, checking that it is executable, passes `shellcheck`, resolves on `PATH` through `path.zsh`, and is bound in `config.toml` the way that binding needs to read. Most are bound by their bare name. `herdr-flock` is bound by a path, because the server holds the environment it started with, and a bare name would resolve against a `$PATH` that can predate `herdr/path.zsh`. Stub `herdr`, `gh`, and `glab` on `PATH` rather than talking to the live server. `scripts/lib/shell-fixtures.ts` holds the sandbox, the stub writer, and `resolveOnPath`, which is what does the `path.zsh` lookup.
