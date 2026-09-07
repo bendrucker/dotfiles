@@ -15,18 +15,6 @@
         "(?m)^(?<depName>[^\\s#/]+/[^\\s#]+)\\s+(?<currentValue>\\S+)"
       ],
       "datasourceTemplate": "github-releases"
-    },
-    {
-      "customType": "regex",
-      "fileMatch": [
-        "^\\.github/workflows/test\\.yml$",
-        "^\\.pre-commit-config\\.yaml$"
-      ],
-      "matchStrings": [
-        "oxlint@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
-      ],
-      "depNameTemplate": "oxlint",
-      "datasourceTemplate": "npm"
     }
   ],
   "packageRules": [

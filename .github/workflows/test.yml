@@ -251,11 +251,15 @@ jobs:
       - name: Check private-use glyphs are declared
         run: bin/glyph-scan
 
-      # Pinned rather than tracked to a range, so a release cannot fail an
-      # unrelated PR. bunx runs it from its own cache, which is what keeps the
-      # repo free of a lockfile and an install step.
+      # oxlint is the one devDependency, so this installs it and nothing the
+      # scripts import. A bare `bunx oxlint` with no install resolves the
+      # latest release and ignores the pin, so the install is what makes the
+      # version in package.json the one that runs.
+      - name: Install oxlint
+        run: bun install --frozen-lockfile
+
       - name: Lint TypeScript
-        run: bunx oxlint@1.82.0 --deny-warnings --format=github
+        run: bunx oxlint --deny-warnings --format=github
 
       - name: Check for expired migrations
         run: scripts/lint-expired

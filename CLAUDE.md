@@ -28,13 +28,15 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 | `#worktree/*` | Worktrunk state, forge queries, column alignment |
 | `#plugins` | The installed Claude Code plugins |
 
-Bun resolves `imports` from the root `package.json` alone, with no `node_modules`, no lockfile, and no install step. That is what keeps this compatible with the 3am jobs, which run `$HOME/.dotfiles/bin/*` under bun straight from a fast-forwarded clone. Adding a dependency to one of these modules would mean the job could not import it until something had installed it, so `#jobs/*` and everything `bin/dotfiles-sync` reaches stays dependency-free.
+Bun resolves `imports` from the root `package.json` alone, so a specifier resolves with no `node_modules` and no install step. That is what keeps this compatible with the 3am jobs, which run `$HOME/.dotfiles/bin/*` under bun straight from a fast-forwarded clone. `bun.lock` covers the one devDependency in [Linting TypeScript](#linting-typescript), which no script imports, so a clone nothing has installed into still runs every one of them. Adding a runtime dependency to one of these modules would mean the job could not import it until something had installed it, so `#jobs/*` and everything `bin/dotfiles-sync` reaches stays dependency-free.
 
 `scripts/shell/` is the floor underneath. `spin.sh`, `git-sync.sh`, `symlinks.sh`, and `cask-variants.sh` are sourced by `scripts/setup` and `bin/dotf` before bun or gum are installed, so they are POSIX sh sourced by relative path rather than modules resolved by specifier.
 
 ### Linting TypeScript
 
-`bunx oxlint@<version> --deny-warnings` runs in the `lint` job and as a pre-commit hook, pinned to an exact version in both places and updated by a Renovate custom manager. bunx resolves it from its own cache, so oxlint stays out of the repo's import graph and out of the 3am jobs' way, and the no-install property above survives.
+oxlint is the repo's one devDependency, pinned in `package.json` and tracked by Renovate's bun manager like any other. The `lint` job and the pre-commit hook both run `bun install --frozen-lockfile` before `bunx oxlint --deny-warnings`.
+
+That install is what makes the pin real. A bare `bunx oxlint` against a tree with no `node_modules` fetches the latest release and ignores the version in `package.json` without saying so, which is a silent wrong-version run rather than a failure.
 
 `.oxlintrc.json` runs the `correctness` category plus a `no-restricted-imports` rule that rejects a path-shaped import of anything under `packages/`. That rule is what makes the specifier table above a boundary rather than a convention, since a deep relative path into another package now fails the build.
 

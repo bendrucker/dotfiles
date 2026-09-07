@@ -43,6 +43,6 @@ repos:
       - id: oxlint
         name: oxlint
         language: system
-        entry: bunx oxlint@1.82.0 --deny-warnings
+        entry: bash -c 'bun install --frozen-lockfile && exec bunx oxlint --deny-warnings'
         types: [ts]
         pass_filenames: false
