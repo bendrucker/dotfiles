@@ -26,7 +26,7 @@ Launch it in its own Ghostty window:
 open -na Ghostty --args -e env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID -u HERDR_SOCKET_PATH -u HERDR_BIN_PATH HERDR_CONFIG_PATH="$PWD/herdr/config.toml" herdr --session preview
 ```
 
-The `-u` flags matter. The new window inherits this pane's environment, and a `herdr` that sees `HERDR_ENV` refuses to start inside another herdr. `open -na` starts a second Ghostty instance, so the window is not reachable through AppleScript sent to the first one. Record the window id by diffing `list-terminal-windows` from the screenshot skill before and after the launch. The window's title is `Studio.local: ~`, which is not unique enough to match on.
+The `-u` flags matter. The new window inherits this pane's environment, and a `herdr` that sees `HERDR_ENV` refuses to start inside another herdr. `open -na` starts a second Ghostty instance, so the window is not reachable through AppleScript sent to the first one. Record the window id by diffing `list-terminal-windows` from the `screenshot-terminal` skill before and after the launch. The window's title is `Studio.local: ~`, which is not unique enough to match on.
 
 Every command against the preview goes through its socket:
 
