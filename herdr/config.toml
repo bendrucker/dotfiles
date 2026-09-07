@@ -57,15 +57,6 @@ enabled = false
 # One row per agent, and nothing in it that changes faster than the agent's
 # state.
 #
-# `terminal_title_stripped` used to sit on a second row, on the theory that
-# Claude Code's title answers "what is each agent doing". It does not survive
-# a 26-column sidebar. The title is `<cwd basename> · <turn summary> ·
-# <session id>`, so the part that fits is the cwd, which `workspace` already
-# says, and the part that would earn the row is truncated away. What does
-# arrive is motion: the summary changes every turn, and Claude Code prefixes a
-# spinner frame while it streams, so the row animates in the corner of the eye
-# for the whole session.
-#
 # `agent` stays because its glyph is per-CLI and changes only when the pane's
 # occupant does. It moves onto the first row so keeping it costs no height.
 #
@@ -76,8 +67,7 @@ enabled = false
 # list already does, and the title is what tells them apart. It leads the
 # row, with the workspace dimmed beneath it, and it clips at sidebar_max_width
 # rather than widening the panel. The row is bare until the first turn names
-# the session. The status line also reports a context dial as `$ctx_*`, which
-# sat here for a while and said nothing worth a column.
+# the session.
 [ui.sidebar.agents]
 rows = [["state_icon", "agent", "workspace", "tab"]]
 
