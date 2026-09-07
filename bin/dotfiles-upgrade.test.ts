@@ -287,9 +287,7 @@ describe("the sync step", () => {
     expect(run.stderr).toContain("to-do already filed");
   });
 
-  // The gate logs the unattended skips in a row from the second on, at the power
-  // of two below the count. A latch keyed on the step alone would hold the first
-  // night's to-do over every later one.
+  // The gate logs the unattended skips in a row from the second on, at the power of two below the count.
   test("files again as the skipped syncs mount", () => {
     const skipped = (escalation: string): void =>
       syncStub(
