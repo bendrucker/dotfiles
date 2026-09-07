@@ -1,11 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { claudePluginsDir, pluginInventory, pluginSource } from "./claude-plugins.ts";
-
-const cli = join(dirname(import.meta.dir), "..", "bin", "claude-plugins");
-const shim = join(import.meta.dir, "claude-plugins.sh");
 
 let sandbox: string;
 let plugins: string;
@@ -401,108 +398,5 @@ describe("pluginSource", () => {
   // not there.
   test("reports an id carrying no marketplace as unreadable", () => {
     expect(pluginSource("alpha")).toEqual({ ok: false, reason: "unreadable" });
-  });
-});
-
-describe("the CLI the shell callers reach", () => {
-  function run(args: string[]): { code: number; stdout: string; stderr: string } {
-    const spawned = Bun.spawnSync({ cmd: [cli, ...args], env: process.env });
-    return {
-      code: spawned.exitCode,
-      stdout: spawned.stdout.toString(),
-      stderr: spawned.stderr.toString(),
-    };
-  }
-
-  test("prints the plugin state directory", () => {
-    expect(run(["dir"])).toMatchObject({ code: 0, stdout: `${plugins}\n` });
-  });
-
-  test("prints one tab-separated row per plugin", () => {
-    const alpha = payload("first", "alpha", "1.0.0");
-    writeList([record("alpha@first", alpha)]);
-    writeSettings({ enabledPlugins: { "beta@third": true } });
-    expect(run(["inventory"])).toMatchObject({
-      code: 0,
-      stdout: `alpha@first\t${alpha}\nbeta@third\t\n`,
-    });
-  });
-
-  // The row is the unit both callers read with `IFS=$'\t' read -r id payload`. A
-  // tab or a newline arriving raw would end one row early and hand the rest to
-  // the next read as a plugin nobody installed.
-  test("escapes a tab or a newline rather than splitting the row", () => {
-    writeList([record("alpha@first", "/tmp/x\ny"), record("beta@third", "/tmp/p\tq")]);
-    expect(run(["inventory"]).stdout).toBe("alpha@first\t/tmp/x\\ny\nbeta@third\t/tmp/p\\tq\n");
-  });
-
-  // The captured run is what the failure to-do quotes, so the cause has to reach
-  // stderr rather than only the exit status.
-  test("exits 1 and names the cause when the inventory cannot be read", () => {
-    writeSettings("not json\n");
-    const failed = run(["inventory"]);
-    expect(failed.code).toBe(1);
-    expect(failed.stdout).toBe("");
-    expect(failed.stderr).toContain("settings.json is not JSON");
-  });
-
-  // 3 and 4 are the contract bin/claude-upgrade and bin/claude-plugin-audit
-  // compare against numerically.
-  test("exits 3 on an unreadable source and 4 on an absent one", () => {
-    writeManifest("first", { plugins: [{ name: "alpha" }] });
-    expect(run(["source", "alpha@first"]).code).toBe(3);
-    expect(run(["source", "ghost@first"]).code).toBe(4);
-    expect(run(["source", "alpha@nowhere"]).code).toBe(3);
-  });
-
-  test("prints the source as compact JSON", () => {
-    writeManifest("first", {
-      plugins: [
-        { name: "alpha", source: "./plugins/alpha" },
-        { name: "delta", source: { source: "github", repo: "example/delta" } },
-      ],
-    });
-    expect(run(["source", "alpha@first"]).stdout).toBe('"./plugins/alpha"\n');
-    expect(run(["source", "delta@first"]).stdout).toBe(
-      '{"source":"github","repo":"example/delta"}\n',
-    );
-  });
-});
-
-describe("the shim the shell callers source", () => {
-  function sourced(snippet: string): { code: number; stdout: string } {
-    const spawned = Bun.spawnSync({
-      cmd: ["bash", "-c", `source "$1"; shift; ${snippet}`, "_", shim],
-      env: process.env,
-    });
-    return { code: spawned.exitCode, stdout: spawned.stdout.toString() };
-  }
-
-  test("names the two sentinel codes the callers branch on", () => {
-    expect(sourced('printf "%s %s\\n" "$PLUGIN_SOURCE_UNREADABLE" "$PLUGIN_SOURCE_ABSENT"')).toEqual(
-      { code: 0, stdout: "3 4\n" },
-    );
-  });
-
-  test("defines claude_plugins_dir and plugin_inventory", () => {
-    const alpha = payload("first", "alpha", "1.0.0");
-    writeList([record("alpha@first", alpha)]);
-    expect(sourced("claude_plugins_dir")).toEqual({ code: 0, stdout: `${plugins}\n` });
-    expect(sourced("plugin_inventory")).toEqual({ code: 0, stdout: `alpha@first\t${alpha}\n` });
-  });
-
-  test("defines plugin_source, carrying the sentinel codes out", () => {
-    writeManifest("first", { plugins: [{ name: "alpha", source: "./plugins/alpha" }] });
-    expect(sourced("plugin_source alpha@first")).toEqual({
-      code: 0,
-      stdout: '"./plugins/alpha"\n',
-    });
-    expect(sourced("plugin_source ghost@first").code).toBe(4);
-    expect(sourced("plugin_source alpha@nowhere").code).toBe(3);
-  });
-
-  test("fails the inventory rather than printing an empty one", () => {
-    writeSettings("not json\n");
-    expect(sourced("plugin_inventory")).toEqual({ code: 1, stdout: "" });
   });
 });

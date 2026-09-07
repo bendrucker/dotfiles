@@ -1,6 +1,5 @@
 // Failure reporting for the unattended (3am launchd) jobs: a per-job latch, a
-// Things to-do filed through `open`, and a Darwin notification. bin/report-failure
-// is the CLI over this, and scripts/lib/report-failure.sh the shim the jobs source.
+// Things to-do filed through `open`, and a Darwin notification.
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, homedir } from "node:os";

@@ -1,7 +1,6 @@
 // The Claude Code plugins installed on this machine, and where each one's
-// marketplace says it comes from. bin/claude-plugins is the CLI over this, and
-// scripts/lib/claude-plugins.sh the shim bin/claude-upgrade (which updates the
-// plugins) and bin/claude-plugin-audit (which checks the update landed) source.
+// marketplace says it comes from. bin/claude-upgrade updates the plugins and
+// bin/claude-plugin-audit checks the update landed.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
