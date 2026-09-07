@@ -455,13 +455,22 @@ function skipSync(out: Output, title: string): boolean {
 function recordSkip(out: Output, repoDir: string): void {
   const job = skipJob(repoDir);
   const skips = (Number.parseInt(readLatch(job), 10) || 0) + 1;
-  writeLatch(job, String(skips));
+  // The count only paces the notifications, so state that cannot be stored
+  // leaves the gate logging and skipping as it would with no counter at all.
+  // readLatch already swallows its own end of this.
+  bestEffort(() => writeLatch(job, String(skips)));
   if (skips < 2) return;
   log(out, "warn", `Sync skipped ${skipBucket(skips)} runs in a row`);
 }
 
 function clearSkips(repoDir: string): void {
-  rmSync(statusFile(skipJob(repoDir)), { force: true });
+  bestEffort(() => rmSync(statusFile(skipJob(repoDir)), { force: true }));
+}
+
+function bestEffort(store: () => void): void {
+  try {
+    store();
+  } catch {}
 }
 
 function skipBucket(skips: number): number {

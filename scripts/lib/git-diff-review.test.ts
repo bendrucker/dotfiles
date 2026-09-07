@@ -638,6 +638,22 @@ describe("reviewDirty", () => {
     expect(out.captured()).not.toContain("runs in a row");
   });
 
+  // The count only paces the notifications, so a state directory it cannot
+  // write must not preempt the skip the gate exists to perform. A file standing
+  // where the directory goes is the cheapest way to make every write fail.
+  test("skips and syncs as usual when the count cannot be stored", () => {
+    const blocked = join(sandbox, "blocked-state");
+    writeFileSync(blocked, "");
+    process.env.XDG_STATE_HOME = blocked;
+
+    writeFileSync(join(repo, "stray.txt"), "stray\n");
+    expect(reviewDirty(out, repo, "Title", { interactive: () => false })).toBe(false);
+    expect(out.captured()).toContain("Local changes present - skipping sync");
+
+    rmSync(join(repo, "stray.txt"));
+    expect(reviewDirty(out, repo, "Title")).toBe(true);
+  });
+
   // Someone was watching, so the skip needs no escalation to reach them.
   test("leaves a skip chosen at the prompt uncounted", () => {
     writeFileSync(join(repo, "file.txt"), "edited\n");
