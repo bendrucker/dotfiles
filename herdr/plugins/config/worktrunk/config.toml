@@ -1,0 +1,7 @@
+# Settings in herdr's own config.toml never reach a plugin.
+# https://github.com/devashish2203/herdr-worktrunk#picker-presentation
+
+# The split reflows the layout for as long as it takes to pick a branch. Size
+# stays at the default: the split picker draws its own 20%,30% margin, so a
+# half-window popup already has the larger list.
+picker_placement = "popup"
