@@ -1,100 +1,263 @@
-#!/usr/bin/env zsh
-# claude-launch: launcher for background Claude agents (`claude --bg`).
-#
-# Picks a launch directory from zoxide's frecency list with fzf, gathers
-# optional permission-mode and model choices via gum, prompts for the task, and
-# dispatches a detached background agent. Monitoring and attach live in the
-# built-in view (`claude agents`); this script is launcher-only.
-#
-# $CLAUDE_AGENTS_ADD_DIR (colon-separated) adds tool-access dirs to every
-# dispatch via repeated --add-dir. Pass --here to skip the picker and launch in
-# the current directory.
+#!/usr/bin/env bun
+//
+// claude-launch: launcher for background Claude agents (`claude --bg`).
+//
+// Picks a launch directory from zoxide's frecency list with fzf, gathers
+// optional permission-mode and model choices via gum, prompts for the task, and
+// dispatches a detached background agent. Monitoring and attach live in the
+// built-in view (`claude agents`), so this is launcher-only.
+//
+// $CLAUDE_AGENTS_ADD_DIR (colon-separated) adds tool-access dirs to every
+// dispatch via repeated --add-dir. Pass --here to skip the picker and launch in
+// the current directory.
 
-set -uo pipefail
+const USAGE = [
+  "usage: claude-launch [--here]",
+  "",
+  "Dispatch a background Claude agent, walking through the launch directory, the",
+  "permission mode, the model, and the task.",
+  "",
+  "  --here  launch in the current directory instead of picking one",
+].join("\n");
 
-here=0
-[[ "${1:-}" == --here ]] && here=1
+const PERMISSION_MODES = ["default", "plan", "acceptEdits", "bypassPermissions"];
+const MODELS = ["default", "opus", "sonnet", "haiku"];
 
-pick_repo() {
-  if (( here )); then
-    print -r -- "$PWD"
-    return
-  fi
+// Longer than this the pasteboard is a document someone happened to copy, not a
+// task worth pre-filling the editor with.
+const SEED_LIMIT = 4000;
 
-  # In-flight agent dirs first, then zoxide's frecency-ranked dirs. ${(u)...}
-  # keeps first occurrence, so an active agent's dir wins its slot and fzf's
-  # --no-sort preserves that order until you type.
-  local -a seeds dirs
-  seeds=("${(@f)$(claude agents --json 2>/dev/null | jq -r '.[].cwd // empty' 2>/dev/null)}")
-  dirs=("${(@f)$(zoxide query -l 2>/dev/null)}")
+// A dispatch answers with "backgrounded · <id> · <name>" in color.
+const ANSI = /\u001b\[[0-9;]*m/g;
+const SEPARATOR = " · ";
 
-  local -a candidates=("${seeds[@]}" "${dirs[@]}")
-  candidates=(${(u)candidates})
-  candidates=(${candidates:#})
-
-  if (( ${#candidates} == 0 )); then
-    gum log --level error "no directories from zoxide" >&2
-    return 1
-  fi
-
-  print -rl -- "${candidates[@]}" \
-    | fzf --no-sort --border --border-label ' claude · launch dir ' --prompt '  '
+// In-flight agent directories ahead of zoxide's frecency ranking, first
+// occurrence winning, so an active agent's directory keeps its slot. fzf is
+// asked not to sort, which preserves that order until you type.
+export function launchDirs(agents: string[], frecent: string[]): string[] {
+  return [...new Set([...agents, ...frecent])].filter((dir) => dir !== "");
 }
 
-# Selecting the leading default/(none) option, or skipping with Esc, leaves the
-# flag off so Claude applies its own default.
-choose_flag() {
-  local header="$1"; shift
-  gum choose --header "$header" "$@"
+// The agent's name, from the first six words of the prompt's first line.
+export function slugify(prompt: string): string {
+  const slug = (prompt.split("\n")[0] ?? "")
+    .split(/\s+/)
+    .filter((word) => word !== "")
+    .slice(0, 6)
+    .join("-")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug === "" ? "agent" : slug;
 }
 
-repo=$(pick_repo) || exit 1
-[[ -n "$repo" ]] || { gum log --level warn "no directory selected"; exit 1; }
+// Something that reads like a task or a URL, which a filesystem path does not.
+// The editor opens on it, so a wrong guess costs a keystroke to clear.
+export function seedFrom(clipboard: string): string {
+  if (clipboard === "" || clipboard.length > SEED_LIMIT || clipboard.startsWith("/")) return "";
+  const task =
+    clipboard.startsWith("http://") || clipboard.startsWith("https://") || clipboard.includes(" ");
+  return task ? clipboard : "";
+}
 
-perm=$(choose_flag "permission-mode" default plan acceptEdits bypassPermissions)
-model=$(choose_flag "model" default opus sonnet haiku)
+export function addDirs(setting: string | undefined): string[] {
+  return (setting ?? "").split(":").filter((dir) => dir !== "");
+}
 
-# Pre-fill the editor from the pasteboard when it reads like a task or URL
-# (mirrors cwp), skipping filesystem paths and oversized blobs.
-seed=""
-clip="$(pbpaste 2>/dev/null)"
-if [[ -n "$clip" && ${#clip} -le 4000 && "$clip" != /* \
-   && ( "$clip" == http://* || "$clip" == https://* || "$clip" == *' '* ) ]]; then
-  seed="$clip"
-fi
+export interface Launch {
+  slug: string;
+  // Empty when the picker was skipped, "default" when its leading option was
+  // taken. Either way the flag stays off and Claude applies its own default.
+  permission: string;
+  model: string;
+  addDirs: string[];
+  prompt: string;
+}
 
-prompt=$(gum write --placeholder "Task for the agent…" --value "$seed" --width 80 --height 12)
-[[ -n "$prompt" ]] || { gum log --level warn "no prompt entered"; exit 1; }
+export function launchCommand(launch: Launch): string[] {
+  const cmd = ["claude", "--bg", "--name", launch.slug];
+  if (launch.permission !== "" && launch.permission !== "default") {
+    cmd.push("--permission-mode", launch.permission);
+  }
+  if (launch.model !== "" && launch.model !== "default") cmd.push("--model", launch.model);
+  for (const dir of launch.addDirs) cmd.push("--add-dir", dir);
+  cmd.push(launch.prompt);
+  return cmd;
+}
 
-# Name defaults to a slug of the prompt's first words.
-first="${prompt%%$'\n'*}"
-typeset -a words=(${=first})
-slug="${(j:-:)words[1,6]:l}"
-slug="${slug//[^a-z0-9-]/-}"
-while [[ "$slug" == *--* ]]; do slug="${slug//--/-}"; done
-slug="${slug#-}"; slug="${slug%-}"
-[[ -n "$slug" ]] || slug="agent"
+export function agentId(dispatched: string): string {
+  const first = (dispatched.split("\n")[0] ?? "").replace(ANSI, "");
+  return first.split(SEPARATOR)[1] ?? "";
+}
 
-typeset -a cmd=(claude --bg --name "$slug")
-[[ -n "$perm"  && "$perm"  != default  ]] && cmd+=(--permission-mode "$perm")
-[[ -n "$model" && "$model" != default  ]] && cmd+=(--model "$model")
-if [[ -n "${CLAUDE_AGENTS_ADD_DIR:-}" ]]; then
-  local d
-  for d in ${(s.:.)CLAUDE_AGENTS_ADD_DIR}; do
-    cmd+=(--add-dir "$d")
-  done
-fi
-cmd+=("$prompt")
+interface Capture {
+  status: number;
+  stdout: string;
+}
 
-gum log --level info "Launching in $repo"
-out=$( (cd "$repo" && "${cmd[@]}") )
-rc=$?
-print -r -- "$out"
-if (( rc )); then
-  gum log --level error "launch failed"
-  exit $rc
-fi
+interface Options {
+  cwd?: string;
+  // The three lookups that seed the launch are advisory, so their complaints
+  // are dropped rather than shown above a picker that works without them. The
+  // dispatch keeps its stderr, which is where a refused launch says why.
+  quiet?: boolean;
+}
 
-# First line is "backgrounded · <id> · <name>"; strip ANSI and pull the id.
-id=$(print -r -- "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | awk -F ' · ' 'NR==1 {print $2}')
-[[ -n "$id" ]] && gum log --level info "agent $id · attach with: claude attach $id"
+// The environment goes across explicitly because Bun otherwise resolves a bare
+// command name against the PATH it captured at startup, so a caller that
+// adjusted PATH would reach a different binary than it meant to. A command that
+// is not installed raises where the shell exited 127, and every caller here
+// already handles the answer it could not get.
+function capture(cmd: string[], options: Options = {}): Capture {
+  try {
+    const child = Bun.spawnSync({
+      cmd,
+      env: process.env,
+      cwd: options.cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: options.quiet === true ? "ignore" : "inherit",
+    });
+    return { status: child.exitCode, stdout: child.stdout.toString() };
+  } catch {
+    return { status: 127, stdout: "" };
+  }
+}
+
+// gum and fzf draw their interface on stderr and read the terminal, so stderr
+// and (for gum) stdin stay inherited. Dismissing one exits nonzero with nothing
+// on stdout, which is the same answer as choosing nothing.
+function ask(cmd: string[], stdin: "inherit" | string): string {
+  try {
+    const child = Bun.spawnSync({
+      cmd,
+      env: process.env,
+      stdin: stdin === "inherit" ? "inherit" : Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    return child.stdout.toString().replace(/\n+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function log(level: "error" | "warn" | "info", message: string): void {
+  try {
+    Bun.spawnSync({
+      cmd: ["gum", "log", "--level", level, message],
+      env: process.env,
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+  } catch {
+    process.stderr.write(`claude-launch: ${message}\n`);
+  }
+}
+
+function lines(text: string): string[] {
+  return text.split("\n").filter((line) => line !== "");
+}
+
+// Taking the leading "default" option, or dismissing the picker, both leave the
+// flag off so Claude applies its own default.
+function choose(header: string, options: string[]): string {
+  return ask(["gum", "choose", "--header", header, ...options], "inherit");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function agentDirs(): string[] {
+  const agents = capture(["claude", "agents", "--json"], { quiet: true });
+  if (agents.status !== 0) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(agents.stdout);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed.flatMap((entry) => {
+    if (!isRecord(entry)) return [];
+    return typeof entry.cwd === "string" && entry.cwd !== "" ? [entry.cwd] : [];
+  });
+}
+
+function pickDir(): string | undefined {
+  const frecent = capture(["zoxide", "query", "-l"], { quiet: true });
+  const dirs = launchDirs(agentDirs(), lines(frecent.stdout));
+  if (dirs.length === 0) {
+    log("error", "no directories from zoxide");
+    return undefined;
+  }
+
+  const picked = ask(
+    ["fzf", "--no-sort", "--border", "--border-label", " claude · launch dir ", "--prompt", "  "],
+    `${dirs.join("\n")}\n`,
+  );
+  if (picked === "") {
+    log("warn", "no directory selected");
+    return undefined;
+  }
+  return picked;
+}
+
+function main(args: string[]): number {
+  if (args.includes("-h") || args.includes("--help")) {
+    process.stdout.write(`${USAGE}\n`);
+    return 0;
+  }
+
+  const repo = args[0] === "--here" ? process.cwd() : pickDir();
+  if (repo === undefined) return 1;
+
+  const permission = choose("permission-mode", PERMISSION_MODES);
+  const model = choose("model", MODELS);
+  const seed = seedFrom(capture(["pbpaste"], { quiet: true }).stdout);
+
+  const prompt = ask(
+    [
+      "gum",
+      "write",
+      "--placeholder",
+      "Task for the agent…",
+      "--value",
+      seed,
+      "--width",
+      "80",
+      "--height",
+      "12",
+    ],
+    "inherit",
+  );
+  if (prompt === "") {
+    log("warn", "no prompt entered");
+    return 1;
+  }
+
+  const cmd = launchCommand({
+    slug: slugify(prompt),
+    permission,
+    model,
+    addDirs: addDirs(process.env.CLAUDE_AGENTS_ADD_DIR),
+    prompt,
+  });
+
+  log("info", `Launching in ${repo}`);
+  const dispatched = capture(cmd, { cwd: repo });
+  process.stdout.write(`${dispatched.stdout.replace(/\n+$/, "")}\n`);
+  if (dispatched.status !== 0) {
+    log("error", "launch failed");
+    return dispatched.status;
+  }
+
+  const id = agentId(dispatched.stdout);
+  if (id !== "") log("info", `agent ${id} · attach with: claude attach ${id}`);
+  return 0;
+}
+
+if (import.meta.main) process.exit(main(process.argv.slice(2)));
