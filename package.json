@@ -1,0 +1,11 @@
+{
+  "name": "dotfiles",
+  "private": true,
+  "imports": {
+    "#harness": "./packages/harness/index.ts",
+    "#harness/*": "./packages/harness/*.ts",
+    "#jobs/*": "./packages/jobs/*.ts",
+    "#worktree/*": "./packages/worktree/*.ts",
+    "#plugins": "./packages/plugins.ts"
+  }
+}

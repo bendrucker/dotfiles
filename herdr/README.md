@@ -44,11 +44,3 @@ and a word carrying `*` or `$(` would otherwise reach the parser as syntax.
 herdr exposes no word-separator setting, so a double-click takes a word by its
 own rules and a path or a flag comes back in pieces
 ([#713](https://github.com/bendrucker/dotfiles/issues/713)).
-
-## Agent detection
-
-herdr classifies a pane's agent by matching its screen against a detection
-manifest. `agent-detection/` holds the rules herdr's own manifests are missing,
-and `bin/herdr-agent-detection` composes them onto whatever herdr last fetched.
-`spec/agent_detection_spec.sh` scores the recorded screens in that directory, so
-a rule that stops matching fails in CI rather than in the sidebar.

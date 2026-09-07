@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# git-sync <subcommand> …: scripts/lib/git-sync.sh as a command.
+# git-sync <subcommand> …: scripts/shell/git-sync.sh as a command.
 #
 # The library stays shell because scripts/setup sources it on a fresh machine,
 # before brew bundle has installed bun, and it reaches nearly every function
@@ -28,11 +28,11 @@
 # not set, where the library means to fall back to main.
 set -e
 
-lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts/lib" && pwd)"
-# shellcheck source=../scripts/lib/spin.sh
-. "$lib/spin.sh"
-# shellcheck source=../scripts/lib/git-sync.sh
-. "$lib/git-sync.sh"
+shelldir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts/shell" && pwd)"
+# shellcheck source=../scripts/shell/spin.sh
+. "$shelldir/spin.sh"
+# shellcheck source=../scripts/shell/git-sync.sh
+. "$shelldir/git-sync.sh"
 
 usage() {
   echo "usage: git-sync sync <repo_dir> [branch] | default-branch [repo_dir] | https-env" >&2

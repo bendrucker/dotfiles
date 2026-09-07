@@ -40,7 +40,7 @@ import {
   remoteHost,
   type Worktree,
   worktreeAgeSecs,
-} from "../scripts/lib/worktree-state.ts";
+} from "#worktree/state";
 
 // What `wt list` says when it has already resolved the work into the default
 // branch. "empty" is a worktree carrying no commits of its own.

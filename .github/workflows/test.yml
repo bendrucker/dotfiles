@@ -116,14 +116,11 @@ jobs:
     # install-symlinks places the dotfiles git config.
     - name: Remove runner gitconfig so XDG config takes effect
       run: rm -f ~/.gitconfig
-    - name: Run topic tests
-      run: |
-        shopt -s nullglob
-        for spec in */.shellspec; do
-          dir="${spec%/.shellspec}"
-          echo "shellspec $dir"
-          (cd "$dir" && shellspec) || exit 1
-        done
+    # The suffix is what separates these from the tests the bun job runs on a
+    # bare checkout: they read the installed symlinks and the packages brew
+    # bundle put on this runner, so bootstrap is what makes them meaningful.
+    - name: Run topic integration tests
+      run: bun test integration.test.ts
     - name: Benchmark shell startup
       run: |
         hyperfine --warmup 3 --runs 10 --shell=none \
@@ -169,14 +166,31 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
-      - run: bun test
+      # The tests that drive shell scripts stub what those scripts call, but
+      # the interpreters and the tools a script legitimately uses are real.
+      # zsh is the one the image does not already carry.
+      - name: Install shells the tests drive
+        run: sudo apt-get install -y zsh
+      - name: Add brew to PATH
+        run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
+      # The spin tests that cover the no-terminal branch run the real gum,
+      # because a stub cannot show what its spinner writes to stderr.
+      - name: Install gum
+        run: brew install gum
+      # The integration tests read state only bootstrap creates, so they run
+      # there instead. The skill tests need duckdb and have their own job;
+      # discovery skips their dot directory, and the pattern says so on purpose.
+      - run: |
+          bun test \
+            --path-ignore-patterns='**/*.integration.test.ts' \
+            --path-ignore-patterns='.claude/skills/**'
   skill-tests:
     strategy:
       matrix:
         include:
           - name: linux
             # Not 22.04: its glibc predates Homebrew's minimum, so brew builds
-            # its own toolchain there and these specs need no compiler.
+            # its own toolchain there and these tests need no compiler.
             os: ubuntu-latest
           - name: macos
             os: macos-15
@@ -187,14 +201,15 @@ jobs:
       - name: Add brew to Linux PATH
         if: runner.os == 'Linux'
         run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
-      - name: Install shellspec
-        run: brew install shellspec duckdb
+      - uses: oven-sh/setup-bun@v2
+      # The skill under test queries shell history through duckdb, and builds
+      # its own fixture database the same way.
+      - name: Install duckdb
+        run: brew install duckdb
+      # A leading ./ is what makes bun read this as a path. Bare, it is a filter
+      # matched against discovered files, and discovery skips dot directories.
       - name: Run tests
-        run: |
-          for dir in $(find .claude/skills -name .shellspec -exec dirname {} \;); do
-            echo "shellspec $dir"
-            (cd "$dir" && shellspec) || exit 1
-          done
+        run: bun test ./.claude/skills/
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -202,7 +217,7 @@ jobs:
       - name: Add brew to PATH
         run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
       - name: Install lint dependencies
-        run: brew install shellspec ast-grep duckdb
+        run: brew install ast-grep duckdb
       # scripts/lint-expired runs on bun, which nothing else in this job brings.
       - uses: oven-sh/setup-bun@v2
       - uses: j178/prek-action@v3.0.0

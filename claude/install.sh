@@ -3,8 +3,8 @@ set -e
 
 [[ "$(uname -s)" == "Darwin" ]] || exit 0
 
-# shellcheck source=../scripts/lib/symlinks.sh
-. "$(cd "$(dirname "$0")/.." && pwd)/scripts/lib/symlinks.sh"
+# shellcheck source=../scripts/shell/symlinks.sh
+. "$(cd "$(dirname "$0")/.." && pwd)/scripts/shell/symlinks.sh"
 
 CLAUDE_REPO_URL="https://github.com/bendrucker/claude.git"
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"

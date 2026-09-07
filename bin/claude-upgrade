@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { pluginInventory, pluginSource } from "../scripts/lib/claude-plugins.ts";
+import { pluginInventory, pluginSource } from "#plugins";
 import {
   httpsEnv,
   isDirectory,
@@ -26,21 +26,21 @@ import {
   reviewDirty,
   stripNewlines,
   syncNotify,
-} from "../scripts/lib/git-diff-review.ts";
+} from "#jobs/sync-gate";
 import {
   type Capture,
   capturedOutput,
   log,
   type Output,
   type SpawnOptions,
-} from "../scripts/lib/job-output.ts";
-import { byCodeUnit, canonicalJson } from "../scripts/lib/sorted-json.ts";
+} from "#jobs/output";
+import { byCodeUnit, canonicalJson } from "#jobs/json";
 import {
   type Finding,
   reportFailure,
   reportFindings,
   reportSuccess,
-} from "../scripts/lib/report-failure.ts";
+} from "#jobs/report";
 
 const TITLE = "Claude Upgrade";
 const UPGRADE_JOB = "claude-upgrade";
@@ -261,8 +261,6 @@ export function upgradeRevision(repoDir: string): string {
   return rev === "" ? "unknown" : rev;
 }
 
-// One markdown bullet, opening with a dash, which is why every value reaching
-// report-failure travels in the --flag=value form.
 export function upgradeMeta(): string {
   const version = mergedOutput(["claude", "--version"], undefined, "ignore");
   return `- **Claude:** ${version.status === 0 ? version.output : "unknown"}`;

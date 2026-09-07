@@ -35,7 +35,7 @@
 import { writeSync } from "node:fs";
 import { basename } from "node:path";
 import { parseArgs } from "node:util";
-import { alignColumns } from "../scripts/lib/table.ts";
+import { alignColumns } from "#worktree/table";
 import {
   defaultBranch,
   listWorktrees,
@@ -45,7 +45,7 @@ import {
   prState,
   remoteHost,
   type Worktree,
-} from "../scripts/lib/worktree-state.ts";
+} from "#worktree/state";
 
 const USAGE = [
   "Usage: wt prune [--dry-run] [-i|--interactive] [--min-age=DURATION] [--before[=DURATION]]",

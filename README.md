@@ -36,9 +36,11 @@ A file's name determines how and when it loads:
 | `mise.toml` | Pinned language/tool versions, merged into mise's config. |
 | `install.sh` | Non-symlink setup: plugin managers, system config. Run by `scripts/install`. |
 | `reload.sh` | Tells an already-running program to re-read its config (see [config reloads](#config-reloads)). |
-| `.shellspec` | Opts the topic into [integration tests](#topic-integration-tests) that run in CI. |
+| `*.test.ts` | A [test](#tests) sitting next to whatever it covers. |
 
 The repo-root [`bin/`](bin/) holds executables that go on `$PATH`, like `dotfiles-upgrade` and `bench-startup`.
+
+What those executables share lives in [`packages/`](packages/), imported by specifier rather than by relative path: `#harness` for the test harness, `#jobs/*` for what the unattended jobs have in common, `#worktree/*` for worktrunk state, and `#plugins` for the installed Claude Code plugins. The root `package.json` maps them, and Bun resolves that with no `node_modules` and no install step, which is what lets the 3am jobs run straight from a fast-forwarded clone. [`scripts/shell/`](scripts/shell/) is the POSIX floor beneath it, sourced by `scripts/setup` and `bin/dotf` before bun is installed.
 
 ### Shell Startup
 
@@ -178,18 +180,11 @@ Every one is in place. The program re-reads its config and keeps its state, sess
 
 Each script self-gates, exiting 0 without work when its tool isn't installed or isn't running, so a fresh machine and CI both do nothing. The dispatcher logs a failing script and carries on to the rest. It caps each at a minute, since a wedged socket would otherwise hang the nightly job past the point where it could report anything.
 
-### Topic Integration Tests
+### Tests
 
-Tests run against the real post-bootstrap state. A topic opts in by containing a `.shellspec` file, and [CI discovers them](.github/workflows/test.yml) with a glob:
+Everything runs under `bun test`, shell scripts and TypeScript alike. A test sits next to what it covers and is named for it, so [`scripts/install-trust.test.ts`](scripts/install-trust.test.ts) covers `scripts/install-trust`. [`#harness`](packages/harness/index.ts) holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners reporting a script's status alongside both its streams.
 
-```bash
-for spec in */.shellspec; do
-  dir="${spec%/.shellspec}"
-  (cd "$dir" && shellspec) || exit 1
-done
-```
-
-Because bootstrap runs before them, [these specs](git/spec/) verify the installed config through its symlinks.
+A test's name and where it sits decide where it runs. Most tests stub whatever the script under test calls and run on a bare checkout. The `*.integration.test.ts` files instead read the config this repo installed, through its symlinks, so [CI runs those](.github/workflows/test.yml) on Linux and macOS after bootstrap. [`git/config.integration.test.ts`](git/config.integration.test.ts) is one: it asks the installed global config what `pull.rebase` is set to.
 
 ### Bootstrap vs. Install
 

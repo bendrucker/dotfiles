@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { alignColumns } from "../scripts/lib/table.ts";
-import { parseDuration } from "../scripts/lib/worktree-state.ts";
+import { alignColumns } from "#worktree/table";
+import { parseDuration } from "#worktree/state";
 import {
   type Candidate,
   checklist,

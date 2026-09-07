@@ -2,8 +2,8 @@
 # Usage: install-symlinks [dotfiles-root]
 set -e
 
-# shellcheck source=lib/symlinks.sh
-. "$(dirname "$0")/lib/symlinks.sh"
+# shellcheck source=shell/symlinks.sh
+. "$(dirname "$0")/shell/symlinks.sh"
 
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 : "${XDG_CONFIG_HOME:=$HOME/.config}"

@@ -64,8 +64,8 @@ fi
 # Gated on the binary because a KeepAlive agent with a missing exec target
 # respawns forever. That gate has to live here, not in macos/install.sh, which
 # may run first.
-# shellcheck source=../macos/lib/launch-agent.sh
-source "$ZSH/macos/lib/launch-agent.sh"
+# shellcheck source=../macos/shell/launch-agent.sh
+source "$ZSH/macos/shell/launch-agent.sh"
 
 if [[ -x "$HOME/.local/bin/aw-import-screentime" ]]; then
   install_launch_agent com.user.aw-import-screentime.plist "Screen Time import" || true

@@ -17,9 +17,9 @@
 import { accessSync, constants, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { reviewDirty, syncNotify } from "../scripts/lib/git-diff-review.ts";
-import { log, type Output, streamOutput } from "../scripts/lib/job-output.ts";
-import { notify } from "../scripts/lib/report-failure.ts";
+import { reviewDirty, syncNotify } from "#jobs/sync-gate";
+import { log, type Output, streamOutput } from "#jobs/output";
+import { notify } from "#jobs/report";
 
 const TITLE = "Dotfiles Sync";
 

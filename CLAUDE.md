@@ -14,6 +14,23 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
   - `Brewfile`: Homebrew packages for the topic
 - **`*/symlinks.conf`**: Per-topic declarative symlink maps (`source:target`) discovered and processed by `scripts/install-symlinks`
 - **scripts/**: Bootstrap and setup scripts
+- **packages/**: Shared TypeScript, imported by specifier rather than by relative path
+- **scripts/shell/**: The POSIX shell libraries that run before bun exists
+
+### Shared Modules
+
+`packages/` holds the TypeScript that `bin/` scripts and tests have in common. The root `package.json` maps each one to a subpath specifier, so an import names `#jobs/report` instead of counting `../` up from wherever it sits.
+
+| Specifier | What it holds |
+| --- | --- |
+| `#harness` | The `bun test` harness for driving shell scripts |
+| `#jobs/*` | What the unattended jobs share: output capture, failure reporting, the sync gate, canonical JSON |
+| `#worktree/*` | Worktrunk state, forge queries, column alignment |
+| `#plugins` | The installed Claude Code plugins |
+
+Bun resolves `imports` from the root `package.json` alone, with no `node_modules`, no lockfile, and no install step. That is what keeps this compatible with the 3am jobs, which run `$HOME/.dotfiles/bin/*` under bun straight from a fast-forwarded clone. Adding a dependency to one of these modules would mean the job could not import it until something had installed it, so `#jobs/*` and everything `bin/dotfiles-sync` reaches stays dependency-free.
+
+`scripts/shell/` is the floor underneath. `spin.sh`, `git-sync.sh`, `symlinks.sh`, and `cask-variants.sh` are sourced by `scripts/setup` and `bin/dotf` before bun or gum are installed, so they are POSIX sh sourced by relative path rather than modules resolved by specifier.
 
 ## Common Tasks
 
@@ -66,7 +83,7 @@ Plugins are declared in `neovim/config/init.lua` with `vim.pack.add` and no `ver
 
 Updates are manual. Run `:lua vim.pack.update()`, review the confirmation buffer, `:write` to apply, then commit the lockfile diff. Renovate is not a fallback here, because nvim-treesitter publishes no tags on `main` (its tags sit on the diverged `master` branch) and lualine publishes no version tags at all.
 
-Treesitter parsers are built against a specific nvim-treesitter revision. They break when the plugin moves ahead of them. A `PackChanged` autocommand in `neovim/config/lua/config/treesitter.lua` re-runs `treesitter.update()` on every plugin change, and `neovim/spec/` asserts that each declared language ends up with a parser that attaches a highlighter.
+Treesitter parsers are built against a specific nvim-treesitter revision. They break when the plugin moves ahead of them. A `PackChanged` autocommand in `neovim/config/lua/config/treesitter.lua` re-runs `treesitter.update()` on every plugin change, and `neovim/neovim.integration.test.ts` asserts that each declared language ends up with a parser that attaches a highlighter.
 
 ### Shell Configuration
 
@@ -96,25 +113,26 @@ Config and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev
 - **Point the tool at the worktree file** — for a config the tool can reload at runtime, name the worktree path explicitly. A reload that names the installed path follows the symlink to `~/.dotfiles` and picks up the wrong copy.
 - Test dependencies: `bin/dotf` installs/updates packages
 
-### Topic Integration Tests
+### Tests
 
-Topics can ship a shellspec integration test that runs in CI after bootstrap (so symlinks are installed and packages are available). The bootstrap job iterates `*/.shellspec` and runs `shellspec` in each matching directory.
+Everything runs under `bun test`. A test sits next to what it covers and is named for it: `scripts/install-trust.test.ts` covers `scripts/install-trust`, `herdr/bin/herdr-flock.test.ts` covers that launcher. Shell scripts and TypeScript modules are tested the same way, so there is one runner and one set of conventions to learn.
 
-To add tests to a topic:
+`#harness` holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners that report a script's status alongside both its streams. `shell()` runs a snippet under bash or zsh, which is how a library function gets called directly. Sourcing inside the snippet is what lets a test redefine one of the library's own functions afterwards and have the redefinition win.
 
-1. Create `<topic>/.shellspec` with shellspec options (e.g., `--shell bash`)
-2. Create `<topic>/spec/<name>_spec.sh` with `Describe`/`It` blocks
+A test's name and where it sits decide which CI job runs it:
 
-Existing examples: `git/spec/`, `neovim/spec/`. Tests run against the installed config (symlinks from `~/.dotfiles`), so they verify the real post-bootstrap state.
+- `*.test.ts` run in the `bun` job against a bare checkout. They stub whatever the script under test calls, so nothing they assert depends on the machine.
+- `*.integration.test.ts` run in the `bootstrap` job on Linux and macOS, after symlinks are installed and `brew bundle` has run. They read the installed config through its symlinks, which is state only bootstrap produces.
+- Tests under `.claude/skills/` run in the `skill-tests` job, whichever suffix they carry, because they need that skill's own dependencies. bun's discovery skips dot directories, so the job names the path with a leading `./` to have it read as a path rather than a filter.
+
+An integration test carries no guard that would let it pass on an unbootstrapped machine. Failing there is correct, and the CI job is what decides when it runs. A skip guard is for a genuinely optional dependency, like the font cask that `bin/glyph-scan.integration.test.ts` needs to check a glyph renders.
 
 #### Stubbing a Command for a zsh Script
 
-A spec that runs a script from `bin/` and replaces one of its dependencies with a stub has to isolate zsh's startup files. Those scripts use a `#!/usr/bin/env zsh` shebang, and zsh sources `~/.zshenv` on every invocation, non-interactive ones included. `zsh/.zshenv` runs `brew shellenv`, which can put `$HOMEBREW_PREFIX/bin` ahead of whatever the spec prepended to `$PATH`, so the real command wins and the stub never runs. Point `ZDOTDIR` at an empty directory for the duration of the call. zsh then finds no `.zshenv` and leaves `$PATH` alone.
+A test that runs a script from `bin/` and replaces one of its dependencies with a stub has to isolate zsh's startup files. Those scripts use a `#!/usr/bin/env zsh` shebang, and zsh sources `~/.zshenv` on every invocation, non-interactive ones included. `zsh/.zshenv` runs `brew shellenv`, which can put `$HOMEBREW_PREFIX/bin` ahead of the stub directory, so the real command wins and the stub never runs. Point `ZDOTDIR` at an empty directory for the duration of the call. zsh then finds no `.zshenv` and leaves `$PATH` alone.
 
-```sh
-run_with_stub() {
-  (cd "$dir" && PATH="$stub_bin:$PATH" ZDOTDIR="$empty_dir" "$script" "$@")
-}
+```ts
+run([script, ...args], { cwd: box.dir, path: [box.bin], env: { ZDOTDIR: box.mkdir("empty") } });
 ```
 
 The shape of this failure is what makes it worth documenting. It passes on a developer machine, where `HOMEBREW_PREFIX` is already exported and `brew shellenv` emits no `PATH` line, and fails in CI, where it does. Prepending to `$PATH` is enough to stub a command for a bash script, so the habit carries over and breaks silently.

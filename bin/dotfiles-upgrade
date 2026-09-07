@@ -14,8 +14,8 @@
 import { realpathSync, writeSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { SKIP_ESCALATION } from "../scripts/lib/git-diff-review.ts";
-import { reportFailure, reportSuccess } from "../scripts/lib/report-failure.ts";
+import { SKIP_ESCALATION } from "#jobs/sync-gate";
+import { reportFailure, reportSuccess } from "#jobs/report";
 
 const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
 

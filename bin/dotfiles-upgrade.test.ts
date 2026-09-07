@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { skipMessage } from "../scripts/lib/git-diff-review.ts";
+import { skipMessage } from "#jobs/sync-gate";
 import {
   currentRevision,
   driftFingerprint,
@@ -121,15 +121,13 @@ const REAL_PATH = process.env.PATH ?? "";
 const GIT = Bun.which("git", { PATH: REAL_PATH });
 // $PATH holds nothing but the stub directory, so the real utilities the
 // wrapper and the stubs shell out to have to be linked into it: bin/spin
-// resolves scripts/lib/spin.sh through `dirname`, and the stubs print their
+// resolves scripts/shell/spin.sh through `dirname`, and the stubs print their
 // fixtures with `cat`. Neither touches anything outside the sandbox.
 const UTILITIES = ["dirname", "cat"].map(
   (name) => Bun.which(name, { PATH: REAL_PATH }) ?? join("/usr/bin", name),
 );
 
-// Mirrors scripts/spec/spec_helper.sh: the spin branch runs the command after
-// the separator, and `gum log … msg` echoes msg to stderr, where the real gum
-// writes it.
+// `gum log … msg` echoes msg to stderr, where the real gum writes it.
 const GUM_STUB = `#!/bin/sh
 case "$1" in
   spin)
@@ -264,8 +262,8 @@ describe("syncFingerprint", () => {
   });
 
   // The gate prints the dirty tree's diff to the stream this reads, and the
-  // phrase is tracked text in this repo, so an uncommitted edit to a spec that
-  // carries it would otherwise forge an escalation out of diff content.
+  // phrase is tracked text in this repo, so an uncommitted edit to a test file
+  // that carries it would otherwise forge an escalation out of diff content.
   test("ignores the phrase outside a WARN line the gate logged", () => {
     const diff = [
       "ERRO Local changes present - skipping sync",

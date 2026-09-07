@@ -6,7 +6,7 @@ set -e
 
 # Before the cd: ${0:A} resolves against the current directory, so a relative
 # $0 would pick up the new one and name a path inside it.
-source "${0:A:h}/../scripts/lib/spin.sh"
+source "${0:A:h}/../scripts/shell/spin.sh"
 
 cd "${0:h}"
 
