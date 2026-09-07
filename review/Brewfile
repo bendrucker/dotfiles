@@ -1,0 +1,4 @@
+tap 'greptileai/tap'
+brew 'greptileai/tap/greptile'
+
+cask 'coderabbit'
