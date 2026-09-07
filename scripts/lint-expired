@@ -1,112 +1,173 @@
-#!/usr/bin/env sh
-# Usage: lint-expired [dotfiles-root]
-#
-# Fail once a one-off cleanup step has outlived the date its author gave it.
-#
-# Migrations are correct to write and easy to leave behind: removing a
-# superseded launchd plist, dropping a package that moved, working around a bug
-# that has since been fixed. Nothing about the code says when it stopped being
-# necessary, so it accretes. Tagging one with a date in a comment moves that
-# judgement out of memory and into CI, which is the only place it will actually
-# resurface.
-#
-#   # EXPIRES: 2026-10-26 every machine has the upgrade job
-#
-# Reaching the date prompts a review. Delete the code, or push the date out
-# because the reason still holds.
-set -e
+#!/usr/bin/env bun
+//
+// Fail once a one-off cleanup step has outlived the date its author gave it.
+//
+// Migrations are correct to write and easy to leave behind: removing a
+// superseded launchd plist, dropping a package that moved, working around a bug
+// that has since been fixed. Nothing about the code says when it stopped being
+// necessary, so it accretes. Tagging one with a date in a comment moves that
+// judgement out of memory and into CI, which is the only place it will actually
+// resurface.
+//
+//   # EXPIRES: 2026-10-26 every machine has the upgrade job
+//
+// Reaching the date prompts a review. Delete the code, or push the date out
+// because the reason still holds.
 
-DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
-cd "$DOTFILES_ROOT"
+import { realpathSync } from "node:fs";
+import { join } from "node:path";
 
-# Overridable so the spec can test against fixed dates.
-today="${LINT_EXPIRED_TODAY:-$(date +%Y-%m-%d)}"
-today_num=$(echo "$today" | tr -d -)
+const USAGE = [
+  "usage: lint-expired [dotfiles-root]",
+  "",
+  "Fail once a marked cleanup step has outlived the date its author gave it.",
+  "A marker reads `EXPIRES: YYYY-MM-DD reason`.",
+].join("\n");
 
-marker='EXPIRES:'
-tab=$(printf '\t')
+export const MARKER = "EXPIRES:";
 
-matches=$(git grep -n -- "$marker" || true)
+// This script and its own cases both document the marker, so they match
+// themselves.
+const SKIPPED = new Set(["scripts/lint-expired", "scripts/lint-expired.test.ts"]);
 
-# Records go out through a pipeline rather than a here-document, which bash
-# stages through a temp file it picks itself. A denied write there would leave
-# this check exiting 0 with a clean report.
-classify_matches() {
-  while IFS=: read -r file line rest; do
-    [ -n "$file" ] || continue
+const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
-    # This script and its spec both document the marker, so they match themselves.
-    case "$file" in
-      scripts/lint-expired | scripts/spec/lint_expired_spec.sh) continue ;;
-    esac
-
-    date_field=$(printf '%s\n' "$rest" |
-      sed -n "s/.*${marker}[[:space:]]*\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\).*/\1/p")
-
-    # A typo'd date that silently never fires would defeat the point, so treat
-    # an unparseable marker as a failure rather than skipping it. Checking the
-    # month and day ranges independently would admit dates like 2026-02-31, so
-    # the day is measured against the length of that specific month.
-    day_limit=0
-    if [ -n "$date_field" ]; then
-      # Zero padding reads as octal in arithmetic, so strip it first.
-      year=$(echo "$date_field" | cut -d- -f1)
-      month=$(echo "$date_field" | cut -d- -f2 | sed 's/^0//')
-      day=$(echo "$date_field" | cut -d- -f3 | sed 's/^0//')
-
-      case "$month" in
-        1 | 3 | 5 | 7 | 8 | 10 | 12) day_limit=31 ;;
-        4 | 6 | 9 | 11) day_limit=30 ;;
-        2)
-          day_limit=28
-          if [ $((year % 4)) -eq 0 ] &&
-            { [ $((year % 100)) -ne 0 ] || [ $((year % 400)) -eq 0 ]; }; then
-            day_limit=29
-          fi
-          ;;
-      esac
-    fi
-
-    if [ "$day_limit" -eq 0 ] || [ "$day" -lt 1 ] || [ "$day" -gt "$day_limit" ]; then
-      printf 'M%s%s:%s\n' "$tab" "$file" "$line"
-      continue
-    fi
-
-    if [ "$(echo "$date_field" | tr -d -)" -lt "$today_num" ]; then
-      reason=$(printf '%s\n' "$rest" |
-        sed -n "s/.*${marker}[[:space:]]*[0-9-]\{10\}[[:space:]]*//p")
-      printf 'E%s%s:%s%s%s%s%s\n' "$tab" "$file" "$line" "$tab" "$date_field" "$tab" "$reason"
-    fi
-  done
+export interface Marker {
+  // Empty when the text carries no date in the form the marker calls for.
+  date: string;
+  reason: string;
 }
 
-records=$(printf '%s\n' "$matches" | classify_matches)
+export function parseMarker(text: string): Marker {
+  const dated = new RegExp(`${MARKER}\\s*(\\d{4}-\\d{2}-\\d{2})\\s*`, "g");
 
-malformed=$(printf '%s\n' "$records" | grep "^M${tab}" | cut -f2- || true)
-expired=$(printf '%s\n' "$records" | grep "^E${tab}" | cut -f2- || true)
+  // The last marker on the line, matching what a greedy leading `.*` picked out
+  // for the sed this replaces.
+  let last: RegExpExecArray | undefined;
+  for (let match = dated.exec(text); match !== null; match = dated.exec(text)) last = match;
+  if (last === undefined) return { date: "", reason: "" };
 
-status=0
+  return { date: last[1] ?? "", reason: text.slice(last.index + last[0].length) };
+}
 
-if [ -n "$malformed" ]; then
-  echo "ERROR: malformed $marker marker (expected $marker YYYY-MM-DD reason):" >&2
-  printf '%s\n' "$malformed" | sed 's/^/  /' >&2
-  status=1
-fi
+// Checking the month and the day independently would admit a date like
+// 2026-02-31, so the day is measured against the length of that specific month.
+export function isRealDate(date: string): boolean {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (parts === null) return false;
 
-if [ -n "$expired" ]; then
-  expired_count=$(printf '%s\n' "$expired" | grep -c . || true)
-  noun="migrations are"
-  [ "$expired_count" -eq 1 ] && noun="migration is"
-  echo "ERROR: $expired_count $noun past the expiry date." >&2
-  printf '%s\n' "$expired" | while IFS="$tab" read -r location date_field reason; do
-    [ -n "$location" ] || continue
-    echo "  $location  $marker $date_field" >&2
-    if [ -n "$reason" ]; then
-      echo "    $reason" >&2
-    fi
-  done
-  echo "  Remove it, or push the date out because the reason still holds." >&2
-  status=1
-fi
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
+  if (month < 1 || month > 12) return false;
 
-exit "$status"
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const limit = month === 2 && leap ? 29 : (MONTH_LENGTHS[month - 1] ?? 0);
+  return day >= 1 && day <= limit;
+}
+
+export interface Finding {
+  kind: "malformed" | "expired";
+  location: string;
+  date: string;
+  reason: string;
+}
+
+export function findings(matches: string[], today: string): Finding[] {
+  const found: Finding[] = [];
+
+  for (const match of matches) {
+    const [file, line, ...rest] = match.split(":");
+    if (file === undefined || file === "" || line === undefined) continue;
+    if (SKIPPED.has(file)) continue;
+
+    const marker = parseMarker(rest.join(":"));
+    const location = `${file}:${line}`;
+
+    // A typo'd date that silently never fires would defeat the point, so an
+    // unreadable marker fails rather than being passed over.
+    if (!isRealDate(marker.date)) {
+      found.push({ kind: "malformed", location, date: "", reason: "" });
+      continue;
+    }
+
+    // The expiry date itself is not yet due.
+    if (marker.date < today) {
+      found.push({ kind: "expired", location, date: marker.date, reason: marker.reason });
+    }
+  }
+
+  return found;
+}
+
+export function report(found: Finding[]): string[] {
+  const lines: string[] = [];
+
+  const malformed = found.filter((finding) => finding.kind === "malformed");
+  if (malformed.length > 0) {
+    lines.push(`ERROR: malformed ${MARKER} marker (expected ${MARKER} YYYY-MM-DD reason):`);
+    for (const finding of malformed) lines.push(`  ${finding.location}`);
+  }
+
+  const expired = found.filter((finding) => finding.kind === "expired");
+  if (expired.length > 0) {
+    const noun = expired.length === 1 ? "migration is" : "migrations are";
+    lines.push(`ERROR: ${expired.length} ${noun} past the expiry date.`);
+    for (const finding of expired) {
+      lines.push(`  ${finding.location}  ${MARKER} ${finding.date}`);
+      if (finding.reason !== "") lines.push(`    ${finding.reason}`);
+    }
+    lines.push("  Remove it, or push the date out because the reason still holds.");
+  }
+
+  return lines;
+}
+
+// The date the machine is on, in its own timezone. A UTC reading would expire a
+// marker up to a day early west of Greenwich.
+export function today(): string {
+  const override = process.env.LINT_EXPIRED_TODAY ?? "";
+  if (override !== "") return override;
+
+  const now = new Date();
+  const pad = (part: number): string => String(part).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function main(args: string[]): number {
+  if (args.includes("-h") || args.includes("--help")) {
+    process.stdout.write(`${USAGE}\n`);
+    return 0;
+  }
+
+  const root = realpathSync(args[0] ?? join(import.meta.dir, ".."));
+
+  const grep = Bun.spawnSync({
+    cmd: ["git", "grep", "-n", "--", MARKER],
+    cwd: root,
+    env: process.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  // git grep exits 1 on no match, which is the clean answer here. Anything above
+  // that is a git that could not read the tree, and a lint that reports nothing
+  // because it never looked is worse than one that fails.
+  if (grep.exitCode > 1) {
+    process.stderr.write(`ERROR: git grep could not search ${root}\n`);
+    return 1;
+  }
+
+  const matches = grep.stdout
+    .toString()
+    .split("\n")
+    .filter((line) => line !== "");
+  const lines = report(findings(matches, today()));
+  if (lines.length === 0) return 0;
+
+  process.stderr.write(`${lines.join("\n")}\n`);
+  return 1;
+}
+
+if (import.meta.main) process.exit(main(process.argv.slice(2)));
