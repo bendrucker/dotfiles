@@ -100,7 +100,7 @@ test("resolves a terminal id", () => {
 });
 
 // A dropped mosh link leaves its client holding the terminal, so reclaiming
-// one is the ordinary case rather than the exception.
+// one is the ordinary case.
 test("passes --takeover through", () => {
   stubHerdr();
   const r = attach("--takeover", "shipper");

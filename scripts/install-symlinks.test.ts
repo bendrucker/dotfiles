@@ -52,12 +52,9 @@ describe("install-symlinks remove_stale", () => {
     expect(r.status).toBe(0);
     expect(r.stdout).toContain(`removing stale symlink ${home}/.stale`);
     expect(r.stdout).toContain(`removing stale symlink ${xdg}/nested/stale`);
-    // Declared link created.
     expect(lstatSync(join(home, ".kept")).isSymbolicLink()).toBe(true);
-    // Stale links into root removed.
     expect(existsSync(join(home, ".stale"))).toBe(false);
     expect(existsSync(join(xdg, "nested", "stale"))).toBe(false);
-    // Link pointing outside root left untouched.
     expect(lstatSync(join(home, ".unrelated")).isSymbolicLink()).toBe(true);
   });
 });

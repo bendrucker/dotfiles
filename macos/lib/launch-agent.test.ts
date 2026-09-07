@@ -10,7 +10,6 @@ function launchAgentPlan(...args: string[]) {
 
 describe("launch_agent_plan", () => {
   describe("for every combination of inputs", () => {
-    // unchanged loaded is_self  plan
     test.each<{ unchanged: number; loaded: number; is_self: number; plan: string }>([
       { unchanged: 1, loaded: 1, is_self: 0, plan: "skip" },
       { unchanged: 1, loaded: 1, is_self: 1, plan: "skip" },

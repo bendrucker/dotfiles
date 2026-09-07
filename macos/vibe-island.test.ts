@@ -207,7 +207,6 @@ describe("macos/vibe-island.sh", () => {
       expect(actionLog()).toContain("display notification");
     });
 
-    // A preference that could not be written is not the app overriding one.
     test("reports a failed write as its own, not as the app ignoring the opt-out", () => {
       const r = runVibeIsland({ ...env, WRITE_FAILS: "1" });
       expect(r.status).toBe(0);

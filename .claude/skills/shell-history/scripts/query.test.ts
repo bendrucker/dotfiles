@@ -10,9 +10,9 @@ let dbPath: string;
 
 // Build a small sqlite history db (atuin's schema) and point the runner at it
 // via ATUIN_HISTORY_DB, the same override seam the runner resolves at runtime.
-// Timestamps are nanoseconds, matching atuin. "Recent" rows land at now. One
-// "old" row sits ~400 days back to exercise the --recent cutoff. One row is
-// soft-deleted (deleted_at set) to confirm it is filtered out.
+// Timestamps are nanoseconds, matching atuin. One "old" row sits ~400 days back
+// to exercise the --recent cutoff. One row is soft-deleted (deleted_at set) to
+// confirm it is filtered out.
 beforeEach(() => {
   box = sandbox("shell-history-query");
   dbPath = box.path("history.db");
@@ -21,9 +21,7 @@ beforeEach(() => {
   const now = nowSeconds * 1_000_000_000n;
   const old = (nowSeconds - 400n * 86400n) * 1_000_000_000n;
 
-  // Piped rather than fed by here-doc, for the same reason as query.sh: bash 3.2
-  // stages a here-doc through a temp file in the cwd or /var/tmp, so a
-  // read-only cwd breaks an otherwise fine run.
+  // Piped rather than fed by here-doc: bash 3.2 stages a here-doc through a temp file in the cwd or /var/tmp, so a read-only cwd breaks an otherwise fine run.
   const sql = [
     "INSTALL sqlite; LOAD sqlite;",
     `ATTACH '${dbPath}' AS fx (TYPE sqlite);`,

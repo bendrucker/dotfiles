@@ -3,9 +3,8 @@ import { join } from "node:path";
 import { repoRoot, run, sandbox, stubGum, type Run, type Sandbox } from "../scripts/lib/shell-fixtures.ts";
 
 // bin/spin is the command form of scripts/lib/spin.sh, for the TypeScript
-// callers that cannot source it. scripts/lib/spin.test.ts covers the branch
-// itself. These cover what the wrapper adds: that the arguments arrive as
-// given and the command's status comes back out.
+// callers that cannot source it. These cover what the wrapper adds: that the
+// arguments arrive as given and the command's status comes back out.
 
 const script = join(repoRoot, "bin", "spin");
 

@@ -3,11 +3,10 @@ import { join } from "node:path";
 import { must, repoRoot, run, sandbox, stubGum, type Run, type Sandbox } from "../scripts/lib/shell-fixtures.ts";
 
 // bin/git-sync is the command form of scripts/lib/git-sync.sh, for the
-// TypeScript callers that cannot source it. The library's own behaviour is
-// covered by scripts/lib/git-sync.test.ts. These cover the boundary: the three
-// status codes a caller reads instead of $GIT_SYNC_*, and the environment
-// git_https_env would have exported, printed instead so the caller can scope it
-// to the children that need it.
+// TypeScript callers that cannot source it. These cover the boundary: the
+// three status codes a caller reads instead of $GIT_SYNC_*, and the
+// environment git_https_env would have exported, printed instead so the
+// caller can scope it to the children that need it.
 
 const script = join(repoRoot, "bin", "git-sync");
 

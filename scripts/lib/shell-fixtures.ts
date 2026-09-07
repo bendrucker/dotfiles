@@ -1,7 +1,3 @@
-// Fixtures for tests that drive this repo's shell scripts: a sandbox to build a
-// fake tree in, stub commands to shadow the real ones, and runners that report
-// a script's status alongside both its streams.
-//
 // A stub only shadows the real command while the directory holding it comes
 // first on $PATH, so `run` and `shell` take the stub directories rather than
 // leaving each test to assemble a PATH.
@@ -92,7 +88,6 @@ export function commandExists(name: string): boolean {
 }
 
 export interface Sandbox {
-  /** The sandbox root. */
   dir: string;
   /** A directory for stub commands, empty until something is written into it. */
   bin: string;
@@ -100,7 +95,6 @@ export interface Sandbox {
   path(...parts: string[]): string;
   /** Write an executable stub into `bin`, or into `dir` when given a path. */
   stub(name: string, body: string, options?: { shebang?: string }): string;
-  /** Create a directory inside the sandbox and return it. */
   mkdir(...parts: string[]): string;
   /** Write a file inside the sandbox, creating its parent directories. */
   write(name: string, contents: string): string;
@@ -121,9 +115,7 @@ export function sandbox(prefix: string): Sandbox {
     bin,
     path,
     stub(name, body, options = {}) {
-      // A bare name lands in bin, where $PATH can find it. A path is for a stub
-      // that has to sit somewhere else, such as a second PATH holding fewer
-      // commands.
+      // A path is for a stub that has to sit somewhere else, such as a second PATH holding fewer commands.
       const target = name.includes("/") ? path(name) : join(bin, name);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, `${options.shebang ?? "#!/bin/sh"}\n${body}\n`);

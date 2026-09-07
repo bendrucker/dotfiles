@@ -39,9 +39,7 @@ test("is reachable on PATH from a login shell", () => {
   expect(resolveOnPath("herdr", "herdr-flock")).toBe(realpathSync(launcher));
 });
 
-// The prefix+alt+f binding is the only [[keys.command]] block naming this
-// launcher, so isolating the block between the key line and the next blank
-// line is what a single sed pass over config.toml did.
+// The prefix+alt+f binding is the only [[keys.command]] block naming this launcher.
 function flockBinding(): string {
   const blocks = readFileSync(config, "utf8").split("\n\n");
   const block = blocks.find((b) => b.includes('key = "prefix+alt+f"'));
@@ -60,7 +58,7 @@ test("binds the launcher by a path rather than a name PATH has to resolve", () =
 });
 
 // A prefix that can expand to nothing would leave an absolute path rooted at
-// /, which is the same silent miss in a new disguise.
+// /, silently resolving to the wrong location.
 test("falls back to the installed root when the server carries no $ZSH", () => {
   const r = shell(`echo ${flockBinding()}`, { env: { ZSH: undefined } });
   expect(r.stdout.trim()).toBe(`${process.env.HOME}/.dotfiles/herdr/bin/herdr-flock`);

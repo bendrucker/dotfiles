@@ -592,8 +592,6 @@ describe("shim", () => {
     );
   });
 
-  // bin/dotfiles-upgrade and bin/worktree-prune both call it with only the
-  // required five.
   test("defaults the three optional positionals", () => {
     const { shimCopy, argv } = argvFixture();
     const status = sourceShim(shimCopy, "report_failure JOB TITLE COMMAND OUTPUT REVISION");
@@ -632,8 +630,6 @@ describe("shim", () => {
     expect(argv().trimEnd()).toBe(["success", "--job=JOB"].join("\n"));
   });
 
-  // scripts/lib/git-diff-review.test.ts redefines notify to capture "$1: $2",
-  // so the first two positionals are title and message wherever it is called.
   test("takes a title and a message", () => {
     const { shimCopy, argv } = argvFixture();
     const status = sourceShim(shimCopy, "notify TITLE MESSAGE");
@@ -641,7 +637,6 @@ describe("shim", () => {
     expect(argv().trimEnd()).toBe(["notify", "--title=TITLE", "--message=MESSAGE"].join("\n"));
   });
 
-  // bin/dotfiles-sync is the only caller that asks for a sound.
   test("passes a third positional as the sound", () => {
     const { shimCopy, argv } = argvFixture();
     const status = sourceShim(shimCopy, "notify TITLE MESSAGE Glass");

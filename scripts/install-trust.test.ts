@@ -79,8 +79,6 @@ function runScript() {
 }
 
 describe("install-trust", () => {
-  // The steady-state run: no `brew tap` calls at all, only the bundle list and
-  // one batched trust.
   test("does not tap a repository that is already on disk", () => {
     declared("oven-sh/bun", "schpet/tap");
     installed("oven-sh/bun", "schpet/tap");
