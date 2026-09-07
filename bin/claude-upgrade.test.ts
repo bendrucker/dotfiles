@@ -9,6 +9,7 @@ import {
   driftFields,
   failureFingerprint,
   hookCommands,
+  installAgentHooks,
   main,
   reportDrift,
   revertCosmeticJsonChanges,
@@ -248,6 +249,32 @@ beforeEach(() => {
   // the whole observation of whether a latch let one through.
   writeScript(join(stubs, "open"), `printf '%s\\n' "$1" >>"${join(sandbox, "todos")}"`);
   writeScript(join(stubs, "osascript"), `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
+  // Both installers rewrite the repo's settings.json, which is the whole of what
+  // the install step has to sort out. herdr writes before it can fail, so a
+  // failed run still leaves an entry for the discard to take back. A failing
+  // moshi-hook exits first, so its entries are only ever a finished install's.
+  const hookLog = join(sandbox, "hooks.log");
+  const settingsWrite = (name: string) =>
+    `printf '{"${name}":1}\\n' >"$AGENT_HOOK_REPO/user/settings.json"`;
+  writeScript(
+    join(stubs, "herdr"),
+    [
+      `printf '%s %s\\n' "herdr" "$*" >>"${hookLog}"`,
+      settingsWrite("herdr"),
+      `[ -n "$HERDR_LOCKS" ] && chmod 0444 "$AGENT_HOOK_REPO/user/settings.json"`,
+      '[ -n "$HERDR_FAILS" ] && exit 1',
+      "exit 0",
+    ].join("\n"),
+  );
+  writeScript(
+    join(stubs, "moshi-hook"),
+    [
+      `printf '%s %s\\n' "moshi-hook" "$*" >>"${hookLog}"`,
+      '[ -n "$MOSHI_FAILS" ] && exit 1',
+      settingsWrite("moshi-hook"),
+      "exit 0",
+    ].join("\n"),
+  );
 
   process.env.HOME = sandbox;
   process.env.PATH = `${stubs}:${environment.PATH}`;
@@ -255,6 +282,10 @@ beforeEach(() => {
   process.env.CLAUDE_PLUGIN_LOG = join(sandbox, "plugin.log");
   process.env.CLAUDE_UPDATE_FAILS = "";
   process.env.CLAUDE_DRAINS_STDIN = "";
+  process.env.AGENT_HOOK_REPO = repo;
+  process.env.HERDR_FAILS = "";
+  process.env.HERDR_LOCKS = "";
+  process.env.MOSHI_FAILS = "";
   writeFileSync(process.env.CLAUDE_PLUGIN_LOG, "");
 
   writePluginFixture();
@@ -292,6 +323,10 @@ afterEach(() => {
   delete process.env.CLAUDE_PLUGIN_LOG;
   delete process.env.CLAUDE_UPDATE_FAILS;
   delete process.env.CLAUDE_DRAINS_STDIN;
+  delete process.env.AGENT_HOOK_REPO;
+  delete process.env.HERDR_FAILS;
+  delete process.env.HERDR_LOCKS;
+  delete process.env.MOSHI_FAILS;
   rmSync(sandbox, { recursive: true, force: true });
 });
 
@@ -721,6 +756,69 @@ describe("claudeRepoHome", () => {
   });
 });
 
+// herdr's installer appends a SessionStart entry it cannot recognize in the
+// committed $HOME form, and its status check reads only the script's version
+// marker. moshi's entries are what the committed file is meant to carry.
+describe("installAgentHooks", () => {
+  function repoSettings(): unknown {
+    return JSON.parse(readFileSync(join(repo, "user", "settings.json"), "utf8"));
+  }
+
+  test("discards herdr's settings edit and keeps moshi's", () => {
+    expect(installAgentHooks(out, repo, process.env)).toBe(true);
+    expect(readLog("hooks.log")).toBe(
+      "herdr integration install claude\nmoshi-hook install --target claude\n",
+    );
+    expect(repoSettings()).toEqual({ "moshi-hook": 1 });
+  });
+
+  // herdr writes its entry before it can fail on a later step. The discard has to
+  // take that back too: left in the tree, it holds the sync gate shut on every
+  // later run, and that gate is what this step needs to clear to run again.
+  test("reports a failed install and still discards what it wrote", () => {
+    process.env.HERDR_FAILS = "1";
+    process.env.MOSHI_FAILS = "1";
+
+    expect(installAgentHooks(out, repo, process.env)).toBe(false);
+    expect(out.captured()).toContain("herdr integration install failed");
+    expect(out.captured()).toContain("moshi-hook install failed");
+    expect(settingsStatus()).toBe("clean");
+  });
+
+  // Only what herdr wrote comes back out. An edit already in the tree when the
+  // install started belongs to whoever made it, and restoring the committed file
+  // would take that with it.
+  test("keeps an edit the install did not make", () => {
+    rmSync(join(stubs, "moshi-hook"));
+    writeRepoSettings({ unrelated: 1 });
+
+    expect(installAgentHooks(out, repo, process.env)).toBe(true);
+    expect(repoSettings()).toEqual({ unrelated: 1 });
+  });
+
+  // The entry survives a restore that could not write, and the sync gate blocks
+  // on it the next night. Reporting it here is what says which run put it there.
+  test("reports a restore that could not run", () => {
+    rmSync(join(stubs, "moshi-hook"));
+    process.env.HERDR_LOCKS = "1";
+
+    expect(installAgentHooks(out, repo, process.env)).toBe(false);
+    expect(out.captured()).toContain("Could not discard herdr's edit");
+    expect(repoSettings()).toEqual({ herdr: 1 });
+  });
+
+  // A missing installer stays out of the log rather than warning every night.
+  test("skips an installer that is not on PATH", () => {
+    rmSync(join(stubs, "herdr"));
+    rmSync(join(stubs, "moshi-hook"));
+    const env = { ...process.env, PATH: `${stubs}:/usr/bin:/bin` };
+
+    expect(installAgentHooks(out, repo, env)).toBe(true);
+    expect(out.captured()).toBe("");
+    expect(readLog("hooks.log")).toBe("");
+  });
+});
+
 describe("upgrade", () => {
   function auditStub(status: number): string {
     const path = join(sandbox, `audit-${status}`);
@@ -730,6 +828,22 @@ describe("upgrade", () => {
 
   test("succeeds when the sync, the updates and the audit all do", () => {
     expect(upgrade(out, repo, { audit: auditStub(0) })).toBe(0);
+    expect(readLog("plugin.log")).toContain("update alpha@first");
+  });
+
+  // The install follows the sync, so the pull that removes a stale script from
+  // the clone runs against a clean tree before the installer puts the current one
+  // back.
+  test("reinstalls the hooks after the sync and before the plugins", () => {
+    expect(upgrade(out, repo, { audit: auditStub(0) })).toBe(0);
+    const log = out.captured();
+    expect(log.indexOf("Syncing Claude repository")).toBeLessThan(log.indexOf("Installing herdr"));
+    expect(log.indexOf("Installing moshi")).toBeLessThan(log.indexOf("Updating marketplaces"));
+  });
+
+  test("fails when a hook install fails, and still updates the plugins", () => {
+    process.env.HERDR_FAILS = "1";
+    expect(upgrade(out, repo, { audit: auditStub(0) })).toBe(1);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 

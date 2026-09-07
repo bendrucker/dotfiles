@@ -58,7 +58,9 @@ without removing, `--force` skips the prompt.
 
 ## Plugins
 
-`claude-upgrade` runs nightly. It syncs the Claude config repo, refreshes every marketplace, then updates every plugin installed at user scope, disabled ones included. `claude plugin enable` does not update, so a plugin skipped while disabled would come back stale months later.
+`claude-upgrade` runs nightly. It syncs the Claude config repo, reinstalls the herdr and moshi integrations, refreshes every marketplace, then updates every plugin installed at user scope, disabled ones included. `claude plugin enable` does not update, so a plugin skipped while disabled would come back stale months later. Each install is skipped where its binary is absent.
+
+The herdr install writes `~/.claude/hooks/herdr-agent-state.sh`, which the config repo gitignores. It also appends a `SessionStart` entry to `settings.json`, which the upgrade discards: herdr cannot recognize the committed `$HOME` form of the same entry and only checks the script's version marker. What comes back is the file as it stood before the install, so an edit already in the tree survives. The restore runs whether or not the install finished, because an entry left behind stops the next night's run at the sync gate, before it reaches the step that would clear it. The moshi install's edits stay. A diff in `settings.json` is a moshi upgrade, and the run stops at that same gate until the diff is committed.
 
 A plugin no longer offered by its marketplace is left alone. Nothing can update it, so the fix is to uninstall it, and the audit says so.
 
