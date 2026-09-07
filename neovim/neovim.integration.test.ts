@@ -48,8 +48,13 @@ describe("neovim", () => {
     "installs a working parser for every declared treesitter language",
     () => {
       const r = run(["nvim", "--headless", "-c", `luafile ${join(support, "treesitter_check.lua")}`], { cwd: box.dir });
+      const output = r.stdout + r.stderr;
+      // The FAIL: lines name which language broke and why, so they are asserted
+      // before the status. A bare status assertion reports the exit code alone
+      // and discards them.
+      expect(output).not.toContain("FAIL:");
+      expect(output).toContain("tree-sitter CLI");
       expect(r.status).toBe(0);
-      expect(r.stdout + r.stderr).toContain("tree-sitter CLI");
     },
     timeout,
   );
