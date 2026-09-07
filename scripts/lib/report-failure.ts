@@ -2,7 +2,7 @@
 // Things to-do filed through `open`, and a Darwin notification. bin/report-failure
 // is the CLI over this, and scripts/lib/report-failure.sh the shim the jobs source.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -138,6 +138,12 @@ export function readLatch(job: string): string {
   } catch {
     return "";
   }
+}
+
+// The counterpart to writeLatch, so a caller clearing a latch needs no more
+// knowledge of where it sits on disk than one writing to it.
+export function clearLatch(job: string): void {
+  rmSync(statusFile(job), { force: true });
 }
 
 export function writeLatch(job: string, value: string): void {

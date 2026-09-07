@@ -38,6 +38,7 @@ let out: Capture;
 const environment = {
   PATH: process.env.PATH,
   GUM_CHOICE: process.env.GUM_CHOICE,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 };
 
 // httpsEnv reads and extends whatever GIT_CONFIG_* the run already carries, so
@@ -163,6 +164,7 @@ beforeEach(() => {
   repo = join(sandbox, "repo");
   origin = join(sandbox, "origin.git");
   mkdirSync(stubs);
+  process.env.XDG_STATE_HOME = join(sandbox, "state");
 
   // The spin branch runs the command after the separator, and log echoes the
   // message to stderr, where the real gum writes it. choose answers with
@@ -263,6 +265,8 @@ afterEach(() => {
   process.env.PATH = environment.PATH;
   if (environment.GUM_CHOICE === undefined) delete process.env.GUM_CHOICE;
   else process.env.GUM_CHOICE = environment.GUM_CHOICE;
+  if (environment.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = environment.XDG_STATE_HOME;
   for (const key of gitConfigKeys()) delete process.env[key];
   for (const [key, value] of gitConfigEnvironment) process.env[key] = value;
   rmSync(sandbox, { recursive: true, force: true });
@@ -603,6 +607,62 @@ describe("reviewDirty", () => {
     const captured = out.captured();
     expect(captured).toContain("?? stray.txt");
     expect(captured).toContain("+++ b/stray.txt");
+  });
+
+  // The jobs latch their to-do on the log's warnings, so a tree that stays dirty
+  // in the same way files once and then holds the sync shut in silence. From the
+  // second unattended skip on, the count in a row goes into the log at the power
+  // of two below it, so the fingerprint moves on a lengthening cadence.
+  test("escalates on a lengthening cadence while the skips continue", () => {
+    writeFileSync(join(repo, "stray.txt"), "stray\n");
+    const skip = (): string => {
+      out = recording();
+      reviewDirty(out, repo, "Title", { interactive: () => false });
+      return out.captured().match(/Sync skipped (\d+) runs in a row/)?.[1] ?? "";
+    };
+
+    expect(Array.from({ length: 8 }, skip)).toEqual(["", "2", "2", "4", "4", "4", "4", "8"]);
+  });
+
+  test("forgets the skips once the gate lets a sync through", () => {
+    writeFileSync(join(repo, "stray.txt"), "stray\n");
+    reviewDirty(out, repo, "Title", { interactive: () => false });
+    reviewDirty(out, repo, "Title", { interactive: () => false });
+
+    rmSync(join(repo, "stray.txt"));
+    expect(reviewDirty(out, repo, "Title")).toBe(true);
+
+    writeFileSync(join(repo, "stray.txt"), "stray\n");
+    out = recording();
+    reviewDirty(out, repo, "Title", { interactive: () => false });
+    expect(out.captured()).not.toContain("runs in a row");
+  });
+
+  // The count only paces the notifications, so a state directory it cannot
+  // write must not preempt the skip the gate exists to perform. A file standing
+  // where the directory goes is the cheapest way to make every write fail.
+  test("skips and syncs as usual when the count cannot be stored", () => {
+    const blocked = join(sandbox, "blocked-state");
+    writeFileSync(blocked, "");
+    process.env.XDG_STATE_HOME = blocked;
+
+    writeFileSync(join(repo, "stray.txt"), "stray\n");
+    expect(reviewDirty(out, repo, "Title", { interactive: () => false })).toBe(false);
+    expect(out.captured()).toContain("Local changes present - skipping sync");
+
+    rmSync(join(repo, "stray.txt"));
+    expect(reviewDirty(out, repo, "Title")).toBe(true);
+  });
+
+  // Someone was watching, so the skip needs no escalation to reach them.
+  test("leaves a skip chosen at the prompt uncounted", () => {
+    writeFileSync(join(repo, "file.txt"), "edited\n");
+    process.env.GUM_CHOICE = SKIP;
+    reviewDirty(out, repo, "Title", { interactive: () => true });
+
+    out = recording();
+    reviewDirty(out, repo, "Title", { interactive: () => true });
+    expect(out.captured()).not.toContain("runs in a row");
   });
 
   test("discards the changes and continues when asked to", () => {
