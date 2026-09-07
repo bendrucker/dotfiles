@@ -234,13 +234,24 @@ function runCapturingStdout(cmd: string[]): Step {
   }
 }
 
+// The sync gate counts the unattended skips in a row and, from the second on,
+// logs the power of two below the count. A latch keyed on the step alone would
+// hold the first night's to-do over every later one, and a tree left dirty
+// would keep the sync shut in silence.
+export function syncFingerprint(output: string): string {
+  const escalation = output.match(SKIP_ESCALATION);
+  return escalation ? `sync ${escalation[0]}` : "sync";
+}
+
+const SKIP_ESCALATION = /Sync skipped \d+ runs in a row/;
+
 // The latch carries which step broke. Sharing one unfingerprinted latch between
 // the two would let a sync failure one night silence an install failure the
 // next, since the run exits before it can clear the latch and the second break
 // stores the same value the first did.
 function reportStepFailure(
   home: string,
-  step: string,
+  fingerprint: string,
   title: string,
   command: string,
   output: string,
@@ -253,7 +264,7 @@ function reportStepFailure(
     revision: currentRevision(home),
     extraMeta: "",
     outputHeading: "Error Output",
-    fingerprint: step,
+    fingerprint,
   });
   // A refused `open` took the whole run down with its own status rather than
   // the 1 that follows a reported failure.
@@ -288,7 +299,13 @@ export async function run(): Promise<number> {
   ]);
   if (sync.status !== 0) {
     log("error", "sync failed");
-    return reportStepFailure(home, "sync", "Dotfiles sync failed", "dotfiles-sync", sync.output);
+    return reportStepFailure(
+      home,
+      syncFingerprint(sync.output),
+      "Dotfiles sync failed",
+      "dotfiles-sync",
+      sync.output,
+    );
   }
 
   log("info", "Running install");

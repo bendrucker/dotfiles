@@ -784,13 +784,19 @@ describe("upgradeFields", () => {
     "INFO Syncing Claude repository...",
     "WARN Failed to update beta@third",
     "ERRO Local changes present - skipping sync",
+    "WARN Sync skipped 4 runs in a row",
     "INFO Updating plugins...",
   ].join("\n");
 
   // Keyed on which steps warned, so a sync that keeps failing stays quiet while a
-  // plugin failing on top of it reopens the latch.
+  // plugin failing on top of it reopens the latch. The gate's skip count sits in
+  // field 4, so its doublings reopen the latch too.
   test("keeps fields 2 to 4 of every warn and error line", () => {
-    expect(upgradeFields(log)).toEqual(["Failed to update", "Local changes present"]);
+    expect(upgradeFields(log)).toEqual([
+      "Failed to update",
+      "Local changes present",
+      "Sync skipped 4",
+    ]);
   });
 
   test("reads nothing out of a log with no warnings", () => {

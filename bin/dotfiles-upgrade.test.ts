@@ -287,6 +287,25 @@ describe("the sync step", () => {
     expect(run.stderr).toContain("to-do already filed");
   });
 
+  // The gate logs the unattended skips in a row from the second on, at the power
+  // of two below the count. A latch keyed on the step alone would hold the first
+  // night's to-do over every later one.
+  test("files again as the skipped syncs mount", () => {
+    const skipped = (escalation: string): void =>
+      syncStub(
+        `#!/bin/sh\necho "ERRO Local changes present - skipping sync" >&2\n${escalation}exit 1\n`,
+      );
+    skipped("");
+    runUpgrade();
+    skipped('echo "WARN Sync skipped 2 runs in a row" >&2\n');
+    runUpgrade();
+    runUpgrade();
+    skipped('echo "WARN Sync skipped 4 runs in a row" >&2\n');
+    runUpgrade();
+
+    expect(filedTodos().length).toBe(3);
+  });
+
   // The latch records which step broke. Sharing one value between the two steps
   // let a sync failure silence the install failure that followed it, and the run
   // exits before it can ever clear the latch.

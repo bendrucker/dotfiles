@@ -2,5 +2,7 @@
 # The nightly upgrade rewrites it in ~/.dotfiles and has nothing that commits,
 # so tracking it would leave that checkout permanently dirty and dotfiles-sync
 # refuses to pull into a dirty tree. To reproduce a machine, copy its lock over
-# and run `herdr-lazy restore`.
-plugins.lock
+# and run `herdr-lazy restore`. The glob also covers a numbered sibling such as
+# plugins.lock.1, which is not herdr-lazy's own rotation but turned up beside
+# the lock and held the sync shut for a week before anyone looked.
+plugins.lock*

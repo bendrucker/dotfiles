@@ -22,9 +22,9 @@ import {
 } from "node:fs";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { log, type Output } from "./job-output.ts";
-import { notify } from "./report-failure.ts";
+import { notify, readLatch, statusFile, writeLatch } from "./report-failure.ts";
 import { canonicalJson } from "./sorted-json.ts";
 
 // ~/.dotfiles is a symlink to the checkout, so the sibling commands are found
@@ -345,6 +345,12 @@ export function reviewDirty(
   title: string,
   options: ReviewOptions = {},
 ): boolean {
+  const syncing = review(out, repoDir, title, options);
+  if (syncing) clearSkips(repoDir);
+  return syncing;
+}
+
+function review(out: Output, repoDir: string, title: string, options: ReviewOptions): boolean {
   const tree = stripNewlines(gitQuiet(["status", "--porcelain"], repoDir).stdout);
   if (tree === "") return true;
 
@@ -376,7 +382,10 @@ export function reviewDirty(
   log(out, "warn", `${blocking.join(" ")} `);
 
   const interactive = options.interactive ?? (() => process.stdin.isTTY === true);
-  if (!interactive()) return skipSync(out, title);
+  if (!interactive()) {
+    recordSkip(out, repoDir);
+    return skipSync(out, title);
+  }
 
   switch (chooseAction()) {
     case DISCARD:
@@ -434,6 +443,36 @@ function skipSync(out: Output, title: string): boolean {
   notify(title, "Skipped: local changes present");
   return false;
 }
+
+// An unattended skip reaches someone through a banner that fires at 3am and a
+// to-do the jobs latch on the log's warnings, so a tree that stays dirty in the
+// same way is filed once and then holds the sync shut in silence. The skips in
+// a row are counted per checkout and, from the second on, written into the log
+// at the power of two below the count. Each doubling moves the fields the jobs
+// fingerprint, so a deadlock left standing files again on a lengthening
+// cadence rather than nightly or never. A skip chosen at the prompt is not
+// counted: someone was watching.
+function recordSkip(out: Output, repoDir: string): void {
+  const job = skipJob(repoDir);
+  const skips = (Number.parseInt(readLatch(job), 10) || 0) + 1;
+  writeLatch(job, String(skips));
+  if (skips < 2) return;
+  log(out, "warn", `Sync skipped ${skipBucket(skips)} runs in a row`);
+}
+
+function clearSkips(repoDir: string): void {
+  rmSync(statusFile(skipJob(repoDir)), { force: true });
+}
+
+function skipBucket(skips: number): number {
+  return 2 ** (31 - Math.clz32(skips));
+}
+
+function skipJob(repoDir: string): string {
+  return `sync-skips-${basename(repoDir).replace(LEADING_DOTS, "")}`;
+}
+
+const LEADING_DOTS = /^\.+/;
 
 function refuseNamedHost(out: Output, title: string): boolean {
   log(out, "error", "Local changes name this machine - refusing to push them to a public remote");
