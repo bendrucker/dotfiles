@@ -1,6 +1,6 @@
 # herdr/: Working With herdr Configuration Autonomously
 
-The session you run in is a herdr pane. Everything below is about changing herdr without taking that session down. Load the `herdr:herdr` skill when a task needs pane, tab, or workspace awareness.
+This session runs in a herdr pane. Everything below is about changing herdr without taking that session down. Load the `herdr:herdr` skill when a task needs pane, tab, or workspace awareness.
 
 ## The Live Session
 
@@ -18,7 +18,7 @@ Previewing a worktree config in the user's real session means repointing the `~/
 
 ## A Preview Session
 
-A named session is a second server with its own panes, workspaces, sockets, and saved state, started on whatever config the launching command names. It is the place for synthetic state, since nothing reported into it reaches the user's session. `--no-session` is not: it runs herdr as one process with no server, so there is no socket to drive it through.
+A named session is a second server with its own panes, workspaces, sockets, and saved state, started on whatever config the launching command names. It is the place for synthetic state, since nothing reported into it reaches the user's session. `--no-session` gives no such place: it runs herdr as one process with no server, so there is no socket to drive it through.
 
 Launch it in its own Ghostty window:
 
@@ -35,7 +35,7 @@ export HERDR_SOCKET_PATH=~/.config/herdr/sessions/preview/herdr.sock
 herdr session list --json
 ```
 
-The user-level sandbox allows only the default session's socket. The project settings add `~/.config/herdr/sessions`, so these run sandboxed. A refusal here is something else.
+The user-level sandbox allows only the default session's socket. The project settings add `~/.config/herdr/sessions`, so these run sandboxed. A refused connection to this socket has some other cause.
 
 After editing the worktree config, `herdr server reload-config` against that socket re-reads it, since the server took the path from `HERDR_CONFIG_PATH` at start.
 
@@ -45,7 +45,8 @@ Workspaces and their sidebar tokens:
 
 ```sh
 id=$(herdr workspace create --label failing-checks --cwd "$PWD" --no-focus | jq -r '.result.workspace.workspace_id')
-herdr workspace report-metadata "$id" --source demo --ttl-ms 3600000 --token "status_red=$glyphs"
+glyph=$(python3 -c 'print(chr(0xF407))')
+herdr workspace report-metadata "$id" --source demo --ttl-ms 3600000 --token "status_red=$glyph"
 ```
 
 An agent row needs no agent. `pane report-agent` overrides detection for a pane, which the herdr skill forbids on the real session and which is exactly the point here:
@@ -56,15 +57,15 @@ herdr pane report-agent "$pane" --source demo --agent claude --state blocked
 herdr pane report-metadata "$pane" --source demo --ttl-ms 3600000 --token 'title=Review the green branch'
 ```
 
-A review of a sidebar change is a set of named scenes, each one a script that empties the preview and rebuilds it: one state per row for the catalog, a realistic mix of workspaces and agents for the ordinary day, and the worst case with every glyph lit under a long label. The worst case is the one that decides. herdr right-aligns custom tokens and truncates the label to fit them, so clutter shows up as the workspace name disappearing. Capture each scene, send the crops, and put a proposed shape in as a scene of its own before coding it, since the user is the acceptance tester and a synthetic row costs nothing to reject.
+A review of a sidebar change is a set of named scenes, each one a script that empties the preview and rebuilds it: one state per row for the catalog, a realistic mix of workspaces and agents for the ordinary day, and the worst case with every glyph lit under a long label. The worst case decides whether the shape ships. herdr right-aligns custom tokens and truncates the label to fit them, so clutter shows up as the workspace name disappearing. Capture each scene, send the crops, and put a proposed shape in as a scene of its own before coding it, since the user is the acceptance tester and a synthetic row costs nothing to reject.
 
 Nerd Font glyphs pasted into a tool call can arrive as an empty string. Build them from codepoints (`python3 -c 'print(chr(0xF407))'`) and check what the snapshot holds.
 
 `tab_bar_right` command entries run in the server with no `HERDR_SOCKET_PATH`, so the preview's copy of `herdr-workspace-status` reports into the default session and never overwrites synthetic tokens. To fill the preview from real repositories instead, run the script yourself with the preview socket exported.
 
-### Looking at It
+### Capture
 
-Capture the preview window with the `screenshot-terminal` skill's `capture-window` and `crop-png`, both with the sandbox off. The sidebar is the left 760 pixels of the capture. Read the crop with the Read tool rather than describing it from the token values.
+Capture the preview window with the `screenshot-terminal` skill's `capture-window` and `crop-png`, both with the sandbox off. The sidebar was the left 760 pixels of a capture at the default window size, so re-measure when the image dimensions differ. Read the crop with the Read tool rather than describing it from the token values.
 
 ### Teardown
 
@@ -82,4 +83,4 @@ pkill -f 'ghostty -e env .*herdr --session preview'
 
 ## Specs
 
-`shellspec` from this directory runs `spec/*_spec.sh` under bash. A script in `bin/` gets a spec that checks it is executable, passes shellcheck, resolves on PATH through `path.zsh`, and is bound in `config.toml` by its bare name. Stub `herdr`, `gh`, and `glab` on `PATH` rather than reaching the live server.
+`shellspec` from this directory runs `spec/*_spec.sh` under bash. A script in `bin/` gets a spec that checks it is executable, passes `shellcheck`, resolves on `PATH` through `path.zsh`, and is bound in `config.toml` by its bare name. Stub `herdr`, `gh`, and `glab` on `PATH` rather than reaching the live server.
