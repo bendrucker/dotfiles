@@ -1,7 +1,3 @@
--- Installs every parser declared in config.treesitter and asserts that opening a
--- buffer of the matching filetype attaches a highlighter. Run headless; writes
--- one line per language and exits non-zero on the first failure.
---
 -- A parser installed during this session lands on disk but stays invisible to
 -- vim.treesitter.language.add(): neovim caches runtime file lookups, and that
 -- cache was warmed before the parser directory existed. Resetting 'runtimepath'
