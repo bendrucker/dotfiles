@@ -499,8 +499,10 @@ export function pileFor(verdict: Verdict): Pile {
   return verdict === "unknown" ? "unverified" : "drifted";
 }
 
-// bin/claude-upgrade's drift fingerprint matches the second field against
-// stale|pinned|orphaned, which is what keeps this bucket out of the latch.
+// bin/claude-upgrade reads a row's second field to decide what the drift latch
+// does with it, and this word is what tells it a plugin went unchecked rather
+// than came back clean. A latched finding whose subject prints this is held
+// where one that stops printing at all is cleared.
 export function verdictWord(verdict: Verdict): string {
   return verdict === "unknown" ? "unverified" : verdict;
 }

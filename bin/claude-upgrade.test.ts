@@ -6,7 +6,7 @@ import type { Capture, SpawnOptions } from "../scripts/lib/job-output.ts";
 import {
   auditPlugins,
   claudeRepoHome,
-  driftFields,
+  driftReport,
   failureFingerprint,
   hookCommands,
   installAgentHooks,
@@ -107,6 +107,29 @@ function readLog(name: string): string {
 
 function todoCount(): number {
   return readLog("todos").split("\n").filter(Boolean).length;
+}
+
+// The notes of the last to-do filed, decoded out of the things:/// URL.
+function filedNotes(): string {
+  const url = readLog("todos").split("\n").filter(Boolean).at(-1) ?? "";
+  return decodeURIComponent(url.split("&notes=")[1]?.split("&")[0] ?? "");
+}
+
+// The "New:" line of every to-do filed, which is the finding each one was filed
+// for.
+function filedNewLines(): string[] {
+  return readLog("todos")
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((url) =>
+      decodeURIComponent(url)
+        .split("\n")
+        .filter((line) => line.startsWith("- **New:**")),
+    );
+}
+
+function driftLatch(): string {
+  return readFileSync(join(sandbox, "state", "dotfiles", "claude-plugin-drift.status"), "utf8");
 }
 
 function run(cmd: string[]): void {
@@ -593,7 +616,7 @@ describe("auditPlugins", () => {
   test("passes a clean audit and clears the drift latch", () => {
     expect(auditPlugins(out, repo, { audit: auditStub(0), env: process.env })).toBe(true);
     expect(todoCount()).toBe(0);
-    expect(readFileSync(join(sandbox, "state", "dotfiles", "claude-plugin-drift.status"), "utf8")).toBe("ok\n");
+    expect(driftLatch()).toBe("standing\n");
   });
 
   // Drift outlives the run that should have fixed it, so it goes to a latch of its
@@ -621,9 +644,9 @@ describe("auditPlugins", () => {
   });
 });
 
-// The fingerprint decides whether a night's findings refile. A verdict left out of
-// it makes two different sets of findings hash the same, and the second set never
-// reaches a to-do at all.
+// The latch decides whether a night's findings refile. It keyed on the whole
+// finding set, so a plugin that had been stale for a week filed a fresh to-do
+// every time an unrelated one joined or left the set around it.
 describe("drift latch", () => {
   const staleRow = "  alpha@first  stale  differs from ./plugins/alpha at 1 path";
   const pinnedRow = "  beta@third  pinned  still offered as 1.0.0";
@@ -646,6 +669,113 @@ describe("drift latch", () => {
     reportDrift(staleRow, repo);
     reportDrift(`${staleRow} and one more`, repo);
     expect(todoCount()).toBe(1);
+  });
+
+  test("stays quiet for a standing finding while the set churns around it", () => {
+    reportDrift(staleRow, repo);
+    reportDrift(`${staleRow}\n${pinnedRow}`, repo);
+    reportDrift(staleRow, repo);
+    expect(todoCount()).toBe(2);
+  });
+
+  test("names the finding it filed for", () => {
+    reportDrift(staleRow, repo);
+    reportDrift(`${staleRow}\n${pinnedRow}`, repo);
+    expect(filedNotes()).toContain("**New:** beta@third pinned");
+  });
+
+  // The whole report reaches the parser, so a block header or the summary line
+  // read as a finding would file a to-do naming "Findings" every night.
+  test("reads no finding out of the headers and the summary", () => {
+    reportDrift(`Findings (act on these):\n${staleRow}\n\n1 finding to act on (6 current)`, repo);
+    reportDrift(`Findings (act on these):\n${staleRow}\n\n1 finding to act on (7 current)`, repo);
+    expect(todoCount()).toBe(1);
+  });
+});
+
+// The four nights of 2026-09-02 through 05, as they were actually reported.
+// agents-md@bendrucker was stale throughout and never changed: installed
+// 6030636029d9 against a HEAD of 7e6c36e88a5e. ast-grep and cloudflare joined and
+// left the set around it on alternating machines, and the set-wide latch refiled
+// agents-md every time one of them did, for four to-dos in four nights.
+describe("September churn", () => {
+  const agentsMd =
+    "  agents-md@bendrucker  stale  installed 6030636029d9, https://github.com/bendrucker/agents.md HEAD is 7e6c36e88a5e";
+  const astGrep =
+    "  ast-grep@bendrucker  stale  differs from ./plugins/ast-grep at 2 paths: SKILL.md, README.md";
+  const cloudflare =
+    "  cloudflare@bendrucker  stale  differs from ./plugins/cloudflare at 1 path: SKILL.md";
+
+  function report(...rows: string[]): string {
+    const noun = rows.length === 1 ? "finding" : "findings";
+    return ["Findings (act on these):", ...rows, "", `${rows.length} ${noun} to act on (6 current)`].join("\n");
+  }
+
+  // The night every marketplace resolved to "has no HEAD". agents-md is
+  // repo-backed, so its own ls-remote went with them and its row moved out of the
+  // findings and into the unverified block. ast-grep is compared against a local
+  // marketplace tree, so nothing about it needed the network.
+  const night0902 = [
+    "Unverified (could not check):",
+    "  agents-md@bendrucker  unverified  https://github.com/bendrucker/agents.md has no HEAD",
+    "  marketplace/bendrucker  unverified  https://github.com/bendrucker/claude has no HEAD",
+    "",
+    report(astGrep),
+  ].join("\n");
+
+  // Each machine keeps its own latch under XDG_STATE_HOME and files into the one
+  // shared inbox, so the two nights each ran are replayed against separate state.
+  function onHost(host: string, output: string): void {
+    process.env.XDG_STATE_HOME = join(sandbox, "state", host);
+    reportDrift(output, repo);
+  }
+
+  // agents-md had already been reported before the episode opened, which is the
+  // state the four nights ran against.
+  function churn(): void {
+    onHost("mbp", report(agentsMd));
+    onHost("studio", report(agentsMd));
+    writeFileSync(join(sandbox, "todos"), "");
+
+    onHost("mbp", night0902);
+    onHost("studio", report(agentsMd));
+    onHost("mbp", report(agentsMd, astGrep));
+    onHost("studio", report(agentsMd, cloudflare));
+  }
+
+  // One per machine, each for the plugin that was genuinely new to it.
+  // Deduplicating across the two is a separate problem and is not solved here.
+  test("files one to-do per machine instead of one per night", () => {
+    churn();
+    expect(todoCount()).toBe(2);
+  });
+
+  test("names the plugin that was new to each machine", () => {
+    churn();
+    expect(filedNewLines()).toEqual([
+      "- **New:** ast-grep@bendrucker stale",
+      "- **New:** cloudflare@bendrucker stale",
+    ]);
+  });
+
+  // The one that was refiled three times. It never changed, so nothing about it
+  // should have reached the inbox again.
+  test("never refiles the finding that did not change", () => {
+    churn();
+    expect(filedNewLines().join("\n")).not.toContain("agents-md");
+  });
+
+  // Leaving the unverified rows out of the old key was meant to keep a network
+  // blip from reopening the latch. It did the opposite: agents-md dropped out of
+  // the hashed set, so the set changed and the blip reopened the latch through
+  // the back door.
+  test("does not let a blip clear a finding it could not check", () => {
+    onHost("mbp", report(agentsMd));
+    onHost("mbp", night0902);
+    onHost("mbp", report(agentsMd));
+    // The first night for agents-md and the second for ast-grep. Nothing on the
+    // third: agents-md came back to a latch that still held it.
+    expect(todoCount()).toBe(2);
   });
 });
 
@@ -674,7 +804,7 @@ describe("upgradeFields", () => {
   });
 });
 
-describe("driftFields", () => {
+describe("driftReport", () => {
   const findings = [
     "  alpha@first  stale  differs from ./plugins/alpha at 1 path",
     "  beta@third  pinned  still offered as 1.0.0",
@@ -683,14 +813,16 @@ describe("driftFields", () => {
     "  epsilon@third  current",
   ].join("\n");
 
-  // Unverified rows are the flaky-network bucket, and hashing them would reopen
-  // the latch on any 3am blip.
-  test("keeps the subject and verdict of every finding but the unverified ones", () => {
-    expect(driftFields(findings)).toEqual([
-      "alpha@first stale",
-      "beta@third pinned",
-      "gamma@first orphaned",
+  test("keeps the subject and verdict of every drifted row", () => {
+    expect(driftReport(findings).standing).toEqual([
+      { subject: "alpha@first", verdict: "stale" },
+      { subject: "beta@third", verdict: "pinned" },
+      { subject: "gamma@first", verdict: "orphaned" },
     ]);
+  });
+
+  test("takes the unverified rows as held rather than as findings", () => {
+    expect(driftReport(findings).held).toEqual(["delta@third"]);
   });
 });
 
@@ -869,5 +1001,19 @@ describe("main", () => {
     expect(main(out)).toBe(1);
     expect(todoCount()).toBe(1);
     expect(readLog("todos")).toContain("Claude%20upgrade%20failed");
+  });
+
+  // Nothing else runs the whole of a clean night, and the branch it ends on has
+  // no output to assert against beyond the latch it clears.
+  test("clears the upgrade latch when the run succeeds", () => {
+    process.env.CLAUDE_REPO_HOME = repo;
+    const audit = join(sandbox, "audit-clean");
+    writeScript(audit, "exit 0");
+
+    expect(main(out, { audit })).toBe(0);
+    expect(todoCount()).toBe(0);
+    expect(readFileSync(join(sandbox, "state", "dotfiles", "claude-upgrade.status"), "utf8")).toBe(
+      "ok\n",
+    );
   });
 });
