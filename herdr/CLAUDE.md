@@ -16,16 +16,6 @@ Never `herdr server stop`. It takes down every pane the session owns, this one i
 
 Previewing a worktree config in the user's real session means repointing the `~/.config/herdr/config.toml` symlink at the worktree, reloading, and restoring it afterwards. Do that only when the user asks to see a change in their own session, and restore the link before finishing. A shape the real session cannot be put into, such as a workspace whose checks are failing or an agent parked on a permission dialog, goes in a preview session.
 
-## Graphics and a Second Client
-
-herdr serves direct-kitty graphics only while exactly one full app client is
-attached. A second one leaves a terminal-browser or tode pane painting normally
-while its mouse coordinates collapse into the top-left corner, so the symptom
-reads as a hung window rather than a coordinate bug. `bin/herdr-attach` is the
-non-counting way in, and `README.md` carries the mechanism. Check which state a
-pane is in with `pane.graphics.info` over the socket: `file_frame_transport:
-"direct-kitty"` means the native path is live.
-
 ## A Preview Session
 
 A named session is a second server with its own panes, workspaces, sockets, and saved state, started on whatever config the launching command names. It is the place for synthetic state, since nothing reported into it reaches the user's session. `--no-session` gives no such place: it runs herdr as one process with no server, so there is no socket to drive it through.
