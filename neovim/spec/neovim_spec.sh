@@ -29,7 +29,10 @@ Describe "neovim"
       nvim --headless -c 'luafile spec/support/treesitter_check.lua' 2>&1
     }
     When call check_treesitter
-    The status should be success
+    # A bare status assertion reports the exit code alone, discarding the output
+    # that names which language broke and why.
+    The output should not include "FAIL:"
     The output should include "tree-sitter CLI"
+    The status should be success
   End
 End
