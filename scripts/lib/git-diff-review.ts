@@ -24,7 +24,7 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { log, type Output } from "./job-output.ts";
-import { notify, readLatch, statusFile, writeLatch } from "./report-failure.ts";
+import { clearLatch, notify, readLatch, writeLatch } from "./report-failure.ts";
 import { canonicalJson } from "./sorted-json.ts";
 
 // ~/.dotfiles is a symlink to the checkout, so the sibling commands are found
@@ -460,11 +460,20 @@ function recordSkip(out: Output, repoDir: string): void {
   // readLatch already swallows its own end of this.
   bestEffort(() => writeLatch(job, String(skips)));
   if (skips < 2) return;
-  log(out, "warn", `Sync skipped ${skipBucket(skips)} runs in a row`);
+  log(out, "warn", skipMessage(skipBucket(skips)));
 }
 
+// bin/dotfiles-upgrade keys its sync-step latch on this line, so the wording
+// and the pattern that reads it back live beside the code that writes it
+// rather than as a second literal over there. A spec holds the two together.
+export function skipMessage(runs: number): string {
+  return `Sync skipped ${runs} runs in a row`;
+}
+
+export const SKIP_ESCALATION = /^Sync skipped \d+ runs in a row$/;
+
 function clearSkips(repoDir: string): void {
-  bestEffort(() => rmSync(statusFile(skipJob(repoDir)), { force: true }));
+  bestEffort(() => clearLatch(skipJob(repoDir)));
 }
 
 function bestEffort(store: () => void): void {

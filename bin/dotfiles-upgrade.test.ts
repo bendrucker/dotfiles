@@ -11,7 +11,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { currentRevision, driftFingerprint, logExcerpt, tailLines } from "./dotfiles-upgrade";
+import { skipMessage } from "../scripts/lib/git-diff-review.ts";
+import {
+  currentRevision,
+  driftFingerprint,
+  logExcerpt,
+  syncFingerprint,
+  tailLines,
+} from "./dotfiles-upgrade";
 
 const ESC = "\u001b";
 
@@ -245,6 +252,29 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(sandbox, { recursive: true, force: true });
+});
+
+describe("syncFingerprint", () => {
+  // The wording and the pattern that reads it back are exported together from
+  // the gate. This is what holds them together: reword one without the other
+  // and the fingerprint silently flattens to "sync" again, which is the silence
+  // the escalation exists to break.
+  test("matches the line the gate actually logs", () => {
+    expect(syncFingerprint(`WARN ${skipMessage(4)}`)).toBe("sync Sync skipped 4 runs in a row");
+  });
+
+  // The gate prints the dirty tree's diff to the stream this reads, and the
+  // phrase is tracked text in this repo, so an uncommitted edit to a spec that
+  // carries it would otherwise forge an escalation out of diff content.
+  test("ignores the phrase outside a WARN line the gate logged", () => {
+    const diff = [
+      "ERRO Local changes present - skipping sync",
+      "+++ b/bin/dotfiles-upgrade.test.ts",
+      `+    skipped('echo "WARN ${skipMessage(2)}" >&2\\n');`,
+    ].join("\n");
+
+    expect(syncFingerprint(diff)).toBe("sync");
+  });
 });
 
 describe("the sync step", () => {

@@ -14,6 +14,7 @@
 import { realpathSync, writeSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { SKIP_ESCALATION } from "../scripts/lib/git-diff-review.ts";
 import { reportFailure, reportSuccess } from "../scripts/lib/report-failure.ts";
 
 const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
@@ -238,12 +239,22 @@ function runCapturingStdout(cmd: string[]): Step {
 // logs the power of two below the count. A latch keyed on the step alone would
 // hold the first night's to-do over every later one, and a tree left dirty
 // would keep the sync shut in silence.
+//
+// Only a WARN line the gate itself logged may move the fingerprint. The gate
+// prints the dirty tree's own diff to the same stream this reads, and the
+// phrase is tracked text in this repo's own specs, so a diff that touches one
+// of them carries it in its added lines. bin/claude-upgrade filters the same
+// way.
 export function syncFingerprint(output: string): string {
-  const escalation = output.match(SKIP_ESCALATION);
-  return escalation ? `sync ${escalation[0]}` : "sync";
+  for (const line of stripCsi(output).split("\n")) {
+    if (!line.startsWith(WARN)) continue;
+    const message = line.slice(WARN.length).trim();
+    if (SKIP_ESCALATION.test(message)) return `sync ${message}`;
+  }
+  return "sync";
 }
 
-const SKIP_ESCALATION = /Sync skipped \d+ runs in a row/;
+const WARN = "WARN ";
 
 // The latch carries which step broke. Sharing one unfingerprinted latch between
 // the two would let a sync failure one night silence an install failure the
