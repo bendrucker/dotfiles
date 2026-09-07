@@ -1,0 +1,3 @@
+#!/bin/sh
+# link a checkout's .claude at its personal overlay in the claude repo
+exec bun "${CLAUDE_REPO_HOME:-$HOME/.claude-repo}/plugins/overlay/scripts/link.ts" "$@"

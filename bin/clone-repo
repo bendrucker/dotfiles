@@ -78,6 +78,12 @@ switch (host) {
     break;
 }
 
+// Callers read the target path off stdout, so the linker only gets stderr. A
+// clone without an overlay is still a usable clone, so nothing here is fatal.
+try {
+  await Bun.spawn(["claude-overlay", "link", target], { stdout: "ignore", stderr: "inherit" }).exited;
+} catch {}
+
 console.log(target);
 
 async function listRepos(org: string, query?: string, host?: string): Promise<string[]> {
