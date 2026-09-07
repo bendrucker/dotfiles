@@ -8,12 +8,10 @@ import {
   claudeRepoHome,
   driftReport,
   failureFingerprint,
-  hookCommands,
   installAgentHooks,
   main,
   reportDrift,
   revertCosmeticJsonChanges,
-  revertVibeIslandHookRewrite,
   syncRepo,
   updateMarketplaces,
   updatePlugins,
@@ -21,8 +19,6 @@ import {
   upgradeFields,
   upgradeMeta,
   upgradeRevision,
-  vibeIslandHookPresent,
-  vibeIslandOwnsEveryHook,
 } from "./claude-upgrade";
 
 let sandbox: string;
@@ -217,23 +213,11 @@ function writePluginFixture(): void {
 }
 
 const GUARDED_HOOK = '/bin/sh -c [ -x "$HOME/.vibe-island/bin/vibe-island-bridge" ] && exit 0';
-const REWRITTEN_HOOK = "~/.vibe-island/bin/vibe-island-hook --host user@example";
 
 function settingsJson(command: unknown, extra = "bar"): unknown {
   return {
     env: { EXAMPLE: extra },
     hooks: { SessionStart: [{ hooks: [{ type: "command", command }] }] },
-  };
-}
-
-// Two hooks under different events, so an example can hold one of each kind.
-function mixedSettingsJson(session: unknown, pre: unknown): unknown {
-  return {
-    env: { EXAMPLE: "bar" },
-    hooks: {
-      SessionStart: [{ hooks: [{ type: "command", command: session }] }],
-      PreToolUse: [{ hooks: [{ type: "command", command: pre }] }],
-    },
   };
 }
 
@@ -434,130 +418,6 @@ describe("updateMarketplaces", () => {
   });
 });
 
-// Vibe Island rewrites ~/.claude/settings.json through the dotfiles symlink,
-// swapping every hook for the command it runs on a remote agent host. The binary
-// it names is not installed here, so hooks fail in every new session, and the
-// dirty tracked file stalls the sync until someone looks at it.
-describe("revertVibeIslandHookRewrite", () => {
-  test("discards the rewrite and says so", () => {
-    writeRepoSettings(settingsJson(REWRITTEN_HOOK));
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toContain("Reverting Vibe Island's hook rewrite");
-    expect(readLog("notifications")).toContain("hook rewrite");
-    expect(settingsStatus()).toBe("clean");
-  });
-
-  // The app reformats the whole file while it rewrites the hooks, so the revert
-  // cannot depend on the rest of the file being byte-identical.
-  test("discards a rewrite that also reordered the file", () => {
-    writeRepoSettings(settingsJson(REWRITTEN_HOOK), 4);
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toContain("Reverting");
-    expect(settingsStatus()).toBe("clean");
-  });
-
-  test("discards a rewrite that took every hook", () => {
-    writeRepoSettings(mixedSettingsJson(REWRITTEN_HOOK, REWRITTEN_HOOK));
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toContain("Reverting");
-    expect(settingsStatus()).toBe("clean");
-  });
-
-  // Anything outside .hooks could be a real edit. The sync gate asks about those,
-  // and it cannot ask about a file this already threw away.
-  test("leaves a change outside .hooks alone", () => {
-    writeRepoSettings(settingsJson(GUARDED_HOOK, "changed"));
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toBe("");
-    expect(settingsStatus()).toBe("dirty");
-  });
-
-  test("leaves a rewrite carrying a change outside .hooks alone", () => {
-    writeRepoSettings(settingsJson(REWRITTEN_HOOK, "changed"));
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toBe("");
-    expect(readLog("notifications")).toBe("");
-    expect(settingsStatus()).toBe("dirty");
-  });
-
-  // A command the predicates cannot read is a hook the revert cannot vouch for,
-  // so the file goes to the sync gate like any other.
-  test("leaves a rewrite standing beside a non-string command alone", () => {
-    writeRepoSettings(mixedSettingsJson(REWRITTEN_HOOK, 123));
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toBe("");
-    expect(readLog("notifications")).toBe("");
-    expect(settingsStatus()).toBe("dirty");
-  });
-
-  // Only the app's own command is the app's doing. A hook edited by hand is a
-  // local change like any other.
-  test("leaves a hand-edited hook alone", () => {
-    writeRepoSettings(settingsJson("echo hello"));
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toBe("");
-    expect(settingsStatus()).toBe("dirty");
-  });
-
-  // The revert restores the whole file, so a hand-edited hook sitting beside the
-  // app's would go with it. The app replaces every hook at once, so a file holding
-  // anything else is not the case this handles.
-  test("leaves a rewrite standing beside a hand-edited hook alone", () => {
-    writeRepoSettings(mixedSettingsJson(REWRITTEN_HOOK, "echo hello"));
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toBe("");
-    expect(readLog("notifications")).toBe("");
-    expect(settingsStatus()).toBe("dirty");
-  });
-
-  test("does nothing to a clean tree", () => {
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toBe("");
-    expect(readLog("notifications")).toBe("");
-    expect(settingsStatus()).toBe("clean");
-  });
-
-  // A config that ships the command deliberately is not a rewrite to undo, and
-  // reverting to it would leave the working tree exactly as it was.
-  test("leaves a working tree alone when HEAD already carries the command", () => {
-    writeRepoSettings(settingsJson(REWRITTEN_HOOK));
-    run(["git", "-C", repo, "commit", "-q", "-am", "adopt the hook"]);
-    writeRepoSettings(settingsJson(REWRITTEN_HOOK, "changed"));
-
-    revertVibeIslandHookRewrite(out, repo);
-    expect(out.captured()).toBe("");
-    expect(settingsStatus()).toBe("dirty");
-  });
-});
-
-describe("hook predicates", () => {
-  test("collect every command anywhere under .hooks", () => {
-    expect(hookCommands(mixedSettingsJson("a", "b")).sort()).toEqual(["a", "b"]);
-  });
-
-  test("read a settings file with no hooks as holding none", () => {
-    expect(hookCommands({ env: {} })).toEqual([]);
-    expect(vibeIslandOwnsEveryHook({ env: {} })).toBe(false);
-    expect(vibeIslandHookPresent({ env: {} })).toBe(false);
-  });
-
-  // A command that is not a string is one nothing here can vouch for, which makes
-  // the predicate false rather than raising.
-  test("refuse to vouch for a command that is not a string", () => {
-    expect(vibeIslandOwnsEveryHook(mixedSettingsJson(REWRITTEN_HOOK, 123))).toBe(false);
-    expect(vibeIslandHookPresent(mixedSettingsJson(REWRITTEN_HOOK, 123))).toBe(true);
-  });
-});
-
 describe("revertCosmeticJsonChanges", () => {
   // An app that rewrote a tracked settings file without changing anything in it
   // would otherwise stall the sync behind a diff with nothing in it.
@@ -589,8 +449,8 @@ describe("syncRepo", () => {
     expect(syncRepo(out, join(sandbox, "missing"))).toBe(false);
   });
 
-  // Both reverts run before the gate, so a tree dirtied only by them is clean by
-  // the time it looks.
+  // The revert runs before the gate, so a tree dirtied only by a reformat is
+  // clean by the time it looks.
   test("clears a cosmetic reorder before the gate sees it", () => {
     writeRepoSettings(settingsJson(GUARDED_HOOK), 4);
 

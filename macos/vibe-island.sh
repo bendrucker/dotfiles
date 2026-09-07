@@ -8,10 +8,10 @@
 # started afterward fails.
 #
 # An earlier version replaced the symlink with a regular file instead, which
-# left Claude Code reading a file no longer connected to the repo. Both are
-# worth defending against, and they need different defenses: claude/install.sh
-# restores a replaced symlink, while claude-upgrade reverts a write that came
-# through one.
+# left Claude Code reading a file no longer connected to the repo. That one has
+# a defense: claude/install.sh restores a replaced symlink. A write that comes
+# through one does not. It leaves a dirty tracked file, and the nightly sync
+# stops on it and files a to-do rather than repairing it.
 #
 # This preference opts out of that management, recording a standing choice so a
 # new machine does not arrive with the app owning the hook config again. Opting
@@ -104,10 +104,9 @@ fi
 
 # The app reads the preference at launch, so what it reports once it is up is
 # what it means to honor. A value that is still not 0 means the app is ignoring
-# the opt-out, and only claude-upgrade's revert can defend the config from
-# there. A best-effort signal either way: an app slow to write its own value
-# back reads as compliant here, and the revert's notification is the detector
-# that does not depend on timing.
+# the opt-out, and nothing downstream undoes what it writes. A best-effort
+# signal: an app slow to write its own value back reads as compliant here, and
+# a rewrite that gets past this surfaces as the stalled nightly sync instead.
 wait_for_app running || exit 0
 
 # An unreadable preference is not the app overriding one. Blaming it for a read
