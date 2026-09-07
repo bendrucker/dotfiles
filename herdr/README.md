@@ -52,3 +52,41 @@ manifest. `agent-detection/` holds the rules herdr's own manifests are missing,
 and `bin/herdr-agent-detection` composes them onto whatever herdr last fetched.
 `spec/agent_detection_spec.sh` scores the recorded screens in that directory, so
 a rule that stops matching fails in CI rather than in the sidebar.
+
+## Reaching the session from a phone
+
+herdr serves its native direct-kitty graphics only while exactly one full app
+client is attached to a session. Running plain `herdr` over mosh from Moshi
+makes a second one, and the desktop loses the transport for as long as the
+phone stays connected.
+
+What breaks is the mouse, not the picture, which is what makes it so hard to
+read. A terminal-browser or tode pane falls back to writing kitty escapes
+itself and `[experimental] kitty_graphics` passes them through, so the pane
+keeps painting and the browser keeps running. But herdr stops sending pixel
+mouse coordinates while still answering the pane's `?1016$p` probe as set, so
+the browser reads cell numbers as pixels and the whole pane collapses into a
+patch of the top-left corner, where the toolbar's reload button sits. Every
+click reloads the page. It looks like a hung window rather than a coordinate
+bug.
+
+`bin/herdr-attach` is the way in from the phone. It connects to one pane's
+terminal rather than the workspace UI, which is a mode the client count
+excludes, so the desktop keeps its graphics. With no argument it offers a
+picker over the panes; a pane id, terminal id, or agent name skips it. Detach
+with Ctrl-B q, and pass `--takeover` to reclaim a terminal a dropped link left
+held.
+
+Nothing here needs repairing after the fact. The desktop recovers the moment
+the second client detaches, with no server restart and no pane loss, so a
+session that went in through plain `herdr` costs only the time it stayed
+connected. To confirm which state a browser pane is in:
+
+```sh
+printf '{"id":"i","method":"pane.graphics.info","params":{"pane_id":"<pane>"}}\n' |
+  nc -U ~/.config/herdr/herdr.sock
+```
+
+`file_frame_transport: "direct-kitty"` means the native path is live. Its
+absence means something disqualified it, and a second attached client is the
+first thing to check.
