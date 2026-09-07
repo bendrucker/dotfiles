@@ -1,6 +1,9 @@
 {
   "name": "dotfiles",
   "private": true,
+  "devDependencies": {
+    "oxlint": "1.82.0"
+  },
   "imports": {
     "#harness": "./packages/harness/index.ts",
     "#harness/*": "./packages/harness/*.ts",

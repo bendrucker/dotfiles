@@ -251,6 +251,16 @@ jobs:
       - name: Check private-use glyphs are declared
         run: bin/glyph-scan
 
+      # oxlint is the one devDependency, so this installs it and nothing the
+      # scripts import. A bare `bunx oxlint` with no install resolves the
+      # latest release and ignores the pin, so the install is what makes the
+      # version in package.json the one that runs.
+      - name: Install oxlint
+        run: bun install --frozen-lockfile
+
+      - name: Lint TypeScript
+        run: bunx oxlint --deny-warnings --format=github
+
       - name: Check for expired migrations
         run: scripts/lint-expired
 

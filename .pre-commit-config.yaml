@@ -40,3 +40,9 @@ repos:
         entry: bun test ./.claude/skills/
         files: ^\.claude/skills/.*\.(sh|ts)$
         pass_filenames: false
+      - id: oxlint
+        name: oxlint
+        language: system
+        entry: bash -c 'bun install --frozen-lockfile && exec bunx oxlint --deny-warnings'
+        types: [ts]
+        pass_filenames: false
