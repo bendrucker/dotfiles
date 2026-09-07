@@ -14,7 +14,7 @@
 // to-do for a later upgrade failure.
 
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { pluginInventory, pluginSource } from "../scripts/lib/claude-plugins.ts";
@@ -236,6 +236,78 @@ function claude(out: Output, args: string[], env: Record<string, string | undefi
   return out.run(["claude", ...args], { env, stdin: "ignore" });
 }
 
+// herdr owns user/hooks/herdr-agent-state.sh. Its installer writes the script
+// through the ~/.claude/hooks symlink, and the claude repo gitignores that path,
+// so the write leaves the clone clean and the deployed copy tracks the installed
+// herdr instead of a commit. The installer also appends a SessionStart entry to
+// settings.json: it matches its own entry by exact command string and cannot
+// recognize the committed $HOME form. herdr's status check reads only the
+// script's version marker, so that edit is discarded.
+//
+// moshi's installer adds the per-event entries its binary expects and leaves the
+// rest alone. Its edit stays: the committed file is meant to match it, so a diff
+// here is a moshi upgrade, which the sync gate reports the next night and a
+// commit of the diff settles.
+export function installAgentHooks(
+  out: Output,
+  repoDir: string,
+  env: Record<string, string | undefined>,
+): boolean {
+  let ok = true;
+
+  if (Bun.which("herdr", { PATH: env.PATH }) !== null) {
+    log(out, "info", "Installing herdr claude integration...");
+
+    // Taken before the install and written back after, so what goes away is
+    // herdr's entry and nothing else. Restoring from HEAD would also discard an
+    // unrelated edit that landed after the sync gate looked at the tree.
+    const settings = join(repoDir, SETTINGS);
+    const before = readSettings(settings);
+
+    if (out.run(["herdr", "integration", "install", "claude"], { env, stdin: "ignore" }) !== 0) {
+      log(out, "warn", "herdr integration install failed");
+      ok = false;
+    }
+
+    // Restored after the attempt rather than after a success, because an install
+    // that wrote the entry and then failed leaves it behind either way. Left
+    // there, it holds the sync gate shut on every later run, and clearing that
+    // gate is what lets this step run again at all.
+    if (!restoreSettings(out, settings, before)) ok = false;
+  }
+
+  if (Bun.which("moshi-hook", { PATH: env.PATH }) !== null) {
+    log(out, "info", "Installing moshi claude hooks...");
+    if (out.run(["moshi-hook", "install", "--target", "claude"], { env, stdin: "ignore" }) !== 0) {
+      log(out, "warn", "moshi-hook install failed");
+      ok = false;
+    }
+  }
+
+  return ok;
+}
+
+function readSettings(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function restoreSettings(out: Output, path: string, before: string | undefined): boolean {
+  if (before === undefined || readSettings(path) === before) return true;
+
+  try {
+    writeFileSync(path, before);
+  } catch {
+    log(out, "warn", `Could not discard herdr's edit to ${SETTINGS}`);
+    return false;
+  }
+
+  return true;
+}
+
 export interface AuditOptions extends SpawnOptions {
   audit?: string;
 }
@@ -355,9 +427,13 @@ export function upgrade(out: Output, repoDir: string, options: AuditOptions = {}
   // moves the repo itself, and its PR push has to stay on the SSH pushurl.
   const env = { ...process.env, ...httpsEnv() };
 
+  let status = 0;
+  // After the sync, so the pull that removes a stale script from the clone runs
+  // against a clean tree and the installer puts the current one back.
+  if (!installAgentHooks(out, repoDir, env)) status = 1;
+
   updateMarketplaces(out, env);
 
-  let status = 0;
   if (!updatePlugins(out, env)) status = 1;
   // The audit runs whatever the update pass did, since a failed update is the
   // case most likely to have left something stale. Its own findings go to a
