@@ -30,7 +30,9 @@ export function quote(value: string): string {
 function environment(options: RunOptions): Record<string, string> {
   const merged: Record<string, string | undefined> = { ...process.env, ...options.env };
   if (options.onlyPath) merged.PATH = options.onlyPath.join(":");
-  else if (options.path) merged.PATH = [...options.path, merged.PATH].join(":");
+  // An empty entry means the current directory, so an unset inherited PATH has
+  // to drop out rather than join into a trailing colon.
+  else if (options.path) merged.PATH = [...options.path, merged.PATH].filter(Boolean).join(":");
 
   // An explicit undefined unsets the variable, which is how a test reproduces
   // `env -u NAME` for a script that reads whatever it was already handed.
@@ -173,9 +175,6 @@ export function stubGum(box: Sandbox): void {
 }
 
 /** A no-op osascript, so a notification stays silent and side-effect-free. */
-export function stubOsascript(box: Sandbox): void {
-  box.stub("osascript", "exit 0");
-}
 
 export const repoRoot = dirname(dirname(import.meta.dir));
 

@@ -17,7 +17,7 @@ function topicBins(): string[] {
     } catch {
       continue;
     }
-    for (const match of contents.matchAll(/\$ZSH\/[A-Za-z0-9_.-]*\/bin/g)) {
+    for (const match of contents.matchAll(/\$ZSH(?:\/[A-Za-z0-9_.-]+)+\/bin/g)) {
       found.add(match[0].replace("$ZSH", repoRoot));
     }
   }
@@ -31,7 +31,8 @@ function topicBins(): string[] {
 // the directory holds decides whether the path.zsh loop runs at all.
 function pathOf(files: string[]): string[] {
   const zdotdir = mkdtempSync(join(tmpdir(), "zdotdir-"));
-  const out = join(mkdtempSync(join(tmpdir(), "pathof-")), "out");
+  const outdir = mkdtempSync(join(tmpdir(), "pathof-"));
+  const out = join(outdir, "out");
   for (const file of files) {
     symlinkSync(join(repoRoot, "zsh", file), join(zdotdir, file));
   }
@@ -42,7 +43,7 @@ function pathOf(files: string[]): string[] {
   });
   const built = readFileSync(out, "utf8");
   rmSync(zdotdir, { recursive: true, force: true });
-  rmSync(out, { force: true });
+  rmSync(outdir, { recursive: true, force: true });
   return built.split("\n").filter(Boolean);
 }
 

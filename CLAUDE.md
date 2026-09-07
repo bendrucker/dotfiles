@@ -102,10 +102,11 @@ Everything runs under `bun test`. A test sits next to what it covers and is name
 
 `scripts/lib/shell-fixtures.ts` holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners that report a script's status alongside both its streams. `shell()` runs a snippet under bash or zsh, which is how a library function gets called directly. Sourcing inside the snippet is what lets a test redefine one of the library's own functions afterwards and have the redefinition win.
 
-The filename decides which CI job runs a test:
+A test's name and where it sits decide which CI job runs it:
 
 - `*.test.ts` run in the `bun` job against a bare checkout. They stub whatever the script under test calls, so nothing they assert depends on the machine.
 - `*.integration.test.ts` run in the `bootstrap` job on Linux and macOS, after symlinks are installed and `brew bundle` has run. They read the installed config through its symlinks, which is state only bootstrap produces.
+- A test under `.claude/skills/` runs in the `skill-tests` job whichever suffix it carries, because it needs that skill's own dependencies. bun's discovery skips dot directories, so the job names the path with a leading `./` to have it read as a path rather than a filter.
 
 An integration test carries no guard that would let it pass on an unbootstrapped machine. Failing there is correct, and the CI job is what decides when it runs. A skip guard is for a genuinely optional dependency, like the font cask that `bin/glyph-scan.integration.test.ts` needs to check a glyph renders.
 

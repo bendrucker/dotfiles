@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { run, sandbox, type Run, type Sandbox } from "../scripts/lib/shell-fixtures.ts";
+import { run, sandbox, stubGum, type Run, type Sandbox } from "../scripts/lib/shell-fixtures.ts";
 
 const script = join(import.meta.dir, "vibe-island.sh");
 
@@ -68,8 +68,7 @@ function stubActions(box: Sandbox): void {
   // The waits are bounded in real seconds. An example should not spend them.
   box.stub("sleep", "exit 0", { shebang: "#!/usr/bin/env bash" });
 
-  // The real gum logs to stderr, so the warning stays off captured stdout.
-  box.stub("gum", 'printf "%s\\n" "${@: -1}" >&2', { shebang: "#!/usr/bin/env bash" });
+  stubGum(box);
 }
 
 function runVibeIsland(env: Record<string, string>): Run {
@@ -203,7 +202,7 @@ describe("macos/vibe-island.sh", () => {
     test("notifies when it cannot reopen the app", () => {
       const r = runVibeIsland({ ...env, OPEN_FAILS: "1" });
       expect(r.status).toBe(0);
-      expect(r.stderr).toBeDefined();
+      expect(r.stderr).not.toBe("");
       expect(actionLog()).toContain("display notification");
     });
 
