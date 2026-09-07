@@ -17,8 +17,7 @@ describe("herdr", () => {
     expect(statSync(config).size).toBeGreaterThan(0);
   });
 
-  // A directory link, so a new plugin's config goes live by existing in the
-  // repo rather than by another install run.
+  // A directory link, so a new plugin's config goes live as soon as it exists in the repo.
   test("symlinks the whole plugin config tree", () => {
     expect(lstatSync(pluginConfig).isSymbolicLink()).toBe(true);
   });

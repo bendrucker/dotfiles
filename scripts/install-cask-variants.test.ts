@@ -138,8 +138,6 @@ describe("install-cask-variants", () => {
   test("uninstalls nothing when a later candidate cannot be confirmed", () => {
     declared("ghostty@tip", "claude-code@latest");
     installed("ghostty", "claude-code");
-    // The first candidate confirms cleanly, so removing before confirming the
-    // rest would take ghostty out and then abort on the second.
     box.write("info-ghostty@tip.json", '{"casks":[{"conflicts_with":{"cask":["ghostty"]}}]}\n');
     box.write("info-claude-code@latest.json", "not json at all\n");
 

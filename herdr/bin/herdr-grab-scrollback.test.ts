@@ -132,7 +132,6 @@ test("falls back past pbcopy to whichever clipboard tool the box has", () => {
   // Absolute /bin/cat, since PATH below holds only the stub directory.
   box.stub("xclip", `echo "xclip $*" > ${box.path("clipboard")}\n/bin/cat >> ${box.path("clipboard")}`);
   // PATH holds only the stubs, so the system pbcopy cannot win the dispatch.
-  // jq is linked in because the script still needs it.
   symlinkSync(realJq(), box.path("bin", "jq"));
   const r = run(["/bin/bash", launcher], { onlyPath: [box.bin] });
   expect(r.status).toBe(0);

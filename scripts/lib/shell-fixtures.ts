@@ -76,7 +76,6 @@ export function shell(script: string, options: ShellOptions = {}): Run {
   return run([interpreter, "-c", script, interpreter, ...args], rest);
 }
 
-/** Run a command and fail the test on a nonzero status, for fixture setup. */
 export function must(cmd: string[], options: RunOptions = {}): string {
   const result = run(cmd, options);
   if (result.status !== 0) {
@@ -173,8 +172,6 @@ export function stubGum(box: Sandbox): void {
     ].join("\n"),
   );
 }
-
-/** A no-op osascript, so a notification stays silent and side-effect-free. */
 
 export const repoRoot = dirname(dirname(import.meta.dir));
 

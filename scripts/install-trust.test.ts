@@ -19,8 +19,6 @@ beforeEach(() => {
   repository = box.path("repo");
   box.write("repository", `${box.path("repo")}\n`);
 
-  // Each invocation appends one line, so the tests can count calls as well as
-  // check arguments.
   box.stub(
     "brew",
     [

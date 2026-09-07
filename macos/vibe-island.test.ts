@@ -100,7 +100,7 @@ beforeEach(() => {
     APP_CLOBBERS: "",
     // A reopen that fails: the app stays down, and the user's menu bar with it.
     OPEN_FAILS: "",
-    // A preference write that does not take, leaving the key unset behind it.
+    // A preference write that does not take.
     WRITE_FAILS: "",
     ACTION_LOG: box.path("actions.log"),
   };
