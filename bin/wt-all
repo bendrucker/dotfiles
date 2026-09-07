@@ -1,158 +1,372 @@
-#!/usr/bin/env zsh
-# wt all <cmd>: run a wt command in every repo under the discovery roots.
-#
-# Worktrunk has no machine-wide registry, so we walk a known root and find each
-# repo's main worktree (the parent of a .git directory). Linked worktrees use a
-# .git file, so they're excluded. Pruning the main worktree covers all of a
-# repo's linked worktrees.
-#
-# Roots come from $WT_ALL_ROOT (colon-separated, PATH-style), falling back to
-# $PROJECTS, then ~/src. Repos run concurrently (WT_ALL_JOBS, default 8) since
-# the per-repo forge calls are network-bound.
-#
-# Repos whose command produces no output are skipped in the report, so
-# `wt all prune` shows only repos with something to remove, one line each, then
-# a totals trailer. A wrapped command can opt into a terse summary via $WT_ALL.
-#
-# Output is an aligned table by default. Set $WT_ALL_RAW to get the underlying
-# "<repo>\t<line>" rows instead, for a caller that parses the fields.
+#!/usr/bin/env bun
+//
+// wt all <cmd>: run a wt command in every repo under the discovery roots.
+//
+// Worktrunk has no machine-wide registry, so we walk a known root and find each
+// repo's main worktree (the parent of a .git directory). Linked worktrees use a
+// .git file, so they're excluded. Pruning the main worktree covers all of a
+// repo's linked worktrees.
+//
+// Roots come from $WT_ALL_ROOT (colon-separated, PATH-style), falling back to
+// $PROJECTS, then ~/src. Repos run concurrently ($WT_ALL_JOBS, default 8) since
+// the per-repo forge calls are network-bound.
+//
+// Repos whose command produces no output are skipped in the report, so
+// `wt all prune` shows only repos with something to remove, one line each, then
+// a totals trailer. A wrapped command can opt into a terse summary via $WT_ALL.
+//
+// Output is an aligned table by default. Set $WT_ALL_RAW to get the underlying
+// "<repo>\t<line>" rows instead, for a caller that parses the fields.
 
-set -uo pipefail
+import { readdirSync, writeSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { alignColumns } from "../scripts/lib/table.ts";
 
-# $0 is the function name inside main, so capture the script path up here.
-self="${0:A}"
+const USAGE = [
+  "Usage: wt all <cmd> [args]",
+  "Run a wt command in every repo under the discovery roots.",
+  "  $WT_ALL_ROOT   colon-separated roots to walk (default $PROJECTS, then ~/src)",
+  "  $WT_ALL_JOBS   how many repos run at once (default 8)",
+  "  $WT_ALL_RAW    print tab-separated rows instead of an aligned table",
+].join("\n");
 
-# Make sibling wt-* subcommands (e.g. wt-prune) resolvable by `wt` even when
-# this script is run by path, before install has put bin/ on PATH.
-export PATH="${self:h}:$PATH"
+const DEFAULT_JOBS = 8;
 
-# Internal per-repo worker, invoked in parallel by xargs.
-if [[ "${1:-}" == --worker ]]; then
-  cmd=("${(@f)$(<"$WT_ALL_DIR/.cmd")}")
-  # Percent-encode '/' so distinct repo paths map to distinct temp files; a
-  # plain '/'->'_' swap collides a nested path with an underscore in a name.
-  key="${2//\%/%25}"; key="${key//\//%2F}"
-  out=$(wt -C "$2" "${cmd[@]}" 2>"$WT_ALL_DIR/$key.err")
-  rc=$?
-  print -r -- "$out" > "$WT_ALL_DIR/$key"
-  (( rc )) && : > "$WT_ALL_DIR/$key.failed"
-  print   # one tick per completion drives the progress counter
-  exit 0
-fi
+// How far below a root a repo can sit and still be found. The root itself is
+// depth 0, so a .git at depth 4 belongs to a repo three directories down.
+const MAX_DEPTH = 4;
 
-main () {
-  local roots="${WT_ALL_ROOT:-${PROJECTS:-$HOME/src}}"
+// Dependency trees hold vendored checkouts that are nobody's working copy.
+const SKIPPED = new Set(["node_modules", "vendor"]);
 
-  local -a repos
-  local root gitdir
-  for root in ${(s.:.)roots}; do
-    [[ -d "$root" ]] || continue
-    while IFS= read -r gitdir; do
-      repos+=("${gitdir%/.git}")
-    done < <(find "$root" -maxdepth 4 \
-      \( -type d \( -name node_modules -o -name vendor \) -prune \) -o \
-      \( -type d -name .git -prune -print \))
-  done
+const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-  local -a wtcmd=("$@")
-  typeset -g dir
-  dir=$(mktemp -d "${TMPDIR:-/tmp}/wt-all.XXXXXX")
-  trap 'rm -rf "${dir:-}"' EXIT
-  print -rl -- "${wtcmd[@]}" > "$dir/.cmd"
+// Carriage return, then erase to end of line, so each redraw replaces the last.
+const ERASE_LINE = "\r\u001b[K";
 
-  export WT_ALL=1 WT_ALL_DIR="$dir"
-  integer jobs=${WT_ALL_JOBS:-8}
-  integer total=${#repos}
+// How much of a failing repo's stderr to show. Enough for a stack or a usage
+// block, short of a repo that failed by printing.
+const ERROR_LINES = 20;
 
-  # Workers run under xargs and each emits one tick on completion. On a TTY we
-  # redraw a single "spinner N/total" line as ticks arrive; otherwise (the
-  # nightly job) we run silently and let the summary speak.
-  if [[ -t 2 ]]; then
-    integer scanned=0
-    local -a frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-    printf '%s\0' "${repos[@]}" \
-      | xargs -0 -P "$jobs" -n1 "$self" --worker \
-      | while IFS= read -r _; do
-          (( scanned++ ))
-          printf '\r\033[K%s  %d/%d  wt %s' \
-            "${frames[scanned % ${#frames} + 1]}" "$scanned" "$total" "${wtcmd[*]}" >&2
-        done
-    printf '\r\033[K' >&2
-  else
-    printf '%s\0' "${repos[@]}" | xargs -0 -P "$jobs" -n1 "$self" --worker >/dev/null
-  fi
+// `wt prune` under $WT_ALL emits its counts and nothing else, which is what
+// lets them be totalled. Every other shape of output is a line to display.
+const COUNTS = /^(\d+)\t(\d+)$/;
 
-  local base="${PROJECTS:-$HOME/src}/"
-  integer active=0 worktrees=0 branches=0
-  local -a rows failed failed_errs
-  # outline is declared here rather than in the loop: re-declaring a parameter
-  # that already holds a value makes zsh echo it, which would land in the table.
-  local repo key disp out outline
-  for repo in "${repos[@]}"; do
-    key="${repo//\%/%25}"; key="${key//\//%2F}"
-    disp="${repo#$base}"
-    if [[ -e "$dir/$key.failed" ]]; then
-      failed+=("$disp")
-      [[ -s "$dir/$key.err" ]] \
-        && failed_errs+=("$disp:"$'\n'"$(tail -n 20 "$dir/$key.err" | sed 's/^/  /')")
-      continue
-    fi
-    out="$(<"$dir/$key")"
-    [[ -z "$out" ]] && continue
-    (( active++ ))
-    # Each line of a repo's output becomes a row keyed by that repo. A wrapped
-    # command can emit tab-separated fields to land in their own columns; `wt
-    # prune` emits "<worktrees>\t<branches>", which we also total below.
-    # Keying every line matters for commands like prune-audit that report one
-    # line per finding: prefixing only the first leaves the rest looking like
-    # they belong to whatever repo `column` happens to align them under.
-    for outline in "${(@f)out}"; do
-      # A blank line inside a command's output separates records. Keyed to the
-      # repo it would become a row with no fields.
-      [[ -n "$outline" ]] || continue
-      rows+=("$disp"$'\t'"$outline")
-    done
-    if [[ "$out" == <->$'\t'<-> ]]; then
-      (( worktrees += ${out%%$'\t'*} ))
-      (( branches  += ${out##*$'\t'} ))
-    fi
-  done
-
-  if (( ${#rows} )); then
-    if [[ -n "${WT_ALL_RAW:-}" ]]; then
-      # Tab-separated rows, no header and no alignment padding, for callers that
-      # parse the fields rather than read them. `column -t` collapses the tabs,
-      # so the aligned table cannot be split back into fields.
-      print -rl -- "${rows[@]}"
-    elif [[ "${wtcmd[1]}" == prune ]]; then
-      # Prune emits "<worktrees>\t<branches>"; head it and sort by worktree
-      # count (then branches) so the biggest cleanups sort to the top.
-      {
-        print -r -- "REPO"$'\t'"WORKTREES"$'\t'"BRANCHES"
-        print -rl -- "${rows[@]}" | sort -t $'\t' -k2,2nr -k3,3nr
-      } | column -t -s $'\t'
-    else
-      print -rl -- "${rows[@]}" | column -t -s $'\t'
-    fi
-  fi
-
-  local -a summary=("${#repos} scanned" "$active with output")
-  (( ${#failed} )) && summary+=("${#failed} failed")
-  (( worktrees || branches )) && summary+=("$worktrees worktrees, $branches branches")
-
-  # The spacer separates the table from the summary for a reader. Raw output is
-  # parsed field by field, so it gets rows and nothing else.
-  [[ -n "${WT_ALL_RAW:-}" ]] || print
-  gum log --level info "${(j: · :)summary}"
-  if (( ${#failed} )); then
-    gum log --level warn "failed: ${(j:, :)failed}"
-    # Diagnostics go to stderr, alongside the gum summary they belong to. On
-    # stdout this free-form text would land in a raw consumer's field parser as
-    # rows that are not rows.
-    (( ${#failed_errs} )) && print -rl -- "${failed_errs[@]}" >&2
-  fi
-
-  (( ${#failed} == 0 ))
+export interface Result {
+  // The repo as the report names it, with the projects root cut off the front.
+  display: string;
+  stdout: string;
+  stderr: string;
+  ok: boolean;
 }
 
-main "$@"
+export interface Totals {
+  scanned: number;
+  active: number;
+  failed: number;
+  worktrees: number;
+  branches: number;
+}
+
+// An empty variable counts as unset, matching the shell's `${VAR:-default}`.
+function setting(name: string): string | undefined {
+  const value = process.env[name];
+  return value === undefined || value === "" ? undefined : value;
+}
+
+export function projectsRoot(): string {
+  return setting("PROJECTS") ?? join(setting("HOME") ?? homedir(), "src");
+}
+
+export function roots(): string[] {
+  return (setting("WT_ALL_ROOT") ?? projectsRoot()).split(":").filter((root) => root !== "");
+}
+
+// A value that is not a positive count falls back to the default. `xargs -P`
+// read 0 as one process per repo, so a stray export meant a hundred concurrent
+// forge calls.
+export function jobs(): number {
+  const parsed = Number.parseInt(setting("WT_ALL_JOBS") ?? "", 10);
+  return Number.isNaN(parsed) || parsed < 1 ? DEFAULT_JOBS : parsed;
+}
+
+// Every main worktree under the roots. Entries are read in sorted order and
+// deduplicated, so overlapping roots cannot run one repo twice and the report
+// comes out the same on every machine.
+export function discover(from: string[]): string[] {
+  const found = new Set<string>();
+  for (const root of from) walk(root, 0, found);
+  return [...found];
+}
+
+function walk(dir: string, depth: number, found: Set<string>): void {
+  // Entries here sit one level below dir, so this is the last level that can
+  // hold a .git within the depth limit.
+  if (depth >= MAX_DEPTH) return;
+
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    // A root that does not exist, or one this user cannot read.
+    return;
+  }
+
+  for (const entry of [...entries].sort((left, right) => left.name.localeCompare(right.name))) {
+    // A symlink reports false here, so a link into a repo is not a second copy
+    // of it, and neither is one pointing back up its own tree.
+    if (!entry.isDirectory()) continue;
+    if (entry.name === ".git") {
+      found.add(dir);
+      continue;
+    }
+    if (SKIPPED.has(entry.name)) continue;
+    walk(join(dir, entry.name), depth + 1, found);
+  }
+}
+
+export function display(repo: string, base: string): string {
+  return repo.startsWith(base) ? repo.slice(base.length) : repo;
+}
+
+// One row per line of a repo's output, each keyed by the repo. A wrapped
+// command can emit tab-separated fields to land in their own columns.
+//
+// Keying every line matters for commands like prune-audit that report one line
+// per finding: prefixing only the first leaves the rest looking like they
+// belong to whatever repo the alignment happens to put them under. A blank line
+// inside a command's output separates records, and keyed to the repo it would
+// become a row with no fields.
+export function rowsFor(result: Result): string[][] {
+  return result.stdout
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => [result.display, ...line.split("\t")]);
+}
+
+// The two counts `wt prune` reports, or undefined for output that is anything
+// else. The whole output has to be the pair, so a command that happens to print
+// two numbers among other lines is not mistaken for one.
+export function countsIn(output: string): [number, number] | undefined {
+  const matched = COUNTS.exec(output.replace(/\n+$/, ""));
+  if (matched === null) return undefined;
+  return [Number(matched[1]), Number(matched[2])];
+}
+
+// Prune reports "<worktrees>\t<branches>" per repo, so head those columns and
+// sort by worktree count (then branches) to put the biggest cleanups on top.
+export function pruneTable(rows: string[][]): string[] {
+  const sorted = [...rows].sort(
+    (left, right) => count(right, 1) - count(left, 1) || count(right, 2) - count(left, 2),
+  );
+  return alignColumns([["REPO", "WORKTREES", "BRANCHES"], ...sorted]);
+}
+
+function count(row: string[], column: number): number {
+  const parsed = Number.parseInt(row[column] ?? "", 10);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+export function summarize(totals: Totals): string {
+  const parts = [`${totals.scanned} scanned`, `${totals.active} with output`];
+  if (totals.failed > 0) parts.push(`${totals.failed} failed`);
+  if (totals.worktrees > 0 || totals.branches > 0) {
+    parts.push(`${totals.worktrees} worktrees, ${totals.branches} branches`);
+  }
+  return parts.join(" · ");
+}
+
+// A failing repo's own diagnostics, indented under its name. Undefined when it
+// failed without saying anything, which leaves the summary to report the count.
+export function failureBlock(result: Result): string | undefined {
+  const lines = result.stderr.split("\n");
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  if (lines.length === 0) return undefined;
+  return [`${result.display}:`, ...lines.slice(-ERROR_LINES).map((line) => `  ${line}`)].join("\n");
+}
+
+export function frame(scanned: number): string {
+  return FRAMES[scanned % FRAMES.length] ?? "";
+}
+
+// Run `work` over the items, at most `limit` of them in flight.
+async function pool<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  const queue = items.map((item, index) => ({ item, index }));
+
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (let entry = queue.shift(); entry !== undefined; entry = queue.shift()) {
+      results[entry.index] = await work(entry.item);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
+}
+
+// Bun otherwise resolves a bare command name against the PATH it captured at
+// startup, so the environment goes over explicitly on every spawn.
+function environment(): Record<string, string | undefined> {
+  // Sibling wt-* subcommands (e.g. wt-prune) stay resolvable by `wt` even when
+  // this script is run by path, before install has put bin/ on PATH.
+  const path = `${dirname(import.meta.path)}:${process.env.PATH ?? ""}`;
+  return { ...process.env, PATH: path, WT_ALL: "1" };
+}
+
+async function runRepo(repo: string, base: string, cmd: string[]): Promise<Result> {
+  const spawned = Bun.spawn({
+    cmd: ["wt", "-C", repo, ...cmd],
+    env: environment(),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr] = await Promise.all([
+    new Response(spawned.stdout).text(),
+    new Response(spawned.stderr).text(),
+  ]);
+
+  return { display: display(repo, base), stdout, stderr, ok: (await spawned.exited) === 0 };
+}
+
+// One line redrawn in place as results arrive. Off without a terminal, which is
+// how the nightly job runs: there the summary is the whole report.
+function progress(scanned: number, total: number, cmd: string[]): void {
+  if (!process.stderr.isTTY) return;
+  const label = `${frame(scanned)}  ${scanned}/${total}  wt ${cmd.join(" ")}`;
+  process.stderr.write(`${ERASE_LINE}${label}`);
+}
+
+function clearProgress(): void {
+  if (process.stderr.isTTY) process.stderr.write(ERASE_LINE);
+}
+
+function log(level: "info" | "warn", message: string): void {
+  Bun.spawnSync({
+    cmd: ["gum", "log", "--level", level, message],
+    env: environment(),
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+}
+
+function report(results: Result[], cmd: string[]): number {
+  const raw = setting("WT_ALL_RAW") !== undefined;
+  const totals: Totals = {
+    scanned: results.length,
+    active: 0,
+    failed: 0,
+    worktrees: 0,
+    branches: 0,
+  };
+  const rows: string[][] = [];
+  const blocks: string[] = [];
+  const failed: string[] = [];
+
+  for (const result of results) {
+    // A repo whose command failed reports the failure instead of its output,
+    // which is partial by definition and would read as the whole answer.
+    if (!result.ok) {
+      totals.failed += 1;
+      failed.push(result.display);
+      const block = failureBlock(result);
+      if (block !== undefined) blocks.push(block);
+      continue;
+    }
+
+    const repoRows = rowsFor(result);
+    if (repoRows.length === 0) continue;
+    totals.active += 1;
+    rows.push(...repoRows);
+
+    const counts = countsIn(result.stdout);
+    if (counts !== undefined) {
+      totals.worktrees += counts[0];
+      totals.branches += counts[1];
+    }
+  }
+
+  const lines: string[] = [];
+  if (rows.length > 0) {
+    if (raw) {
+      // Tab-separated rows, no header and no alignment padding, for callers
+      // that parse the fields rather than read them. Padding them out would
+      // leave a consumer splitting on runs of spaces inside its own cells.
+      lines.push(...rows.map((row) => row.join("\t")));
+    } else if (cmd[0] === "prune") {
+      lines.push(...pruneTable(rows));
+    } else {
+      lines.push(...alignColumns(rows));
+    }
+  }
+
+  // The spacer separates the table from the summary for a reader. Raw output is
+  // parsed field by field, so it gets rows and nothing else.
+  if (!raw) lines.push("");
+  if (lines.length > 0) writeAll(1, `${lines.join("\n")}\n`);
+
+  log("info", summarize(totals));
+  if (failed.length > 0) {
+    log("warn", `failed: ${failed.join(", ")}`);
+    // Diagnostics go to stderr, alongside the gum summary they belong to. On
+    // stdout this free-form text would land in a raw consumer's field parser as
+    // rows that are not rows.
+    if (blocks.length > 0) writeAll(2, `${blocks.join("\n")}\n`);
+  }
+
+  return failed.length === 0 ? 0 : 1;
+}
+
+// A write followed by process.exit delivers only one pipe buffer, and the
+// nightly job reads this through a pipe. A table over every repo outruns that.
+function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let written = 0;
+  while (written < bytes.length) written += writeSync(fd, bytes, written);
+}
+
+function missing(tool: string): boolean {
+  return Bun.which(tool, { PATH: environment().PATH }) === null;
+}
+
+async function main(args: string[]): Promise<number> {
+  if (args[0] === "-h" || args[0] === "--help") {
+    writeAll(1, `${USAGE}\n`);
+    return 0;
+  }
+
+  // The shell ran a bare `wt` in every repo here, fanning worktrunk's own usage
+  // text across the machine and reporting it as a finding per repo.
+  if (args.length === 0) {
+    writeAll(2, `wt all: no command given\n${USAGE}\n`);
+    return 2;
+  }
+
+  // Named once rather than as a failure in every repo, which is what a missing
+  // worktrunk would otherwise look like across a whole sweep.
+  for (const tool of ["wt", "gum"]) {
+    if (missing(tool)) {
+      writeAll(2, `wt all: ${tool} is required\n`);
+      return 1;
+    }
+  }
+
+  const repos = discover(roots());
+  const base = `${projectsRoot()}/`;
+
+  let scanned = 0;
+  const results = await pool(repos, jobs(), async (repo) => {
+    const result = await runRepo(repo, base, args);
+    scanned += 1;
+    progress(scanned, repos.length, args);
+    return result;
+  });
+  clearProgress();
+
+  return report(results, args);
+}
+
+if (import.meta.main) {
+  process.exit(await main(process.argv.slice(2)));
+}
