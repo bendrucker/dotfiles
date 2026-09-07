@@ -34,9 +34,9 @@ repos:
         entry: ast-grep test --skip-snapshot-tests
         files: ^(rules|rule-tests)/
         pass_filenames: false
-      - id: shellspec
-        name: shellspec
+      - id: skill-tests
+        name: skill tests
         language: system
-        entry: bash -c 'for dir in $(find .claude/skills -name .shellspec -exec dirname {} \;); do echo "shellspec $dir" && (cd "$dir" && shellspec) || exit 1; done'
-        files: \.(sh|shellspec)$
+        entry: bun test ./.claude/skills/
+        files: ^\.claude/skills/.*\.(sh|ts)$
         pass_filenames: false

@@ -54,5 +54,5 @@ A re-import only matters when a codepoint new to a release turns up in
 `glyphs.conf` declares every private-use glyph this repo renders, with the Nerd
 Fonts name it comes from. `glyph-scan` fails when a tracked file uses a glyph
 that is not declared, and `glyph-scan --font` fails when the installed font is
-missing one that is. CI runs the first. `spec/glyphs_spec.sh` runs both, skipping
+missing one that is. CI runs the first. `bin/glyph-scan.integration.test.ts` runs both, skipping
 the second where the cask was not installed.

@@ -81,6 +81,6 @@ pkill -f 'ghostty -e env .*herdr --session preview'
 
 `bin/herdr-workspace-status` reports the `$status_*` and `$branch` workspace tokens. The Claude status line in bendrucker/claude reports `$title` and `$ctx_*` on panes. herdr strips escape codes from token values, so a color is a token name styled in `config.toml`, and a new color is a new name in both places.
 
-## Specs
+## Tests
 
-`shellspec` from this directory runs `spec/*_spec.sh` under bash. A script in `bin/` gets a spec that checks it is executable, passes `shellcheck`, resolves on `PATH` through `path.zsh`, and is bound in `config.toml` by its bare name. Stub `herdr`, `gh`, and `glab` on `PATH` rather than reaching the live server.
+A script in `bin/` gets a `bun test` file beside it, `bin/<script>.test.ts`, checking that it is executable, passes `shellcheck`, resolves on `PATH` through `path.zsh`, and is bound in `config.toml` by its bare name. Stub `herdr`, `gh`, and `glab` on `PATH` rather than talking to the live server. `scripts/lib/shell-fixtures.ts` holds the sandbox, the stub writer, and `resolveOnPath`, which is what does the `path.zsh` lookup.
