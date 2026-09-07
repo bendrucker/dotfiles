@@ -52,3 +52,51 @@ manifest. `agent-detection/` holds the rules herdr's own manifests are missing,
 and `bin/herdr-agent-detection` composes them onto whatever herdr last fetched.
 `spec/agent_detection_spec.sh` scores the recorded screens in that directory, so
 a rule that stops matching fails in CI rather than in the sidebar.
+
+## Reaching the session from a phone
+
+herdr serves its native direct-kitty graphics only while exactly one full app
+client is attached to a session. Running plain `herdr` over mosh from Moshi
+makes a second one, and the desktop loses the transport for as long as the
+phone stays connected.
+
+What breaks is the mouse, not the picture, which is what makes it so hard to
+read. A terminal-browser or tode pane falls back to writing kitty escapes
+itself and `[experimental] kitty_graphics` passes them through, so the pane
+keeps painting and the browser keeps running. But herdr stops sending pixel
+mouse coordinates while still answering the pane's `?1016$p` probe as set, so
+the browser reads cell numbers as pixels and the whole pane collapses into a
+patch of the top-left corner, where the toolbar's reload button sits. Every
+click reloads the page. It looks like a hung window rather than a coordinate
+bug.
+
+`bin/herdr-attach` is the way in from the phone. It connects to one pane's
+terminal rather than the workspace UI, which is a mode the client count
+excludes, so the desktop keeps its graphics. With no argument it offers a
+picker over the panes; a pane id, terminal id, or agent name skips it. Detach
+with Ctrl-B q, and pass `--takeover` to reclaim a terminal a dropped link left
+held.
+
+A browser pane is not what a phone gives up by attaching this way, because
+mosh could never have carried one. Its state-synchronization protocol replays a
+grid of cells and attributes rather than a byte stream, and that model has no
+field an image could occupy: mosh's parser recognizes the APC introducer and
+then discards every byte of a kitty graphics payload. Mode 1016 is absent from
+its DEC-mode tables and it answers no DECRQM query at all, so pixel-core's probe
+times out and settles on cell coordinates. Reaching terminal-browser from a
+phone would mean a plain SSH connection instead of mosh, on its own herdr
+session so it keeps a client count of one.
+
+Nothing here needs repairing after the fact. The desktop recovers the moment
+the second client detaches, with no server restart and no pane loss, so a
+session that went in through plain `herdr` costs only the time it stayed
+connected. To confirm which state a browser pane is in:
+
+```sh
+printf '{"id":"i","method":"pane.graphics.info","params":{"pane_id":"<pane>"}}\n' |
+  nc -U ~/.config/herdr/herdr.sock
+```
+
+`file_frame_transport: "direct-kitty"` means the native path is live. Its
+absence means something disqualified it, and a second attached client is the
+first thing to check.
