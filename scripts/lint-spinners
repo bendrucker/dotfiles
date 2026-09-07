@@ -24,12 +24,12 @@ report() {
     [ -n "$file" ] || continue
 
     # The wrapper makes the call this forbids, and bin/spin names it in the
-    # usage line describing what it wraps. Its spec, the gum stub that stands
+    # usage line describing what it wraps. Its test, the gum stub that stands
     # in for the real binary, and the skill documenting the rule all quote the
     # string without calling it.
     case "$file" in
       scripts/lib/spin.sh | bin/spin | scripts/lint-spinners) continue ;;
-      scripts/spec/spin_spec.sh | scripts/spec/spec_helper.sh) continue ;;
+      scripts/lib/spin.test.ts | scripts/lib/shell-fixtures.ts) continue ;;
       .claude/*) continue ;;
     esac
 

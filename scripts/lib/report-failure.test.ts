@@ -544,4 +544,117 @@ describe("shim", () => {
     expect(sourced("report_failure drift Stale audit '-- stderr --' abc123")).toBe(0);
     expect(filedNotes()).toContain("-- stderr --");
   });
+
+  // The shim is the boundary five shell callers were written against, and they
+  // pass their arguments by position. A slot that shifts files a to-do naming
+  // the wrong thing, or latches the wrong job, with nothing to say it went
+  // wrong.
+
+  // A copy of report-failure.sh alongside a fake bin/report-failure that records
+  // one argument per line, so a slot that moved shows up as a line that moved,
+  // and so sourcing the copy also exercises the shim finding the CLI from
+  // wherever it happens to sit.
+  function argvFixture() {
+    const root = join(sandbox, "argv-fixture");
+    const recorded = join(root, "argv");
+    mkdirSync(join(root, "bin"), { recursive: true });
+    mkdirSync(join(root, "scripts", "lib"), { recursive: true });
+    const shimCopy = join(root, "scripts", "lib", "report-failure.sh");
+    writeFileSync(shimCopy, readFileSync(shim, "utf8"));
+    writeStub(join(root, "bin", "report-failure"), `printf '%s\\n' "$@" > ${JSON.stringify(recorded)}`);
+    return { shimCopy, argv: () => readFileSync(recorded, "utf8") };
+  }
+
+  function sourceShim(shimCopy: string, script: string, interpreter: "bash" | "zsh" = "bash"): number {
+    return Bun.spawnSync({
+      cmd: [interpreter, "-c", `. ${JSON.stringify(shimCopy)}\n${script}`, interpreter],
+      env: { ...process.env, PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(":") },
+      stdio: ["ignore", "ignore", "ignore"],
+    }).exitCode;
+  }
+
+  test("hands all eight positionals to their flags", () => {
+    const { shimCopy, argv } = argvFixture();
+    const status = sourceShim(shimCopy, "report_failure JOB TITLE COMMAND OUTPUT REVISION META HEADING FINGERPRINT");
+    expect(status).toBe(0);
+    expect(argv().trimEnd()).toBe(
+      [
+        "failure",
+        "--job=JOB",
+        "--title=TITLE",
+        "--command=COMMAND",
+        "--output=OUTPUT",
+        "--revision=REVISION",
+        "--extra-meta=META",
+        "--output-heading=HEADING",
+        "--fingerprint=FINGERPRINT",
+      ].join("\n"),
+    );
+  });
+
+  // bin/dotfiles-upgrade and bin/worktree-prune both call it with only the
+  // required five.
+  test("defaults the three optional positionals", () => {
+    const { shimCopy, argv } = argvFixture();
+    const status = sourceShim(shimCopy, "report_failure JOB TITLE COMMAND OUTPUT REVISION");
+    expect(status).toBe(0);
+    expect(argv().trimEnd()).toBe(
+      [
+        "failure",
+        "--job=JOB",
+        "--title=TITLE",
+        "--command=COMMAND",
+        "--output=OUTPUT",
+        "--revision=REVISION",
+        "--extra-meta=",
+        "--output-heading=Error Output",
+        "--fingerprint=",
+      ].join("\n"),
+    );
+  });
+
+  // bin/worktree-prune passes an explanation whose first character is a newline,
+  // and a reproduction command running to several hundred characters.
+  test("keeps a multi-line argument in one slot", () => {
+    const { shimCopy, argv } = argvFixture();
+    const status = sourceShim(
+      shimCopy,
+      "report_failure JOB TITLE \"$(printf 'cd here\\nrun this')\" OUTPUT REVISION",
+    );
+    expect(status).toBe(0);
+    expect(argv()).toContain("cd here\nrun this");
+  });
+
+  test("names the job it clears", () => {
+    const { shimCopy, argv } = argvFixture();
+    const status = sourceShim(shimCopy, "report_success JOB");
+    expect(status).toBe(0);
+    expect(argv().trimEnd()).toBe(["success", "--job=JOB"].join("\n"));
+  });
+
+  // scripts/lib/git-diff-review.test.ts redefines notify to capture "$1: $2",
+  // so the first two positionals are title and message wherever it is called.
+  test("takes a title and a message", () => {
+    const { shimCopy, argv } = argvFixture();
+    const status = sourceShim(shimCopy, "notify TITLE MESSAGE");
+    expect(status).toBe(0);
+    expect(argv().trimEnd()).toBe(["notify", "--title=TITLE", "--message=MESSAGE"].join("\n"));
+  });
+
+  // bin/dotfiles-sync is the only caller that asks for a sound.
+  test("passes a third positional as the sound", () => {
+    const { shimCopy, argv } = argvFixture();
+    const status = sourceShim(shimCopy, "notify TITLE MESSAGE Glass");
+    expect(status).toBe(0);
+    expect(argv().trimEnd()).toBe(["notify", "--title=TITLE", "--message=MESSAGE", "--sound=Glass"].join("\n"));
+  });
+
+  // Half the callers are zsh scripts, and the shim has to find the CLI relative
+  // to itself under a shell with no BASH_SOURCE.
+  test("resolves the CLI from its own location", () => {
+    const { shimCopy, argv } = argvFixture();
+    const status = sourceShim(shimCopy, "report_success ZJOB", "zsh");
+    expect(status).toBe(0);
+    expect(argv().trimEnd()).toBe(["success", "--job=ZJOB"].join("\n"));
+  });
 });
