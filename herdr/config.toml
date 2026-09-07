@@ -307,6 +307,12 @@ description = "flock coordinator (focus or create)"
 agent_panel_sort = "priority"
 
 [experimental]
+# Image rendering for attached clients, which terminal-browser needs to paint
+# anything. Without it a browser pane is blank while the browser itself runs
+# fine, so the symptom points at the wrong half. ghostty is the
+# kitty-compatible outer terminal it requires.
+kitty_graphics = true
+
 # herdr server restarts (done for config/plugin changes) currently lose pane
 # screen history. This preserves it across restarts.
 pane_history = true
