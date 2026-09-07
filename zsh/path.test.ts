@@ -93,7 +93,7 @@ describe("PATH", () => {
   });
 
   // An exported marker would let a child shell read its parent's startup as
-  // its own and skip the rebuild it needs, which is the whole bug again.
+  // its own and skip the rebuild it needs.
   test("does not export the marker the rebuild keys on", () => {
     const r = run([
       "zsh",

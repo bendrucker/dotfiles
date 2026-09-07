@@ -37,8 +37,8 @@ describe("bin/spin", () => {
     expect(r.stderr).toContain("Pushing");
   });
 
-  // The failure that made the library check for it: a caller that built an
-  // empty argument list would otherwise report a step that never ran as done.
+  // A caller that built an empty argument list would otherwise report a step
+  // that never ran as done.
   test("refuses an empty command", () => {
     const r = runSpin("--title", "Syncing", "--");
     expect(r.status).toBe(2);
