@@ -285,7 +285,8 @@ workspaces=$(herdr workspace list 2>/dev/null | jq -r '
 # worktrees should not wait on it one repo at a time. Workspace ids as
 # arguments narrow the run to those.
 while IFS=$'\t' read -r id path label; do
-  [ -n "$id" ] && [ -d "$path" ] || continue
+  [ -n "$id" ] || continue
+  [ -d "$path" ] || continue
   if [ "$#" -gt 0 ]; then
     case " $* " in *" $id "*) ;; *) continue ;; esac
   fi

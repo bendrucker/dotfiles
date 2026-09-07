@@ -171,6 +171,12 @@ jobs:
       # zsh is the one the image does not already carry.
       - name: Install shells the tests drive
         run: sudo apt-get install -y zsh
+      - name: Add brew to PATH
+        run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
+      # The spin tests that cover the no-terminal branch run the real gum,
+      # because a stub cannot show what its spinner writes to stderr.
+      - name: Install gum
+        run: brew install gum
       # The integration tests read state only bootstrap creates, so they run
       # there instead. The skill tests need duckdb and have their own job;
       # discovery skips their dot directory, and the pattern says so on purpose.

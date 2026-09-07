@@ -129,7 +129,10 @@ describe("herdr-workspace-status", () => {
   });
 
   test.skipIf(!commandExists("shellcheck"))("passes shellcheck", () => {
-    expect(run(["shellcheck", script]).status).toBe(0);
+    // shellcheck writes its findings to stdout, so asserting on the output is
+    // what puts the finding itself in the failure.
+    const check = run(["shellcheck", script]);
+    expect(check.stdout + check.stderr).toBe("");
   });
 
   test("is reachable on PATH from a login shell", () => {

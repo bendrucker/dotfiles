@@ -28,7 +28,10 @@ test("is executable", () => {
 });
 
 test.skipIf(!commandExists("shellcheck"))("passes shellcheck", () => {
-  expect(run(["shellcheck", launcher]).status).toBe(0);
+  // shellcheck writes its findings to stdout, so asserting on the output is
+  // what puts the finding itself in the failure.
+  const check = run(["shellcheck", launcher]);
+  expect(check.stdout + check.stderr).toBe("");
 });
 
 // path.zsh is one of the two files .zshrc skips, so sourcing it under a chosen
