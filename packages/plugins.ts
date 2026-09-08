@@ -33,6 +33,11 @@ export type SourceLookup =
 // read empty as "nothing is declared" and uninstall everything.
 export type Declaration = { ok: true; ids: Set<string> } | { ok: false; reason: string };
 
+// What a payload's manifest says it depends on. A manifest that exists and
+// cannot be read arrives as a failure rather than as no dependencies, because
+// the caller uninstalls whatever nothing accounts for.
+export type Dependencies = { ok: true; ids: string[] } | { ok: false; reason: string };
+
 const UNREADABLE = { ok: false, reason: "unreadable" } as const;
 const ABSENT = { ok: false, reason: "absent" } as const;
 
@@ -111,15 +116,14 @@ function runList() {
   }
 }
 
-// settings.json's whole enabledPlugins map, keys and values both. Reading it
-// separately from the two views below is what keeps them from disagreeing about
-// which plugins the file names.
-function settingsPlugins(): Record<string, unknown> {
+// settings.json's whole enabledPlugins map, keys and values both, or undefined
+// when the file is not there. Reading it separately from the two views below is
+// what keeps them from disagreeing about which plugins the file names, and the
+// absent case is theirs to interpret: it enables nothing, and it declares
+// nothing either, which are different answers to a caller that uninstalls.
+function settingsPlugins(): Record<string, unknown> | undefined {
   const path = join(home(), ".claude", "settings.json");
-  // A settings.json that is not there enables nothing by name. Only a file that
-  // exists and cannot be read or parsed stops the inventory, so a zero-byte one,
-  // which is a file something wrote wrong, is loud.
-  if (!isFile(path)) return {};
+  if (!isFile(path)) return undefined;
 
   let captured: string;
   try {
@@ -142,7 +146,7 @@ function enabledPlugins(): InstalledPlugin[] {
   // settings.json records a plugin turned off as an explicit false rather than
   // dropping the key, so reading the keys alone would enumerate (and install) a
   // disabled plugin. Only false and null are off.
-  return Object.entries(settingsPlugins())
+  return Object.entries(settingsPlugins() ?? {})
     .filter(([, value]) => value !== false && value !== null)
     .map(([id]) => ({ id, installPath: "" }));
 }
@@ -151,11 +155,24 @@ function enabledPlugins(): InstalledPlugin[] {
 // to false declares a plugin that is installed and turned off, so its payload is
 // meant to stay.
 export function declaredPlugins(): Declaration {
+  let named: Record<string, unknown> | undefined;
   try {
-    return { ok: true, ids: new Set(Object.keys(settingsPlugins())) };
+    named = settingsPlugins();
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
+
+  // A file that is not there declares nothing and permits nothing. It is the
+  // shape a broken symlink into the config repo leaves behind, and reading it as
+  // an empty declaration would uninstall every plugin on the machine. A file
+  // that is there and names no plugins is a real declaration of none.
+  if (named === undefined) {
+    return {
+      ok: false,
+      reason: "settings.json is not there, so nothing declares which plugins belong",
+    };
+  }
+  return { ok: true, ids: new Set(Object.keys(named)) };
 }
 
 // The user-scope payloads `claude plugin list` reports, without the
@@ -222,28 +239,44 @@ export function splitPluginId(id: string): { name: string; marketplace: string }
 // would take it out from under the plugin that needs it. A bare name resolves
 // against the marketplace the depending plugin came from, which is how the
 // manifests in the wild spell them.
-export function pluginDependencies(id: string, installPath: string): string[] {
-  if (installPath === "") return [];
+//
+// A payload with no manifest at all names no dependencies, which is the ordinary
+// answer for a plugin that ships none. A manifest that is there and cannot be
+// read is a different answer: it may name a dependency, and the caller would
+// uninstall that dependency on the strength of a file nothing parsed.
+export function pluginDependencies(id: string, installPath: string): Dependencies {
+  if (installPath === "") return { ok: true, ids: [] };
+
+  const manifest = join(installPath, ".claude-plugin", "plugin.json");
+  if (!isFile(manifest)) return { ok: true, ids: [] };
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(
-      readFileSync(join(installPath, ".claude-plugin", "plugin.json"), "utf8").replace(
-        BYTE_ORDER_MARK,
-        "",
-      ),
-    );
-  } catch {
-    // A payload that ships no manifest, or one nothing can parse, declares no
-    // dependencies. The audit is what reports a payload in that state.
-    return [];
+    parsed = JSON.parse(readFileSync(manifest, "utf8").replace(BYTE_ORDER_MARK, ""));
+  } catch (error) {
+    return { ok: false, reason: `manifest could not be read: ${describe(error)}` };
   }
-  if (!isRecord(parsed) || !Array.isArray(parsed.dependencies)) return [];
+  if (!isRecord(parsed)) return { ok: false, reason: "manifest does not hold an object" };
+
+  const declared = parsed.dependencies;
+  if (declared === undefined || declared === null || declared === false) {
+    return { ok: true, ids: [] };
+  }
+  if (!Array.isArray(declared)) {
+    return { ok: false, reason: "manifest dependencies is not an array" };
+  }
 
   const { marketplace } = splitPluginId(id);
-  return parsed.dependencies
-    .filter((entry): entry is string => typeof entry === "string" && entry !== "")
-    .map((entry) => (entry.includes("@") ? entry : `${entry}@${marketplace}`));
+  const ids: string[] = [];
+  for (const entry of declared) {
+    // An entry in a shape nothing here reads leaves the rest of the list
+    // unaccounted for, and the plugin it meant to name would be uninstalled.
+    if (typeof entry !== "string" || entry === "") {
+      return { ok: false, reason: "manifest names a dependency that is not a name" };
+    }
+    ids.push(entry.includes("@") ? entry : `${entry}@${marketplace}`);
+  }
+  return { ok: true, ids };
 }
 
 export function pluginSource(id: string): SourceLookup {

@@ -111,20 +111,39 @@ export function updateMarketplaces(out: Output, env: Record<string, string | und
   }
 }
 
+// The ids a prune must leave installed, or why the set could not be settled.
+export type Kept = { ok: true; ids: Set<string> } | { ok: false; reason: string };
+
 // The ids whose payloads the declaration accounts for: what settings.json names,
 // plus what those plugins name as their own dependencies. Claude Code installs a
 // dependency at user scope without writing a key for it, so reading the
 // declaration alone would uninstall it out from under the plugin that needs it,
 // every night, with nothing to put it back.
-export function keptPlugins(declared: Set<string>, installed: InstalledPlugin[]): Set<string> {
-  const kept = new Set(declared);
-  for (const plugin of installed) {
-    if (!declared.has(plugin.id)) continue;
-    for (const dependency of pluginDependencies(plugin.id, plugin.installPath)) {
-      kept.add(dependency);
-    }
+//
+// A dependency is walked as well as kept. Reading only the manifests of the
+// directly declared plugins keeps a dependency while uninstalling the one it
+// depends on in turn, which breaks the chain at its second link.
+export function keptPlugins(declared: Set<string>, installed: InstalledPlugin[]): Kept {
+  const payloads = new Map(installed.map((plugin) => [plugin.id, plugin.installPath]));
+  const kept = new Set<string>();
+  const pending = [...declared];
+
+  while (pending.length > 0) {
+    const id = pending.pop();
+    if (id === undefined || kept.has(id)) continue;
+    kept.add(id);
+
+    // Declared but not installed: the update pass installs it, and there is no
+    // payload here to read a dependency out of.
+    const payload = payloads.get(id);
+    if (payload === undefined) continue;
+
+    const dependencies = pluginDependencies(id, payload);
+    if (!dependencies.ok) return { ok: false, reason: `${id}: ${dependencies.reason}` };
+    pending.push(...dependencies.ids);
   }
-  return kept;
+
+  return { ok: true, ids: kept };
 }
 
 // Uninstall the user-scope payloads settings.json no longer names.
@@ -158,11 +177,18 @@ export function prunePlugins(out: Output, env: Record<string, string | undefined
     return false;
   }
 
+  // A dependency that could not be read leaves the payloads it names
+  // unaccounted for, and uninstalling on that is what breaks a declared plugin.
   const kept = keptPlugins(declared.ids, installed.plugins);
+  if (!kept.ok) {
+    log(out, "warn", "Could not read which plugins are depended on");
+    out.write(2, `claude-plugins: ${kept.reason}\n`);
+    return false;
+  }
 
   let failed = 0;
   for (const plugin of installed.plugins) {
-    if (plugin.id === "" || kept.has(plugin.id)) continue;
+    if (plugin.id === "" || kept.ids.has(plugin.id)) continue;
 
     log(out, "info", `Uninstalling ${plugin.id} (no longer declared)...`);
     // One id per call: the CLI takes a single plugin and ignores anything after

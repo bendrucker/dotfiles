@@ -355,12 +355,57 @@ afterEach(() => {
 });
 
 describe("keptPlugins", () => {
+  function kept(declared: string[], installed: { id: string; installPath: string }[]): string[] {
+    const read = keptPlugins(new Set(declared), installed);
+    if (!read.ok) throw new Error(`kept failed: ${read.reason}`);
+    return [...read.ids].sort();
+  }
+
   test("keeps what a declared plugin names as a dependency", () => {
     const path = payload("first", "alpha", "1.0.0");
     writePayloadManifest(path, { name: "alpha", dependencies: ["gamma"] });
 
-    const kept = keptPlugins(new Set(["alpha@first"]), [{ id: "alpha@first", installPath: path }]);
-    expect([...kept].sort()).toEqual(["alpha@first", "gamma@first"]);
+    expect(kept(["alpha@first"], [{ id: "alpha@first", installPath: path }])).toEqual([
+      "alpha@first",
+      "gamma@first",
+    ]);
+  });
+
+  // Keeping a dependency without reading its own manifest breaks the chain at
+  // its second link: gamma survives and the delta it needs is uninstalled.
+  test("walks a dependency of a dependency", () => {
+    const alpha = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(alpha, { name: "alpha", dependencies: ["gamma"] });
+    const gamma = payload("first", "gamma", "1.0.0");
+    writePayloadManifest(gamma, { name: "gamma", dependencies: ["delta"] });
+
+    expect(
+      kept(
+        ["alpha@first"],
+        [
+          { id: "alpha@first", installPath: alpha },
+          { id: "gamma@first", installPath: gamma },
+        ],
+      ),
+    ).toEqual(["alpha@first", "delta@first", "gamma@first"]);
+  });
+
+  // Two plugins naming each other would otherwise queue each other forever.
+  test("settles on a dependency cycle", () => {
+    const alpha = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(alpha, { name: "alpha", dependencies: ["gamma"] });
+    const gamma = payload("first", "gamma", "1.0.0");
+    writePayloadManifest(gamma, { name: "gamma", dependencies: ["alpha"] });
+
+    expect(
+      kept(
+        ["alpha@first"],
+        [
+          { id: "alpha@first", installPath: alpha },
+          { id: "gamma@first", installPath: gamma },
+        ],
+      ),
+    ).toEqual(["alpha@first", "gamma@first"]);
   });
 
   // Reading an undeclared plugin's dependencies would keep whatever it names
@@ -369,16 +414,28 @@ describe("keptPlugins", () => {
     const path = payload("first", "stray", "1.0.0");
     writePayloadManifest(path, { name: "stray", dependencies: ["gamma"] });
 
-    const kept = keptPlugins(new Set(["alpha@first"]), [{ id: "stray@first", installPath: path }]);
-    expect([...kept]).toEqual(["alpha@first"]);
+    expect(kept(["alpha@first"], [{ id: "stray@first", installPath: path }])).toEqual([
+      "alpha@first",
+    ]);
   });
 
   test("takes a dependency that names its own marketplace as written", () => {
     const path = payload("first", "alpha", "1.0.0");
     writePayloadManifest(path, { name: "alpha", dependencies: ["beta@third"] });
 
-    const kept = keptPlugins(new Set(["alpha@first"]), [{ id: "alpha@first", installPath: path }]);
-    expect([...kept].sort()).toEqual(["alpha@first", "beta@third"]);
+    expect(kept(["alpha@first"], [{ id: "alpha@first", installPath: path }])).toEqual([
+      "alpha@first",
+      "beta@third",
+    ]);
+  });
+
+  test("fails when a declared plugin's manifest cannot be read", () => {
+    const path = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(path, "not json\n");
+
+    expect(keptPlugins(new Set(["alpha@first"]), [{ id: "alpha@first", installPath: path }])).toEqual(
+      { ok: false, reason: expect.stringContaining("alpha@first") },
+    );
   });
 });
 
@@ -431,6 +488,30 @@ describe("prunePlugins", () => {
     expect(prunePlugins(out, process.env)).toBe(false);
     expect(readLog("plugin.log")).toBe("");
     expect(out.captured()).toContain("claude-plugins:");
+  });
+
+  // The shape a broken symlink into the config repo leaves behind. An absent
+  // file is not a declaration that nothing belongs here.
+  test("uninstalls nothing when settings.json is not there", () => {
+    rmSync(join(sandbox, ".claude", "settings.json"), { force: true });
+
+    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(readLog("plugin.log")).toBe("");
+  });
+
+  // A manifest that is there and cannot be read may name a dependency, and the
+  // payload it names would go on the strength of a file nothing parsed.
+  test("uninstalls nothing when a declared plugin's manifest cannot be read", () => {
+    const alpha = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(alpha, "not json\n");
+    writePluginList([
+      { id: "alpha@first", installPath: alpha },
+      { id: "stray@first", installPath: payload("first", "stray", "1.0.0") },
+    ]);
+    writeSettings({ "alpha@first": true });
+
+    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(readLog("plugin.log")).toBe("");
   });
 
   // Pruning against a partial inventory reports success over payloads it never

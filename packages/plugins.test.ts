@@ -377,11 +377,15 @@ describe("declaredPlugins", () => {
     expect(ids()).toEqual(["on@market"]);
   });
 
-  test("declares nothing when settings.json is not there", () => {
+  // The shape a broken symlink into the config repo leaves behind. Reading it as
+  // an empty declaration is what would uninstall every plugin on the machine.
+  test("fails when settings.json is not there", () => {
     rmSync(join(sandbox, ".claude", "settings.json"), { force: true });
-    expect(declared()).toEqual([]);
+    expect(declaredPlugins().ok).toBe(false);
   });
 
+  // A file that is there and names no plugins is a real declaration of none,
+  // which is a different answer from a file nothing could read.
   test("declares nothing when the file names no plugins", () => {
     writeSettings({ env: {} });
     expect(declared()).toEqual([]);
@@ -423,42 +427,61 @@ describe("installedPlugins", () => {
 });
 
 describe("pluginDependencies", () => {
+  function names(id: string, path: string): string[] {
+    const read = pluginDependencies(id, path);
+    if (!read.ok) throw new Error(`dependencies failed: ${read.reason}`);
+    return read.ids;
+  }
+
   test("resolves a bare name against the depending plugin's marketplace", () => {
     const path = payload("market", "alpha", "1.0.0");
     writePayloadManifest(path, { name: "alpha", dependencies: ["beta"] });
-    expect(pluginDependencies("alpha@market", path)).toEqual(["beta@market"]);
+    expect(names("alpha@market", path)).toEqual(["beta@market"]);
   });
 
   test("leaves a dependency that names its own marketplace alone", () => {
     const path = payload("market", "alpha", "1.0.0");
     writePayloadManifest(path, { name: "alpha", dependencies: ["beta@other"] });
-    expect(pluginDependencies("alpha@market", path)).toEqual(["beta@other"]);
+    expect(names("alpha@market", path)).toEqual(["beta@other"]);
   });
 
+  // A plugin that ships no manifest is ordinary, so it names no dependencies
+  // rather than stopping the prune that reads it.
   test("names nothing for a payload with no manifest", () => {
-    expect(pluginDependencies("alpha@market", payload("market", "alpha", "1.0.0"))).toEqual([]);
+    expect(names("alpha@market", payload("market", "alpha", "1.0.0"))).toEqual([]);
   });
 
   test("names nothing for a plugin with no payload", () => {
-    expect(pluginDependencies("alpha@market", "")).toEqual([]);
+    expect(names("alpha@market", "")).toEqual([]);
   });
 
-  // A manifest the plugin ships in a shape nothing here reads says as much about
-  // its dependencies as one that declares none.
-  test("names nothing for a manifest nothing can parse or use", () => {
-    const broken = payload("market", "broken", "1.0.0");
-    writePayloadManifest(broken, "not json\n");
-    expect(pluginDependencies("broken@market", broken)).toEqual([]);
-
-    const wrong = payload("market", "wrong", "1.0.0");
-    writePayloadManifest(wrong, { name: "wrong", dependencies: "beta" });
-    expect(pluginDependencies("wrong@market", wrong)).toEqual([]);
-  });
-
-  test("drops an entry that is not a name", () => {
+  test("names nothing for a manifest that declares no dependencies", () => {
     const path = payload("market", "alpha", "1.0.0");
-    writePayloadManifest(path, { name: "alpha", dependencies: ["beta", "", 7, null] });
-    expect(pluginDependencies("alpha@market", path)).toEqual(["beta@market"]);
+    writePayloadManifest(path, { name: "alpha" });
+    expect(names("alpha@market", path)).toEqual([]);
+  });
+
+  // A manifest that is there and cannot be read may name a dependency, and the
+  // caller would uninstall that dependency on the strength of a file nothing
+  // parsed.
+  test("fails on a manifest nothing can parse", () => {
+    const path = payload("market", "broken", "1.0.0");
+    writePayloadManifest(path, "not json\n");
+    expect(pluginDependencies("broken@market", path).ok).toBe(false);
+  });
+
+  test("fails on a manifest whose dependencies are not a list", () => {
+    const path = payload("market", "wrong", "1.0.0");
+    writePayloadManifest(path, { name: "wrong", dependencies: "beta" });
+    expect(pluginDependencies("wrong@market", path).ok).toBe(false);
+  });
+
+  // An entry in a shape nothing reads leaves the rest of the list unaccounted
+  // for, and the plugin it meant to name would be uninstalled.
+  test("fails on an entry that is not a name", () => {
+    const path = payload("market", "alpha", "1.0.0");
+    writePayloadManifest(path, { name: "alpha", dependencies: ["beta", 7] });
+    expect(pluginDependencies("alpha@market", path).ok).toBe(false);
   });
 });
 
