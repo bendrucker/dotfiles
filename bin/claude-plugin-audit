@@ -19,7 +19,7 @@
 
 import { readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { claudePluginsDir, pluginInventory, pluginSource } from "#plugins";
+import { claudePluginsDir, pluginInventory, pluginSource, splitPluginId } from "#plugins";
 
 const USAGE = [
   "Usage: claude-plugin-audit",
@@ -253,11 +253,7 @@ function installedRecords(): unknown {
 // Compare a plugin's installed payload against the source its marketplace
 // currently offers.
 export async function auditPlugin(id: string, payload: string): Promise<Check> {
-  // The marketplace is whatever follows the final separator, matching how the
-  // shared library splits the same id: a plugin name may carry an @ of its own.
-  const separator = id.lastIndexOf("@");
-  const marketplace = separator === -1 ? id : id.slice(separator + 1);
-  const name = separator === -1 ? id : id.slice(0, separator);
+  const { name, marketplace } = splitPluginId(id);
 
   const lookup = pluginSource(id);
   if (!lookup.ok) {
@@ -499,7 +495,7 @@ export function pileFor(verdict: Verdict): Pile {
   return verdict === "unknown" ? "unverified" : "drifted";
 }
 
-// bin/claude-upgrade reads a row's second field to decide what the drift latch
+// bin/claude-sync reads a row's second field to decide what the drift latch
 // does with it, and this word is what tells it a plugin went unchecked rather
 // than came back clean. A latched finding whose subject prints this is held
 // where one that stops printing at all is cleared.
@@ -609,8 +605,7 @@ export async function audit(): Promise<Outcome> {
 
   for (const plugin of inventory.plugins) {
     if (plugin.id === "") continue;
-    const separator = plugin.id.lastIndexOf("@");
-    const marketplace = separator === -1 ? plugin.id : plugin.id.slice(separator + 1);
+    const { marketplace } = splitPluginId(plugin.id);
     const check = await auditPlugin(plugin.id, plugin.installPath);
 
     const marketplaceCheck = marketplaceChecks.get(marketplace);
@@ -721,7 +716,7 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// bin/claude-upgrade reads the report over a pipe, where a write can only take
+// bin/claude-sync reads the report over a pipe, where a write can only take
 // what fits in the buffer and process.exit discards whatever is still queued
 // behind it. A report longer than the buffer arrived cut mid-row, with the
 // summary line the caller reads gone.

@@ -5,7 +5,7 @@ message: >-
   'status' is a read-only special parameter in zsh (a synonym for $?), so
   assigning to it fails at runtime with "read-only variable". These shell
   sources are sourced into zsh entrypoints (bin/dotfiles-sync,
-  bin/claude-upgrade), so use a different name (e.g. 'rc', 'code', or something
+  bin/claude-sync), so use a different name (e.g. 'rc', 'code', or something
   descriptive).
 note: >-
   This flags binding 'status' (assignment, local/typeset/for), not reading an

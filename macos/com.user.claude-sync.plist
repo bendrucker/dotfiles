@@ -3,14 +3,14 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.user.claude-upgrade</string>
+    <string>com.user.claude-sync</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/zsh</string>
         <string>-l</string>
         <string>-c</string>
-        <string>$HOME/.dotfiles/bin/claude-upgrade</string>
+        <string>$HOME/.dotfiles/bin/claude-sync</string>
     </array>
 
     <key>StartCalendarInterval</key>
@@ -25,10 +25,10 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/tmp/claude-upgrade.log</string>
+    <string>/tmp/claude-sync.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/tmp/claude-upgrade.log</string>
+    <string>/tmp/claude-sync.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

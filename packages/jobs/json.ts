@@ -5,7 +5,7 @@
 // Through jq, which is what the shell these callers came from used, and not a
 // JSON.parse round trip. JavaScript numbers are doubles: 1700000000000000001
 // and 1700000000000000002 both come back as 1700000000000000000, and 1e400
-// comes back as null. bin/claude-upgrade's revertCosmeticJsonChanges answers
+// comes back as null. bin/claude-sync's revertCosmeticJsonChanges answers
 // "these are the same file" by comparing two canonical texts and then runs
 // `git checkout HEAD --` on the working copy, so a canonicalizer that loses a
 // distinction discards the edit that made it. jq carries the literal through.

@@ -28,12 +28,16 @@ setup_worktree_prune() {
   install_launch_agent com.user.worktree-prune.plist "nightly worktree prune"
 }
 
-setup_claude_upgrade() {
-  # Remove old plist that pointed to ~/.claude-repo/bin/claude-upgrade
-  # EXPIRES: 2026-10-26 every machine has the relocated claude-upgrade plist
+setup_claude_sync() {
+  # The job was called claude-upgrade, under a label and plist of its own. The
+  # rename leaves that plist behind, and a file left in LaunchAgents reloads at
+  # next login, so it is removed rather than only booted out.
+  # EXPIRES: 2027-03-07 every machine has run scripts/install since the rename
   launchctl bootout "gui/$UID/com.user.claude-upgrade" 2>/dev/null || true
+  rm -f "$HOME/Library/LaunchAgents/com.user.claude-upgrade.plist"
+  rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/claude-upgrade.status"
 
-  install_launch_agent com.user.claude-upgrade.plist "nightly Claude upgrade"
+  install_launch_agent com.user.claude-sync.plist "nightly Claude sync"
 }
 
 # The theme-sync watcher is core functionality, so it runs in every mode.
@@ -51,7 +55,7 @@ install_launch_agent com.user.activitywatch.plist "ActivityWatch capture"
 # Only setup upgrade if we're in separate-directory mode (not a symlink)
 if [[ ! -L "$HOME/.dotfiles" ]]; then
   setup_dotfiles_upgrade
-  setup_claude_upgrade
+  setup_claude_sync
   setup_worktree_prune
 fi
 

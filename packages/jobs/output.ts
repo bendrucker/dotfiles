@@ -1,7 +1,7 @@
 // Where an unattended job's own lines and its children's output go.
 //
 // bin/dotfiles-sync lets both through to the streams it was started with.
-// bin/claude-upgrade keeps a copy of everything as well, which is what its
+// bin/claude-sync keeps a copy of everything as well, which is what its
 // failure report and its latch fingerprint are built from: the `{ … } 2>&1 |
 // tee "$output"` the shell wrapped its whole body in.
 //

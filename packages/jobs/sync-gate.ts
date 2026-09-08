@@ -1,7 +1,7 @@
 // The dirty-tree gate the two unattended sync jobs pass through, and the bridge
 // from bin/git-sync's exit codes to a notification.
 //
-// bin/dotfiles-sync and bin/claude-upgrade both fast-forward a public deploy
+// bin/dotfiles-sync and bin/claude-sync both fast-forward a public deploy
 // checkout at 3am against a locked Mac, where stdin is not a terminal and SSH
 // cannot sign. The gate decides whether a dirty tree stops that: it fetches the
 // incoming .gitignore first, so a rule shipped alongside the files it covers
@@ -375,7 +375,7 @@ function review(out: Output, repoDir: string, title: string, options: ReviewOpti
   out.write(2, renderDiff(repoDir));
 
   // The blocking paths get a log line to themselves, ahead of any error.
-  // bin/claude-upgrade fingerprints on fields 2-4 of the WARN and ERRO lines,
+  // bin/claude-sync fingerprints on fields 2-4 of the WARN and ERRO lines,
   // and the error below reads identically whatever is dirty, so without this a
   // block that recurs over a different dirty set files nothing after the first
   // and the deadlock goes silent.
@@ -402,7 +402,7 @@ function review(out: Output, repoDir: string, title: string, options: ReviewOpti
 }
 
 // gum draws its UI on stderr and takes the viewport size from the terminal
-// stderr points at. A caller that captures stderr, as bin/claude-upgrade does to
+// stderr points at. A caller that captures stderr, as bin/claude-sync does to
 // log the run, leaves that size at zero and every frame renders empty, while
 // stdin is still the terminal so the keys keep working: an invisible prompt that
 // answers the first Enter with whatever the cursor started on. Draw on the

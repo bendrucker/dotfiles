@@ -7,19 +7,21 @@ import {
   auditPlugins,
   claudeRepoHome,
   driftReport,
+  failureFields,
   failureFingerprint,
   installAgentHooks,
+  keptPlugins,
   main,
+  prunePlugins,
   reportDrift,
+  repoRevision,
   revertCosmeticJsonChanges,
+  sync,
   syncRepo,
   updateMarketplaces,
   updatePlugins,
-  upgrade,
-  upgradeFields,
-  upgradeMeta,
-  upgradeRevision,
-} from "./claude-upgrade";
+  versionMeta,
+} from "./claude-sync";
 
 let sandbox: string;
 let stubs: string;
@@ -162,6 +164,12 @@ const claudeStub = [
   '    case " $CLAUDE_UPDATE_FAILS " in *" $3 "*) exit 1 ;; esac',
   "    ;;",
   "  install) printf 'install %s\\n' \"$3\" >>\"$CLAUDE_PLUGIN_LOG\" ;;",
+  "  uninstall)",
+  // The id is the last argument, because the call names its scope in front of it.
+  "    for last; do :; done",
+  "    printf 'uninstall %s\\n' \"$last\" >>\"$CLAUDE_PLUGIN_LOG\"",
+  '    case " $CLAUDE_UNINSTALL_FAILS " in *" $last "*) exit 1 ;; esac',
+  "    ;;",
   "esac",
   "exit 0",
 ].join("\n");
@@ -182,6 +190,13 @@ function payload(...segments: string[]): string {
   const path = join(sandbox, ".claude", "plugins", "cache", ...segments);
   mkdirSync(path, { recursive: true });
   return path;
+}
+
+// The manifest Claude Code reads out of an installed payload, which is the only
+// place a plugin's dependencies are written down.
+function writePayloadManifest(path: string, manifest: unknown): void {
+  mkdirSync(join(path, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(path, ".claude-plugin", "plugin.json"), JSON.stringify(manifest));
 }
 
 function writeMarketplace(name: string, entries: unknown[]): void {
@@ -226,7 +241,7 @@ function writeRepoSettings(settings: unknown, indent = 2): void {
 }
 
 beforeEach(() => {
-  sandbox = mkdtempSync(join(tmpdir(), "claude-upgrade-"));
+  sandbox = mkdtempSync(join(tmpdir(), "claude-sync-"));
   stubs = join(sandbox, "stub");
   repo = join(sandbox, "repo");
   origin = join(sandbox, "origin.git");
@@ -288,6 +303,7 @@ beforeEach(() => {
   process.env.XDG_STATE_HOME = join(sandbox, "state");
   process.env.CLAUDE_PLUGIN_LOG = join(sandbox, "plugin.log");
   process.env.CLAUDE_UPDATE_FAILS = "";
+  process.env.CLAUDE_UNINSTALL_FAILS = "";
   process.env.CLAUDE_DRAINS_STDIN = "";
   process.env.AGENT_HOOK_REPO = repo;
   process.env.HERDR_FAILS = "";
@@ -329,12 +345,202 @@ afterEach(() => {
   else process.env.CLAUDE_REPO_HOME = environment.CLAUDE_REPO_HOME;
   delete process.env.CLAUDE_PLUGIN_LOG;
   delete process.env.CLAUDE_UPDATE_FAILS;
+  delete process.env.CLAUDE_UNINSTALL_FAILS;
   delete process.env.CLAUDE_DRAINS_STDIN;
   delete process.env.AGENT_HOOK_REPO;
   delete process.env.HERDR_FAILS;
   delete process.env.HERDR_LOCKS;
   delete process.env.MOSHI_FAILS;
   rmSync(sandbox, { recursive: true, force: true });
+});
+
+describe("keptPlugins", () => {
+  function kept(declared: string[], installed: { id: string; installPath: string }[]): string[] {
+    const read = keptPlugins(new Set(declared), installed);
+    if (!read.ok) throw new Error(`kept failed: ${read.reason}`);
+    return [...read.ids].sort();
+  }
+
+  test("keeps what a declared plugin names as a dependency", () => {
+    const path = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(path, { name: "alpha", dependencies: ["gamma"] });
+
+    expect(kept(["alpha@first"], [{ id: "alpha@first", installPath: path }])).toEqual([
+      "alpha@first",
+      "gamma@first",
+    ]);
+  });
+
+  // Keeping a dependency without reading its own manifest breaks the chain at
+  // its second link: gamma survives and the delta it needs is uninstalled.
+  test("walks a dependency of a dependency", () => {
+    const alpha = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(alpha, { name: "alpha", dependencies: ["gamma"] });
+    const gamma = payload("first", "gamma", "1.0.0");
+    writePayloadManifest(gamma, { name: "gamma", dependencies: ["delta"] });
+
+    expect(
+      kept(
+        ["alpha@first"],
+        [
+          { id: "alpha@first", installPath: alpha },
+          { id: "gamma@first", installPath: gamma },
+        ],
+      ),
+    ).toEqual(["alpha@first", "delta@first", "gamma@first"]);
+  });
+
+  // Two plugins naming each other would otherwise queue each other forever.
+  test("settles on a dependency cycle", () => {
+    const alpha = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(alpha, { name: "alpha", dependencies: ["gamma"] });
+    const gamma = payload("first", "gamma", "1.0.0");
+    writePayloadManifest(gamma, { name: "gamma", dependencies: ["alpha"] });
+
+    expect(
+      kept(
+        ["alpha@first"],
+        [
+          { id: "alpha@first", installPath: alpha },
+          { id: "gamma@first", installPath: gamma },
+        ],
+      ),
+    ).toEqual(["alpha@first", "gamma@first"]);
+  });
+
+  // Reading an undeclared plugin's dependencies would keep whatever it names
+  // alive alongside it, so a pair of leftovers would hold each other in place.
+  test("ignores what an undeclared plugin names", () => {
+    const path = payload("first", "stray", "1.0.0");
+    writePayloadManifest(path, { name: "stray", dependencies: ["gamma"] });
+
+    expect(kept(["alpha@first"], [{ id: "stray@first", installPath: path }])).toEqual([
+      "alpha@first",
+    ]);
+  });
+
+  test("takes a dependency that names its own marketplace as written", () => {
+    const path = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(path, { name: "alpha", dependencies: ["beta@third"] });
+
+    expect(kept(["alpha@first"], [{ id: "alpha@first", installPath: path }])).toEqual([
+      "alpha@first",
+      "beta@third",
+    ]);
+  });
+
+  test("fails when a declared plugin's manifest cannot be read", () => {
+    const path = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(path, "not json\n");
+
+    expect(keptPlugins(new Set(["alpha@first"]), [{ id: "alpha@first", installPath: path }])).toEqual(
+      { ok: false, reason: expect.stringContaining("alpha@first") },
+    );
+  });
+});
+
+describe("prunePlugins", () => {
+  test("uninstalls a payload settings.json no longer names", () => {
+    writePluginList([
+      { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
+      { id: "stray@first", installPath: payload("first", "stray", "1.0.0") },
+    ]);
+    writeSettings({ "alpha@first": true });
+
+    expect(prunePlugins(out, process.env)).toBe(true);
+    expect(readLog("plugin.log")).toContain("uninstall stray@first");
+    expect(readLog("plugin.log")).not.toContain("uninstall alpha@first");
+  });
+
+  // The fixture records `disabled@first` as an explicit false, which is a plugin
+  // installed and turned off rather than one nothing names.
+  test("keeps a plugin declared with an explicit false", () => {
+    writePluginList([
+      { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
+      { id: "disabled@first", installPath: payload("first", "disabled", "1.0.0") },
+    ]);
+
+    expect(prunePlugins(out, process.env)).toBe(true);
+    expect(readLog("plugin.log")).toBe("");
+  });
+
+  // Claude Code installs a dependency without writing a settings.json key for
+  // it, so the declaration alone would take it out from under the plugin that
+  // needs it every night.
+  test("keeps a dependency of a declared plugin", () => {
+    const alpha = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(alpha, { name: "alpha", dependencies: ["gamma"] });
+    writePluginList([
+      { id: "alpha@first", installPath: alpha },
+      { id: "gamma@first", installPath: payload("first", "gamma", "1.0.0") },
+    ]);
+    writeSettings({ "alpha@first": true });
+
+    expect(prunePlugins(out, process.env)).toBe(true);
+    expect(readLog("plugin.log")).toBe("");
+  });
+
+  // A declaration that could not be read accounts for nothing, and acting on it
+  // would uninstall every plugin on the machine.
+  test("uninstalls nothing when the declaration cannot be read", () => {
+    writeFileSync(join(sandbox, ".claude", "settings.json"), "not json\n");
+
+    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(readLog("plugin.log")).toBe("");
+    expect(out.captured()).toContain("claude-plugins:");
+  });
+
+  // The shape a broken symlink into the config repo leaves behind. An absent
+  // file is not a declaration that nothing belongs here.
+  test("uninstalls nothing when settings.json is not there", () => {
+    rmSync(join(sandbox, ".claude", "settings.json"), { force: true });
+
+    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(readLog("plugin.log")).toBe("");
+  });
+
+  // A manifest that is there and cannot be read may name a dependency, and the
+  // payload it names would go on the strength of a file nothing parsed.
+  test("uninstalls nothing when a declared plugin's manifest cannot be read", () => {
+    const alpha = payload("first", "alpha", "1.0.0");
+    writePayloadManifest(alpha, "not json\n");
+    writePluginList([
+      { id: "alpha@first", installPath: alpha },
+      { id: "stray@first", installPath: payload("first", "stray", "1.0.0") },
+    ]);
+    writeSettings({ "alpha@first": true });
+
+    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(readLog("plugin.log")).toBe("");
+  });
+
+  // Pruning against a partial inventory reports success over payloads it never
+  // saw, which is the silence the whole job exists to break.
+  test("fails when the installed plugins cannot be enumerated", () => {
+    writeFileSync(join(sandbox, "plugin-list.json"), "not json\n");
+
+    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(out.captured()).toContain("claude-plugins:");
+  });
+
+  test("fails when an uninstall fails", () => {
+    writePluginList([{ id: "stray@first", installPath: payload("first", "stray", "1.0.0") }]);
+    writeSettings({ "alpha@first": true });
+    process.env.CLAUDE_UNINSTALL_FAILS = "stray@first";
+
+    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(out.captured()).toContain("Failed to uninstall stray@first");
+  });
+
+  // A plugin declared but never installed has no payload, so there is nothing
+  // for the prune to reach and the update pass installs it instead.
+  test("leaves a declared plugin that is not installed alone", () => {
+    writePluginList([{ id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") }]);
+    writeSettings({ "alpha@first": true, "gamma@first": true });
+
+    expect(prunePlugins(out, process.env)).toBe(true);
+    expect(readLog("plugin.log")).toBe("");
+  });
 });
 
 describe("updatePlugins", () => {
@@ -480,8 +686,8 @@ describe("auditPlugins", () => {
   });
 
   // Drift outlives the run that should have fixed it, so it goes to a latch of its
-  // own rather than failing the upgrade.
-  test("files drift without failing the upgrade", () => {
+  // own rather than failing the sync.
+  test("files drift without failing the sync", () => {
     const audit = auditStub(1, "  alpha@first  stale  differs from ./plugins/alpha at 1 path");
 
     expect(auditPlugins(out, repo, { audit, env: process.env })).toBe(true);
@@ -491,14 +697,14 @@ describe("auditPlugins", () => {
   });
 
   // Filing a check that never ran as drift would name plugins it never looked at,
-  // and would leave the upgrade reporting success over nothing.
-  test("fails the upgrade when the audit could not run at all", () => {
+  // and would leave the sync reporting success over nothing.
+  test("fails the sync when the audit could not run at all", () => {
     expect(auditPlugins(out, repo, { audit: auditStub(2), env: process.env })).toBe(false);
     expect(out.captured()).toContain("Plugin audit did not run");
     expect(todoCount()).toBe(0);
   });
 
-  test("fails the upgrade when the audit is not there", () => {
+  test("fails the sync when the audit is not there", () => {
     expect(auditPlugins(out, repo, { audit: join(sandbox, "no-such-audit"), env: process.env })).toBe(false);
     expect(out.captured()).toContain("Plugin audit did not run");
   });
@@ -639,7 +845,7 @@ describe("September churn", () => {
   });
 });
 
-describe("upgradeFields", () => {
+describe("failureFields", () => {
   const log = [
     "INFO Syncing Claude repository...",
     "WARN Failed to update beta@third",
@@ -652,7 +858,7 @@ describe("upgradeFields", () => {
   // plugin failing on top of it reopens the latch. The gate's skip count sits in
   // field 4, so its doublings reopen the latch too.
   test("keeps fields 2 to 4 of every warn and error line", () => {
-    expect(upgradeFields(log)).toEqual([
+    expect(failureFields(log)).toEqual([
       "Failed to update",
       "Local changes present",
       "Sync skipped 4",
@@ -660,13 +866,13 @@ describe("upgradeFields", () => {
   });
 
   test("reads nothing out of a log with no warnings", () => {
-    expect(upgradeFields("INFO all good\n")).toEqual([]);
+    expect(failureFields("INFO all good\n")).toEqual([]);
   });
 
   // A warn line with fewer than four fields still has to produce a value, or the
   // fingerprint moves with the padding rather than with the finding.
   test("pads a short line rather than dropping it", () => {
-    expect(upgradeFields("WARN stray.txt \n")).toEqual(["stray.txt  "]);
+    expect(failureFields("WARN stray.txt \n")).toEqual(["stray.txt  "]);
   });
 });
 
@@ -694,7 +900,7 @@ describe("driftReport", () => {
 
 describe("failureFingerprint", () => {
   // The shell hashed `awk … | sort | shasum | cut -c1-12`, and a fingerprint that
-  // moved in the port would refile every latched failure once on upgrade.
+  // moved in the port would refile every latched failure once on the rename.
   function shellFingerprint(extracted: string[]): string {
     const result = Bun.spawnSync({
       cmd: ["bash", "-c", "sort | shasum | cut -c1-12"],
@@ -719,24 +925,24 @@ describe("failureFingerprint", () => {
   });
 });
 
-describe("upgradeRevision", () => {
+describe("repoRevision", () => {
   test("reads the short HEAD", () => {
-    expect(upgradeRevision(repo)).toBe(git("rev-parse", "--short", "HEAD").trim());
+    expect(repoRevision(repo)).toBe(git("rev-parse", "--short", "HEAD").trim());
   });
 
   test("reads unknown where there is no repo", () => {
-    expect(upgradeRevision(join(sandbox, "missing"))).toBe("unknown");
+    expect(repoRevision(join(sandbox, "missing"))).toBe("unknown");
   });
 });
 
-describe("upgradeMeta", () => {
+describe("versionMeta", () => {
   test("names the installed Claude version in a single bullet", () => {
-    expect(upgradeMeta()).toBe("- **Claude:** claude 1.2.3");
+    expect(versionMeta()).toBe("- **Claude:** claude 1.2.3");
   });
 
   test("says unknown where the CLI cannot answer", () => {
     writeScript(join(stubs, "claude"), "exit 1");
-    expect(upgradeMeta()).toBe("- **Claude:** unknown");
+    expect(versionMeta()).toBe("- **Claude:** unknown");
   });
 });
 
@@ -815,7 +1021,7 @@ describe("installAgentHooks", () => {
   });
 });
 
-describe("upgrade", () => {
+describe("sync", () => {
   function auditStub(status: number): string {
     const path = join(sandbox, `audit-${status}`);
     writeScript(path, `exit ${status}`);
@@ -823,7 +1029,7 @@ describe("upgrade", () => {
   }
 
   test("succeeds when the sync, the updates and the audit all do", () => {
-    expect(upgrade(out, repo, { audit: auditStub(0) })).toBe(0);
+    expect(sync(out, repo, { audit: auditStub(0) })).toBe(0);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
@@ -831,7 +1037,7 @@ describe("upgrade", () => {
   // the clone runs against a clean tree before the installer puts the current one
   // back.
   test("reinstalls the hooks after the sync and before the plugins", () => {
-    expect(upgrade(out, repo, { audit: auditStub(0) })).toBe(0);
+    expect(sync(out, repo, { audit: auditStub(0) })).toBe(0);
     const log = out.captured();
     expect(log.indexOf("Syncing Claude repository")).toBeLessThan(log.indexOf("Installing herdr"));
     expect(log.indexOf("Installing moshi")).toBeLessThan(log.indexOf("Updating marketplaces"));
@@ -839,19 +1045,19 @@ describe("upgrade", () => {
 
   test("fails when a hook install fails, and still updates the plugins", () => {
     process.env.HERDR_FAILS = "1";
-    expect(upgrade(out, repo, { audit: auditStub(0) })).toBe(1);
+    expect(sync(out, repo, { audit: auditStub(0) })).toBe(1);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
   test("fails when a plugin update fails, and still audits", () => {
     process.env.CLAUDE_UPDATE_FAILS = "beta@third";
-    expect(upgrade(out, repo, { audit: auditStub(0) })).toBe(1);
+    expect(sync(out, repo, { audit: auditStub(0) })).toBe(1);
     expect(out.captured()).toContain("Auditing plugin payloads");
   });
 
   test("leaves the plugins unattempted when the sync refuses", () => {
     writeRepoSettings(settingsJson(GUARDED_HOOK, "changed"));
-    expect(upgrade(out, repo, { audit: auditStub(0) })).toBe(1);
+    expect(sync(out, repo, { audit: auditStub(0) })).toBe(1);
     expect(readLog("plugin.log")).toBe("");
   });
 });
@@ -859,24 +1065,24 @@ describe("upgrade", () => {
 describe("main", () => {
   // The whole run is captured as it happens, and a failure files a Things to-do
   // built from that log.
-  test("files a to-do built from the captured log when the upgrade fails", () => {
+  test("files a to-do built from the captured log when the sync fails", () => {
     process.env.CLAUDE_REPO_HOME = join(sandbox, "missing");
 
     expect(main(out)).toBe(1);
     expect(todoCount()).toBe(1);
-    expect(readLog("todos")).toContain("Claude%20upgrade%20failed");
+    expect(readLog("todos")).toContain("Claude%20sync%20failed");
   });
 
   // Nothing else runs the whole of a clean night, and the branch it ends on has
   // no output to assert against beyond the latch it clears.
-  test("clears the upgrade latch when the run succeeds", () => {
+  test("clears the sync latch when the run succeeds", () => {
     process.env.CLAUDE_REPO_HOME = repo;
     const audit = join(sandbox, "audit-clean");
     writeScript(audit, "exit 0");
 
     expect(main(out, { audit })).toBe(0);
     expect(todoCount()).toBe(0);
-    expect(readFileSync(join(sandbox, "state", "dotfiles", "claude-upgrade.status"), "utf8")).toBe(
+    expect(readFileSync(join(sandbox, "state", "dotfiles", "claude-sync.status"), "utf8")).toBe(
       "ok\n",
     );
   });

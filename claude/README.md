@@ -58,11 +58,23 @@ without removing, `--force` skips the prompt.
 
 ## Plugins
 
-`claude-upgrade` runs nightly. It syncs the Claude config repo, reinstalls the herdr and moshi integrations, refreshes every marketplace, then updates every plugin installed at user scope, disabled ones included. `claude plugin enable` does not update, so a plugin skipped while disabled would come back stale months later. Each install is skipped where its binary is absent.
+`claude-sync` runs nightly. It syncs the Claude config repo, reinstalls the herdr and moshi integrations, uninstalls the plugins the synced `settings.json` no longer declares, refreshes every marketplace, then updates every plugin installed at user scope, disabled ones included. `claude plugin enable` does not update, so a plugin skipped while disabled would come back stale months later. Each install is skipped where its binary is absent.
 
-The herdr install writes `~/.claude/hooks/herdr-agent-state.sh`, which the config repo gitignores. It also appends a `SessionStart` entry to `settings.json`, which the upgrade discards: herdr cannot recognize the committed `$HOME` form of the same entry and only checks the script's version marker. What comes back is the file as it stood before the install, so an edit already in the tree survives. The restore runs whether or not the install finished, because an entry left behind stops the next night's run at the sync gate, before it reaches the step that would clear it. The moshi install's edits stay. A diff in `settings.json` is a moshi upgrade, and the run stops at that same gate until the diff is committed.
+The herdr install writes `~/.claude/hooks/herdr-agent-state.sh`, which the config repo gitignores. It also appends a `SessionStart` entry to `settings.json`, which the sync discards: herdr cannot recognize the committed `$HOME` form of the same entry and only checks the script's version marker. What comes back is the file as it stood before the install, so an edit already in the tree survives. The restore runs whether or not the install finished, because an entry left behind stops the next night's run at the sync gate, before it reaches the step that would clear it. The moshi install's edits stay. A diff in `settings.json` is a moshi upgrade, and the run stops at that same gate until the diff is committed.
 
 A plugin no longer offered by its marketplace is left alone. Nothing can update it, so the fix is to uninstall it, and the audit says so.
+
+### Pruning
+
+`settings.json` is the declaration, and `claude plugin install` writes the plugin's key into it. A user-scope payload with no key is one whose declaration was removed, by a commit that synced down or by hand, so `claude-sync` uninstalls it. Without that the removal never reaches the machine and the payload is refreshed nightly forever.
+
+A key set to `false` still declares the plugin. That is a plugin installed and turned off, and its payload stays.
+
+Dependencies are the exception a declaration cannot express. Claude Code installs a plugin named in another plugin's `dependencies` without writing a key for it, so the prune reads the manifest of every declared payload and keeps what it names. A bare name resolves against the marketplace the depending plugin came from.
+
+An unreadable `settings.json` fails the run rather than pruning against an empty declaration, which would take every plugin on the machine. Uninstalling touches only ids the file does not name, so the pass writes nothing back and cannot dirty the tracked config and stall the next night at the sync gate.
+
+A plugin the marketplace dropped keeps its declaration, so the prune leaves it and the audit reports it as `orphaned`. Removing the payload while `settings.json` still names it would leave an entry pointing at nothing.
 
 ### Auditing
 
@@ -86,7 +98,7 @@ A payload whose source still offers the version already installed is reported as
 
 Payload directories carry an `.in_use` directory holding one file per session PID. Check those with `kill -0` before removing anything by hand. Deleting a payload out from under a live session breaks its skill loads until restart, which is why the audit only ever reports.
 
-`claude-upgrade` runs the audit after updating and files its findings as a Things to-do on a latch separate from the upgrade's own. Drift outlives the run that should have fixed it, so one stale plugin sharing the upgrade latch would suppress the to-do for a later upgrade failure. The latch also holds a fingerprint of which plugins are flagged, so a plugin that goes stale months later reopens it instead of hiding behind one that has been stale all along.
+`claude-sync` runs the audit after updating and files its findings as a Things to-do on a latch separate from the sync's own. Drift outlives the run that should have fixed it, so one stale plugin sharing the sync latch would suppress the to-do for a later sync failure. The latch also holds a fingerprint of which plugins are flagged, so a plugin that goes stale months later reopens it instead of hiding behind one that has been stale all along.
 
 ## Computer Use
 
