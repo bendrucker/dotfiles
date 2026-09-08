@@ -23,6 +23,23 @@ set -e
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
 
+# Homebrew clones a tap from its https://github.com/<user>/homebrew-<repo> URL,
+# but a `url.git@github.com:.insteadOf` rule rewrites that to SSH on the way out
+# of git config, and Secretive refuses to sign while the Mac is locked, so the
+# 3am run dies on "agent refused operation". Git applies the longest matching
+# rule, so one keyed on the tap's own URL and mapping it to itself outranks a
+# rule keyed on the bare host while leaving every other remote alone. Homebrew
+# runs the clone itself, so the rule reaches it through the environment rather
+# than a repo config that does not exist yet. Appending to any GIT_CONFIG_COUNT
+# already set keeps a machine-local entry. See scripts/shell/git-sync.sh
+# git_https_pin, which does the same thing for a clone this repo owns.
+pin_https() {
+  i="${GIT_CONFIG_COUNT:-0}"
+  export "GIT_CONFIG_KEY_$i=url.$1.insteadOf"
+  export "GIT_CONFIG_VALUE_$i=$1"
+  export GIT_CONFIG_COUNT=$((i + 1))
+}
+
 # Not a ${:=} default, which would swallow a failing brew and leave the path
 # empty, silently re-tapping everything on every run.
 if [ -z "${HOMEBREW_REPOSITORY-}" ]; then
@@ -37,6 +54,11 @@ for tap in $taps; do
   path="$HOMEBREW_REPOSITORY/Library/Taps/$name"
 
   if [ ! -d "$path" ] || [ -f "$path/.git/shallow" ]; then
+    url="https://github.com/${tap%%/*}/homebrew-${tap#*/}"
+    pin_https "$url"
+    # git matches an insteadOf prefix literally, and a tap declared with
+    # capitals can be cloned from the downcased URL its path is built from.
+    [ "$url" = "https://github.com/$name" ] || pin_https "https://github.com/$name"
     brew tap "$tap"
   fi
 done

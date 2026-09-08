@@ -35,7 +35,7 @@ shelldir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scripts/shell" && pwd)"
 . "$shelldir/git-sync.sh"
 
 usage() {
-  echo "usage: git-sync sync <repo_dir> [branch] | default-branch [repo_dir] | https-env" >&2
+  echo "usage: git-sync sync <repo_dir> [branch] | default-branch [repo_dir] | https-remote <repo_dir> [remote] | https-env" >&2
   exit 2
 }
 
@@ -52,6 +52,10 @@ case "$command" in
     ;;
   default-branch)
     git_default_branch "${1:-.}"
+    ;;
+  https-remote)
+    [ "$#" -ge 1 ] || usage
+    git_https_remote "$1" "${2:-origin}"
     ;;
   https-env)
     # In a subshell, because git_https_env exports into whatever called it and

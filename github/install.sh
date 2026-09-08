@@ -7,6 +7,7 @@ set -e
 # Before the cd: ${0:A} resolves against the current directory, so a relative
 # $0 would pick up the new one and name a path inside it.
 source "${0:A:h}/../scripts/shell/spin.sh"
+git_sync_bin="${0:A:h}/../bin/git-sync"
 
 cd "${0:h}"
 
@@ -41,17 +42,38 @@ install_extension() {
   dir=$data_home/gh/extensions/${repo##*/}
 
   echo "→ $repo @ $tag"
-  gh extension install --force --pin "$tag" "$repo"
 
+  # gh resolves a script extension's latest version with ls-remote against the
+  # clone's own stored remote, which it never re-derives from the current
+  # git_protocol setting. One cloned over SSH stays on SSH, where Secretive
+  # cannot sign against a locked Mac and the 3am run dies on "agent refused
+  # operation".
   if [[ -d "$dir/.git" ]]; then
-    git -C "$dir" fetch --tags --quiet origin
-    git -C "$dir" -c advice.detachedHead=false checkout --quiet "refs/tags/$tag"
+    "$git_sync_bin" https-remote "$dir" || return 1
   fi
+
+  gh extension install --force --pin "$tag" "$repo" || return 1
+
+  [[ -d "$dir/.git" ]] || return 0
+  git -C "$dir" fetch --tags --quiet origin || return 1
+  git -C "$dir" -c advice.detachedHead=false checkout --quiet "refs/tags/$tag"
 }
 
+# One unreachable extension is not a reason to leave the rest unattempted, or to
+# fail an install whose brew, mise, and symlink steps have already succeeded.
+failed=()
 for repo in ${(k)desired}; do
-  install_extension "$repo" "$desired[$repo]"
+  install_extension "$repo" "$desired[$repo]" || failed+=("$repo")
 done
+
+if (( $#failed > 0 )); then
+  {
+    echo "WARNING: gh extensions that could not be installed or upgraded:"
+    for repo in "${failed[@]}"; do
+      echo "  $repo @ $desired[$repo]"
+    done
+  } >&2
+fi
 
 undeclared=()
 while IFS=$'\t' read -r _ repo _; do
