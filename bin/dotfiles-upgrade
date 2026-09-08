@@ -20,6 +20,7 @@ import { reportFailure, reportSuccess } from "#jobs/report";
 const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
 
 const JOB = "dotfiles-upgrade";
+const SYNC_JOB = "dotfiles-sync";
 const DRIFT_JOB = "brew-drift";
 
 // A failure ends at the end of its log, and Things caps a note at 10,000
@@ -256,11 +257,12 @@ export function syncFingerprint(output: string): string {
 
 const WARN = "WARN ";
 
-// The latch carries which step broke. Sharing one unfingerprinted latch between
-// the two would let a sync failure one night silence an install failure the
-// next, since the run exits before it can clear the latch and the second break
-// stores the same value the first did.
+// A step latches under its own job, because the run no longer stops at the
+// first break: a sync that stays broken has to hold its to-do while the install
+// behind it reports its own state, and one latch between them would have each
+// night's second failure overwrite what the first stored.
 function reportStepFailure(
+  job: string,
   home: string,
   fingerprint: string,
   title: string,
@@ -268,7 +270,7 @@ function reportStepFailure(
   output: string,
 ): number {
   const status = reportFailure({
-    job: JOB,
+    job,
     title,
     command,
     output: logExcerpt(output),
@@ -308,15 +310,24 @@ export async function run(): Promise<number> {
     "--",
     join(home, "bin", "dotfiles-sync"),
   ]);
+  // A sync that cannot run leaves a stale checkout that everything below can
+  // still work from. Stopping here would let one dirty file hold back brew,
+  // mise, symlinks and the drift check for as long as it sat there, so the
+  // failure is reported and carried to the exit status instead.
+  let syncFailure = 0;
   if (sync.status !== 0) {
     log("error", "sync failed");
-    return reportStepFailure(
+    syncFailure = reportStepFailure(
+      SYNC_JOB,
       home,
       syncFingerprint(sync.output),
       "Dotfiles sync failed",
       "dotfiles-sync",
       sync.output,
     );
+    log("warn", "Installing from the checkout as it stands");
+  } else {
+    reportSuccess(SYNC_JOB);
   }
 
   log("info", "Running install");
@@ -327,7 +338,14 @@ export async function run(): Promise<number> {
     // The installer, not `brew bundle`: that is the first of its six steps, and
     // a run failing at symlinks, mise or a topic install.sh reproduces nothing
     // from it.
-    return reportStepFailure(home, "install", "Dotfiles install failed", installer, install.output);
+    return reportStepFailure(
+      JOB,
+      home,
+      "install",
+      "Dotfiles install failed",
+      installer,
+      install.output,
+    );
   }
 
   const cleanup = runInherited([
@@ -360,6 +378,11 @@ export async function run(): Promise<number> {
   }
 
   reportSuccess(JOB);
+  if (syncFailure !== 0) {
+    log("warn", "Upgrades completed against a checkout the sync could not move");
+    return syncFailure;
+  }
+
   log("info", "All upgrades completed successfully");
   return 0;
 }
