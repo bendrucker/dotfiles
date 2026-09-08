@@ -4,84 +4,40 @@
 onboarding = false
 
 [update]
-# herdr installs via Homebrew (herdr/Brewfile), upgraded by the nightly
-# dotfiles-upgrade run of brew. Declaring stable here (rather than the
-# `herdr channel set preview` run once by hand) makes the tracked config
-# authoritative and keeps `herdr update` from fighting the brew-managed
-# binary. version_check stays off since brew already owns upgrades and a
-# background nag can't act on itself. manifest_check stays on since that's
-# the agent-detection manifest, not the binary.
+# brew owns the binary (herdr/Brewfile), so herdr update stays out of it.
+# manifest_check stays on: that's agent detection, not the binary.
 channel = "stable"
 version_check = false
 
 [session]
-# herdr resumes agents off the integration hook the claude repo installs
-# (user/hooks/herdr-agent-state.sh), which reports the session ref to resume
-# into. Declared rather than left to the default, since a silent flip to false
-# would look like panes simply coming back empty.
 resume_agents_on_restore = true
 
 [keys]
-# Ghostty maps Hyper+A to the same byte (terminal/ghostty.config) for a chord
-# that misses readline.
+# Ghostty maps Hyper+A to the same byte (terminal/ghostty.config).
 prefix = "ctrl+s"
 
-# Native worktree creation lands in ~/.herdr/worktrees, outside the worktrunk
-# layout (~/src/.worktrees/{owner}/{repo}/{branch}). Unbound in favor of the
-# worktrunk plugin bindings below.
+# Native creation lands in ~/.herdr/worktrees, outside the worktrunk layout.
+# Use the worktrunk plugin bindings below.
 new_worktree = ""
 
-# prefix+o is the key herdr-annotate's README asks for, and its document
-# review earns it over jumping to the pane a notification came from.
-open_notification_target = ""
-
 [theme]
-# ghostty already flips Mocha/Latte with the system appearance and reports the
-# change to the pane (terminal/ghostty.config), so herdr's chrome can follow the
-# same signal instead of needing a theme-sync-herdr script. Picking a theme by
-# hand in herdr's settings turns auto_switch back off.
+# ghostty flips Mocha/Latte with the system appearance and reports it to the
+# pane (terminal/ghostty.config). Picking a theme by hand turns this back off.
 auto_switch = true
 light_name = "catppuccin-latte"
 dark_name = "catppuccin"
 
 [ui.toast]
-# Surface agent state changes (blocked / working / done) as native toasts.
 delivery = "herdr"
 
 [ui.sound]
-# The toasts above already report every state change, and they report which
-# agent it was. A chime carries less and interrupts more, including whoever
-# else is in the room.
 enabled = false
 
-# One row per agent, and nothing in it that changes faster than the agent's
-# state.
-#
-# `agent` stays because its glyph is per-CLI and changes only when the pane's
-# occupant does. It moves onto the first row so keeping it costs no height.
-#
-# A Claude row drops that glyph for `$title`, the name Claude Code gives the
-# session, which its status line reads out of the transcript and reports as
-# pane metadata (bendrucker/claude, user/scripts/pane-metadata.ts). Five agent
-# rows that all say their workspace name are five rows saying what the spaces
-# list already does, and the title is what tells them apart. It leads the
-# row, with the workspace dimmed beneath it, and it clips at sidebar_max_width
-# rather than widening the panel. The row is bare until the first turn names
-# the session.
-#
-# `machine` names the host an agent runs on. The machines themselves are saved
-# by `herdr machine add` into a catalog of ssh targets, which stays out of this
-# repo the same way the mirror plugin's hosts.toml did. herdr omits the token
-# entirely while Local is the only machine, so it costs nothing until a second
-# one is connected, and it is the only thing that answers which agents are over
-# there once one agent list holds both. A custom layout does not get it by
-# default, which is why it is spelled out here.
-#
-# Its rule dims Local rather than coloring the remotes, so the row needs to
-# know no machine labels: whatever is not this machine reads at full weight,
-# and adding a machine changes nothing here. On the Claude row the second line
-# is dim as a whole, so the occurrence undims itself first and the rule puts
-# Local back.
+# `machine` is omitted while Local is the only machine, and its rule dims Local
+# rather than coloring the remotes, so adding a machine changes nothing here.
+# The Claude row trades the agent glyph for the session name, which herdr reads
+# off the pane title. The stripped form drops the leading state glyph, which
+# would otherwise flicker with the spinner.
 [ui.sidebar.agents]
 rows = [
   [
@@ -95,7 +51,7 @@ rows = [
 
 [ui.sidebar.agents.rows_by_agent]
 claude = [
-  ["state_icon", { token = "$title", bold = true, dim = false }],
+  ["state_icon", { token = "terminal_title_stripped", bold = true, dim = false }],
   [
     { token = "machine", dim = false, rules = [{ equals = "Local", dim = true }] },
     { token = "workspace", bold = false, dim = true },
@@ -103,31 +59,11 @@ claude = [
   ],
 ]
 
-# One row per workspace, then only what is out of the ordinary. herdr's own
-# `branch` and `git_status` are dropped: a root checkout's branch is main and a
-# worktree's branch is its label, so the row said nothing, and the behind count
-# it painted red measured the last fetch rather than the repo, since herdr
-# never fetches. bin/herdr-workspace-status reports these instead, on the tab
-# bar interval under [ui] below, and a row whose tokens are all empty is not
-# drawn, so a clean checkout of main is one word.
-#
-# The status is one token of at most two glyphs, because herdr draws a dot
-# between every custom token and right-aligns them by truncating the label,
-# so every glyph past the second is two more columns off the workspace name.
-# The glyphs are the Nerd Font octicons. The first slot is where the branch
-# is locally: a boxed dot for uncommitted changes, else an up arrow for
-# commits the remote has not seen. The second is the pull request (draft,
-# open, stacked, merged, closed), the open one if there is one, the stack
-# glyph alone if there are two, and otherwise the most recently touched one.
-# Color carries the checks, so it rides on the token name the way `$ctx_*`
-# does: red for failing checks or a conflict, yellow for checks still
-# running, green for passing, plain for an open PR with nothing to say, mauve
-# merged, dim closed. Local work with no open PR is yellow whatever the last
-# PR did. `$branch` shows only when the branch is neither the workspace label
-# nor the default branch, which is a worktree carrying a layer of a stack.
-#
-# Inline token styles take hex only. These are picked to read on both
-# catppuccin flavors, since auto_switch above flips between them.
+# bin/herdr-workspace-status reports these tokens in place of herdr's `branch`
+# and `git_status`. herdr strips escape codes from token values, so color rides
+# on the token name. `$status_*` is at most two glyphs, since herdr right-aligns
+# custom tokens by truncating the workspace label. Hex only, picked to read on
+# both catppuccin flavors.
 [ui.sidebar.spaces]
 rows = [
   [
@@ -143,23 +79,15 @@ rows = [
   ["$branch"],
 ]
 
-# --- Plugin keybindings ----------------------------------------------------
-# Plugins themselves are installed by install.sh. The command IDs below come
-# from each plugin's herdr-plugin.toml.
+# Plugins are installed by install.sh. The command IDs come from each plugin's
+# herdr-plugin.toml.
 
-# Switching splits in two: native goto (prefix+g) reaches anything that already
-# has a workspace, and this reaches a directory that doesn't have one yet.
-# herdr-navigator used to cover both, but it paints Catppuccin Mocha regardless
-# of auto_switch above (thanhdat77/herdr-navigator#28), so it's dropped until
-# that's fixed. herdr-zoxide passes no --color, so its fzf picker inherits
-# FZF_DEFAULT_OPTS_FILE and follows the system appearance.
 [[keys.command]]
 key = "prefix+t"
 type = "plugin_action"
 command = "herdr-zoxide.browse"
 description = "open a directory as a workspace"
 
-# herdr-file-viewer — git-aware, read-only file browser (diffs, markdown, code).
 [[keys.command]]
 key = "prefix+f"
 type = "shell"
@@ -173,32 +101,21 @@ command = "herdr plugin action invoke open-file-viewer-tab --plugin herdr-file-v
 description = "file viewer (tab)"
 
 # reviewr's auto-open is off (reviewr.toml), so this is the only way in.
-# herdr's resize mode already holds prefix+r.
 [[keys.command]]
 key = "prefix+d"
 type = "shell"
 command = "herdr plugin action invoke toggle --plugin persiyanov.reviewr"
 description = "reviewr diff (toggle)"
 
-# herdr-nvim — a per-tab nvim in a full-height split. The plugin has an nvim
-# half too, declared in neovim/config/init.lua, which is what sends
-# annotations back to an agent. Its README suggests prefix+e, which herdr
-# binds as edit_scrollback, so the toggle takes the shift variant the same way
-# the file viewer does above.
-#
-# Its picker over the files the agent just touched held prefix+shift+o and
-# gave it up to herdr-annotate below. Unbound rather than moved, since
-# `herdr plugin action invoke pick-file --plugin chmarax.herdr-nvim` reaches
-# it and nothing else was competing for the key it would move to.
+# The nvim half is declared in neovim/config/init.lua. Its file picker is
+# unbound; reach it with `herdr plugin action invoke pick-file --plugin
+# chmarax.herdr-nvim`.
 [[keys.command]]
 key = "prefix+shift+e"
 type = "plugin_action"
 command = "chmarax.herdr-nvim.toggle"
 description = "nvim sidebar (toggle)"
 
-# worktrunk — routes worktree creation through wt instead of herdr's native
-# flow (see new_worktree above). prefix+shift+g reuses the native flow's key
-# so muscle memory carries. prefix+ctrl+g is the stacking entry point.
 [[keys.command]]
 key = "prefix+shift+g"
 type = "plugin_action"
@@ -211,12 +128,6 @@ type = "plugin_action"
 command = "worktrunk.open-current"
 description = "worktree: switch / create (current branch)"
 
-# terminal-code (tode) and terminal-browser — a VS Code and a browser, each in
-# a right-hand split. Both ship a CLI on PATH (~/.local/bin, zsh/.zshenv) whose
-# `--split right` is what the plugin action shells out to, so these keys buy
-# reaching them without a shell prompt. prefix+b and prefix+c are herdr's
-# toggle_sidebar and new_tab, so both take the shift variant the same way the
-# file viewer and nvim do above.
 [[keys.command]]
 key = "prefix+shift+c"
 type = "plugin_action"
@@ -229,17 +140,9 @@ type = "plugin_action"
 command = "zenbu-labs.terminal-browser.open-split"
 description = "terminal-browser (right split)"
 
-# herdr-annotate — comment on a terminal selection, then copy the set as
-# Markdown for an agent. It works off what herdr copies to the system
-# clipboard, so what it can annotate is any pane's scrollback: a build log or
-# a test run that already scrolled past. That is the half herdr-nvim above
-# does not cover, since that one annotates the buffers it has open. Its
-# README's visual-mode nvim mapping is skipped for the same reason. Inside
-# nvim, herdr-nvim already owns sending annotations to an agent.
-#
-# These are the plugin's own suggested keys, and all three are unbound in
-# herdr's defaults, so none of them needs the shift variant the bindings above
-# take.
+# herdr-annotate works off what herdr copies to the system clipboard, so it
+# annotates any pane's scrollback. herdr-nvim above covers the buffers it has
+# open, including the visual-mode mapping this plugin's README suggests.
 [[keys.command]]
 key = "prefix+a"
 type = "plugin_action"
@@ -258,18 +161,11 @@ type = "plugin_action"
 command = "annotate.manage"
 description = "manage annotations"
 
-# The plugin's other half is document review, which runs the plannotator-tui
-# binary it fetches at build time. `open` reviews the focused pane's folder
-# with a file tree, `last` reviews the agent's most recent message, and both
-# send the feedback back to that pane's agent as its next message. A Ctrl-click
-# on a file:// Markdown link opens that file through the plugin's own link
-# handler, which needs no key.
-#
-# These are the README's keys. Both were taken, and both were freed for them:
-# open_notification_target is unbound above and herdr-nvim's picker gave up
-# the shift variant.
+# Document review, on the plannotator-tui binary the plugin fetches at build
+# time. Both send feedback back to the focused pane's agent as its next
+# message. A Ctrl-click on a file:// Markdown link needs no key.
 [[keys.command]]
-key = "prefix+o"
+key = "prefix+alt+o"
 type = "plugin_action"
 command = "annotate.open"
 description = "review documents in this folder"
@@ -280,22 +176,13 @@ type = "plugin_action"
 command = "annotate.last"
 description = "review the agent's last reply"
 
-# Whole scrollback onto the clipboard in one keystroke, which is how a build
-# log or a test run gets into an issue or an agent prompt. Native
-# edit_scrollback (prefix+e) opens the same buffer in an editor, for reading it
-# rather than moving it. `y` is the yank key everywhere else and herdr binds
-# nothing to it.
 [[keys.command]]
 key = "prefix+y"
 type = "shell"
 command = "herdr-grab-scrollback"
 description = "copy scrollback to the clipboard"
 
-# Claude Code's background-agent view, which tmux held on prefix+a. herdr's
-# sidebar lists pane agents, and a background agent occupies no pane, so
-# nothing here reports them. annotate.capture holds the plain key, so this
-# takes the alt variant. A popup rather than a pane: the view is a detour, and
-# it should not reshape the layout to take one.
+# The sidebar lists pane agents, and a background agent occupies no pane.
 [[keys.command]]
 key = "prefix+alt+a"
 type = "popup"
@@ -304,15 +191,9 @@ description = "claude background agents"
 width = "85%"
 height = "85%"
 
-# flock coordinates every other pane, so there is one of it and this is the way
-# back to it. The launcher looks the workspace up by label and builds it on the
-# first run, which keeps the binding working after the workspace is closed.
-#
-# Spelled out rather than named bare. The server holds the environment it
-# started with for as long as it runs, so a bare name resolves against a PATH
-# that can predate herdr/path.zsh and the launcher it puts on PATH. $ZSH is the
-# active root, which keeps the binding pointed at a dev checkout while dev mode
-# is on, and $HOME/.dotfiles is where the symlinks point otherwise.
+# Spelled out rather than named bare: the server holds the environment it
+# started with, so a bare name resolves against a PATH that can predate
+# herdr/path.zsh. $ZSH keeps this on a dev checkout while dev mode is on.
 [[keys.command]]
 key = "prefix+alt+f"
 type = "shell"
@@ -322,25 +203,19 @@ description = "flock coordinator (focus or create)"
 [ui]
 agent_panel_sort = "priority"
 
-# herdr runs a tab bar command entry on an interval and shows its last line of
-# output, and that interval is the only scheduler it offers a script that is
-# not a plugin. herdr-workspace-status prints nothing, so the entry stays
-# blank and the run is what it is for: reporting the $tokens the spaces rows
-# above render. Those carry a ten minute TTL, so a timer that has stopped
-# shows as bare rows rather than a stale green. Each worktree costs one forge
-# list call per run, plus one per open pull request.
+# The only scheduler herdr offers a script that is not a plugin.
+# herdr-workspace-status prints nothing, so the entry stays blank and the run is
+# what it is for: reporting the $tokens the spaces rows render. Those carry a
+# ten minute TTL. Each worktree costs one forge list call per run, plus one per
+# open pull request.
 tab_bar_right = [
   { type = "command", command = "herdr-workspace-status", interval_seconds = 30, timeout_seconds = 25 },
 ]
 
 [terminal]
-# Image rendering for attached clients, which terminal-browser needs to paint
-# anything. Without it a browser pane is blank while the browser itself runs
-# fine, so the symptom points at the wrong half. ghostty is the
-# kitty-compatible outer terminal it requires.
+# terminal-browser paints nothing without this.
 kitty_graphics = true
 
 [experimental]
-# herdr server restarts (done for config/plugin changes) currently lose pane
-# screen history. This preserves it across restarts.
+# Preserve pane screen history across server restarts.
 pane_history = true
