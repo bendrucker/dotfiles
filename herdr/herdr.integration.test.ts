@@ -28,6 +28,16 @@ describe("herdr", () => {
     expect(statSync(path).size).toBeGreaterThan(0);
   });
 
+  // herdr's own validation, which reaches past TOML syntax to unknown keys,
+  // invalid enum values and key names, and a duplicate binding that would
+  // silently disable its second occurrence. The pre-commit hook runs the same
+  // check locally. The lint job skips it because herdr is not installed there.
+  test("passes herdr's own config check", () => {
+    const r = run(["herdr", "config", "check"], { env: { HERDR_CONFIG_PATH: config } });
+    expect(`${r.stdout}${r.stderr}`).toContain("config: ok");
+    expect(r.status).toBe(0);
+  });
+
   test("declares the plugin set in plugins.list", () => {
     expect(statSync(list).size).toBeGreaterThan(0);
   });
