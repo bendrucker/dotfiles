@@ -18,7 +18,7 @@ Previewing a worktree config in the user's real session means repointing the `~/
 
 ## A Preview Session
 
-A named session is a second server with its own panes, workspaces, sockets, and saved state, started on whatever config the launching command names. It is the place for synthetic state, since nothing reported into it reaches the user's session. `--no-session` gives no such place: it runs herdr as one process with no server, so there is no socket to drive it through.
+A named session is a second server with its own panes, workspaces, sockets, and saved state, started on whatever config the launching command names. It is the place for synthetic state, since nothing reported into it reaches the user's session. Use them for all testing and demos to avoid mutating the user's live session.
 
 Launch it in its own Ghostty window:
 

@@ -68,13 +68,39 @@ enabled = false
 # row, with the workspace dimmed beneath it, and it clips at sidebar_max_width
 # rather than widening the panel. The row is bare until the first turn names
 # the session.
+#
+# `machine` names the host an agent runs on. The machines themselves are saved
+# by `herdr machine add` into a catalog of ssh targets, which stays out of this
+# repo the same way the mirror plugin's hosts.toml did. herdr omits the token
+# entirely while Local is the only machine, so it costs nothing until a second
+# one is connected, and it is the only thing that answers which agents are over
+# there once one agent list holds both. A custom layout does not get it by
+# default, which is why it is spelled out here.
+#
+# Its rule dims Local rather than coloring the remotes, so the row needs to
+# know no machine labels: whatever is not this machine reads at full weight,
+# and adding a machine changes nothing here. On the Claude row the second line
+# is dim as a whole, so the occurrence undims itself first and the rule puts
+# Local back.
 [ui.sidebar.agents]
-rows = [["state_icon", "agent", "workspace", "tab"]]
+rows = [
+  [
+    "state_icon",
+    "agent",
+    { token = "machine", rules = [{ equals = "Local", dim = true }] },
+    "workspace",
+    "tab",
+  ],
+]
 
 [ui.sidebar.agents.rows_by_agent]
 claude = [
   ["state_icon", { token = "$title", bold = true, dim = false }],
-  [{ token = "workspace", bold = false, dim = true }, { token = "tab", dim = true }],
+  [
+    { token = "machine", dim = false, rules = [{ equals = "Local", dim = true }] },
+    { token = "workspace", bold = false, dim = true },
+    { token = "tab", dim = true },
+  ],
 ]
 
 # One row per workspace, then only what is out of the ordinary. herdr's own
@@ -185,61 +211,6 @@ type = "plugin_action"
 command = "worktrunk.open-current"
 description = "worktree: switch / create (current branch)"
 
-# herdr-mirror mirrors a remote herdr server's workspaces and agents into the
-# local sidebar. Its hosts live in ~/.config/herdr-mirror/hosts.toml, untracked
-# because every entry is an ssh target.
-#
-# That file also carries `autostart = false`, so focusing a workspace no longer
-# pulls the remote in. One sidebar holding both machines loses the separation
-# that makes the second machine useful: which agents are here and which are over
-# there stops being answerable at a glance, and the rows that scroll past are
-# mostly not the ones being worked on. Mirroring is per-sitting instead of
-# ambient, which is what the two keys below are for.
-#
-# teardown closes the local mirrors and nothing else. The remote panes and their
-# agents keep running, and start re-mirrors them from scratch. The rest of the
-# lifecycle (pause, status, once, restore) stays on the herdr-mirror the install
-# links into ~/.local/bin, where it reads fine as a typed command.
-[[keys.command]]
-key = "prefix+shift+m"
-type = "plugin_action"
-command = "mirror.start"
-description = "remote: mirror hosts into the sidebar"
-
-[[keys.command]]
-key = "prefix+alt+d"
-type = "plugin_action"
-command = "mirror.teardown"
-description = "remote: stop mirroring, close every mirror"
-
-# Creating objects on the remote. These four have no CLI equivalent worth
-# typing: each takes its host and cwd from the mirror it's invoked from, and
-# degrades to the plain local action outside one. Native key plus alt, so both
-# sets stay reachable.
-[[keys.command]]
-key = "prefix+alt+n"
-type = "plugin_action"
-command = "mirror.remote-new-workspace"
-description = "remote: new workspace"
-
-[[keys.command]]
-key = "prefix+alt+c"
-type = "plugin_action"
-command = "mirror.remote-new-tab"
-description = "remote: new tab"
-
-[[keys.command]]
-key = "prefix+alt+v"
-type = "plugin_action"
-command = "mirror.remote-split-right"
-description = "remote: split right"
-
-[[keys.command]]
-key = "prefix+alt+minus"
-type = "plugin_action"
-command = "mirror.remote-split-down"
-description = "remote: split down"
-
 # terminal-code (tode) and terminal-browser — a VS Code and a browser, each in
 # a right-hand split. Both ship a CLI on PATH (~/.local/bin, zsh/.zshenv) whose
 # `--split right` is what the plugin action shells out to, so these keys buy
@@ -323,8 +294,8 @@ description = "copy scrollback to the clipboard"
 # Claude Code's background-agent view, which tmux held on prefix+a. herdr's
 # sidebar lists pane agents, and a background agent occupies no pane, so
 # nothing here reports them. annotate.capture holds the plain key, so this
-# takes the alt variant the mirror bindings do. A popup rather than a pane:
-# the view is a detour, and it should not reshape the layout to take one.
+# takes the alt variant. A popup rather than a pane: the view is a detour, and
+# it should not reshape the layout to take one.
 [[keys.command]]
 key = "prefix+alt+a"
 type = "popup"
@@ -362,13 +333,14 @@ tab_bar_right = [
   { type = "command", command = "herdr-workspace-status", interval_seconds = 30, timeout_seconds = 25 },
 ]
 
-[experimental]
+[terminal]
 # Image rendering for attached clients, which terminal-browser needs to paint
 # anything. Without it a browser pane is blank while the browser itself runs
 # fine, so the symptom points at the wrong half. ghostty is the
 # kitty-compatible outer terminal it requires.
 kitty_graphics = true
 
+[experimental]
 # herdr server restarts (done for config/plugin changes) currently lose pane
 # screen history. This preserves it across restarts.
 pane_history = true
