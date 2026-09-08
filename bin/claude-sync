@@ -244,7 +244,7 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
     }
 
     log(out, "info", `Updating ${plugin.id}...`);
-    if (claude(out, ["plugin", "update", plugin.id], env) !== 0) {
+    if (!updatePlugin(out, plugin.id, env)) {
       log(out, "warn", `Failed to update ${plugin.id}`);
       failed += 1;
     }
@@ -255,6 +255,29 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
     return false;
   }
   return true;
+}
+
+const UPDATE_ATTEMPTS = 2;
+const RETRY_PAUSE_MS = 2000;
+
+// `claude plugin update` intermittently answers "Plugin not found" for an id its
+// own marketplace manifest lists, and the same plugin updates on the next run.
+// pluginSource has already read that manifest by the time this runs, so the id
+// is one the CLI should resolve. A second attempt absorbs the race while a
+// plugin that is genuinely stuck fails both and still reports.
+function updatePlugin(
+  out: Output,
+  id: string,
+  env: Record<string, string | undefined>,
+): boolean {
+  for (let attempt = 1; attempt <= UPDATE_ATTEMPTS; attempt += 1) {
+    if (claude(out, ["plugin", "update", id], env) === 0) return true;
+    if (attempt < UPDATE_ATTEMPTS) {
+      log(out, "info", `Retrying ${id} (attempt ${attempt + 1}/${UPDATE_ATTEMPTS})...`);
+      Bun.sleepSync(RETRY_PAUSE_MS);
+    }
+  }
+  return false;
 }
 
 // Denied the job's stdin, so a prompt-happy CLI cannot swallow what the job is
@@ -383,16 +406,20 @@ export function failureFingerprint(extracted: string[]): string {
   return digest.slice(0, 12);
 }
 
-// Fields 2, 3 and 4 of every line gum logged at warn or error level. Keyed on
+// Fields 2 through 5 of every line gum logged at warn or error level. Keyed on
 // which steps warned, so a sync that keeps failing stays quiet while a plugin
 // failing on top of it reopens the latch.
+//
+// The fifth field is what names the plugin in "Failed to update <id>", so one
+// plugin swapping for another between nights reads as the new finding it is
+// rather than as the one already filed.
 export function failureFields(output: string): string[] {
   return output
     .split("\n")
     .filter((line) => line.startsWith("WARN") || line.startsWith("ERRO"))
     .map((line) => {
       const fields = awkFields(line);
-      return [fields[1] ?? "", fields[2] ?? "", fields[3] ?? ""].join(" ");
+      return [fields[1] ?? "", fields[2] ?? "", fields[3] ?? "", fields[4] ?? ""].join(" ");
     });
 }
 

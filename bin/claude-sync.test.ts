@@ -162,6 +162,13 @@ const claudeStub = [
   "  update)",
   "    printf 'update %s\\n' \"$3\" >>\"$CLAUDE_PLUGIN_LOG\"",
   '    case " $CLAUDE_UPDATE_FAILS " in *" $3 "*) exit 1 ;; esac',
+  // The intermittent shape the retry exists for: the first attempt refuses and
+  // the next one takes.
+  '    case " $CLAUDE_UPDATE_FAILS_ONCE " in',
+  '      *" $3 "*)',
+  '        [ -f "$HOME/refused-$3" ] || { : >"$HOME/refused-$3"; exit 1; }',
+  "        ;;",
+  "    esac",
   "    ;;",
   "  install) printf 'install %s\\n' \"$3\" >>\"$CLAUDE_PLUGIN_LOG\" ;;",
   "  uninstall)",
@@ -303,6 +310,7 @@ beforeEach(() => {
   process.env.XDG_STATE_HOME = join(sandbox, "state");
   process.env.CLAUDE_PLUGIN_LOG = join(sandbox, "plugin.log");
   process.env.CLAUDE_UPDATE_FAILS = "";
+  process.env.CLAUDE_UPDATE_FAILS_ONCE = "";
   process.env.CLAUDE_UNINSTALL_FAILS = "";
   process.env.CLAUDE_DRAINS_STDIN = "";
   process.env.AGENT_HOOK_REPO = repo;
@@ -345,6 +353,7 @@ afterEach(() => {
   else process.env.CLAUDE_REPO_HOME = environment.CLAUDE_REPO_HOME;
   delete process.env.CLAUDE_PLUGIN_LOG;
   delete process.env.CLAUDE_UPDATE_FAILS;
+  delete process.env.CLAUDE_UPDATE_FAILS_ONCE;
   delete process.env.CLAUDE_UNINSTALL_FAILS;
   delete process.env.CLAUDE_DRAINS_STDIN;
   delete process.env.AGENT_HOOK_REPO;
@@ -556,6 +565,32 @@ describe("updatePlugins", () => {
     process.env.CLAUDE_UPDATE_FAILS = "beta@third";
     expect(updatePlugins(out, process.env)).toBe(false);
     expect(out.captured()).toContain("Failed to update beta@third");
+  });
+
+  // `claude plugin update` answers "Plugin not found" for an id its own
+  // marketplace manifest lists, and the same plugin updates on the next nightly
+  // run. Every one of those filed a to-do naming a plugin that was never broken.
+  test("takes a second attempt at a plugin whose first update refuses", () => {
+    process.env.CLAUDE_UPDATE_FAILS_ONCE = "beta@third";
+
+    expect(updatePlugins(out, process.env)).toBe(true);
+    expect(out.captured()).not.toContain("Failed to update beta@third");
+    const attempts = readLog("plugin.log")
+      .split("\n")
+      .filter((line) => line === "update beta@third");
+    expect(attempts).toHaveLength(2);
+  });
+
+  // The retry absorbs a flake without hiding a plugin that is genuinely stuck,
+  // which stays reported after it has failed every attempt.
+  test("reports a plugin that refuses every attempt", () => {
+    process.env.CLAUDE_UPDATE_FAILS = "beta@third";
+
+    expect(updatePlugins(out, process.env)).toBe(false);
+    const attempts = readLog("plugin.log")
+      .split("\n")
+      .filter((line) => line === "update beta@third");
+    expect(attempts).toHaveLength(2);
   });
 
   // Nothing can update a plugin its marketplace stopped offering, so the update
@@ -857,22 +892,32 @@ describe("failureFields", () => {
   // Keyed on which steps warned, so a sync that keeps failing stays quiet while a
   // plugin failing on top of it reopens the latch. The gate's skip count sits in
   // field 4, so its doublings reopen the latch too.
-  test("keeps fields 2 to 4 of every warn and error line", () => {
+  test("keeps fields 2 to 5 of every warn and error line", () => {
     expect(failureFields(log)).toEqual([
-      "Failed to update",
-      "Local changes present",
-      "Sync skipped 4",
+      "Failed to update beta@third",
+      "Local changes present -",
+      "Sync skipped 4 runs",
     ]);
+  });
+
+  // The plugin that failed is the finding. Dropping its name left one plugin's
+  // failure indistinguishable from another's, so a night where a different
+  // plugin broke came back to a latch already holding the old one and stayed
+  // silent.
+  test("names the plugin a failed update was for", () => {
+    expect(failureFields("WARN Failed to update alpha@first\n")).not.toEqual(
+      failureFields("WARN Failed to update beta@third\n"),
+    );
   });
 
   test("reads nothing out of a log with no warnings", () => {
     expect(failureFields("INFO all good\n")).toEqual([]);
   });
 
-  // A warn line with fewer than four fields still has to produce a value, or the
+  // A warn line with fewer than five fields still has to produce a value, or the
   // fingerprint moves with the padding rather than with the finding.
   test("pads a short line rather than dropping it", () => {
-    expect(failureFields("WARN stray.txt \n")).toEqual(["stray.txt  "]);
+    expect(failureFields("WARN stray.txt \n")).toEqual(["stray.txt   "]);
   });
 });
 
