@@ -220,7 +220,11 @@ jobs:
         run: brew install ast-grep duckdb
       # scripts/lint-expired runs on bun, which nothing else in this job brings.
       - uses: oven-sh/setup-bun@v2
+      # herdr is not installed here and its formula has no Linux bottle, so the
+      # config check runs in bootstrap instead, where brew bundle put it.
       - uses: j178/prek-action@v3.0.0
+        env:
+          SKIP: herdr-config
       - name: Check completion file naming convention
         run: |
           bad=$(find . -name 'completions.zsh' -not -path './.git/*')

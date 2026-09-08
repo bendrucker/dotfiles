@@ -40,6 +40,12 @@ repos:
         entry: bun test ./.claude/skills/
         files: ^\.claude/skills/.*\.(sh|ts)$
         pass_filenames: false
+      - id: herdr-config
+        name: herdr config check
+        language: system
+        entry: env HERDR_CONFIG_PATH=herdr/config.toml herdr config check
+        files: ^herdr/
+        pass_filenames: false
       - id: oxlint
         name: oxlint
         language: system
