@@ -142,7 +142,7 @@ description = "terminal-browser (right split)"
 
 # herdr-annotate works off what herdr copies to the system clipboard, so it
 # annotates any pane's scrollback. herdr-nvim above covers the buffers it has
-# open, including the visual-mode mapping this plugin's README suggests.
+# open.
 [[keys.command]]
 key = "prefix+a"
 type = "plugin_action"
@@ -217,5 +217,4 @@ tab_bar_right = [
 kitty_graphics = true
 
 [experimental]
-# Preserve pane screen history across server restarts.
 pane_history = true
