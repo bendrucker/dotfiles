@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claudePluginsDir, pluginInventory, pluginSource } from "#plugins";
+import {
+  claudePluginsDir,
+  declaredPlugins,
+  installedPlugins,
+  pluginDependencies,
+  pluginInventory,
+  pluginSource,
+  splitPluginId,
+} from "#plugins";
 
 let sandbox: string;
 let plugins: string;
@@ -94,6 +102,22 @@ function ids(): string[] {
   const read = pluginInventory();
   if (!read.ok) throw new Error(`inventory failed: ${read.reason}`);
   return read.plugins.map((plugin) => plugin.id);
+}
+
+// The manifest Claude Code reads out of an installed payload, which is where a
+// plugin's dependencies are written down.
+function writePayloadManifest(path: string, manifest: unknown): void {
+  mkdirSync(join(path, ".claude-plugin"), { recursive: true });
+  writeFileSync(
+    join(path, ".claude-plugin", "plugin.json"),
+    typeof manifest === "string" ? manifest : JSON.stringify(manifest),
+  );
+}
+
+function declared(): string[] {
+  const read = declaredPlugins();
+  if (!read.ok) throw new Error(`declaration failed: ${read.reason}`);
+  return [...read.ids].sort();
 }
 
 function writeManifest(marketplace: string, manifest: unknown): void {
@@ -327,6 +351,114 @@ describe("readable but empty inventory", () => {
   test("reads a plugin list carrying a byte order mark", () => {
     writeList(`\uFEFF${JSON.stringify([record("alpha@first")])}`);
     expect(ids()).toEqual(["alpha@first"]);
+  });
+});
+
+
+describe("splitPluginId", () => {
+  test("splits on the last separator, so a name may carry one of its own", () => {
+    expect(splitPluginId("a@b@market")).toEqual({ name: "a@b", marketplace: "market" });
+  });
+
+  // An id with no separator names neither half, and both readers of it treat the
+  // whole string as the answer to whichever they asked for.
+  test("reads an id with no separator as both halves", () => {
+    expect(splitPluginId("bare")).toEqual({ name: "bare", marketplace: "bare" });
+  });
+});
+
+describe("declaredPlugins", () => {
+  // The enabled view drops a key set to false, because reading the keys alone
+  // would install a plugin that is deliberately off. The declaration keeps it:
+  // the file naming a plugin is what says its payload belongs here.
+  test("keeps an id settings.json turned off", () => {
+    writeSettings({ enabledPlugins: { "on@market": true, "off@market": false } });
+    expect(declared()).toEqual(["off@market", "on@market"]);
+    expect(ids()).toEqual(["on@market"]);
+  });
+
+  test("declares nothing when settings.json is not there", () => {
+    rmSync(join(sandbox, ".claude", "settings.json"), { force: true });
+    expect(declared()).toEqual([]);
+  });
+
+  test("declares nothing when the file names no plugins", () => {
+    writeSettings({ env: {} });
+    expect(declared()).toEqual([]);
+  });
+
+  // A caller pruning against this reads an empty set as "nothing is declared"
+  // and uninstalls every plugin on the machine, so an unreadable file has to
+  // arrive as a failure rather than as no declarations.
+  test("fails on a settings.json nothing can parse", () => {
+    writeSettings("not json\n");
+    expect(declaredPlugins().ok).toBe(false);
+  });
+
+  test("fails when enabledPlugins is not an object", () => {
+    writeSettings({ enabledPlugins: ["on@market"] });
+    expect(declaredPlugins().ok).toBe(false);
+  });
+});
+
+describe("installedPlugins", () => {
+  // The inventory folds in what settings.json enables, so a plugin declared but
+  // never installed appears there with no payload. This view reports payloads
+  // that exist, and a caller deciding what to uninstall has nothing to do with
+  // a row that has none.
+  test("reports what the CLI lists, without the declared-but-missing rows", () => {
+    writeList([record("installed@market", payload("market", "installed", "1.0.0"))]);
+    writeSettings({ enabledPlugins: { "installed@market": true, "missing@market": true } });
+
+    const read = installedPlugins();
+    if (!read.ok) throw new Error(read.reason);
+    expect(read.plugins.map((plugin) => plugin.id)).toEqual(["installed@market"]);
+    expect(ids()).toEqual(["installed@market", "missing@market"]);
+  });
+
+  test("fails when the CLI could not be read", () => {
+    process.env.CLAUDE_LIST_STATUS = "1";
+    expect(installedPlugins().ok).toBe(false);
+  });
+});
+
+describe("pluginDependencies", () => {
+  test("resolves a bare name against the depending plugin's marketplace", () => {
+    const path = payload("market", "alpha", "1.0.0");
+    writePayloadManifest(path, { name: "alpha", dependencies: ["beta"] });
+    expect(pluginDependencies("alpha@market", path)).toEqual(["beta@market"]);
+  });
+
+  test("leaves a dependency that names its own marketplace alone", () => {
+    const path = payload("market", "alpha", "1.0.0");
+    writePayloadManifest(path, { name: "alpha", dependencies: ["beta@other"] });
+    expect(pluginDependencies("alpha@market", path)).toEqual(["beta@other"]);
+  });
+
+  test("names nothing for a payload with no manifest", () => {
+    expect(pluginDependencies("alpha@market", payload("market", "alpha", "1.0.0"))).toEqual([]);
+  });
+
+  test("names nothing for a plugin with no payload", () => {
+    expect(pluginDependencies("alpha@market", "")).toEqual([]);
+  });
+
+  // A manifest the plugin ships in a shape nothing here reads says as much about
+  // its dependencies as one that declares none.
+  test("names nothing for a manifest nothing can parse or use", () => {
+    const broken = payload("market", "broken", "1.0.0");
+    writePayloadManifest(broken, "not json\n");
+    expect(pluginDependencies("broken@market", broken)).toEqual([]);
+
+    const wrong = payload("market", "wrong", "1.0.0");
+    writePayloadManifest(wrong, { name: "wrong", dependencies: "beta" });
+    expect(pluginDependencies("wrong@market", wrong)).toEqual([]);
+  });
+
+  test("drops an entry that is not a name", () => {
+    const path = payload("market", "alpha", "1.0.0");
+    writePayloadManifest(path, { name: "alpha", dependencies: ["beta", "", 7, null] });
+    expect(pluginDependencies("alpha@market", path)).toEqual(["beta@market"]);
   });
 });
 

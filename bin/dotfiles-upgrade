@@ -243,7 +243,7 @@ function runCapturingStdout(cmd: string[]): Step {
 // Only a WARN line the gate itself logged may move the fingerprint. The gate
 // prints the dirty tree's own diff to the same stream this reads, and the
 // phrase is tracked text in this repo's own specs, so a diff that touches one
-// of them carries it in its added lines. bin/claude-upgrade filters the same
+// of them carries it in its added lines. bin/claude-sync filters the same
 // way.
 export function syncFingerprint(output: string): string {
   for (const line of stripCsi(output).split("\n")) {

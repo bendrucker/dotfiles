@@ -50,7 +50,7 @@ describe("canonicalJson", () => {
   });
 
   // The reason this goes through jq at all. Both of these are 1700000000000000000
-  // as a JavaScript double, and bin/claude-upgrade answers "the file did not
+  // as a JavaScript double, and bin/claude-sync answers "the file did not
   // change" by comparing two canonical texts before running `git checkout HEAD --`
   // over the working copy.
   test("keeps integers a double would collapse apart", () => {
@@ -63,7 +63,7 @@ describe("canonicalJson", () => {
     expect(canonicalJson('\uFEFF{"a":1}')).toBe(canonicalJson('{"a":1}'));
   });
 
-  // The comparison bin/claude-upgrade makes over everything outside one key,
+  // The comparison bin/claude-sync makes over everything outside one key,
   // rather than deleting it from a parsed object and re-encoding.
   test("applies the filter it is given", () => {
     expect(canonicalJson('{"hooks":{"x":1},"a":1}', "del(.hooks)")).toBe(canonicalJson('{"a":1}'));

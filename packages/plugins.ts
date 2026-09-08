@@ -1,6 +1,6 @@
 // The Claude Code plugins installed on this machine, and where each one's
-// marketplace says it comes from. bin/claude-upgrade updates the plugins and
-// bin/claude-plugin-audit checks the update landed.
+// marketplace says it comes from. bin/claude-sync prunes and updates the
+// plugins and bin/claude-plugin-audit checks the update landed.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -26,6 +26,12 @@ export type Inventory =
 export type SourceLookup =
   | { ok: true; source: unknown }
   | { ok: false; reason: "unreadable" | "absent" };
+
+// The ids settings.json names, whether or not it has them turned on. Carries the
+// same failure shape as the inventory, and for the same reason: a set that could
+// not be read is not an empty one, and the caller that prunes against it would
+// read empty as "nothing is declared" and uninstall everything.
+export type Declaration = { ok: true; ids: Set<string> } | { ok: false; reason: string };
 
 const UNREADABLE = { ok: false, reason: "unreadable" } as const;
 const ABSENT = { ok: false, reason: "absent" } as const;
@@ -105,12 +111,15 @@ function runList() {
   }
 }
 
-function enabledPlugins(): InstalledPlugin[] {
+// settings.json's whole enabledPlugins map, keys and values both. Reading it
+// separately from the two views below is what keeps them from disagreeing about
+// which plugins the file names.
+function settingsPlugins(): Record<string, unknown> {
   const path = join(home(), ".claude", "settings.json");
   // A settings.json that is not there enables nothing by name. Only a file that
   // exists and cannot be read or parsed stops the inventory, so a zero-byte one,
   // which is a file something wrote wrong, is loud.
-  if (!isFile(path)) return [];
+  if (!isFile(path)) return {};
 
   let captured: string;
   try {
@@ -120,19 +129,47 @@ function enabledPlugins(): InstalledPlugin[] {
   }
 
   const settings = parse(captured, "settings.json");
-  if (settings === null) return [];
+  if (settings === null) return {};
   if (!isRecord(settings)) throw new Error("settings.json does not hold an object");
 
   const enabled = settings.enabledPlugins;
-  if (enabled === undefined || enabled === null || enabled === false) return [];
+  if (enabled === undefined || enabled === null || enabled === false) return {};
   if (!isRecord(enabled)) throw new Error("settings.json enabledPlugins is not an object");
+  return enabled;
+}
 
+function enabledPlugins(): InstalledPlugin[] {
   // settings.json records a plugin turned off as an explicit false rather than
   // dropping the key, so reading the keys alone would enumerate (and install) a
   // disabled plugin. Only false and null are off.
-  return Object.entries(enabled)
+  return Object.entries(settingsPlugins())
     .filter(([, value]) => value !== false && value !== null)
     .map(([id]) => ({ id, installPath: "" }));
+}
+
+// Every id settings.json names, an explicitly disabled one included. A key set
+// to false declares a plugin that is installed and turned off, so its payload is
+// meant to stay.
+export function declaredPlugins(): Declaration {
+  try {
+    return { ok: true, ids: new Set(Object.keys(settingsPlugins())) };
+  } catch (error) {
+    return { ok: false, reason: describe(error) };
+  }
+}
+
+// The user-scope payloads `claude plugin list` reports, without the
+// declared-but-never-installed rows pluginInventory folds in. Those rows carry
+// no payload, so a caller deciding what to uninstall has nothing to do with
+// them.
+export function installedPlugins(): Inventory {
+  let rows: InstalledPlugin[];
+  try {
+    rows = listedPlugins();
+  } catch (error) {
+    return { ok: false, reason: describe(error) };
+  }
+  return { ok: true, plugins: chooseInstallPaths(rows) };
 }
 
 // A plugin can hold several records: an uninstall that left its metadata behind
@@ -170,12 +207,47 @@ function bestPath(recorded: string[]): string {
   return best;
 }
 
-export function pluginSource(id: string): SourceLookup {
-  // Split on the last `@`. A plugin name may carry one of its own, so the
-  // marketplace is whatever follows the final separator.
+// Split on the last `@`. A plugin name may carry one of its own, so the
+// marketplace is whatever follows the final separator. An id with no separator
+// names neither half on its own, and both callers below read it as both.
+export function splitPluginId(id: string): { name: string; marketplace: string } {
   const separator = id.lastIndexOf("@");
-  const name = separator === -1 ? id : id.slice(0, separator);
-  const marketplace = separator === -1 ? id : id.slice(separator + 1);
+  if (separator === -1) return { name: id, marketplace: id };
+  return { name: id.slice(0, separator), marketplace: id.slice(separator + 1) };
+}
+
+// The plugin ids a payload's manifest names as its dependencies. Claude Code
+// installs a dependency at user scope without writing a settings.json key for
+// it, so nothing marks it as wanted and a prune reading the declaration alone
+// would take it out from under the plugin that needs it. A bare name resolves
+// against the marketplace the depending plugin came from, which is how the
+// manifests in the wild spell them.
+export function pluginDependencies(id: string, installPath: string): string[] {
+  if (installPath === "") return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(
+      readFileSync(join(installPath, ".claude-plugin", "plugin.json"), "utf8").replace(
+        BYTE_ORDER_MARK,
+        "",
+      ),
+    );
+  } catch {
+    // A payload that ships no manifest, or one nothing can parse, declares no
+    // dependencies. The audit is what reports a payload in that state.
+    return [];
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.dependencies)) return [];
+
+  const { marketplace } = splitPluginId(id);
+  return parsed.dependencies
+    .filter((entry): entry is string => typeof entry === "string" && entry !== "")
+    .map((entry) => (entry.includes("@") ? entry : `${entry}@${marketplace}`));
+}
+
+export function pluginSource(id: string): SourceLookup {
+  const { name, marketplace } = splitPluginId(id);
 
   const manifest = join(
     claudePluginsDir(),

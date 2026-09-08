@@ -953,7 +953,7 @@ describe("a repo-backed payload no update can reach", () => {
   });
 });
 
-// bin/claude-upgrade runs the executable with its stdout on a pipe, and reads
+// bin/claude-sync runs the executable with its stdout on a pipe, and reads
 // the summary line out of what comes back.
 describe("the executable", () => {
   test("delivers a report longer than a pipe buffer whole", () => {

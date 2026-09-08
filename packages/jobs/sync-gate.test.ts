@@ -590,7 +590,7 @@ describe("reviewDirty", () => {
     expect(notifications()).toContain("Skipped: local changes present");
   });
 
-  // bin/claude-upgrade fingerprints on fields 2-4 of the WARN and ERRO lines, and
+  // bin/claude-sync fingerprints on fields 2-4 of the WARN and ERRO lines, and
   // "Local changes present - skipping sync" reads the same whatever is dirty. The
   // paths need a line of their own, or a block recurring over a different dirty
   // set files no to-do after the first and the deadlock goes silent.

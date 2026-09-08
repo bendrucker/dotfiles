@@ -296,7 +296,7 @@ describe("decideFindings", () => {
   });
 });
 
-// Things stores 10,000 characters of notes and drops the rest. claude-upgrade
+// Things stores 10,000 characters of notes and drops the rest. claude-sync
 // opens its log with a repository sync whose diffstat alone ran past that, and
 // filed to-dos holding the diffstat and none of the error that ended the run.
 describe("trimOutput", () => {
