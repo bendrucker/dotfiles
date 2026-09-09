@@ -4,6 +4,41 @@
 ## Put the selected command on the prompt (enter runs, tab edits).
 enter_accept = true
 
+## Commands atuin must not record, on top of the built-in secrets_filter (on by
+## default) and the leading-space rule both of which it applies already. Only
+## the gap goes here: the built-in list covers AWS access key ids, GitHub,
+## GitLab, Stripe, Netlify, npm and Pulumi tokens, so none of those are
+## repeated. What it has no pattern for is a credential named rather than
+## shaped -- FOO_TOKEN=, --password, an Authorization header -- along with the
+## sk- vendors and a few prefixes it predates. Its own patterns are also
+## case-sensitive, so the lowercase spelling of a cloud credential name gets
+## covered here.
+##
+## These are Rust regexps matched anywhere in the command. The zsh side is
+## zsh/history-secrets.zsh, and both are tested against packages/history-secrets.ts.
+history_filter = [
+  '(?i)(api[_-]?key|apikey|auth[_-]?token|secret|token|pass(word|wd|phrase)?|credential|private[_-]?key|access[_-]?key)[a-z0-9_]*\s*=\s*[^\s=]',
+  '(?i)--(api[_-]?key|secret|token|pass(word|wd|phrase)?|auth|credential)\s+[^\s-]',
+  '(?i)authorization:\s*(bearer|token|basic)?\s*\S{8,}',
+  '(?i)bearer\s+[a-z0-9._~+/=-]{16,}',
+  ## user:password, as a curl -u pair or as the userinfo of a url. The length
+  ## floor is what leaves `docker run -u 1000:1000` alone.
+  '(?i)(^|\s)-u\s?[a-z0-9._%+-]+:\S{8,}',
+  '://[^\s/@]+:[^\s/@]{6,}@',
+  ## mysql takes its password attached to the flag, which no --flag value or
+  ## name=value rule sees. Naming the clients keeps `-p 8080:80` out of it.
+  '(?i)(^|\s)(mysql|mysqldump|mysqladmin|mariadb)[a-z]*(\s[^;|&]*)?\s-p[^\s-]',
+  '(?i)(aws|azure|gcp|google)[a-z0-9_]*_(secret|token|key)',
+  'sk-[A-Za-z0-9_-]{32,}',
+  '(?i)xox[abeprs][.-][a-z0-9.-]{10,}',
+  '(?i)xapp-[a-z0-9-]{10,}',
+  ## The built-in webhook pattern wants exactly 8 characters per id segment.
+  ## Slack issues 9 and up, so it matches nothing Slack hands out.
+  '(?i)hooks\.slack\.com/services/',
+  '(?i)pplx-[a-z0-9]{20,}',
+  '(?i)rubygems_[0-9a-f]{20,}',
+]
+
 [sync]
 ## Use the sync v2 record store.
 records = true
