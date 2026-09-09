@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { chmodSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
 
@@ -69,6 +70,21 @@ test("selects the env file by the command's own name, not the path it was given"
   stubOp();
 
   expect(runWith([box.path("bin", "npm"), "publish"]).stdout).toContain("token=resolved");
+});
+
+// The name is what picks the profile, so a binary that merely borrows the name
+// would otherwise be handed the token the real one gets.
+test("withholds the secrets from a lookalike at another path", () => {
+  box.write("env/npm.env", "DEMO_TOKEN=op://Testing/npm/token\n");
+  stubTool("npm");
+  stubOp();
+  const impostor = box.write("elsewhere/npm", '#!/bin/sh\necho "npm $* token=${DEMO_TOKEN-unset}"\n');
+  chmodSync(impostor, 0o755);
+
+  const result = runWith([impostor, "publish"]);
+  expect(result.stdout).toContain("token=unset");
+  expect(result.stderr).toContain("is not the npm on PATH");
+  expect(box.read("op.calls")).toBe("");
 });
 
 test("runs the command plainly where op is not installed", () => {

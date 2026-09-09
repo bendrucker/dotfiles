@@ -109,6 +109,20 @@ describe("reporting", () => {
       contents: "github.com:\n    oauth_token: gho_xxx\n",
       subject: "~/.config/gh/hosts.yml",
     },
+    {
+      name: "a token scoped to a registry naming a port",
+      path: "home/.npmrc",
+      contents: `//registry.example.com:8080/:_authToken=${FAKE_NPM_TOKEN}\n`,
+      subject: "~/.npmrc",
+    },
+    {
+      // Docker not being able to read the file is no reason to believe the
+      // credential left it.
+      name: "a docker config too truncated to parse",
+      path: "home/.docker/config.json",
+      contents: '{"auths":{"registry.example.com":{"auth":"aGk6dGhlcmU="',
+      subject: "~/.docker/config.json",
+    },
   ])("names $name", ({ path, contents, subject }) => {
     credential(path, contents);
     expect(verdicts(runAudit().stdout)).toEqual({ [subject]: "plaintext" });
@@ -176,7 +190,7 @@ describe("modes", () => {
     expect(verdicts(runAudit(["--enforce"]).stdout)["~/.npmrc"]).toBe("plaintext");
   });
 
-  test("leaves a symlinked credential path alone", () => {
+  test("leaves the mode of a symlinked credential alone", () => {
     // A chmod follows the link and would land on the tracked file in whatever
     // config repo it points into.
     const target = box.write("repo/hosts.yml", "github.com:\n");
@@ -185,6 +199,18 @@ describe("modes", () => {
     symlinkSync(target, home(".config", "gh", "hosts.yml"));
 
     expect(runAudit(["--enforce"]).stdout).toBe("");
+    expect(statSync(target).mode & 0o777).toBe(0o644);
+  });
+
+  // Skipping the link altogether reported a secret readable at that path as no
+  // finding at all, which is the one answer the nightly latch acts on.
+  test("names a symlinked credential whose target holds a secret", () => {
+    const target = box.write("repo/hosts.yml", "github.com:\n    oauth_token: gho_xxx\n");
+    chmodSync(target, 0o644);
+    box.mkdir("home/.config/gh");
+    symlinkSync(target, home(".config", "gh", "hosts.yml"));
+
+    expect(verdicts(runAudit(["--enforce"]).stdout)["~/.config/gh/hosts.yml"]).toBe("plaintext");
     expect(statSync(target).mode & 0o777).toBe(0o644);
   });
 });
@@ -285,6 +311,20 @@ describe("--adopt", () => {
     // was not swapped for a reference behind its back.
     expect(box.read("home/.npmrc")).toContain("added.example.com");
     expect(box.read("home/.npmrc")).toContain(FAKE_NPM_TOKEN);
+  });
+
+  // The rewrite renames a temp file into place, which would leave a regular file
+  // where the link was and detach the secret from the repo that owns it.
+  test("refuses a credential reached through a symlink", () => {
+    declareReference();
+    stubOp(FAKE_NPM_TOKEN);
+    const target = box.write("repo/npmrc", `//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}\n`);
+    symlinkSync(target, home(".npmrc"));
+
+    const result = runAudit(["--adopt"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("is a symlink");
+    expect(box.read("repo/npmrc")).toContain(FAKE_NPM_TOKEN);
   });
 
   test("refuses a file holding two different secrets", () => {
