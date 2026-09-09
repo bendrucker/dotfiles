@@ -39,6 +39,16 @@ if [[ -d $herdr_plugin_config && ! -L $herdr_plugin_config ]]; then
   gum log --level warn "moved $herdr_plugin_config to .pre-link; anything you configured by hand is in there"
 fi
 
+# One-time cleanups older machines have left to do, which convergence cannot
+# express: it describes the state every machine should be in, and a machine
+# installed after a removal has nothing to remove. Here rather than later
+# because a fresh machine is told apart from an existing one by whether this
+# repo's symlinks are already in place, and because a migration clearing the way
+# for a link has to run before the links are laid. A failure is a warning: the
+# convergence around it has succeeded, and a cleanup that could not finish
+# tonight is retried tomorrow.
+./bin/dotfiles-migrate || gum log --level warn "some migrations did not finish"
+
 ./scripts/install-symlinks
 
 # Build exclusions for mise and any git submodules
