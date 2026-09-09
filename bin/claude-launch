@@ -28,6 +28,7 @@ const MODELS = ["default", "opus", "sonnet", "haiku"];
 const SEED_LIMIT = 4000;
 
 // A dispatch answers with "backgrounded · <id> · <name>" in color.
+// oxlint-disable-next-line no-control-regex -- ESC is what the pattern is for.
 const ANSI = /\u001b\[[0-9;]*m/g;
 const SEPARATOR = " · ";
 

@@ -40,7 +40,7 @@ That install is what makes the pin real. `scripts/lint-ts` spawns `node_modules/
 
 `.oxlintrc.json` runs the `correctness` category plus a `no-restricted-imports` rule that rejects a path-shaped import of anything under `packages/`. That rule is what makes the specifier table above a boundary rather than a convention, since a deep relative path into another package now fails the build.
 
-`no-control-regex` is off. Stripping ANSI escapes with a pattern built around `\u001b` is a recurring idiom in a repo this full of terminal tooling, and the rule cannot tell one from a stray control character, so it fires on correct code everywhere the idiom appears.
+`Bun.stripANSI` is what strips escape sequences from a child's output, as `zsh/zprof/zprof-format.ts` does. Use a hand-rolled regex only to strip something narrower, the way `bin/dotfiles-upgrade` keeps OSC title text a reader wants while dropping CSI. That regex holds a literal ESC, so it needs an `oxlint-disable-next-line no-control-regex`. Turning the rule off repo-wide instead would cover three deliberate patterns at the cost of every accidental control character.
 
 #### Size and Complexity
 
