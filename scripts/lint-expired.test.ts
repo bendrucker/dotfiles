@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Finding, findings, isRealDate, parseMarker, report, today } from "./lint-expired";
+import { type Finding, findings, isRealDate, parseMarker, report, today, unmarked } from "./lint-expired";
 
 const SCRIPT = join(import.meta.dir, "lint-expired");
 const TODAY = "2026-07-28";
@@ -26,6 +26,14 @@ function git(args: string[]): void {
 // git grep only sees tracked files, so a fixture has to be staged.
 function fixture(...lines: string[]): void {
   writeFileSync(join(sandbox, "migration.sh"), `${lines.join("\n")}\n`);
+  git(["-C", sandbox, "add", "-A"]);
+}
+
+// A migration file under the directory the runner reads, where the marker is
+// required rather than optional.
+function migrationFixture(name: string, ...lines: string[]): void {
+  mkdirSync(join(sandbox, "migrations"), { recursive: true });
+  writeFileSync(join(sandbox, "migrations", name), `${lines.join("\n")}\n`);
   git(["-C", sandbox, "add", "-A"]);
 }
 
@@ -133,8 +141,29 @@ describe("findings", () => {
     const matches = [
       "scripts/lint-expired:11:#   EXPIRES: 2020-01-01 an example",
       "scripts/lint-expired.test.ts:1:# EXPIRES: 2020-01-01 a fixture",
+      "CLAUDE.md:270:Give it an `EXPIRES:` marker.",
     ];
     expect(findings(matches, TODAY)).toEqual([]);
+  });
+});
+
+describe("unmarked", () => {
+  const migration = "migrations/202601010001-remove-thing.ts";
+
+  test("reports a migration the grep never matched", () => {
+    expect(unmarked([migration], ["scripts/install:34:# EXPIRES: 2099-01-01 something else"])).toEqual([
+      { kind: "unmarked", location: migration, date: "", reason: "" },
+    ]);
+  });
+
+  test("says nothing about a migration that carries one", () => {
+    expect(unmarked([migration], [`${migration}:12:// EXPIRES: 2099-01-01 done`])).toEqual([]);
+  });
+
+  // The test beside a migration is not itself a cleanup with a date to keep.
+  test("passes over the files in the directory that are not migrations", () => {
+    const listed = ["migrations/202601010001-remove-thing.test.ts", "migrations/README.md"];
+    expect(unmarked(listed, [])).toEqual([]);
   });
 });
 
@@ -168,6 +197,16 @@ describe("report", () => {
 
   test("leaves the reason line off a marker that carries none", () => {
     expect(report([expired("2020-01-01", "")])).not.toContain("    ");
+  });
+
+  test("lists a migration with no marker under its own heading", () => {
+    const found: Finding[] = [
+      { kind: "unmarked", location: "migrations/202601010001-a.ts", date: "", reason: "" },
+    ];
+    expect(report(found)).toEqual([
+      "ERROR: migration with no EXPIRES: marker saying when to delete it:",
+      "  migrations/202601010001-a.ts",
+    ]);
   });
 
   test("lists the malformed markers under their own heading", () => {
@@ -247,6 +286,27 @@ describe("the executable", () => {
   test("ignores a marker in an untracked file", () => {
     fixture("echo tracked");
     writeFileSync(join(sandbox, "untracked.sh"), "# EXPIRES: 2020-01-01 untracked\n");
+
+    expect(run().status).toBe(0);
+  });
+
+  test("fails on a migration carrying no marker", () => {
+    fixture("echo tracked");
+    migrationFixture("202601010001-remove-thing.ts", "export function up() {}");
+
+    const outcome = run();
+    expect(outcome.status).toBe(1);
+    expect(outcome.stderr).toContain("no EXPIRES: marker");
+    expect(outcome.stderr).toContain("migrations/202601010001-remove-thing.ts");
+  });
+
+  test("passes on a migration carrying one that is still in the future", () => {
+    fixture("echo tracked");
+    migrationFixture(
+      "202601010001-remove-thing.ts",
+      "// EXPIRES: 2099-12-31 every machine has run it",
+      "export function up() {}",
+    );
 
     expect(run().status).toBe(0);
   });

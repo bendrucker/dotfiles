@@ -11,6 +11,14 @@
 // Uninstalling on that ambiguity loses work no one asked to lose, so the answer
 // goes to a to-do and the removal stays a decision someone makes awake.
 //
+// One of those two reasons is now narrower than it was. A commit that stops
+// declaring a package carries a migration that uninstalls it (see
+// bin/dotfiles-migrate), and scripts/install runs migrations before this ever
+// sees the machine. What is left to report is a package installed by hand and
+// never written down. A finding naming something a Brewfile used to declare
+// therefore means a removal commit shipped without its migration, which is a
+// gap in that commit rather than a decision waiting to be made.
+//
 // `brew bundle cleanup` is what decides "undeclared". Reusing it keeps this
 // honest about the things a hand-rolled comparison gets wrong: renamed casks
 // whose old token survives as a Caskroom symlink, formulae kept alive as

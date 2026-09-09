@@ -25,6 +25,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 | --- | --- |
 | `#harness` | The `bun test` harness for driving shell scripts |
 | `#jobs/*` | What the unattended jobs share: output capture, failure reporting, the sync gate, canonical JSON |
+| `#migrations/*` | What a one-time migration is, and the runner behind `bin/dotfiles-migrate` |
 | `#worktree/*` | Worktrunk state, forge queries, column alignment |
 | `#plugins` | The installed Claude Code plugins |
 
@@ -201,6 +202,8 @@ Never add employer-specific tooling to a topic directory. Machines legitimately 
 
 Nothing uninstalls. A package no Brewfile names is either a leftover or something installed deliberately an hour ago that has not been written down yet. At 3am those are the same thing. Removing on that ambiguity loses work no one asked to lose, so the removal stays a decision made awake. Act on a to-do by declaring the package in a topic Brewfile or uninstalling it by hand.
 
+What drift should now find is narrower than that. A commit that stops declaring a package carries a migration that uninstalls it, and `scripts/install` runs migrations well before this check sees the machine, so the leftover half of the ambiguity is handled where the decision was actually made. A finding naming something a Brewfile used to declare means a removal commit shipped without its migration. Fix the commit rather than the machine.
+
 Omitting `--force` does not make `brew bundle cleanup` a dry run. It prints the listing, then asks whether to uninstall, and `--force` only skips the question. `scripts/brew-drift` closes stdin, so the prompt cannot be shown and the command exits 1 with the listing already printed and nothing removed. That is what stops a hand run from uninstalling anything.
 
 `brew bundle cleanup` therefore exits nonzero whenever it printed a listing it could not act on, which is the normal result of a run that found something. `scripts/brew-drift` treats the listing as the signal and the status as decisive only when there is no output at all to read, so it exits 0 on a finding and 1 only when cleanup produced nothing. That is what lets `bin/dotfiles-upgrade` tell a finding apart from a check that could not run.
@@ -231,6 +234,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 - `dotfiles sync --bootstrap` — Sync and re-run bootstrap for symlinks
 - `dotf` — Full install/update: Homebrew, brew bundle, mise install, topic installers
 - `scripts/brew-drift`: Print the Brewfile entries that would declare whatever is installed and undeclared
+- `bin/dotfiles-migrate` — Run the one-time cleanups this machine hasn't run yet
 
 ### Installation Flow
 
@@ -238,10 +242,35 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 1. `brew bundle` — Install Brewfile dependencies
 2. Symlink `*/mise.toml` → `~/.config/mise/conf.d/`
 3. `mise install` — Install language runtimes
-4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
-5. Run topic `install.sh` scripts
-6. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
-7. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
+4. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
+5. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
+6. Run topic `install.sh` scripts
+7. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
+8. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
+
+### Migrations
+
+`bin/dotfiles-migrate` runs the one-time cleanups a machine hasn't run yet. Each lives in `migrations/`, named `YYYYMMDDNNNN-slug.ts`, and exports `up(context)`. The version and the name come from the filename, so there is no constant to disagree with where the file sorts. `${XDG_STATE_HOME:-~/.local/state}/dotfiles/migration-version` records how far the machine got.
+
+The rule for what belongs here: convergence describes the state every machine should be in and runs on every machine forever. A migration describes the transition work only a machine that predates a change has left to do. Removing a tool from a Brewfile stops declaring it and uninstalls nothing, so the removal commit carries a migration that uninstalls it. Do not put a one-time cleanup in the install path just because it is idempotent. That leaves the installer describing a machine nobody has any more, which is how `scripts/install` and `macos/install.sh` collected the dated blocks still sitting in them.
+
+A machine with no version file is a fresh one. It stamps the latest version and runs nothing, because it was installed after every migration was written and has none of the state they clean up. The first run after this shipped is the exception every machine passes through once: no machine has the file yet, so freshness is read off the symlinks instead. A home directory carrying a link into `~/.dotfiles` has had `scripts/install` run on it before and gets every migration; one carrying none is fresh. That reading is only available before the links are laid, which is why the runner sits ahead of `scripts/install-symlinks` rather than at the end. It is also what lets a migration clear the way for a link, which is what the herdr plugin-config block above it does inline.
+
+The version is stamped after each migration rather than once at the end, and a failure stops the run without stamping. The next install retries the one that broke and the ones behind it, and never re-runs one that finished. Later migrations are skipped rather than attempted, since one may assume the one before it completed. `scripts/install` downgrades a nonzero exit to a warning, the way it does for `theme-sync` and `dotfiles-reload`: this runs unattended at 3am behind convergence that has already succeeded, and a cleanup that could not finish tonight is a cleanup to retry tomorrow rather than a to-do nobody can act on until morning.
+
+`bin/dotfiles-sync` does not run migrations. A plain `dotfiles sync` moves the tree and reloads what is already pointed at; it does not converge. The nightly job reaches them through `scripts/install`, and so does `dotfiles sync --bootstrap`, which is the one hook point.
+
+A migration may set `export const platform = "darwin" | "linux"` when the work only makes sense on one, since everything outside `macos/` has to stay Linux-compatible. A migration the platform will never run is stamped rather than left pending forever.
+
+`context` carries `home`, `config`, `data`, `root`, `platform`, and an `out` to run children through, so a migration never reads a path out of the environment and a test can hand it a sandbox. `removeFormula` uninstalls a formula a Brewfile stopped declaring, and does nothing where brew or the formula is absent. `removeTree` removes a path, and refuses one outside the `home` it was handed. A migration that means to reach further calls `node:fs` itself.
+
+#### Adding one
+
+1. Write `migrations/<YYYYMMDDNNNN>-<slug>.ts` in the same commit as the change it cleans up after.
+2. Give it an `EXPIRES:` marker. This is required rather than optional, and `scripts/lint-expired` fails without one.
+3. Add `migrations/<same-name>.test.ts` beside it, driving `up` against a sandbox home.
+
+The `EXPIRES:` marker and the runner compose rather than overlap. The runner makes the cleanup happen on the machines that still need it; the marker is what makes the file get deleted once none do. A migration that has run everywhere is exactly the cleanup that outlived its reason, so the marker's date is the author's estimate of when every machine will have run `scripts/install` since the change. Reaching it fails CI, and the fix is to delete the migration file. Deleting one is safe at any point: a machine stamped past it has nothing pending, and the stamp never moves backwards. That date is also the backstop for a migration that keeps failing, since a failure is only a warning at 3am and CI is where it surfaces.
 
 ### Config Reloads
 

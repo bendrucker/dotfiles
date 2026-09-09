@@ -8,6 +8,7 @@
     "#harness": "./packages/harness/index.ts",
     "#harness/*": "./packages/harness/*.ts",
     "#jobs/*": "./packages/jobs/*.ts",
+    "#migrations/*": "./packages/migrations/*.ts",
     "#worktree/*": "./packages/worktree/*.ts",
     "#plugins": "./packages/plugins.ts"
   }

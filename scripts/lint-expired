@@ -13,22 +13,31 @@
 //
 // Reaching the date prompts a review. Delete the code, or push the date out
 // because the reason still holds.
+//
+// A migration under migrations/ is the same thing with a runner behind it, so
+// the marker is required there rather than optional. The runner makes the
+// cleanup happen on machines that need it; the marker is what makes the file
+// get deleted once none do. Without one a migration would run on every fresh
+// machine forever, doing nothing, describing a machine nobody has.
 
 import { realpathSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { MIGRATION_FILENAME, MIGRATIONS_DIR } from "#migrations/runner";
 
 const USAGE = [
   "usage: lint-expired [dotfiles-root]",
   "",
   "Fail once a marked cleanup step has outlived the date its author gave it.",
-  "A marker reads `EXPIRES: YYYY-MM-DD reason`.",
+  "A marker reads `EXPIRES: YYYY-MM-DD reason`, and every migration needs one.",
 ].join("\n");
 
 export const MARKER = "EXPIRES:";
 
-// This script and its own cases both document the marker, so they match
-// themselves.
-const SKIPPED = new Set(["scripts/lint-expired", "scripts/lint-expired.test.ts"]);
+// The files that document the marker rather than carry one, which would
+// otherwise match themselves. CLAUDE.md is here for the same reason as this
+// script: it explains the marker to a reader, and prose describing a rule is
+// not a cleanup with a date to keep.
+const SKIPPED = new Set(["scripts/lint-expired", "scripts/lint-expired.test.ts", "CLAUDE.md"]);
 
 const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
@@ -67,7 +76,7 @@ export function isRealDate(date: string): boolean {
 }
 
 export interface Finding {
-  kind: "malformed" | "expired";
+  kind: "malformed" | "expired" | "unmarked";
   location: string;
   date: string;
   reason: string;
@@ -100,8 +109,29 @@ export function findings(matches: string[], today: string): Finding[] {
   return found;
 }
 
+// A migration file the grep never matched, which is a cleanup with no date
+// saying when to delete it. Both sides name paths relative to the root that was
+// searched, since the grep and the listing run against the same one.
+export function unmarked(migrations: string[], matches: string[]): Finding[] {
+  const marked = new Set<string>();
+  for (const match of matches) {
+    const file = match.split(":")[0];
+    if (file !== undefined && file !== "") marked.add(file);
+  }
+
+  return migrations
+    .filter((file) => MIGRATION_FILENAME.test(basename(file)) && !marked.has(file))
+    .map((file) => ({ kind: "unmarked" as const, location: file, date: "", reason: "" }));
+}
+
 export function report(found: Finding[]): string[] {
   const lines: string[] = [];
+
+  const missing = found.filter((finding) => finding.kind === "unmarked");
+  if (missing.length > 0) {
+    lines.push(`ERROR: migration with no ${MARKER} marker saying when to delete it:`);
+    for (const finding of missing) lines.push(`  ${finding.location}`);
+  }
 
   const malformed = found.filter((finding) => finding.kind === "malformed");
   if (malformed.length > 0) {
@@ -134,6 +164,25 @@ export function today(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+// git ls-files rather than readdir, so an untracked scratch file left in the
+// directory is not reported as a migration nobody dated.
+export function migrationFiles(root: string): string[] {
+  const listed = Bun.spawnSync({
+    cmd: ["git", "ls-files", "--", MIGRATIONS_DIR],
+    cwd: root,
+    env: process.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  if (listed.exitCode !== 0) return [];
+
+  return listed.stdout
+    .toString()
+    .split("\n")
+    .filter((line) => line !== "");
+}
+
 function main(args: string[]): number {
   if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(`${USAGE}\n`);
@@ -163,7 +212,7 @@ function main(args: string[]): number {
     .toString()
     .split("\n")
     .filter((line) => line !== "");
-  const lines = report(findings(matches, today()));
+  const lines = report([...unmarked(migrationFiles(root), matches), ...findings(matches, today())]);
   if (lines.length === 0) return 0;
 
   process.stderr.write(`${lines.join("\n")}\n`);
