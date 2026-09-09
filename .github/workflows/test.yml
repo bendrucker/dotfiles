@@ -214,6 +214,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The secret scan below reads history, which a shallow checkout omits.
+          fetch-depth: 0
       - name: Add brew to PATH
         run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
       - name: Install lint dependencies
@@ -228,9 +231,21 @@ jobs:
       # prek runs the gitleaks hook above, but that hook scans the staged diff,
       # and nothing is staged on a runner. Its whole job is blocking a commit
       # before it exists, so the push that skipped the hook is the one CI has to
-      # catch, and catching it means scanning the tree rather than a diff.
+      # catch, and catching it means scanning here rather than a diff.
+      #
+      # Two scans because neither covers the other. A secret added in one commit
+      # and deleted in the next is absent from the tree and still fetchable from
+      # history, and history is what a public repo hands out. The tree scan
+      # covers what a patch scan skips: merge commits, and content git treats as
+      # binary. Full history is a second on this repo.
+      #
+      # --log-opts HEAD is what keeps the check about this branch. fetch-depth 0
+      # fetches every branch, and gitleaks defaults to scanning all refs, so
+      # without it an unrelated open branch fails this job.
       - name: Scan for secrets
-        run: gitleaks dir --redact --no-banner --no-color --max-target-megabytes 5 .
+        run: |
+          gitleaks dir --redact --no-banner --no-color --max-target-megabytes 5 .
+          gitleaks git --redact --no-banner --no-color --log-opts HEAD .
       - name: Check completion file naming convention
         run: |
           bad=$(find . -name 'completions.zsh' -not -path './.git/*')
