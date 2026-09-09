@@ -1,3 +1,9 @@
 #!/bin/sh
 # link a checkout's .claude at its personal overlay in the claude repo
-exec bun "${CLAUDE_REPO_HOME:-$HOME/.claude-repo}/plugins/overlay/scripts/link.ts" "$@"
+# The linker ships from the claude repo, so a machine whose clone predates the
+# overlay plugin has no linker. A checkout without an overlay is still usable,
+# so this exits quietly rather than reporting a missing module to whatever ran
+# the clone.
+linker="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}/plugins/overlay/scripts/link.ts"
+[ -f "$linker" ] || exit 0
+exec bun "$linker" "$@"
