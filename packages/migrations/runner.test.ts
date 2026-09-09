@@ -191,6 +191,18 @@ describe("errors the readers cannot suppress", () => {
     }
   });
 
+  test("run reports an unwritable state directory rather than crashing", async () => {
+    markInstalled();
+    migration("202601010001-first");
+    const state = box.mkdir("state");
+    chmodSync(state, 0o500);
+    try {
+      expect(await migrate()).toBe(1);
+    } finally {
+      chmodSync(state, 0o755);
+    }
+  });
+
   test("run reports an unreadable migrations directory rather than stamping past it", async () => {
     markInstalled();
     const dir = box.mkdir("root", "migrations");

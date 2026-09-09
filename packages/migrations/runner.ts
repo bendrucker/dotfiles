@@ -196,20 +196,24 @@ export async function load(found: Found): Promise<Migration> {
   return { up: up as Migration["up"], platform };
 }
 
+// Every failure leaves the stamp where it was, so nothing is recorded as done
+// that did not run. The status is what scripts/install downgrades to a warning.
 export async function run(options: RunOptions): Promise<number> {
+  try {
+    return await migrate(options);
+  } catch (error) {
+    log(options.context.out, "error", message(error));
+    return 1;
+  }
+}
+
+async function migrate(options: RunOptions): Promise<number> {
   const context = options.context;
   const { home, out } = context;
   const file = options.version;
 
-  let found: Found[];
-  let current: number | undefined;
-  try {
-    found = discover(options.root);
-    current = readVersion(file);
-  } catch (error) {
-    log(out, "error", message(error));
-    return 1;
-  }
+  const found = discover(options.root);
+  let current = readVersion(file);
 
   if (current === undefined) {
     if (!previouslyInstalled(home, context.config, context.installed)) {
