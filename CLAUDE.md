@@ -34,13 +34,29 @@ Bun resolves `imports` from the root `package.json` alone, so a specifier resolv
 
 ### Linting TypeScript
 
-oxlint is the repo's one devDependency, pinned in `package.json` and tracked by Renovate's bun manager like any other. The `lint` job and the pre-commit hook both run `bun install --frozen-lockfile` before `bunx oxlint --deny-warnings`.
+oxlint is the repo's one devDependency, pinned in `package.json` and tracked by Renovate's bun manager like any other. The `lint` job and the pre-commit hook both run `bun install --frozen-lockfile` before `scripts/lint-ts --deny-warnings`.
 
 That install is what makes the pin real. A bare `bunx oxlint` against a tree with no `node_modules` fetches the latest release and ignores the version in `package.json` without saying so, which is a silent wrong-version run rather than a failure.
 
 `.oxlintrc.json` runs the `correctness` category plus a `no-restricted-imports` rule that rejects a path-shaped import of anything under `packages/`. That rule is what makes the specifier table above a boundary rather than a convention, since a deep relative path into another package now fails the build.
 
-oxlint discovers files by extension, so the `bin/` executables are invisible to it: they carry a `#!/usr/bin/env bun` shebang and no `.ts` suffix, and naming one on the command line reports no files to lint. Their `bin/<script>.test.ts` neighbors are linted normally. A rule that has to hold for the executables themselves needs a different mechanism.
+#### Size and Complexity
+
+`.oxlintrc.json` also caps `complexity`, `max-depth`, `max-params`, `max-statements`, `max-lines-per-function`, and `max-lines`. Every threshold is set from what the tree measured when it went in, a little above the largest thing that passes, so the gate holds the line where the code already is instead of asking for a refactor. Tightening one is a decision to make with the distribution in front of you, not a round number to reach for.
+
+A `**/*.test.ts` override turns off `max-lines`, `max-lines-per-function`, and `max-statements`. Those three measure the `describe` block, which is a container for cases rather than a function, and a test file that grows because it covers more is doing the right thing. `complexity`, `max-depth`, and `max-params` stay on there, since they measure the helpers inside a case.
+
+Two functions are over a ceiling and carry an `oxlint-disable-next-line` naming why. `forgePass` in `bin/wt-prune` is at complexity 31, and `main` in `bin/clone-repo` at complexity 27 and 54 statements. Both are wide rather than deep: a decision table in one, a run of flag handlers in the other, where the count comes from the number of arms and no single arm is hard to read. Everything else clusters at or below 17 and 37. Splitting either is its own change.
+
+#### Linting the bin/ Executables
+
+oxlint discovers files by extension, so the `bin/` executables are invisible to it: they carry a `#!/usr/bin/env bun` shebang and no `.ts` suffix, and naming one on the command line reports no files to lint. Since they hold the largest TypeScript in the repo, `scripts/lint-ts` is what the two callers run instead of `oxlint` directly. It symlinks each one into `tmp/lint-ts/` under a `.ts` name, lints that mirror against the same config, and maps the mirror paths in the output back to the real ones, so a diagnostic names `bin/wt-prune:294` and a CI annotation lands on the right line.
+
+The mirror is built after the ordinary pass rather than excluded from it. An oxlint ignore cannot separate the two, because a path it ignores stays ignored even when named on the command line. It lives inside the repo rather than under `$TMPDIR` because the github formatter emits an annotation only for a path it can make relative to the working directory.
+
+The pre-commit hook keys on `files:` rather than `types: [ts]`. identify tags an extensionless bun executable as `executable` and nothing more, so a `types`-keyed hook never fires on a change to one.
+
+Nothing here finds an unused export across the `#`-specifier modules. oxlint 1.82.0 does not implement `import/no-unused-modules`, `no-unused-vars` reaches only within a file, and every candidate that would close the gap is a new dependency.
 
 ## Common Tasks
 

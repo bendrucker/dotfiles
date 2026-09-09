@@ -262,8 +262,10 @@ jobs:
       - name: Install oxlint
         run: bun install --frozen-lockfile
 
+      # scripts/lint-ts wraps oxlint so the bin/ executables are linted too.
+      # oxlint discovers by extension and they carry none.
       - name: Lint TypeScript
-        run: bunx oxlint --deny-warnings --format=github
+        run: scripts/lint-ts --deny-warnings --format=github
 
       - name: Check for expired migrations
         run: scripts/lint-expired

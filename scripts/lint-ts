@@ -1,0 +1,143 @@
+#!/usr/bin/env bun
+//
+// Run oxlint over every TypeScript file in the repo, the bin/ executables
+// included.
+//
+// oxlint discovers files by extension. The largest TypeScript here is in
+// bin/ and scripts/, where an executable carries a `#!/usr/bin/env bun`
+// shebang and no .ts suffix so that it reads as a command on $PATH. A plain
+// oxlint run skips every one of them, and naming one on the command line
+// reports no files to lint, so the size and complexity thresholds would apply
+// to everything except the code most likely to breach them.
+//
+// This mirrors each executable into a scratch directory under a .ts name,
+// lints the mirror against the same config, and rewrites the mirror paths in
+// the output back to the real ones. The mirror entries are symlinks, so the
+// content and every line number are the file's own.
+
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
+const USAGE = [
+  "usage: lint-ts [oxlint-args...]",
+  "",
+  "Lint the repo with oxlint, including the extensionless bun executables",
+  "that oxlint's own file discovery cannot see. Arguments are passed through.",
+].join("\n");
+
+// Inside the repo rather than the system temp directory: oxlint's github
+// formatter emits an annotation only for a path it can make relative to the
+// working directory, and an out-of-tree file silently produces none.
+//
+// Being in the tree means ordinary discovery would find it, and an oxlint
+// ignore cannot separate the two passes because an ignored path stays ignored
+// when it is named on the command line. The mirror is built after the repo
+// pass instead, so it does not exist while that pass is looking.
+export const MIRROR = "tmp/lint-ts";
+
+// A file with no dot in its name and a bun shebang. The `env bun` form is the
+// only one used here, and matching it rather than any bun path keeps a
+// `#!/usr/bin/env bunx` or a comment mentioning bun from being picked up.
+const SHEBANG = /^#!.*\/env +bun *$/;
+
+export function isBunScript(name: string, firstLine: string): boolean {
+  const base = name.slice(name.lastIndexOf("/") + 1);
+  return !base.includes(".") && SHEBANG.test(firstLine);
+}
+
+export async function bunScripts(root: string): Promise<string[]> {
+  const listed = Bun.spawnSync({
+    cmd: ["git", "ls-files", "-z"],
+    cwd: root,
+    env: process.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  if (listed.exitCode !== 0) throw new Error(`git ls-files could not read ${root}`);
+
+  const paths = listed.stdout.toString().split("\0").filter(Boolean);
+  const found: string[] = [];
+  for (const path of paths) {
+    if (path.slice(path.lastIndexOf("/") + 1).includes(".")) continue;
+    // A submodule is listed by its gitlink path, which stats as a directory.
+    if (!statSync(join(root, path)).isFile()) continue;
+    const head = await Bun.file(join(root, path)).slice(0, 200).text();
+    if (isBunScript(path, head.split("\n")[0] ?? "")) found.push(path);
+  }
+  return found.sort();
+}
+
+// Mirror path for a script, keeping its directories so a diagnostic is
+// readable even before the rewrite below.
+export function mirrorPath(script: string): string {
+  return `${MIRROR}/${script}.ts`;
+}
+
+export function clean(root: string): void {
+  rmSync(join(root, MIRROR), { recursive: true, force: true });
+  // tmp/ is where this repo puts scratch by convention and may hold other
+  // things, so it goes only when the mirror was all that was in it.
+  const scratch = join(root, "tmp");
+  if (existsSync(scratch) && readdirSync(scratch).length === 0) rmSync(scratch, { recursive: true });
+}
+
+export function link(root: string, scripts: string[]): void {
+  for (const script of scripts) {
+    const target = join(root, mirrorPath(script));
+    mkdirSync(dirname(target), { recursive: true });
+    symlinkSync(join(root, script), target);
+  }
+}
+
+// oxlint prints the mirror path in every format it supports, including the
+// `file=` field of a github annotation, so one substitution per script covers
+// all of them.
+export function rewrite(output: string, scripts: string[]): string {
+  let text = output;
+  for (const script of scripts) text = text.replaceAll(mirrorPath(script), script);
+  return text;
+}
+
+// `scripts` empty leaves the output alone, which is what the pass over the
+// repo's own .ts files wants. The mirror pass passes the list it linked.
+function oxlint(root: string, args: string[], scripts: string[] = []): number {
+  const run = Bun.spawnSync({
+    cmd: ["bunx", "oxlint", ...args],
+    cwd: root,
+    env: process.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  process.stdout.write(rewrite(run.stdout.toString(), scripts));
+  process.stderr.write(rewrite(run.stderr.toString(), scripts));
+  return run.exitCode;
+}
+
+async function main(args: string[]): Promise<number> {
+  if (args.includes("-h") || args.includes("--help")) {
+    process.stdout.write(`${USAGE}\n`);
+    return 0;
+  }
+
+  // The repo this script sits in, unless a case points it at a fixture tree.
+  const root = resolve(process.env.LINT_TS_ROOT ?? join(import.meta.dir, ".."));
+  const scripts = await bunScripts(root);
+
+  // A run cut short leaves the mirror behind, where the repo pass would lint
+  // it as ordinary source under a path that is not a real file.
+  clean(root);
+  try {
+    // Both passes run whatever the first one reports, so a single invocation
+    // names every violation rather than one pass worth at a time.
+    const repo = oxlint(root, args);
+    link(root, scripts);
+    const bins = oxlint(root, [...args, MIRROR], scripts);
+    return repo === 0 && bins === 0 ? 0 : 1;
+  } finally {
+    clean(root);
+  }
+}
+
+if (import.meta.main) process.exit(await main(process.argv.slice(2)));

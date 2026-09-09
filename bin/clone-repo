@@ -79,6 +79,10 @@ function isName(segment: string): boolean {
   return NAME.test(segment) && segment !== "." && segment !== "..";
 }
 
+// Over the complexity and statement ceilings. The count is the number of
+// flags, each handled by a flat early return, so splitting on it would trade
+// one readable sequence for a dispatch table and a set of one-use helpers.
+// oxlint-disable-next-line complexity, max-statements
 async function main(argv: string[]): Promise<number> {
   if (argv.includes("--help") || argv.includes("-h")) {
     process.stdout.write(`${USAGE}\n`);
