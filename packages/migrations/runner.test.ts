@@ -232,7 +232,6 @@ describe("run", () => {
 
     expect(await migrate()).toBe(1);
     expect(await migrate()).toBe(1);
-    // The one that finished is not re-run, and the one that broke is retried.
     expect(ranMigrations()).toEqual([
       "202601010001-first",
       "202601010002-broken",

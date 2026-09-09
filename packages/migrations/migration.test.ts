@@ -10,8 +10,6 @@ let home: string;
 // command the helper reached for.
 let commands: string[][];
 
-// The arguments of the brew calls, dropping the gum log lines the helpers write
-// alongside them and the resolved path they lead with.
 function brewCalls(): string[][] {
   return commands.filter((cmd) => cmd[0]?.endsWith("brew") === true).map((cmd) => cmd.slice(1));
 }

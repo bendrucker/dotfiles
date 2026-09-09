@@ -160,7 +160,6 @@ describe("unmarked", () => {
     expect(unmarked([migration], [`${migration}:12:// EXPIRES: 2099-01-01 done`])).toEqual([]);
   });
 
-  // The test beside a migration is not itself a cleanup with a date to keep.
   test("passes over the files in the directory that are not migrations", () => {
     const listed = ["migrations/202601010001-remove-thing.test.ts", "migrations/README.md"];
     expect(unmarked(listed, [])).toEqual([]);
