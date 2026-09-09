@@ -51,7 +51,11 @@ rows = [
 
 [ui.sidebar.agents.rows_by_agent]
 claude = [
-  ["state_icon", { token = "terminal_title_stripped", bold = true, dim = false }],
+  [
+    "state_icon",
+    { token = "terminal_title_stripped", bold = true, dim = false },
+    { token = "$review", fg = "#d9a33a" },
+  ],
   [
     { token = "machine", dim = false, rules = [{ equals = "Local", dim = true }] },
     { token = "workspace", bold = false, dim = true },
