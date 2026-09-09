@@ -3,9 +3,8 @@ import { join } from "node:path";
 import { repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
 
 // The linker lives in the claude repo, which this repo installs but does not
-// version. These cover the gate that stands between the two: what a checkout
-// missing the overlay plugin does, and that a checkout holding one still
-// reaches it with the arguments intact.
+// version. These tests cover what a checkout missing the overlay plugin does,
+// and that a checkout holding one still reaches it with the arguments intact.
 
 const script = join(repoRoot, "bin", "claude-overlay");
 
@@ -43,9 +42,9 @@ describe("bin/claude-overlay", () => {
     ]);
   });
 
-  // A clone still stands on its own without an overlay, so a claude repo that
-  // predates the plugin has to leave the caller's output alone rather than
-  // reporting a module bun could not find.
+  // A checkout without the overlay plugin still has to work, so this leaves
+  // the caller's output alone rather than reporting a module bun could not
+  // find.
   test("exits quietly when the claude repo has no linker", () => {
     stubBun();
     const r = runOverlay(box.mkdir("claude-repo"), "link", "/checkout");
