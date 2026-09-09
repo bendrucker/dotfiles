@@ -75,17 +75,13 @@ export function driftFingerprint(listing: string): string {
   return `${listing.split("\n").sort(byCodeUnit).join(" ")} `;
 }
 
-// A report row. The subject is a path and ~/.ssh is globbed, so a key filename
-// can carry spaces of its own, which neither signal alone tells from the gap
-// between columns: counting whitespace misreads a filename holding two spaces,
-// and matching the verdict alone misreads one holding the word "open". The
-// report pads every column, so a verdict is a known word with a column gap on
-// both sides of it.
+// A report row. ~/.ssh is globbed, so a key filename can carry its own spaces,
+// which neither signal alone tells from the padding between columns. A verdict
+// is a known word with a column gap on both sides of it.
 const CREDENTIAL_ROW = new RegExp(`^(.+?)\\s{2,}(${[...VERDICTS, UNREADABLE].join("|")})\\s{2,}\\S`);
 
-// The audit prints one credential per line, its subject first and its verdict
-// second. A subject it could not read this run is held rather than standing, so
-// whatever the latch already says about it survives a run that could not look.
+// A subject the audit could not read is held rather than standing, so what the
+// latch already says about it survives a run that could not look.
 export function credentialFindings(output: string): { standing: Finding[]; held: string[] } {
   const rows = output
     .split("\n")
@@ -323,16 +319,13 @@ function reportDrift(home: string, listing: string): number {
   });
 }
 
-// Latched one credential at a time. The set churns as a leftover key gets
-// removed and a new tool starts writing a token, and a latch covering the whole
-// set would re-file the one that has not moved every time anything else joined
-// or left it.
+// Latched one credential at a time, so a leftover nobody has dealt with stays
+// quiet while the rest of the set churns around it.
 function reportCredentials(home: string, listing: string): number {
   return reportFindings({
     job: CREDENTIALS_JOB,
-    // The report mixes a secret sitting in the clear with a credential file
-    // anyone on the machine can read, and a title naming only the first sends
-    // you looking for a token in a file whose problem is its mode.
+    // The report mixes a secret in the clear with a file anyone can read, so a
+    // title naming only the first misdirects on a finding about a mode.
     title: "Credentials exposed on disk",
     command: join(home, "credentials", "bin", "credential-audit"),
     output: listing,
@@ -406,10 +399,8 @@ export async function run(): Promise<number> {
     reportSuccess(DRIFT_JOB);
   }
 
-  // After the install, which ran credentials/install.sh and has already
-  // tightened every mode it can. What is left is what a chmod cannot fix: a
-  // secret sitting in a file in the clear. Nothing here removes one, for the
-  // same reason nothing removes an undeclared package.
+  // After the install, which ran credentials/install.sh and tightened every
+  // mode it could. What is left is what a chmod cannot fix.
   const credentials = runCapturingStdout([
     join(home, "credentials", "bin", "credential-audit"),
   ]);

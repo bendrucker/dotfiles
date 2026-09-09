@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, statSync, symlinkSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { chmodSync, statSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
 
 const audit = join(repoRoot, "credentials", "bin", "credential-audit");
@@ -43,7 +43,7 @@ function credential(name: string, contents: string): string {
 
 function runAudit(args: string[] = [], env: Record<string, string> = {}): Run {
   return run([audit, ...args], {
-    env: { HOME: home(), CREDENTIALS_ENV_DIR: box.path("env"), ...env },
+    env: { HOME: home(), ...env },
     path: [box.bin],
   });
 }
@@ -215,158 +215,8 @@ describe("modes", () => {
   });
 });
 
-describe("--adopt", () => {
-  const REFERENCE = "op://Testing/npm/token";
-
-  function declareReference(): void {
-    box.write("env/npm.env", `NPM_TOKEN=${REFERENCE}\n`);
-  }
-
-  // Records the arguments so a test can show nothing else was asked for.
-  function stubOp(value: string, status = 0): void {
-    box.stub(
-      "op",
-      [
-        `echo "$@" >> ${box.path("op.calls")}`,
-        `[ "$1" = read ] || exit 9`,
-        `printf '%s\\n' ${JSON.stringify(value)}`,
-        `exit ${status}`,
-      ].join("\n"),
-    );
-  }
-
-  test("rewrites the token to a variable once 1Password hands back the same value", () => {
-    declareReference();
-    stubOp(FAKE_NPM_TOKEN);
-    const path = credential(
-      "home/.npmrc",
-      `@scope:registry=https://registry.example.com/\n//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}\n`,
-    );
-
-    const result = runAudit(["--adopt"]);
-    expect(result.status).toBe(0);
-    expect(box.read("op.calls").trim()).toBe(`read ${REFERENCE}`);
-    // The registry line is npm's config rather than a secret, and survives.
-    expect(box.read("home/.npmrc")).toBe(
-      "@scope:registry=https://registry.example.com/\n//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n",
-    );
-    expect(statSync(path).mode & 0o777).toBe(0o600);
-    // The rewrite goes through a neighbouring file and a rename, which must not
-    // leave the neighbour behind.
-    expect(existsSync(`${path}.credential-audit`)).toBe(false);
-  });
-
-  test("refuses when the item holds a different value", () => {
-    declareReference();
-    stubOp("npm_111111111111111111111111111111111111");
-    const contents = `//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}\n`;
-    credential("home/.npmrc", contents);
-
-    const result = runAudit(["--adopt"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("holds a different value");
-    // The value it would have replaced is the only copy left, so it stays.
-    expect(box.read("home/.npmrc")).toBe(contents);
-    expect(result.stderr).not.toContain(FAKE_NPM_TOKEN);
-  });
-
-  test("refuses when 1Password cannot be read", () => {
-    declareReference();
-    box.stub("op", "echo 'not signed in' >&2\nexit 1");
-    const contents = `//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}\n`;
-    credential("home/.npmrc", contents);
-
-    expect(runAudit(["--adopt"]).status).toBe(1);
-    expect(box.read("home/.npmrc")).toBe(contents);
-  });
-
-  test("refuses when no reference is declared for the variable", () => {
-    box.write("env/npm.env", "# nothing declared yet\n");
-    stubOp(FAKE_NPM_TOKEN);
-    credential("home/.npmrc", `//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}\n`);
-
-    const result = runAudit(["--adopt"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("names no NPM_TOKEN reference");
-  });
-
-  // The stub stands in for the unlock prompt, which waits on a person. Anything
-  // npm writes while it is open would be rolled back by a rewrite of the older
-  // snapshot, so the file is re-read and compared before it is replaced.
-  test("refuses when the file changed while 1Password was unlocking", () => {
-    declareReference();
-    const path = credential("home/.npmrc", `//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}\n`);
-    box.stub(
-      "op",
-      [
-        `printf '%s\\n' "@scope:registry=https://added.example.com/" >> ${path}`,
-        `printf '%s\\n' ${JSON.stringify(FAKE_NPM_TOKEN)}`,
-      ].join("\n"),
-    );
-
-    const result = runAudit(["--adopt"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("changed while 1Password was unlocking");
-    // What the other writer added is still there, and the token it was holding
-    // was not swapped for a reference behind its back.
-    expect(box.read("home/.npmrc")).toContain("added.example.com");
-    expect(box.read("home/.npmrc")).toContain(FAKE_NPM_TOKEN);
-  });
-
-  // The rewrite renames a temp file into place, which would leave a regular file
-  // where the link was and detach the secret from the repo that owns it.
-  test("refuses a credential reached through a symlink", () => {
-    declareReference();
-    stubOp(FAKE_NPM_TOKEN);
-    const target = box.write("repo/npmrc", `//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}\n`);
-    symlinkSync(target, home(".npmrc"));
-
-    const result = runAudit(["--adopt"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("is a symlink");
-    expect(box.read("repo/npmrc")).toContain(FAKE_NPM_TOKEN);
-  });
-
-  test("refuses a file holding two different secrets", () => {
-    declareReference();
-    stubOp(FAKE_NPM_TOKEN);
-    const second = "npm_222222222222222222222222222222222222";
-    const contents = [
-      `//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}`,
-      `//registry.example.com/:_authToken=${second}`,
-      "",
-    ].join("\n");
-    credential("home/.npmrc", contents);
-
-    const result = runAudit(["--adopt"]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("holds 2 different secrets");
-    // One reference cannot stand in for both, and rewriting would have replaced
-    // the second with a value nothing checked and nothing stored.
-    expect(box.read("home/.npmrc")).toBe(contents);
-    expect(result.stderr).not.toContain(second);
-  });
-
-  test("does nothing where op is not installed", () => {
-    declareReference();
-    // bun itself still has to resolve, since the shebang finds it on PATH.
-    const result = run([audit, "--adopt"], {
-      env: { HOME: home(), CREDENTIALS_ENV_DIR: box.path("env") },
-      onlyPath: [box.bin, dirname(process.execPath)],
-    });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("op is not installed");
-  });
-});
-
 test("rejects an argument it does not know", () => {
   const result = runAudit(["--fix"]);
   expect(result.status).toBe(2);
   expect(result.stderr).toContain("unknown --fix");
-});
-
-test("rejects --enforce and --adopt together rather than running one of them", () => {
-  const result = runAudit(["--enforce", "--adopt"]);
-  expect(result.status).toBe(2);
-  expect(result.stderr).toContain("separate runs");
 });

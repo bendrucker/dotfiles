@@ -75,7 +75,7 @@ describe("logExcerpt", () => {
 
 describe("credentialFindings", () => {
   const report = [
-    "~/.npmrc               plaintext    put it in 1Password, then: credential-audit --adopt",
+    "~/.npmrc               plaintext    npm publish takes a short-lived token, so remove this one",
     "~/.ssh/id_ed25519.bak  passphrased  Secretive holds the working keys",
   ].join("\n");
 
