@@ -15,12 +15,13 @@ import { realpathSync, writeSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SKIP_ESCALATION } from "#jobs/sync-gate";
-import { reportFailure, reportSuccess } from "#jobs/report";
+import { type Finding, reportFailure, reportFindings, reportSuccess } from "#jobs/report";
 
 const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
 
 const JOB = "dotfiles-upgrade";
 const DRIFT_JOB = "brew-drift";
+const CREDENTIALS_JOB = "credential-audit";
 
 // A failure ends at the end of its log, and Things caps a note at 10,000
 // characters, so the tail is the part worth keeping.
@@ -71,6 +72,31 @@ export function logExcerpt(log: string): string {
 // too, and it is part of every latch already standing.
 export function driftFingerprint(listing: string): string {
   return `${listing.split("\n").sort(byCodeUnit).join(" ")} `;
+}
+
+// A report row. The subject is a path and ~/.ssh is globbed, so a key filename
+// can carry spaces of its own, which neither signal alone tells from the gap
+// between columns: counting whitespace misreads a filename holding two spaces,
+// and matching the verdict alone misreads one holding the word "open". The
+// report pads every column, so a verdict is the one token with a column gap on
+// both sides of it.
+const CREDENTIAL_ROW = /^(.+?)\s{2,}(unencrypted|plaintext|passphrased|open|unreadable)\s{2,}\S/;
+
+// The audit prints one credential per line, its subject first and its verdict
+// second. A subject it could not read this run is held rather than standing, so
+// whatever the latch already says about it survives a run that could not look.
+export function credentialFindings(output: string): { standing: Finding[]; held: string[] } {
+  const rows = output
+    .split("\n")
+    .map((line) => CREDENTIAL_ROW.exec(line.trim()))
+    .filter((row) => row !== null);
+
+  return {
+    standing: rows
+      .filter((row) => row[2] !== "unreadable")
+      .map((row) => ({ subject: row[1], verdict: row[2] })),
+    held: rows.filter((row) => row[2] === "unreadable").map((row) => row[1]),
+  };
 }
 
 function byCodeUnit(a: string, b: string): number {
@@ -296,6 +322,26 @@ function reportDrift(home: string, listing: string): number {
   });
 }
 
+// Latched one credential at a time. The set churns as a leftover key gets
+// removed and a new tool starts writing a token, and a latch covering the whole
+// set would re-file the one that has not moved every time anything else joined
+// or left it.
+function reportCredentials(home: string, listing: string): number {
+  return reportFindings({
+    job: CREDENTIALS_JOB,
+    // The report mixes a secret sitting in the clear with a credential file
+    // anyone on the machine can read, and a title naming only the first sends
+    // you looking for a token in a file whose problem is its mode.
+    title: "Credentials exposed on disk",
+    command: join(home, "credentials", "bin", "credential-audit"),
+    output: listing,
+    revision: currentRevision(home),
+    extraMeta: "",
+    outputHeading: "Exposed Credentials",
+    ...credentialFindings(listing),
+  });
+}
+
 export async function run(): Promise<number> {
   const home = process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles");
 
@@ -357,6 +403,23 @@ export async function run(): Promise<number> {
     if (filed !== 0) return filed;
   } else {
     reportSuccess(DRIFT_JOB);
+  }
+
+  // After the install, which ran credentials/install.sh and has already
+  // tightened every mode it can. What is left is what a chmod cannot fix: a
+  // secret sitting in a file in the clear. Nothing here removes one, for the
+  // same reason nothing removes an undeclared package.
+  const credentials = runCapturingStdout([
+    join(home, "credentials", "bin", "credential-audit"),
+  ]);
+  if (credentials.status !== 0) {
+    log("warn", "credential audit could not run");
+  } else if (credentials.output !== "") {
+    log("warn", "credentials in plaintext");
+    const filed = reportCredentials(home, credentials.output);
+    if (filed !== 0) return filed;
+  } else {
+    reportSuccess(CREDENTIALS_JOB);
   }
 
   reportSuccess(JOB);

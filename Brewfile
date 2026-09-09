@@ -59,8 +59,6 @@ brew 'teamookla/speedtest/speedtest'
 brew 'watch'
 brew 'yq'
 
-cask '1password'
-cask '1password-cli'
 cask 'adobe-creative-cloud' unless corporate
 cask 'android-file-transfer' unless corporate
 cask 'backblaze' unless corporate
