@@ -166,7 +166,10 @@ export function today(): string {
 
 // git ls-files rather than readdir, so an untracked scratch file left in the
 // directory is not reported as a migration nobody dated.
-export function migrationFiles(root: string): string[] {
+export // Undefined where git could not list, which the caller reports rather than
+// reading as a repo with no migrations. A repo with none lists nothing and
+// exits zero.
+function migrationFiles(root: string): string[] | undefined {
   const listed = Bun.spawnSync({
     cmd: ["git", "ls-files", "--", MIGRATIONS_DIR],
     cwd: root,
@@ -175,7 +178,7 @@ export function migrationFiles(root: string): string[] {
     stdout: "pipe",
     stderr: "inherit",
   });
-  if (listed.exitCode !== 0) return [];
+  if (listed.exitCode !== 0) return undefined;
 
   return listed.stdout
     .toString()
@@ -208,11 +211,19 @@ function main(args: string[]): number {
     return 1;
   }
 
+  // The same rule the grep above follows: a lint that reports nothing because
+  // it never looked is worse than one that fails.
+  const migrations = migrationFiles(root);
+  if (migrations === undefined) {
+    process.stderr.write(`ERROR: git could not list ${MIGRATIONS_DIR} in ${root}\n`);
+    return 1;
+  }
+
   const matches = grep.stdout
     .toString()
     .split("\n")
     .filter((line) => line !== "");
-  const lines = report([...unmarked(migrationFiles(root), matches), ...findings(matches, today())]);
+  const lines = report([...unmarked(migrations, matches), ...findings(matches, today())]);
   if (lines.length === 0) return 0;
 
   process.stderr.write(`${lines.join("\n")}\n`);

@@ -15,9 +15,11 @@
 //   dotfiles-migrate [dotfiles-root]
 //
 // A machine with no record of any migration is a fresh one and stamps the
-// latest version without running anything. DOTFILES_HOME (default ~/.dotfiles)
-// is the tree whose symlinks answer that question, so a hand run out of a
-// worktree still asks about the machine rather than about the worktree.
+// latest version without running anything. The symlinks answer that question,
+// so every tree they may point into counts: DOTFILES_HOME (default
+// ~/.dotfiles), the tree `dotfiles dev enable` recorded, and the tree this is
+// running from. A hand run out of a worktree therefore still asks about the
+// machine rather than about the worktree.
 //
 // scripts/install runs this and downgrades a failure to a warning. It runs
 // unattended at 3am behind a convergence pass that has already succeeded, and a
@@ -28,7 +30,7 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { streamOutput } from "#jobs/output";
 import type { Platform } from "#migrations/migration";
-import { configHome, dataHome, defaultHome, installedRoot, run, versionFile } from "#migrations/runner";
+import { configHome, dataHome, defaultHome, devRoot, installedRoot, run, versionFile } from "#migrations/runner";
 
 // Everything this repo installs on is one of the two. Anything else has no
 // migration written for it, and a platform nothing matches runs nothing.
@@ -46,9 +48,10 @@ if (import.meta.main) {
     home,
     config: configHome(home),
     data: dataHome(home),
+    installed: [...new Set([installedRoot(home), devRoot(home), root].filter((tree) => tree !== undefined))],
     platform: platform(),
     out,
   };
 
-  process.exit(await run({ root, installed: installedRoot(home), version: versionFile(home), context }));
+  process.exit(await run({ root, version: versionFile(home), context }));
 }

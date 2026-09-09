@@ -8,11 +8,13 @@ import { up } from "./202609060001-remove-tmux";
 
 let box: Sandbox;
 let home: string;
+let installed: string;
 let uninstalled: string[];
 
 beforeEach(() => {
   box = sandbox("remove-tmux");
   home = box.mkdir("home");
+  installed = box.mkdir("installed");
   uninstalled = [];
 });
 
@@ -29,6 +31,7 @@ function context(): Context {
     home,
     config: box.path("home", ".config"),
     data: box.path("home", ".local", "share"),
+    installed: [installed],
     platform: "darwin",
     out: {
       write() {},
@@ -63,14 +66,33 @@ describe("remove-tmux", () => {
     expect(exists(dotTmux)).toBe(false);
   });
 
+  test("leaves a ~/.tmux holding something the installer never put there", () => {
+    const dotTmux = box.mkdir("home", ".tmux");
+    writeFileSync(join(dotTmux, "notes"), "");
+
+    withoutBrew(() => up(context()));
+
+    expect(exists(join(dotTmux, "notes"))).toBe(true);
+  });
+
   test("removes the config link the deleted tmux/symlinks.conf made", () => {
     const config = box.mkdir("home", ".config");
     const link = join(config, "tmux");
-    symlinkSync(box.path("tmux"), link);
+    symlinkSync(join(installed, "tmux"), link);
 
     withoutBrew(() => up(context()));
 
     expect(exists(link)).toBe(false);
+  });
+
+  test("leaves a config link pointing somewhere other than a dotfiles tree", () => {
+    const config = box.mkdir("home", ".config");
+    const link = join(config, "tmux");
+    symlinkSync(box.mkdir("elsewhere", "tmux"), link);
+
+    withoutBrew(() => up(context()));
+
+    expect(exists(link)).toBe(true);
   });
 
   test("leaves a real config directory someone put back by hand", () => {

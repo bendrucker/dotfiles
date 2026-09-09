@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
 import type { Context, Platform } from "#migrations/migration";
 import {
+  devRoot,
   discover,
+  load,
   latestVersion,
   previouslyInstalled,
   readVersion,
@@ -54,6 +56,7 @@ function context(platform: Platform = "darwin"): Context {
     home,
     config: join(home, ".config"),
     data: join(home, ".local", "share"),
+    installed: [installed],
     platform,
     out: { write() {}, run: () => 0, read: () => ({ status: 0, stdout: "" }) },
   };
@@ -83,7 +86,7 @@ function markInstalled(): void {
 }
 
 async function migrate(platform: Platform = "darwin"): Promise<number> {
-  return run({ root: root(), installed, version: version(), context: context(platform) });
+  return run({ root: root(), version: version(), context: context(platform) });
 }
 
 describe("discover", () => {
@@ -97,6 +100,15 @@ describe("discover", () => {
       [202601010001, "first"],
       [202601010002, "second"],
     ]);
+  });
+
+  test("refuses two migrations sharing a version, which one stamp cannot record", () => {
+    box.mkdir("root", "migrations");
+    for (const name of ["202601010001-first.ts", "202601010001-other.ts"]) {
+      writeFileSync(join(root(), "migrations", name), "export function up() {}\n");
+    }
+
+    expect(() => discover(root())).toThrow(/share version 202601010001/);
   });
 
   test("skips the test file sitting beside a migration", () => {
@@ -137,19 +149,83 @@ describe("stampVersion", () => {
   });
 });
 
+describe("errors the readers cannot suppress", () => {
+  test("a migrations directory that exists and cannot be read", () => {
+    const dir = box.mkdir("root", "migrations");
+    chmodSync(dir, 0o000);
+    try {
+      expect(() => discover(root())).toThrow();
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+  });
+
+  test("a blank stamp is unreadable rather than zero", () => {
+    box.mkdir("state");
+    const file = box.path("state", "migration-version");
+    writeFileSync(file, "");
+    expect(() => readVersion(file)).toThrow(/unreadable/);
+
+    writeFileSync(file, "  \n");
+    expect(() => readVersion(file)).toThrow(/unreadable/);
+  });
+
+  test("a home directory that exists and cannot be read is not a fresh machine", () => {
+    chmodSync(home, 0o000);
+    try {
+      expect(() => previouslyInstalled(home, join(home, ".config"), [installed])).toThrow();
+    } finally {
+      chmodSync(home, 0o755);
+    }
+  });
+
+  test("a stamp that exists and cannot be read is not an absent stamp", () => {
+    const file = box.path("state", "migration-version");
+    box.mkdir("state");
+    writeFileSync(file, "1\n");
+    chmodSync(file, 0o000);
+    try {
+      expect(() => readVersion(file)).toThrow();
+    } finally {
+      chmodSync(file, 0o644);
+    }
+  });
+
+  test("run reports an unreadable migrations directory rather than stamping past it", async () => {
+    markInstalled();
+    const dir = box.mkdir("root", "migrations");
+    chmodSync(dir, 0o000);
+    try {
+      expect(await migrate()).toBe(1);
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+    expect(existsSync(version())).toBe(false);
+  });
+});
+
 describe("previouslyInstalled", () => {
   test("a link into the installed tree says scripts/install has run here", () => {
     markInstalled();
-    expect(previouslyInstalled(home, join(home, ".config"), installed)).toBe(true);
+    expect(previouslyInstalled(home, join(home, ".config"), [installed])).toBe(true);
   });
 
   test("a fresh home carries none", () => {
-    expect(previouslyInstalled(home, join(home, ".config"), installed)).toBe(false);
+    expect(previouslyInstalled(home, join(home, ".config"), [installed])).toBe(false);
   });
 
   test("a link to the tree's own root does not count, since bootstrap makes it first", () => {
     symlinkSync(installed, join(home, ".dotfiles"));
-    expect(previouslyInstalled(home, join(home, ".config"), installed)).toBe(false);
+    expect(previouslyInstalled(home, join(home, ".config"), [installed])).toBe(false);
+  });
+
+  test("a link into any candidate tree counts, which is what covers dev mode", () => {
+    const dev = box.mkdir("dev", "zsh");
+    writeFileSync(join(dev, ".zshenv"), "");
+    symlinkSync(join(dev, ".zshenv"), join(home, ".zshenv"));
+
+    expect(previouslyInstalled(home, join(home, ".config"), [installed])).toBe(false);
+    expect(previouslyInstalled(home, join(home, ".config"), [installed, box.path("dev")])).toBe(true);
   });
 
   test("a link under XDG_CONFIG_HOME counts too", () => {
@@ -157,7 +233,36 @@ describe("previouslyInstalled", () => {
     box.mkdir("installed", "bat");
     writeFileSync(join(installed, "bat", "config"), "");
     symlinkSync(join(installed, "bat", "config"), join(config, "bat"));
-    expect(previouslyInstalled(home, config, installed)).toBe(true);
+    expect(previouslyInstalled(home, config, [installed])).toBe(true);
+  });
+});
+
+describe("devRoot", () => {
+  test("reads the tree dotfiles dev enable recorded", () => {
+    writeFileSync(join(home, ".dotfiles-dev-mode"), `${box.path("dev")}\n`);
+    expect(devRoot(home)).toBe(box.path("dev"));
+  });
+
+  test("a machine not in dev mode has none", () => {
+    expect(devRoot(home)).toBeUndefined();
+  });
+
+  test("an empty flag file is not a root", () => {
+    writeFileSync(join(home, ".dotfiles-dev-mode"), "\n");
+    expect(devRoot(home)).toBeUndefined();
+  });
+});
+
+describe("load", () => {
+  test("refuses a platform that is neither of the two, which would be stamped past everywhere", async () => {
+    box.mkdir("root", "migrations");
+    const file = join(root(), "migrations", "202601010001-typo.ts");
+    writeFileSync(file, 'export function up() {}\nexport const platform = "macos";\n');
+
+    const entry = discover(root())[0];
+    expect(entry).toBeDefined();
+    if (entry === undefined) return;
+    expect(load(entry)).rejects.toThrow(/not one of darwin, linux/);
   });
 });
 
