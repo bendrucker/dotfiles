@@ -15,7 +15,7 @@
 // the output back to the real ones. The mirror entries are symlinks, so the
 // content and every line number are the file's own.
 
-import { lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { mkdirSync, rmdirSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 
 const USAGE = [
@@ -92,12 +92,16 @@ export function mirrorPath(dir: string, script: string): string {
   return `${dir}/${script}.ts`;
 }
 
-// A directory this run made, and only while nothing else is in it. A symlink
-// someone pointed at their own scratch is theirs, and rmSync would take the
-// link rather than what it holds.
+// rmdir rather than a readdir for emptiness and then a recursive remove: an
+// overlapping run that creates its own mirror between those two would have its
+// links deleted out from under it.
 function prune(path: string): void {
-  if (!lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) return;
-  if (readdirSync(path).length === 0) rmSync(path, { recursive: true });
+  try {
+    rmdirSync(path);
+  } catch {
+    // Not empty, not there, or a symlink someone pointed at their own scratch.
+    // Every one of them means this is not ours to remove.
+  }
 }
 
 export function clean(root: string, dir: string): void {
