@@ -1,0 +1,15 @@
+[extend]
+useDefault = true
+
+# herdr keybindings are `key = "prefix+alt+minus"`, which generic-api-key reads
+# as an assignment to something named `key` holding enough entropy to be a
+# credential. Two commits in this repo's history trip it.
+#
+# Scoped by value shape rather than by path: gitleaks applies an allowlist whose
+# `condition = "AND"` includes `paths` to every finding under those paths, so
+# adding `paths` here would exempt the whole file instead of these lines. The
+# regex only matches a modifier chord, which no credential looks like.
+[[allowlists]]
+description = "herdr keybinding declarations"
+regexTarget = "line"
+regexes = ['''^\s*key\s*=\s*"(prefix|ctrl|alt|shift|super)(\+[a-z0-9]+)+"\s*$''']

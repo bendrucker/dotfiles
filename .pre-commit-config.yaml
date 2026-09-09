@@ -26,6 +26,18 @@ repos:
       - id: ruff
       - id: ruff-format
 
+  # gitleaks-system runs the brew-installed binary, so the Brewfile owns the
+  # version. The repo's other two ids build it from source or pull a Docker
+  # image. pass_filenames is an override, not a preference: upstream omits it on
+  # this id alone, and `gitleaks git` takes at most one path, so a commit
+  # touching two files fails on argument count rather than on a secret.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks-system
+        args: ["--no-banner", "--no-color"]
+        pass_filenames: false
+
   - repo: local
     hooks:
       - id: ast-grep-test
