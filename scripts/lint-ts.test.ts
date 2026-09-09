@@ -111,6 +111,15 @@ describe("link and clean", () => {
     expect(existsSync(join(box.dir, "tmp"))).toBe(false);
   });
 
+  // A killed run leaves its directory behind, and process ids come back around.
+  test("takes over a directory a dead run left at the same id", () => {
+    box.write("bin/wt-pr", "#!/usr/bin/env bun\n");
+    link(box.dir, mirrorDir(7), ["bin/wt-pr"]);
+
+    expect(() => link(box.dir, mirrorDir(7), ["bin/wt-pr"])).not.toThrow();
+    expect(readlinkSync(join(box.dir, mirrorPath(mirrorDir(7), "bin/wt-pr")))).toBe(join(box.dir, "bin/wt-pr"));
+  });
+
   // Two runs in one tree own separate directories, so neither cleanup takes
   // links the other is still linting.
   test("leaves another run's mirror in place", () => {

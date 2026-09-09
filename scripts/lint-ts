@@ -99,6 +99,9 @@ export function clean(root: string, dir: string): void {
 }
 
 export function link(root: string, dir: string, scripts: string[]): void {
+  // A killed run leaves its directory behind, and the OS reuses process ids,
+  // so this run can inherit one. symlinkSync would throw EEXIST on it.
+  rmSync(join(root, dir), { recursive: true, force: true });
   for (const script of scripts) {
     const target = join(root, mirrorPath(dir, script));
     mkdirSync(dirname(target), { recursive: true });
