@@ -16,6 +16,7 @@ import { constants as osConstants, homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SKIP_ESCALATION } from "#jobs/sync-gate";
 import { type Finding, reportFailure, reportFindings, reportSuccess } from "#jobs/report";
+import { UNREADABLE, VERDICTS } from "../credentials/bin/credential-audit";
 
 const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
 
@@ -78,9 +79,9 @@ export function driftFingerprint(listing: string): string {
 // can carry spaces of its own, which neither signal alone tells from the gap
 // between columns: counting whitespace misreads a filename holding two spaces,
 // and matching the verdict alone misreads one holding the word "open". The
-// report pads every column, so a verdict is the one token with a column gap on
+// report pads every column, so a verdict is a known word with a column gap on
 // both sides of it.
-const CREDENTIAL_ROW = /^(.+?)\s{2,}(unencrypted|plaintext|passphrased|open|unreadable)\s{2,}\S/;
+const CREDENTIAL_ROW = new RegExp(`^(.+?)\\s{2,}(${[...VERDICTS, UNREADABLE].join("|")})\\s{2,}\\S`);
 
 // The audit prints one credential per line, its subject first and its verdict
 // second. A subject it could not read this run is held rather than standing, so
@@ -93,9 +94,9 @@ export function credentialFindings(output: string): { standing: Finding[]; held:
 
   return {
     standing: rows
-      .filter((row) => row[2] !== "unreadable")
+      .filter((row) => row[2] !== UNREADABLE)
       .map((row) => ({ subject: row[1], verdict: row[2] })),
-    held: rows.filter((row) => row[2] === "unreadable").map((row) => row[1]),
+    held: rows.filter((row) => row[2] === UNREADABLE).map((row) => row[1]),
   };
 }
 

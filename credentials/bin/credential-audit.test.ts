@@ -64,45 +64,54 @@ describe("reporting", () => {
     expect(result.status).toBe(0);
   });
 
-  test("names an npmrc holding a literal token", () => {
-    credential(`home/.npmrc`, `//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}\n`);
-    expect(verdicts(runAudit().stdout)).toEqual({ "~/.npmrc": "plaintext" });
-  });
-
-  test("stays quiet about an npmrc that references a variable", () => {
-    credential("home/.npmrc", "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n");
+  test.each<{ name: string; path: string; contents: string }>([
+    {
+      name: "an npmrc that references a variable",
+      path: "home/.npmrc",
+      contents: "//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n",
+    },
+    {
+      name: "the registry config around the token",
+      path: "home/.npmrc",
+      contents: "@scope:registry=https://registry.example.com/\n",
+    },
+    {
+      name: "a docker config that defers to a credential store",
+      path: "home/.docker/config.json",
+      contents: JSON.stringify({ auths: { "https://index.docker.io/v1/": {} }, credsStore: "desktop" }),
+    },
+    {
+      name: "a gh config that keeps its token in the keychain",
+      path: "home/.config/gh/hosts.yml",
+      contents: "github.com:\n    git_protocol: ssh\n    user: someone\n",
+    },
+  ])("stays quiet about $name", ({ path, contents }) => {
+    credential(path, contents);
     expect(runAudit().stdout).toBe("");
   });
 
-  test("stays quiet about the registry config around the token", () => {
-    credential("home/.npmrc", "@scope:registry=https://registry.example.com/\n");
-    expect(runAudit().stdout).toBe("");
-  });
-
-  test("reads a docker config that defers to a credential store as clean", () => {
-    credential(
-      "home/.docker/config.json",
-      JSON.stringify({ auths: { "https://index.docker.io/v1/": {} }, credsStore: "desktop" }),
-    );
-    expect(runAudit().stdout).toBe("");
-  });
-
-  test("names a docker config carrying its own registry credential", () => {
-    credential(
-      "home/.docker/config.json",
-      JSON.stringify({ auths: { "registry.example.com": { auth: "aGk6dGhlcmU=" } } }),
-    );
-    expect(verdicts(runAudit().stdout)["~/.docker/config.json"]).toBe("plaintext");
-  });
-
-  test("reads a gh config that keeps its token in the keychain as clean", () => {
-    credential("home/.config/gh/hosts.yml", "github.com:\n    git_protocol: ssh\n    user: someone\n");
-    expect(runAudit().stdout).toBe("");
-  });
-
-  test("names a gh config carrying an oauth token", () => {
-    credential("home/.config/gh/hosts.yml", "github.com:\n    oauth_token: gho_xxx\n");
-    expect(verdicts(runAudit().stdout)["~/.config/gh/hosts.yml"]).toBe("plaintext");
+  test.each<{ name: string; path: string; contents: string; subject: string }>([
+    {
+      name: "an npmrc holding a literal token",
+      path: "home/.npmrc",
+      contents: `//registry.npmjs.org/:_authToken=${FAKE_NPM_TOKEN}\n`,
+      subject: "~/.npmrc",
+    },
+    {
+      name: "a docker config carrying its own registry credential",
+      path: "home/.docker/config.json",
+      contents: JSON.stringify({ auths: { "registry.example.com": { auth: "aGk6dGhlcmU=" } } }),
+      subject: "~/.docker/config.json",
+    },
+    {
+      name: "a gh config carrying an oauth token",
+      path: "home/.config/gh/hosts.yml",
+      contents: "github.com:\n    oauth_token: gho_xxx\n",
+      subject: "~/.config/gh/hosts.yml",
+    },
+  ])("names $name", ({ path, contents, subject }) => {
+    credential(path, contents);
+    expect(verdicts(runAudit().stdout)).toEqual({ [subject]: "plaintext" });
   });
 
   test("tells an unencrypted private key from a passphrased one", () => {
