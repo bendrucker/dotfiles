@@ -8,6 +8,10 @@ const GH_STUB = `
 printf '%s\\n' "$*" >>"$GH_LOG"
 case "$1 $2" in
   "api user") echo "$GH_LOGIN" ;;
+  "api user/orgs")
+    [ -n "$GH_ORGS" ] && printf '%s\\n' $GH_ORGS
+    exit "\${GH_ORGS_STATUS:-0}"
+    ;;
   "repo clone")
     [ -n "$GH_CLONE_STDERR" ] && echo "$GH_CLONE_STDERR" >&2
     exit "\${GH_CLONE_STATUS:-0}"
@@ -37,6 +41,8 @@ beforeEach(() => {
     GH_LOGIN: "me",
     GH_CLONE_STATUS: undefined,
     GH_CLONE_STDERR: undefined,
+    GH_ORGS: undefined,
+    GH_ORGS_STATUS: undefined,
   };
 });
 
@@ -146,4 +152,19 @@ test("completion of an empty prefix offers @me before the cached owners", () => 
   expect(result.status).toBe(0);
   expect(result.stdout).toBe("@me\nme\norg\n");
   expect(box.read("gh.log")).toBe("");
+});
+
+test("refreshing owners caches the login ahead of the orgs", () => {
+  env.GH_ORGS = "org1 org2";
+  const result = clone("--refresh-owners");
+  expect(result.status).toBe(0);
+  expect(box.read("cache/clone-repo/owners.json")).toBe(JSON.stringify(["me", "org1", "org2"]));
+});
+
+test("a failed org listing leaves the owner cache alone", () => {
+  box.write("cache/clone-repo/owners.json", JSON.stringify(["me", "org1"]));
+  env.GH_ORGS_STATUS = "1";
+  const result = clone("--refresh-owners");
+  expect(result.status).toBe(0);
+  expect(box.read("cache/clone-repo/owners.json")).toBe(JSON.stringify(["me", "org1"]));
 });

@@ -221,14 +221,16 @@ function spawnRefresh(flag: string): void {
   })?.unref();
 }
 
-// Empty when gh cannot answer, so nothing caches a login that was never read.
+// Empty when either call fails, so a rate-limited org listing cannot overwrite
+// a complete cache with one that has lost every org until the next refresh. An
+// account with no orgs answers with an empty body, which is a success.
 async function fetchOwners(): Promise<string[]> {
   const [login, orgs] = await Promise.all([
     output(["gh", "api", "user", "--jq", ".login"]),
     output(["gh", "api", "user/orgs", "--jq", ".[].login"]),
   ]);
-  if (!login?.trim()) return [];
-  return [login.trim(), ...lines(orgs ?? "")];
+  if (!login?.trim() || orgs === undefined) return [];
+  return [login.trim(), ...lines(orgs)];
 }
 
 async function fetchRepos(): Promise<string[]> {
