@@ -162,26 +162,53 @@ export function plural(count: number, noun: string): string {
   return count === 1 ? `${count} ${noun}` : `${count} ${noun}s`;
 }
 
-// The commit a ref resolves to, taken from the first peeled line of ls-remote's
-// output. An annotated tag resolves to a tag object, and only its ^{} line
-// carries the commit the install would actually hold.
-export function peeledCommit(output: string): string {
-  const lines = output.split("\n").filter((line) => line.trim() !== "");
-  for (const line of lines) {
-    const [sha, name] = line.trim().split(/\s+/);
-    if (name !== undefined && name.endsWith("^{}")) return sha.toLowerCase();
+// The commit ls-remote reported for one ref, named in full. An annotated tag
+// resolves to a tag object, and only the `^{}` line paired with it carries the
+// commit a clone would hold.
+export function commitFor(output: string, name: string): string {
+  const refs = new Map<string, string>();
+  for (const line of output.split("\n")) {
+    const [sha, ref] = line.trim().split(/\s+/);
+    if (sha !== undefined && ref !== undefined && !refs.has(ref)) refs.set(ref, sha.toLowerCase());
   }
-  return (lines[0]?.trim().split(/\s+/)[0] ?? "").toLowerCase();
+  return refs.get(`${name}^{}`) ?? refs.get(name) ?? "";
 }
 
+// The ref paths a source's `ref` can name, in the order they settle it. A
+// version pin means the tag, so a repo that also carries a branch of that name
+// is read as the tag.
+export function refCandidates(ref: string): string[] {
+  if (ref === "HEAD" || ref.startsWith("refs/")) return [ref];
+  return [`refs/tags/${ref}`, `refs/heads/${ref}`];
+}
+
+// ls-remote matches a bare name against the tail of every ref path and lists
+// refs/heads ahead of refs/tags, so `v0.35.1` came back carrying a release
+// branch named `ctate/v0.35.1` as well as the tag. Reading the first line took
+// the branch and reported a marketplace sitting exactly on its pin as stale
+// every night, with nothing to do about it. Asking by full path and reading the
+// answer back by name is what settles the pin.
+//
+// The trailing `*` is what keeps an annotated tag resolvable. ls-remote omits
+// the peeled `^{}` line for an exact pattern and emits it for a glob, so an
+// exact query answers with the tag object rather than the commit under it.
+// Matching the name exactly afterwards discards the longer tags the glob sweeps
+// in alongside it.
 function resolveRef(url: string, ref: string): string | undefined {
   if (FULL_COMMIT.test(ref)) return ref.toLowerCase();
 
-  const run = spawn(["git", "ls-remote", url, ref]);
+  const candidates = refCandidates(ref);
+  const patterns = candidates.map((name) => (name === "HEAD" ? name : `${name}*`));
+
+  const run = spawn(["git", "ls-remote", url, ...patterns]);
   if (run === undefined || run.exitCode !== 0) return undefined;
 
-  const resolved = peeledCommit(run.stdout.toString());
-  return resolved === "" ? undefined : resolved;
+  const output = run.stdout.toString();
+  for (const name of candidates) {
+    const resolved = commitFor(output, name);
+    if (resolved !== "") return resolved;
+  }
+  return undefined;
 }
 
 // `version` holds the installed commit for a plugin that declares no version of
