@@ -25,7 +25,16 @@ beforeEach(() => {
       'case "$1" in',
       '  bundle) cat "$FIXTURES/declared" ;;',
       '  --repository) cat "$FIXTURES/repository" ;;',
-      '  tap) echo "$2" >> "$FIXTURES/tapped" ;;',
+      // The pins reach Homebrew's own clone through the environment, so the tap
+      // stub records what a child git would read rather than only the tap name.
+      '  tap) echo "$2" >> "$FIXTURES/tapped"',
+      '    i=0',
+      '    while [ "$i" -lt "${GIT_CONFIG_COUNT:-0}" ]; do',
+      '      eval "key=\\$GIT_CONFIG_KEY_$i value=\\$GIT_CONFIG_VALUE_$i"',
+      '      echo "$key=$value" >> "$FIXTURES/gitconfig"',
+      '      i=$((i + 1))',
+      '    done',
+      '    ;;',
       '  trust) shift; echo "$*" >> "$FIXTURES/trusted" ;;',
       "esac",
     ].join("\n"),
@@ -69,10 +78,23 @@ function trusted(): string {
   return box.read("trusted").trim();
 }
 
-function runScript() {
+function gitConfig(): string[] {
+  return box.read("gitconfig").trim().split("\n").filter(Boolean);
+}
+
+// The ambient environment carries git config of its own (the sandbox sets
+// safe.directory entries), so the count is pinned here to keep the pins the
+// script adds the only ones an assertion sees.
+function runScript(env: Record<string, string> = {}) {
   return run([script, box.dir], {
     path: [box.bin],
-    env: { HOMEBREW_REPOSITORY: repository, XDG_CONFIG_HOME: box.path("config"), FIXTURES: box.dir },
+    env: {
+      HOMEBREW_REPOSITORY: repository,
+      XDG_CONFIG_HOME: box.path("config"),
+      FIXTURES: box.dir,
+      GIT_CONFIG_COUNT: "0",
+      ...env,
+    },
   });
 }
 
@@ -142,6 +164,54 @@ describe("install-trust", () => {
     const r = runScript();
     expect(r.status).toBe(0);
     expect(tapped()).toBe("");
+  });
+
+  // An insteadOf rule mapping https://github.com/ to git@github.com: sends the
+  // clone to SSH, where Secretive cannot sign against a locked Mac. Git applies
+  // the longest matching rule, so a rule keyed on the tap's own URL wins.
+  test("pins the tap URL to itself so an insteadOf rule cannot reach it", () => {
+    declared("schpet/tap");
+
+    const r = runScript();
+    expect(r.status).toBe(0);
+    expect(gitConfig()).toEqual([
+      "url.https://github.com/schpet/homebrew-tap.insteadOf=https://github.com/schpet/homebrew-tap",
+    ]);
+  });
+
+  test("pins the downcased URL too, since git matches the prefix literally", () => {
+    declared("Oven-SH/Bun");
+
+    const r = runScript();
+    expect(r.status).toBe(0);
+    expect(gitConfig()).toEqual([
+      "url.https://github.com/Oven-SH/homebrew-Bun.insteadOf=https://github.com/Oven-SH/homebrew-Bun",
+      "url.https://github.com/oven-sh/homebrew-bun.insteadOf=https://github.com/oven-sh/homebrew-bun",
+    ]);
+  });
+
+  test("appends to the environment's git config rather than replacing it", () => {
+    declared("schpet/tap");
+
+    const r = runScript({
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "safe.directory",
+      GIT_CONFIG_VALUE_0: "/somewhere",
+    });
+    expect(r.status).toBe(0);
+    expect(gitConfig()).toEqual([
+      "safe.directory=/somewhere",
+      "url.https://github.com/schpet/homebrew-tap.insteadOf=https://github.com/schpet/homebrew-tap",
+    ]);
+  });
+
+  test("leaves a tap already on disk unpinned, since nothing clones it", () => {
+    declared("schpet/tap");
+    installed("schpet/tap");
+
+    const r = runScript();
+    expect(r.status).toBe(0);
+    expect(existsSync(box.path("gitconfig"))).toBe(false);
   });
 
   // `brew tap` is only a no-op on a tap that is installed and not shallow. On a

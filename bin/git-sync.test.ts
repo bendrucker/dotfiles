@@ -90,6 +90,41 @@ describe("bin/git-sync", () => {
     });
   });
 
+  describe("https-remote", () => {
+    function remoteUrls(): { url: string; pushurl: string } {
+      return {
+        url: must(["git", "-C", repo, "config", "--get", "remote.origin.url"]).trim(),
+        pushurl: must(["git", "-C", repo, "config", "--get", "remote.origin.pushurl"]).trim(),
+      };
+    }
+
+    test("moves an SSH remote to HTTPS for fetch and keeps SSH for push", () => {
+      must(["git", "-C", repo, "remote", "set-url", "origin", "git@github.com:owner/repo.git"]);
+
+      const r = runGitSync(["https-remote", repo]);
+      expect(r.status).toBe(0);
+      expect(remoteUrls()).toEqual({
+        url: "https://github.com/owner/repo.git",
+        pushurl: "git@github.com:owner/repo.git",
+      });
+    });
+
+    test("leaves a remote on another host alone", () => {
+      must(["git", "-C", repo, "remote", "set-url", "origin", "git@gitlab.com:owner/repo.git"]);
+
+      const r = runGitSync(["https-remote", repo]);
+      expect(r.status).toBe(0);
+      expect(must(["git", "-C", repo, "config", "--get", "remote.origin.url"]).trim()).toBe(
+        "git@gitlab.com:owner/repo.git",
+      );
+    });
+
+    test("rejects a call naming no repository", () => {
+      const r = runGitSync(["https-remote"]);
+      expect(r.status).toBe(2);
+    });
+  });
+
   describe("https-env", () => {
     test("prints both SSH prefixes as insteadOf rules", () => {
       const r = runGitSync(["https-env"]);
