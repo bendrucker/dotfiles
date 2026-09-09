@@ -24,6 +24,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 | Specifier | What it holds |
 | --- | --- |
 | `#harness` | The `bun test` harness for driving shell scripts |
+| `#history-secrets` | The commands the two history filters must drop, and the ordinary ones they must keep |
 | `#jobs/*` | What the unattended jobs share: output capture, failure reporting, the sync gate, canonical JSON |
 | `#worktree/*` | Worktrunk state, forge queries, column alignment |
 | `#plugins` | The installed Claude Code plugins |
@@ -101,6 +102,14 @@ Treesitter parsers are built against a specific nvim-treesitter revision. They b
 - **Functions**: Add to `<topic>/functions.zsh`
 - **PATH modifications**: Add to `<topic>/path.zsh`
 - **Completions**: Add to `<topic>/completion.zsh`
+
+### Shell History
+
+Two stores record every command, and each filters secrets with its own engine. `packages/history-secrets.ts` holds the commands both must drop and the ordinary ones both must keep, so a pattern is never fixed in one store and left rotting in the other. Add a case there before adding a pattern anywhere.
+
+atuin is the store that syncs. Its `secrets_filter` is on by default and matches AWS access key ids along with GitHub, GitLab, canonical Slack, Stripe, Netlify, npm and Pulumi tokens. `history_filter` in `atuin/config.toml` carries only what that list misses: a credential named rather than shaped (`FOO_TOKEN=`, `--password`, an `Authorization` header), the `sk-` vendors, and the lowercase spelling of a cloud credential name, which atuin's own case-sensitive patterns walk past.
+
+`zsh/history-secrets.zsh` guards the plaintext copy in `$HISTFILE`, and it carries the whole list because no atuin pattern reaches that file. It cannot cover atuin in return. atuin records from `preexec`, which runs no matter what a `zshaddhistory` hook returns.
 
 ### Config File Installation
 

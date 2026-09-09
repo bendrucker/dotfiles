@@ -7,6 +7,7 @@
   "imports": {
     "#harness": "./packages/harness/index.ts",
     "#harness/*": "./packages/harness/*.ts",
+    "#history-secrets": "./packages/history-secrets.ts",
     "#jobs/*": "./packages/jobs/*.ts",
     "#worktree/*": "./packages/worktree/*.ts",
     "#plugins": "./packages/plugins.ts"

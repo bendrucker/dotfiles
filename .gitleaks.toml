@@ -13,3 +13,16 @@ useDefault = true
 description = "herdr keybinding declarations"
 regexTarget = "line"
 regexes = ['''^\s*key\s*=\s*"(prefix|ctrl|alt|shift|super)(\+[a-z0-9]+)+"\s*$''']
+
+# The history filters' corpus is credential-shaped strings by construction. Every
+# entry is there to prove a filter drops it, so a scan of the file reports the
+# fixtures and nothing else.
+#
+# Exempting the whole path, unlike the entry above. There is no one value shape
+# to match: the corpus spans every vendor prefix the two filters know and gains
+# another whenever a filter does. The cost is that a real credential pasted into
+# this file would go unreported, which is the trade the file's own contents make
+# unavoidable.
+[[allowlists]]
+description = "history filter test fixtures"
+paths = ['''^packages/history-secrets\.ts$''']
