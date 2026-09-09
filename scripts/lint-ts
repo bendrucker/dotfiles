@@ -31,8 +31,10 @@ const USAGE = [
 //
 // Being in the tree means ordinary discovery would find it, and an oxlint
 // ignore cannot separate the two passes because an ignored path stays ignored
-// when it is named on the command line. The mirror is built after the repo
-// pass instead, so it does not exist while that pass is looking.
+// when it is named on the command line. A `tmp/` line in .gitignore silences
+// the mirror pass the same way, since oxlint reads that too. The mirror is
+// built after the repo pass instead, so it does not exist while that pass is
+// looking.
 export const MIRROR = "tmp/lint-ts";
 
 // A file with no dot in its name and a bun shebang. The `env bun` form is the
@@ -40,9 +42,12 @@ export const MIRROR = "tmp/lint-ts";
 // `#!/usr/bin/env bunx` or a comment mentioning bun from being picked up.
 const SHEBANG = /^#!.*\/env +bun *$/;
 
+function hasExtension(path: string): boolean {
+  return path.slice(path.lastIndexOf("/") + 1).includes(".");
+}
+
 export function isBunScript(name: string, firstLine: string): boolean {
-  const base = name.slice(name.lastIndexOf("/") + 1);
-  return !base.includes(".") && SHEBANG.test(firstLine);
+  return !hasExtension(name) && SHEBANG.test(firstLine);
 }
 
 export async function bunScripts(root: string): Promise<string[]> {
@@ -59,9 +64,10 @@ export async function bunScripts(root: string): Promise<string[]> {
   const paths = listed.stdout.toString().split("\0").filter(Boolean);
   const found: string[] = [];
   for (const path of paths) {
-    if (path.slice(path.lastIndexOf("/") + 1).includes(".")) continue;
-    // A submodule is listed by its gitlink path, which stats as a directory.
-    if (!statSync(join(root, path)).isFile()) continue;
+    if (hasExtension(path)) continue;
+    // A submodule is listed by its gitlink path, which stats as a directory,
+    // and a symlink whose target is gone stats as nothing at all.
+    if (!statSync(join(root, path), { throwIfNoEntry: false })?.isFile()) continue;
     const head = await Bun.file(join(root, path)).slice(0, 200).text();
     if (isBunScript(path, head.split("\n")[0] ?? "")) found.push(path);
   }
@@ -132,6 +138,8 @@ async function main(args: string[]): Promise<number> {
     // Both passes run whatever the first one reports, so a single invocation
     // names every violation rather than one pass worth at a time.
     const repo = oxlint(root, args);
+    if (scripts.length === 0) return repo === 0 ? 0 : 1;
+
     link(root, scripts);
     const bins = oxlint(root, [...args, MIRROR], scripts);
     return repo === 0 && bins === 0 ? 0 : 1;

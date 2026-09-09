@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { must, repoRoot, run as spawn, type Run, sandbox, type Sandbox } from "#harness";
 import { bunScripts, clean, isBunScript, link, MIRROR, mirrorPath, rewrite } from "./lint-ts";
 
-const REPO = join(import.meta.dir, "..");
-const SCRIPT = join(import.meta.dir, "lint-ts");
+const SCRIPT = join(repoRoot, "scripts/lint-ts");
 
 let box: Sandbox;
 
@@ -18,45 +17,32 @@ afterEach(() => {
 });
 
 function git(args: string[]): void {
-  const run = Bun.spawnSync({ cmd: ["git", "-C", box.dir, ...args], env: process.env, stdin: "ignore" });
-  if (run.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr.toString()}`);
+  must(["git", ...args], { cwd: box.dir });
 }
 
 /**
  * A tree shaped like this repo: a git checkout carrying the oxlint config, the
  * pinned oxlint that config is meant to run under, a .ts module oxlint finds on
- * its own, and one extensionless bun executable it does not. `bunx oxlint`
- * walks up for node_modules and would otherwise go to the network from a
- * sandbox under the system temp directory.
+ * its own, and one extensionless bun executable it does not, unless
+ * `executable` is null. `bunx oxlint` walks up for node_modules and would
+ * otherwise go to the network from a sandbox under the system temp directory.
  */
-function fixture(executable: string, module = "export const ok = 1;\n"): void {
+function fixture(executable: string | null, module = "export const ok = 1;\n"): void {
   git(["init", "--quiet"]);
-  symlinkSync(join(REPO, "node_modules"), join(box.dir, "node_modules"));
+  symlinkSync(join(repoRoot, "node_modules"), join(box.dir, "node_modules"));
   // oxlint reads .gitignore, which is how the real repo keeps the linter out
   // of the dependency it is installed from.
   box.write(".gitignore", "node_modules/\n");
   box.write(".oxlintrc.json", `${JSON.stringify({ rules: { "max-depth": ["error", 4] } })}\n`);
   box.write("packages/module.ts", module);
-  box.stub("worktree-tool", executable, { shebang: "#!/usr/bin/env bun" });
+  if (executable !== null) box.stub("worktree-tool", executable, { shebang: "#!/usr/bin/env bun" });
   git(["add", "-A"]);
-}
-
-interface Outcome {
-  status: number;
-  stdout: string;
-  stderr: string;
 }
 
 // Run through bun by path rather than by shebang, so the case does not depend
 // on where bun sits on this machine's PATH.
-function run(args: string[] = []): Outcome {
-  const spawned = Bun.spawnSync({
-    cmd: [process.execPath, SCRIPT, ...args],
-    cwd: box.dir,
-    env: { ...process.env, LINT_TS_ROOT: box.dir },
-    stdin: "ignore",
-  });
-  return { status: spawned.exitCode, stdout: spawned.stdout.toString(), stderr: spawned.stderr.toString() };
+function run(args: string[] = []): Run {
+  return spawn([process.execPath, SCRIPT, ...args], { cwd: box.dir, env: { LINT_TS_ROOT: box.dir } });
 }
 
 const NESTED = [
@@ -82,7 +68,7 @@ describe("isBunScript", () => {
 
 describe("bunScripts", () => {
   test("finds the tracked bun executables in this repo", async () => {
-    const found = await bunScripts(REPO);
+    const found = await bunScripts(repoRoot);
     expect(found).toContain("bin/dotfiles-sync");
     expect(found).toContain("scripts/lint-expired");
     expect(found).not.toContain("bin/git-sync");
@@ -92,8 +78,18 @@ describe("bunScripts", () => {
   // git ls-files reports a submodule by its gitlink path, which stats as a
   // directory and cannot be read as a file.
   test("passes over a submodule gitlink", async () => {
-    const found = await bunScripts(REPO);
+    const found = await bunScripts(repoRoot);
     expect(found).not.toContain("bat/catppuccin");
+  });
+
+  // git tracks the link rather than what it points at, so a target that moved
+  // leaves a path that stats as nothing.
+  test("passes over a symlink whose target is gone", async () => {
+    git(["init", "--quiet"]);
+    symlinkSync(join(box.dir, "gone"), join(box.mkdir("bin"), "dangling"));
+    git(["add", "-A"]);
+
+    expect(await bunScripts(box.dir)).toEqual([]);
   });
 });
 
@@ -173,6 +169,17 @@ describe("lint-ts", () => {
     run();
 
     expect(existsSync(join(box.dir, MIRROR))).toBe(false);
+  });
+
+  // link() makes no directory for an empty list, and oxlint exits 1 on a path
+  // that is not there.
+  test("passes a tree with no bun executables", () => {
+    fixture(null);
+
+    const outcome = run();
+
+    expect(outcome.status).toBe(0);
+    expect(outcome.stdout).not.toContain("No files found to lint");
   });
 
   test("explains itself", () => {
