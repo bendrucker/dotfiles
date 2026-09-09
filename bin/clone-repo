@@ -1,9 +1,23 @@
 #!/usr/bin/env bun
+//
+// clone-repo: find or clone a repository under $PROJECTS and print its path.
+//
+// Takes `repo`, `owner/repo`, or a full URL. A bare `repo` is one of your own,
+// so `clone-repo dotfiles` resolves through your GitHub login the same way
+// `@me/dotfiles` does. The path is the only thing written to stdout, because
+// `clone` cd's into whatever this prints and `wt pr` hands it to `wt -C`.
 
-import { $ } from "bun";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdir, rename, stat } from "node:fs/promises";
+
+const USAGE = [
+  "usage: clone-repo <repo|owner/repo|url>",
+  "       clone-repo --list",
+  "",
+  "Prints the checkout under $PROJECTS, cloning it first when it is missing.",
+  "A bare repo name is one of your own, the same as @me/repo.",
+].join("\n");
 
 const CACHE_DIR = join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "clone-repo");
 const OWNERS_CACHE = join(CACHE_DIR, "owners.json");
@@ -11,109 +25,189 @@ const REPOS_CACHE = join(CACHE_DIR, "repos.json");
 const OWNERS_TTL_MS = 24 * 60 * 60 * 1000;
 const REPOS_TTL_MS = 6 * 60 * 60 * 1000;
 
-if (process.argv.includes("--refresh-owners")) {
-  await writeCache(OWNERS_CACHE, await fetchOwners());
-  process.exit(0);
+// What GitHub and GitLab accept in an owner or repository name. Anything else
+// is a typo or an scp-style `git@host:owner/repo`, which neither gh nor glab
+// takes and which would otherwise become a directory named for the host.
+const NAME = /^[A-Za-z0-9_.-]+$/;
+
+interface Target {
+  host?: string;
+  org: string;
+  repo: string;
 }
 
-if (process.argv.includes("--refresh-repos")) {
-  const repos = await fetchRepos();
-  if (repos.length > 0) await writeCache(REPOS_CACHE, repos);
-  process.exit(0);
-}
-
-if (process.argv.includes("--list")) {
-  for (const name of await getRepos()) {
-    console.log(name);
+class Failure extends Error {
+  constructor(
+    message: string,
+    readonly status = 1,
+    readonly usage = false,
+  ) {
+    super(message);
   }
-  process.exit(0);
 }
 
-const input = process.argv[2];
-const completions = process.argv.includes("--completions");
-const projects = process.env.PROJECTS!;
+// Lenient by design: completion parses whatever has been typed so far, so a
+// missing repo comes back empty rather than as an error. `invalid` is the strict
+// check the clone path adds on top.
+function parse(input: string): Target {
+  let url: URL | undefined;
+  try {
+    url = new URL(input);
+  } catch {}
 
-let org: string, repo: string;
-let host: string | undefined;
-try {
-  const url = new URL(input);
-  host = url.hostname;
-  [, org, repo] = url.pathname.replace(/\.git$/, "").split("/");
-} catch {
-  [org, repo] = input.split("/");
+  if (url === undefined) {
+    const segments = input.split("/");
+    if (segments.length > 2) throw new Failure(`${input} has more than owner/repo in it`, 2, true);
+    if (segments.length === 1) return { org: "@me", repo: segments[0] };
+    return { org: segments[0], repo: segments[1] };
+  }
+
+  const segments = url.pathname.replace(/\/+$/, "").replace(/\.git$/, "").split("/").filter(Boolean);
+  if (segments.length > 2) throw new Failure(`${input} has more than owner/repo in its path`, 2, true);
+  return { host: url.hostname, org: segments[0] ?? "", repo: segments[1] ?? "" };
 }
 
-if (completions) {
-  if (!input.includes("/")) {
-    for (const owner of await getOwners()) {
-      console.log(owner);
+function invalid(input: string, target: Target): string | undefined {
+  if (target.org !== "@me" && !isName(target.org)) return `${input} does not name an owner`;
+  if (!isName(target.repo)) return `${input} does not name a repository`;
+  return undefined;
+}
+
+// `.` and `..` match NAME and resolve to a directory that exists, so without
+// this `clone ..` would print $PROJECTS as if it were a checkout.
+function isName(segment: string): boolean {
+  return NAME.test(segment) && segment !== "." && segment !== "..";
+}
+
+async function main(argv: string[]): Promise<number> {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    process.stdout.write(`${USAGE}\n`);
+    return 0;
+  }
+
+  if (argv.includes("--refresh-owners")) {
+    const owners = await fetchOwners();
+    if (owners.length > 0) await writeCache(OWNERS_CACHE, owners);
+    return 0;
+  }
+
+  if (argv.includes("--refresh-repos")) {
+    const repos = await fetchRepos();
+    if (repos.length > 0) await writeCache(REPOS_CACHE, repos);
+    return 0;
+  }
+
+  if (argv.includes("--list")) {
+    for (const name of await getRepos()) {
+      console.log(name);
     }
-    process.exit(0);
+    return 0;
   }
-  const repos = await listRepos(await resolveOwner(org), repo, host);
-  for (const name of repos) {
-    console.log(name);
+
+  const input = argv[0] ?? "";
+  const completions = argv.includes("--completions");
+
+  if (completions) {
+    if (!input.includes("/")) {
+      for (const owner of await getOwners()) {
+        console.log(owner);
+      }
+      return 0;
+    }
+    // A prefix parse rejects has no completions, and the usage message would
+    // otherwise print into the command line being typed.
+    let target: Target;
+    try {
+      target = parse(input);
+    } catch (error) {
+      if (error instanceof Failure) return 0;
+      throw error;
+    }
+    const org = await resolveOwner(target.org);
+    if (org === undefined) return 0;
+    for (const name of await listRepos(org, target.repo, target.host)) {
+      console.log(name);
+    }
+    return 0;
   }
-  process.exit(0);
+
+  if (input.startsWith("-")) throw new Failure(`unknown option ${input}`, 2, true);
+  if (input === "") throw new Failure("a repository is required", 2, true);
+
+  const target = parse(input);
+  const problem = invalid(input, target);
+  if (problem !== undefined) throw new Failure(problem, 2, true);
+
+  const projects = process.env.PROJECTS;
+  if (!projects) throw new Failure("PROJECTS is not set, so there is nowhere to clone into");
+
+  const org = await resolveOwner(target.org);
+  if (org === undefined) {
+    throw new Failure("gh could not report your login, so a bare repo has no owner; check `gh auth status`");
+  }
+  const { repo, host } = target;
+  const checkout = join(projects, org, repo);
+
+  if (await exists(checkout)) {
+    console.log(checkout);
+    return 0;
+  }
+
+  await mkdir(join(projects, org), { recursive: true });
+
+  const clone =
+    host === "gitlab.com"
+      ? // Not the URL: glab clones an https URL over https, ignoring the
+        // git_protocol it was configured with. A bare path lets it pick.
+        ["glab", "repo", "clone", `${org}/${repo}`, checkout]
+      : ["gh", "repo", "clone", host ? input : `${org}/${repo}`, checkout];
+  const status = await exec(clone);
+  if (status !== 0) throw new Failure(`${clone[0]} could not clone ${clone[3]}`, status);
+
+  // Callers read the checkout path off stdout, so the linker only gets stderr. A
+  // clone without an overlay is still a usable clone, so nothing here is fatal.
+  await spawn(["claude-overlay", "link", checkout], { stdout: "ignore", stderr: "inherit" })?.exited;
+
+  console.log(checkout);
+  return 0;
 }
 
-org = await resolveOwner(org);
-const target = `${projects}/${org}/${repo}`;
-
-if (await exists(target)) {
-  console.log(target);
-  process.exit(0);
-}
-
-await $`mkdir -p ${projects}/${org}`;
-
-switch (host) {
-  case "gitlab.com":
-    // Not the URL: glab clones an https URL over https, ignoring the git_protocol
-    // it was configured with. A bare path lets it pick the protocol.
-    await $`glab repo clone ${`${org}/${repo}`} ${target}`;
-    break;
-  default:
-    await $`gh repo clone ${host ? input : `${org}/${repo}`} ${target}`;
-    break;
-}
-
-// Callers read the target path off stdout, so the linker only gets stderr. A
-// clone without an overlay is still a usable clone, so nothing here is fatal.
-try {
-  await Bun.spawn(["claude-overlay", "link", target], { stdout: "ignore", stderr: "inherit" }).exited;
-} catch {}
-
-console.log(target);
-
-async function listRepos(org: string, query?: string, host?: string): Promise<string[]> {
+async function listRepos(org: string, query: string, host?: string): Promise<string[]> {
   switch (host) {
     case "gitlab.com": {
       const search = query ? `&search=${query}` : "";
-      const result = await $`glab api "users/${org}/projects?per_page=20${search}" -q '.[].path_with_namespace'`.text();
-      return lines(result);
+      const result = await output([
+        "glab",
+        "api",
+        `users/${org}/projects?per_page=20${search}`,
+        "-q",
+        ".[].path_with_namespace",
+      ]);
+      return lines(result ?? "");
     }
     default: {
       const args = ["search", "repos", "--owner", org, "--json", "fullName", "--jq", ".[].fullName", "--limit", "20"];
       if (query) args.splice(2, 0, query);
-      const result = await Bun.spawn(["gh", ...args], { stdout: "pipe" });
-      return lines(await new Response(result.stdout).text());
+      return lines((await output(["gh", ...args])) ?? "");
     }
   }
 }
 
-async function resolveOwner(org: string): Promise<string> {
+// Undefined when @me cannot be resolved, which is a gh that is missing or not
+// signed in. Completion stays quiet about that and the clone path names it.
+async function resolveOwner(org: string): Promise<string | undefined> {
   if (org !== "@me") return org;
   const cached = await readCache(OWNERS_CACHE);
   if (cached && cached.length > 0) return cached[0];
-  return (await $`gh api user --jq .login`.text()).trim();
+  const login = (await output(["gh", "api", "user", "--jq", ".login"]))?.trim();
+  return login || undefined;
 }
 
 async function getOwners(): Promise<string[]> {
   const cached = await readCache(OWNERS_CACHE);
   if (!cached) {
     const owners = await fetchOwners();
-    await writeCache(OWNERS_CACHE, owners);
+    if (owners.length > 0) await writeCache(OWNERS_CACHE, owners);
     return ["@me", ...owners];
   }
   const { mtimeMs } = await Bun.file(OWNERS_CACHE).stat();
@@ -134,19 +228,22 @@ async function getRepos(): Promise<string[]> {
 }
 
 function spawnRefresh(flag: string): void {
-  const proc = Bun.spawn([process.execPath, import.meta.path, flag], {
+  spawn([process.execPath, import.meta.path, flag], {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",
-  });
-  proc.unref();
+  })?.unref();
 }
 
+// Empty when either call fails, so a rate-limited org listing cannot overwrite
+// a complete cache with one that has lost every org until the next refresh. An
+// account with no orgs answers with an empty body, which is a success.
 async function fetchOwners(): Promise<string[]> {
   const [login, orgs] = await Promise.all([
-    $`gh api user --jq .login`.text(),
-    $`gh api user/orgs --jq '.[].login'`.text(),
+    output(["gh", "api", "user", "--jq", ".login"]),
+    output(["gh", "api", "user/orgs", "--jq", ".[].login"]),
   ]);
+  if (!login?.trim() || orgs === undefined) return [];
   return [login.trim(), ...lines(orgs)];
 }
 
@@ -155,16 +252,16 @@ async function fetchRepos(): Promise<string[]> {
   const orgs = cachedOwners ? cachedOwners.slice(1) : [];
   const tsv = ".[] | [.nameWithOwner, .pushedAt] | @tsv";
   const sources = [
-    $`gh repo list --json nameWithOwner,pushedAt --limit 200 --jq ${tsv}`.text(),
-    $`gh api user/starred --paginate --jq '.[] | [.full_name, .pushed_at] | @tsv'`.text(),
+    output(["gh", "repo", "list", "--json", "nameWithOwner,pushedAt", "--limit", "200", "--jq", tsv]),
+    output(["gh", "api", "user/starred", "--paginate", "--jq", ".[] | [.full_name, .pushed_at] | @tsv"]),
     ...orgs.map((owner) =>
-      $`gh repo list ${owner} --json nameWithOwner,pushedAt --limit 100 --jq ${tsv}`.text(),
+      output(["gh", "repo", "list", owner, "--json", "nameWithOwner,pushedAt", "--limit", "100", "--jq", tsv]),
     ),
   ];
-  const results = await Promise.all(sources.map((p) => p.catch(() => "")));
+  const results = await Promise.all(sources);
   const pushedAt = new Map<string, string>();
   for (const result of results) {
-    for (const line of lines(result)) {
+    for (const line of lines(result ?? "")) {
       const [name, ts] = line.split("\t");
       const existing = pushedAt.get(name);
       if (!existing || ts > existing) pushedAt.set(name, ts);
@@ -173,6 +270,35 @@ async function fetchRepos(): Promise<string[]> {
   return [...pushedAt.entries()]
     .sort(([, a], [, b]) => (a < b ? 1 : a > b ? -1 : 0))
     .map(([name]) => name);
+}
+
+// A command that is not installed throws where a shell would print `command not
+// found`. Undefined lets each caller say what that means for it.
+function spawn(cmd: string[], options: Parameters<typeof Bun.spawn>[1]): Bun.Subprocess | undefined {
+  try {
+    return Bun.spawn(cmd, options);
+  } catch {
+    return undefined;
+  }
+}
+
+// Run a command on the terminal and report how it ended. gh and glab explain
+// their own failures on stderr, so the caller adds one line naming what failed
+// rather than a stack trace behind it.
+async function exec(cmd: string[]): Promise<number> {
+  const proc = spawn(cmd, { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+  if (proc === undefined) throw new Failure(`${cmd[0]} is not installed`, 127);
+  return await proc.exited;
+}
+
+// stdout of a command that succeeded, or undefined. Its stderr is dropped: every
+// caller is reading a login or a listing, most of them mid-completion, where a
+// rate-limit notice would land in the middle of the word being typed.
+async function output(cmd: string[]): Promise<string | undefined> {
+  const proc = spawn(cmd, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  if (proc === undefined) return undefined;
+  const [text, status] = await Promise.all([new Response(proc.stdout as ReadableStream).text(), proc.exited]);
+  return status === 0 ? text : undefined;
 }
 
 function lines(text: string): string[] {
@@ -202,5 +328,15 @@ async function readCache(path: string): Promise<string[] | null> {
     return JSON.parse(await file.text());
   } catch {
     return null;
+  }
+}
+
+if (import.meta.main) {
+  try {
+    process.exit(await main(process.argv.slice(2)));
+  } catch (error) {
+    if (!(error instanceof Failure)) throw error;
+    process.stderr.write(`clone-repo: ${error.message}\n${error.usage ? `${USAGE}\n` : ""}`);
+    process.exit(error.status);
   }
 }
