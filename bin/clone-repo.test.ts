@@ -75,6 +75,12 @@ test("a github URL is handed to gh whole", () => {
   expect(box.read("gh.log")).toBe(`repo clone https://github.com/owner/repo.git ${projects}/owner/repo\n`);
 });
 
+test("a trailing slash after .git does not become part of the name", () => {
+  const result = clone("https://github.com/owner/repo.git/");
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe(`${projects}/owner/repo\n`);
+});
+
 test("a gitlab URL clones through glab by path", () => {
   const result = clone("https://gitlab.com/group/project");
   expect(result.status).toBe(0);
@@ -100,6 +106,8 @@ test.each([
   ["git@github.com:owner/repo.git", "git@github.com:owner/repo.git does not name an owner"],
   ["https://github.com/owner", "https://github.com/owner does not name a repository"],
   ["https://github.com/a/b/c", "https://github.com/a/b/c has more than owner/repo in its path"],
+  ["..", ".. does not name a repository"],
+  ["owner/.", "owner/. does not name a repository"],
 ])("rejects %j before reaching gh", (input, message) => {
   const result = input === "" ? clone() : clone(input);
   expect(result.status).toBe(2);
@@ -144,6 +152,13 @@ test("completion of a partial owner/repo searches that owner", () => {
   const result = clone("owner/re", "--completions");
   expect(result.status).toBe(0);
   expect(box.read("gh.log")).toBe("search repos re --owner owner --json fullName --jq .[].fullName --limit 20\n");
+});
+
+test("completion of an unparseable prefix is silent", () => {
+  const result = clone("a/b/c", "--completions");
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe("");
 });
 
 test("completion of an empty prefix offers @me before the cached owners", () => {

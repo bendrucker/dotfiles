@@ -62,15 +62,21 @@ function parse(input: string): Target {
     return { org: segments[0], repo: segments[1] };
   }
 
-  const segments = url.pathname.replace(/\.git$/, "").split("/").filter(Boolean);
+  const segments = url.pathname.replace(/\/+$/, "").replace(/\.git$/, "").split("/").filter(Boolean);
   if (segments.length > 2) throw new Failure(`${input} has more than owner/repo in its path`, 2, true);
   return { host: url.hostname, org: segments[0] ?? "", repo: segments[1] ?? "" };
 }
 
 function invalid(input: string, target: Target): string | undefined {
-  if (target.org !== "@me" && !NAME.test(target.org)) return `${input} does not name an owner`;
-  if (!NAME.test(target.repo)) return `${input} does not name a repository`;
+  if (target.org !== "@me" && !isName(target.org)) return `${input} does not name an owner`;
+  if (!isName(target.repo)) return `${input} does not name a repository`;
   return undefined;
+}
+
+// `.` and `..` match NAME and resolve to a directory that exists, so without
+// this `clone ..` would print $PROJECTS as if it were a checkout.
+function isName(segment: string): boolean {
+  return NAME.test(segment) && segment !== "." && segment !== "..";
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -108,7 +114,15 @@ async function main(argv: string[]): Promise<number> {
       }
       return 0;
     }
-    const target = parse(input);
+    // A prefix parse rejects has no completions, and the usage message would
+    // otherwise print into the command line being typed.
+    let target: Target;
+    try {
+      target = parse(input);
+    } catch (error) {
+      if (error instanceof Failure) return 0;
+      throw error;
+    }
     const org = await resolveOwner(target.org);
     if (org === undefined) return 0;
     for (const name of await listRepos(org, target.repo, target.host)) {
