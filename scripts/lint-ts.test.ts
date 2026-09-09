@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { must, repoRoot, run as spawn, type Run, sandbox, type Sandbox } from "#harness";
-import { bunScripts, clean, isBunScript, link, MIRROR, mirrorPath, rewrite } from "./lint-ts";
+import { bunScripts, clean, isBunScript, link, MIRROR, mirrorDir, mirrorPath, rewrite } from "./lint-ts";
 
 const SCRIPT = join(repoRoot, "scripts/lint-ts");
 
@@ -96,45 +96,69 @@ describe("bunScripts", () => {
 describe("link and clean", () => {
   test("mirrors a script under a .ts name pointing at the original", () => {
     box.write("bin/wt-pr", "#!/usr/bin/env bun\n");
-    link(box.dir, ["bin/wt-pr"]);
+    link(box.dir, mirrorDir(7), ["bin/wt-pr"]);
 
-    const mirror = join(box.dir, mirrorPath("bin/wt-pr"));
-    expect(mirror).toBe(join(box.dir, MIRROR, "bin/wt-pr.ts"));
+    const mirror = join(box.dir, mirrorPath(mirrorDir(7), "bin/wt-pr"));
+    expect(mirror).toBe(join(box.dir, MIRROR, "7/bin/wt-pr.ts"));
     expect(readlinkSync(mirror)).toBe(join(box.dir, "bin/wt-pr"));
   });
 
   test("removes the mirror and the scratch directory it made", () => {
-    link(box.dir, ["bin/wt-pr"]);
-    clean(box.dir);
+    link(box.dir, mirrorDir(7), ["bin/wt-pr"]);
+    clean(box.dir, mirrorDir(7));
 
     expect(existsSync(join(box.dir, MIRROR))).toBe(false);
     expect(existsSync(join(box.dir, "tmp"))).toBe(false);
   });
 
+  // Two runs in one tree own separate directories, so neither cleanup takes
+  // links the other is still linting.
+  test("leaves another run's mirror in place", () => {
+    box.write("bin/wt-pr", "#!/usr/bin/env bun\n");
+    link(box.dir, mirrorDir(7), ["bin/wt-pr"]);
+    link(box.dir, mirrorDir(8), ["bin/wt-pr"]);
+    clean(box.dir, mirrorDir(7));
+
+    expect(existsSync(join(box.dir, mirrorPath(mirrorDir(7), "bin/wt-pr")))).toBe(false);
+    expect(existsSync(join(box.dir, mirrorPath(mirrorDir(8), "bin/wt-pr")))).toBe(true);
+  });
+
+  // rmSync takes a symlink rather than what it points at, so a scratch
+  // directory someone linked in would go with it.
+  test("leaves a tmp symlink alone", () => {
+    const target = box.mkdir("elsewhere");
+    symlinkSync(target, join(box.dir, "tmp"));
+    clean(box.dir, mirrorDir(7));
+
+    expect(readlinkSync(join(box.dir, "tmp"))).toBe(target);
+  });
+
   test("leaves other scratch in place", () => {
     box.write("tmp/notes", "kept\n");
-    link(box.dir, ["bin/wt-pr"]);
-    clean(box.dir);
+    link(box.dir, mirrorDir(7), ["bin/wt-pr"]);
+    clean(box.dir, mirrorDir(7));
 
     expect(box.read("tmp/notes")).toBe("kept\n");
   });
 });
 
 describe("rewrite", () => {
+  const DIR = mirrorDir(7);
+
   test("maps a default-format diagnostic onto the real path", () => {
-    const line = `${MIRROR}/bin/wt-pr.ts:12:3: error eslint(complexity): too complex`;
-    expect(rewrite(line, ["bin/wt-pr"])).toBe("bin/wt-pr:12:3: error eslint(complexity): too complex");
+    const line = `${DIR}/bin/wt-pr.ts:12:3: error eslint(complexity): too complex`;
+    expect(rewrite(line, DIR, ["bin/wt-pr"])).toBe("bin/wt-pr:12:3: error eslint(complexity): too complex");
   });
 
   // The annotation names the file twice, and GitHub reads the `file=` field.
   test("maps both paths in a github annotation", () => {
-    const line = `::error file=${MIRROR}/bin/wt-pr.ts,line=12,title=x::${MIRROR}/bin/wt-pr.ts:12:3: nope`;
-    expect(rewrite(line, ["bin/wt-pr"])).toBe("::error file=bin/wt-pr,line=12,title=x::bin/wt-pr:12:3: nope");
+    const line = `::error file=${DIR}/bin/wt-pr.ts,line=12,title=x::${DIR}/bin/wt-pr.ts:12:3: nope`;
+    expect(rewrite(line, DIR, ["bin/wt-pr"])).toBe("::error file=bin/wt-pr,line=12,title=x::bin/wt-pr:12:3: nope");
   });
 
   test("leaves a path it was not given alone", () => {
-    const line = `${MIRROR}/bin/other.ts:1:1: error`;
-    expect(rewrite(line, ["bin/wt-pr"])).toBe(line);
+    const line = `${DIR}/bin/other.ts:1:1: error`;
+    expect(rewrite(line, DIR, ["bin/wt-pr"])).toBe(line);
   });
 });
 
@@ -180,6 +204,19 @@ describe("lint-ts", () => {
 
     expect(outcome.status).toBe(0);
     expect(outcome.stdout).not.toContain("No files found to lint");
+  });
+
+  // A killed run leaves its mirror behind. The repo pass ignores the whole
+  // mirror root, so the leftover is not linted as ordinary source.
+  test("ignores a mirror another run left behind", () => {
+    fixture("export const shallow = (a: number): number => (a ? 1 : 0)\n");
+    box.write("bin/stale", NESTED);
+    link(box.dir, mirrorDir(999), ["bin/stale"]);
+
+    const outcome = run();
+
+    expect(outcome.status).toBe(0);
+    expect(outcome.stdout).not.toContain("bin/stale");
   });
 
   test("explains itself", () => {
