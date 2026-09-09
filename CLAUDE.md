@@ -152,6 +152,7 @@ A test's name and where it sits decide which CI job runs it:
 - `*.test.ts` run in the `bun` job against a bare checkout. They stub whatever the script under test calls, so nothing they assert depends on the machine.
 - `*.integration.test.ts` run in the `bootstrap` job on Linux and macOS, after symlinks are installed and `brew bundle` has run. They read the installed config through its symlinks, which is state only bootstrap produces.
 - Tests under `.claude/skills/` run in the `skill-tests` job, whichever suffix they carry, because they need that skill's own dependencies. bun's discovery skips dot directories, so the job names the path with a leading `./` to have it read as a path rather than a filter.
+- `scripts/lint-ts.test.ts` runs in the `lint` job, which installs oxlint, and the `bun` job ignores it by path. Its cases spawn the pinned binary. Keeping the `bun` job a bare checkout is what fails a runtime dependency added to a `#`-specifier module, so an install there would cost more than the split does.
 
 An integration test carries no guard that would let it pass on an unbootstrapped machine. Failing there is correct, and the CI job is what decides when it runs. A skip guard is for a genuinely optional dependency, like the font cask that `bin/glyph-scan.integration.test.ts` needs to check a glyph renders.
 
