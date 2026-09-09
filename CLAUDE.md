@@ -42,7 +42,7 @@ That install is what makes the pin real. A bare `bunx oxlint` against a tree wit
 
 #### Size and Complexity
 
-`.oxlintrc.json` also caps `complexity`, `max-depth`, `max-params`, `max-statements`, `max-lines-per-function`, and `max-lines`. Every threshold is set a little above the largest thing that passed when it went in, so the gate holds the line where the code already sits instead of asking for a refactor. Measure the tree's distribution before tightening one, rather than reaching for the next round number down.
+`.oxlintrc.json` also caps `complexity`, `max-depth`, `max-params`, `max-statements`, `max-lines-per-function`, and `max-lines`. Every threshold is set at or just above the largest thing that passed when it went in, so the gate holds the line where the code already sits instead of asking for a refactor. `max-depth` and `max-params` sit exactly on it, at 4 and 5, so those two fail on any increase at all. Measure the tree's distribution before tightening one, rather than reaching for the next round number down.
 
 A `**/*.test.ts` override turns off `max-lines`, `max-lines-per-function`, and `max-statements`. Those three measure the `describe` block, which is a container for cases rather than a function, so a test file grows as it covers more. `complexity`, `max-depth`, and `max-params` stay on there, since they measure the helpers inside a case.
 
