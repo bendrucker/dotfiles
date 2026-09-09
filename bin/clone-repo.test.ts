@@ -4,9 +4,6 @@ import { run, type Sandbox, sandbox } from "#harness";
 
 const SCRIPT = join(import.meta.dir, "clone-repo");
 
-// Every call is logged. `api user` answers with the login the test set, and
-// `repo clone` ends however GH_CLONE_STATUS says, after saying why on stderr
-// the way the real gh does.
 const GH_STUB = `
 printf '%s\\n' "$*" >>"$GH_LOG"
 case "$1 $2" in
