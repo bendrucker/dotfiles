@@ -16,14 +16,18 @@
 // content and every line number are the file's own.
 
 import { lstatSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 
 const USAGE = [
-  "usage: lint-ts [oxlint-args...]",
+  "usage: lint-ts [--root=<path>] [oxlint-args...]",
   "",
   "Lint the repo with oxlint, including the extensionless bun executables",
   "that oxlint's own file discovery cannot see. Arguments are passed through.",
+  "",
+  "  --root=<path>  lint this tree instead of the one this script sits in",
 ].join("\n");
+
+const ROOT_FLAG = "--root=";
 
 // Inside the repo rather than the system temp directory: oxlint's github
 // formatter emits an annotation only for a path it can make relative to the
@@ -41,17 +45,21 @@ export function mirrorDir(pid: number = process.pid): string {
   return `${MIRROR}/${pid}`;
 }
 
+// What the mirror pass linted, and what its paths have to be rewritten back to.
+// The two travel together because a diagnostic naming a mirror path is only
+// readable once both are known.
+export interface Mirror {
+  dir: string;
+  scripts: string[];
+}
+
 // A file with no dot in its name and a bun shebang. The `env bun` form is the
 // only one used here, and matching it rather than any bun path keeps a
 // `#!/usr/bin/env bunx` or a comment mentioning bun from being picked up.
 const SHEBANG = /^#!.*\/env +bun *$/;
 
-function hasExtension(path: string): boolean {
-  return path.slice(path.lastIndexOf("/") + 1).includes(".");
-}
-
 export function isBunScript(name: string, firstLine: string): boolean {
-  return !hasExtension(name) && SHEBANG.test(firstLine);
+  return extname(name) === "" && SHEBANG.test(firstLine);
 }
 
 export async function bunScripts(root: string): Promise<string[]> {
@@ -68,7 +76,7 @@ export async function bunScripts(root: string): Promise<string[]> {
   const paths = listed.stdout.toString().split("\0").filter(Boolean);
   const found: string[] = [];
   for (const path of paths) {
-    if (hasExtension(path)) continue;
+    if (extname(path) !== "") continue;
     // A submodule is listed by its gitlink path, which stats as a directory,
     // and a symlink whose target is gone stats as nothing at all.
     if (!statSync(join(root, path), { throwIfNoEntry: false })?.isFile()) continue;
@@ -95,7 +103,7 @@ function prune(path: string): void {
 export function clean(root: string, dir: string): void {
   rmSync(join(root, dir), { recursive: true, force: true });
   prune(join(root, MIRROR));
-  prune(join(root, "tmp"));
+  prune(join(root, dirname(MIRROR)));
 }
 
 export function link(root: string, dir: string, scripts: string[]): void {
@@ -112,25 +120,36 @@ export function link(root: string, dir: string, scripts: string[]): void {
 // oxlint prints the mirror path in every format it supports, including the
 // `file=` field of a github annotation, so one substitution per script covers
 // all of them.
-export function rewrite(output: string, dir: string, scripts: string[]): string {
+export function rewrite(output: string, mirror?: Mirror): string {
+  if (mirror === undefined) return output;
   let text = output;
-  for (const script of scripts) text = text.replaceAll(mirrorPath(dir, script), script);
+  for (const script of mirror.scripts) text = text.replaceAll(mirrorPath(mirror.dir, script), script);
   return text;
 }
 
-// `scripts` empty leaves the output alone, which is what the pass over the
-// repo's own .ts files wants. The mirror pass passes the list it linked.
-function oxlint(root: string, args: string[], dir = "", scripts: string[] = []): number {
+// The pinned oxlint that both callers install before running this. `bunx
+// oxlint` spends about half a second re-resolving the package on every call,
+// and against a tree with no node_modules it fetches the latest release and
+// lints under a version nothing here pinned.
+function oxlintBin(root: string): string {
+  const path = join(root, "node_modules/.bin/oxlint");
+  if (statSync(path, { throwIfNoEntry: false }) === undefined) {
+    throw new Error(`${path} is missing. Run \`bun install\` first.`);
+  }
+  return path;
+}
+
+function oxlint(bin: string, root: string, args: string[], mirror?: Mirror): number {
   const run = Bun.spawnSync({
-    cmd: ["bunx", "oxlint", ...args],
+    cmd: [bin, ...args],
     cwd: root,
     env: process.env,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
-  process.stdout.write(rewrite(run.stdout.toString(), dir, scripts));
-  process.stderr.write(rewrite(run.stderr.toString(), dir, scripts));
+  process.stdout.write(rewrite(run.stdout.toString(), mirror));
+  process.stderr.write(rewrite(run.stderr.toString(), mirror));
   return run.exitCode;
 }
 
@@ -140,8 +159,11 @@ async function main(args: string[]): Promise<number> {
     return 0;
   }
 
-  // The repo this script sits in, unless a case points it at a fixture tree.
-  const root = resolve(process.env.LINT_TS_ROOT ?? join(import.meta.dir, ".."));
+  const named = args.find((arg) => arg.startsWith(ROOT_FLAG))?.slice(ROOT_FLAG.length);
+  const root = resolve(named ?? join(import.meta.dir, ".."));
+  const rest = args.filter((arg) => !arg.startsWith(ROOT_FLAG));
+
+  const bin = oxlintBin(root);
   const scripts = await bunScripts(root);
   const dir = mirrorDir();
 
@@ -149,12 +171,12 @@ async function main(args: string[]): Promise<number> {
   // behind, so neither pass depends on the other having finished.
   // Both passes run whatever the first one reports, so a single invocation
   // names every violation rather than one pass worth at a time.
-  const repo = oxlint(root, [...args, `--ignore-pattern=${MIRROR}/**`]);
+  const repo = oxlint(bin, root, [...rest, `--ignore-pattern=${MIRROR}/**`]);
   if (scripts.length === 0) return repo === 0 ? 0 : 1;
 
   try {
     link(root, dir, scripts);
-    const bins = oxlint(root, [...args, dir], dir, scripts);
+    const bins = oxlint(bin, root, [...rest, dir], { dir, scripts });
     return repo === 0 && bins === 0 ? 0 : 1;
   } finally {
     clean(root, dir);

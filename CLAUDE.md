@@ -36,13 +36,15 @@ Bun resolves `imports` from the root `package.json` alone, so a specifier resolv
 
 oxlint is the repo's one devDependency, pinned in `package.json` and tracked by Renovate's bun manager like any other. The `lint` job and the pre-commit hook both run `bun install --frozen-lockfile` before `scripts/lint-ts --deny-warnings`.
 
-That install is what makes the pin real. A bare `bunx oxlint` against a tree with no `node_modules` fetches the latest release and ignores the version in `package.json` without saying so, which is a silent wrong-version run rather than a failure.
+That install is what makes the pin real. `scripts/lint-ts` spawns `node_modules/.bin/oxlint` and stops with the path it wanted when nothing is there. A bare `bunx oxlint` instead fetches the latest release and ignores the version in `package.json` without saying so, which is a silent wrong-version run rather than a failure, and it spends a few hundred milliseconds re-resolving the package on every call.
 
 `.oxlintrc.json` runs the `correctness` category plus a `no-restricted-imports` rule that rejects a path-shaped import of anything under `packages/`. That rule is what makes the specifier table above a boundary rather than a convention, since a deep relative path into another package now fails the build.
 
+`no-control-regex` is off. Stripping ANSI escapes with a pattern built around `\u001b` is a recurring idiom in a repo this full of terminal tooling, and the rule cannot tell one from a stray control character, so it fires on correct code everywhere the idiom appears.
+
 #### Size and Complexity
 
-`.oxlintrc.json` also caps `complexity`, `max-depth`, `max-params`, `max-statements`, `max-lines-per-function`, and `max-lines`. Every threshold is set at or just above the largest thing that passed when it went in, so the gate holds the line where the code already sits instead of asking for a refactor. `max-depth` and `max-params` sit exactly on it, at 4 and 5, so those two fail on any increase at all. Measure the tree's distribution before tightening one, rather than reaching for the next round number down.
+`.oxlintrc.json` also caps `complexity`, `max-depth`, `max-params`, `max-statements`, `max-lines-per-function`, and `max-lines`. Every threshold sits just above what the tree already contains, so the gate keeps the line where the code sits instead of asking for a refactor. `max-depth` and `max-params` sit exactly on it, at 4 and 5, so those two fail on any increase at all. Measure the tree's distribution before tightening one, rather than reaching for the next round number down.
 
 A `**/*.test.ts` override turns off `max-lines`, `max-lines-per-function`, and `max-statements`. Those three measure the `describe` block, which is a container for cases rather than a function, so a test file grows as it covers more. `complexity`, `max-depth`, and `max-params` stay on there, since they measure the helpers inside a case.
 
@@ -54,7 +56,7 @@ oxlint discovers files by extension, so the `bin/` executables are invisible to 
 
 The ordinary pass takes an `--ignore-pattern` for the mirror root, which is what keeps it from linting the links a second time as source. A config ignore or a `tmp/` line in `.gitignore` would not do, because both reach the mirror pass too, where a path oxlint ignores stays ignored even when named on the command line. Each run mirrors into its own directory under that root, so a hand run overlapping a pre-commit one cannot delete the links the other is reading. The mirror lives inside the repo rather than under `$TMPDIR` because the `github` formatter emits an annotation only for a path it can make relative to the working directory.
 
-The pre-commit hook keys on `files:` rather than `types: [ts]`. The `identify` library tags an extensionless bun executable as `executable` and nothing more, so a `types`-keyed hook never fires on a change to one. The pattern leaves the `bin/` prefix unanchored, because a topic owns its own `bin/` and `scripts/lint-ts` scans every tracked path rather than two directories.
+The pre-commit hook keys on `files:` rather than `types: [ts]`. The `identify` library tags an extensionless bun executable as `executable` and nothing more, so a `types`-keyed hook never fires on a change to one. The pattern matches any extensionless path rather than the two directories that hold one today, since the shebang is what decides which of them get mirrored and a directory prefix in the hook would be a second answer to that. It over-fires on a `Brewfile`, which costs one run of a linter that takes under half a second.
 
 Nothing here finds an unused export across the `#`-specifier modules. oxlint 1.82.0 does not implement `import/no-unused-modules`, `no-unused-vars` reaches only within a file, and every candidate that would close the gap is a new dependency.
 

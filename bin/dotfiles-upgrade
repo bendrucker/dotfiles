@@ -33,7 +33,6 @@ const TRAILING_NEWLINES = /\n+$/;
 // Colour and cursor escapes from the child tools would otherwise render as
 // garbage in the Things note. CSI only: an OSC title sequence carries text a
 // reader may want and does not end in a letter.
-// oxlint-disable-next-line no-control-regex -- ESC is what the pattern is for.
 const CSI = /\u001b\[[0-9;]*[a-zA-Z]/g;
 
 export function stripCsi(text: string): string {

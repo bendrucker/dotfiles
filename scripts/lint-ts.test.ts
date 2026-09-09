@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readlinkSync, symlinkSync } from "node:fs";
+import { existsSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { must, repoRoot, run as spawn, type Run, sandbox, type Sandbox } from "#harness";
 import { bunScripts, clean, isBunScript, link, MIRROR, mirrorDir, mirrorPath, rewrite } from "./lint-ts";
+
+const DIR = mirrorDir(7);
 
 const SCRIPT = join(repoRoot, "scripts/lint-ts");
 
@@ -24,10 +26,10 @@ function git(args: string[]): void {
  * A tree shaped like this repo: a git checkout carrying the oxlint config, the
  * pinned oxlint that config is meant to run under, a .ts module oxlint finds on
  * its own, and one extensionless bun executable it does not, unless
- * `executable` is null. `bunx oxlint` walks up for node_modules and would
- * otherwise go to the network from a sandbox under the system temp directory.
+ * `executable` is omitted. The node_modules symlink is what lint-ts resolves
+ * the pinned oxlint through.
  */
-function fixture(executable: string | null, module = "export const ok = 1;\n"): void {
+function fixture({ executable, module = "export const ok = 1;\n" }: { executable?: string; module?: string }): void {
   git(["init", "--quiet"]);
   symlinkSync(join(repoRoot, "node_modules"), join(box.dir, "node_modules"));
   // oxlint reads .gitignore, which is how the real repo keeps the linter out
@@ -35,14 +37,14 @@ function fixture(executable: string | null, module = "export const ok = 1;\n"): 
   box.write(".gitignore", "node_modules/\n");
   box.write(".oxlintrc.json", `${JSON.stringify({ rules: { "max-depth": ["error", 4] } })}\n`);
   box.write("packages/module.ts", module);
-  if (executable !== null) box.stub("worktree-tool", executable, { shebang: "#!/usr/bin/env bun" });
+  if (executable !== undefined) box.stub("worktree-tool", executable, { shebang: "#!/usr/bin/env bun" });
   git(["add", "-A"]);
 }
 
 // Run through bun by path rather than by shebang, so the case does not depend
 // on where bun sits on this machine's PATH.
 function run(args: string[] = []): Run {
-  return spawn([process.execPath, SCRIPT, ...args], { cwd: box.dir, env: { LINT_TS_ROOT: box.dir } });
+  return spawn([process.execPath, SCRIPT, `--root=${box.dir}`, ...args], { cwd: box.dir });
 }
 
 const NESTED = [
@@ -96,16 +98,16 @@ describe("bunScripts", () => {
 describe("link and clean", () => {
   test("mirrors a script under a .ts name pointing at the original", () => {
     box.write("bin/wt-pr", "#!/usr/bin/env bun\n");
-    link(box.dir, mirrorDir(7), ["bin/wt-pr"]);
+    link(box.dir, DIR, ["bin/wt-pr"]);
 
-    const mirror = join(box.dir, mirrorPath(mirrorDir(7), "bin/wt-pr"));
+    const mirror = join(box.dir, mirrorPath(DIR, "bin/wt-pr"));
     expect(mirror).toBe(join(box.dir, MIRROR, "7/bin/wt-pr.ts"));
     expect(readlinkSync(mirror)).toBe(join(box.dir, "bin/wt-pr"));
   });
 
   test("removes the mirror and the scratch directory it made", () => {
-    link(box.dir, mirrorDir(7), ["bin/wt-pr"]);
-    clean(box.dir, mirrorDir(7));
+    link(box.dir, DIR, ["bin/wt-pr"]);
+    clean(box.dir, DIR);
 
     expect(existsSync(join(box.dir, MIRROR))).toBe(false);
     expect(existsSync(join(box.dir, "tmp"))).toBe(false);
@@ -114,21 +116,21 @@ describe("link and clean", () => {
   // A killed run leaves its directory behind, and process ids come back around.
   test("takes over a directory a dead run left at the same id", () => {
     box.write("bin/wt-pr", "#!/usr/bin/env bun\n");
-    link(box.dir, mirrorDir(7), ["bin/wt-pr"]);
+    link(box.dir, DIR, ["bin/wt-pr"]);
 
-    expect(() => link(box.dir, mirrorDir(7), ["bin/wt-pr"])).not.toThrow();
-    expect(readlinkSync(join(box.dir, mirrorPath(mirrorDir(7), "bin/wt-pr")))).toBe(join(box.dir, "bin/wt-pr"));
+    expect(() => link(box.dir, DIR, ["bin/wt-pr"])).not.toThrow();
+    expect(readlinkSync(join(box.dir, mirrorPath(DIR, "bin/wt-pr")))).toBe(join(box.dir, "bin/wt-pr"));
   });
 
   // Two runs in one tree own separate directories, so neither cleanup takes
   // links the other is still linting.
   test("leaves another run's mirror in place", () => {
     box.write("bin/wt-pr", "#!/usr/bin/env bun\n");
-    link(box.dir, mirrorDir(7), ["bin/wt-pr"]);
+    link(box.dir, DIR, ["bin/wt-pr"]);
     link(box.dir, mirrorDir(8), ["bin/wt-pr"]);
-    clean(box.dir, mirrorDir(7));
+    clean(box.dir, DIR);
 
-    expect(existsSync(join(box.dir, mirrorPath(mirrorDir(7), "bin/wt-pr")))).toBe(false);
+    expect(existsSync(join(box.dir, mirrorPath(DIR, "bin/wt-pr")))).toBe(false);
     expect(existsSync(join(box.dir, mirrorPath(mirrorDir(8), "bin/wt-pr")))).toBe(true);
   });
 
@@ -137,43 +139,41 @@ describe("link and clean", () => {
   test("leaves a tmp symlink alone", () => {
     const target = box.mkdir("elsewhere");
     symlinkSync(target, join(box.dir, "tmp"));
-    clean(box.dir, mirrorDir(7));
+    clean(box.dir, DIR);
 
     expect(readlinkSync(join(box.dir, "tmp"))).toBe(target);
   });
 
   test("leaves other scratch in place", () => {
     box.write("tmp/notes", "kept\n");
-    link(box.dir, mirrorDir(7), ["bin/wt-pr"]);
-    clean(box.dir, mirrorDir(7));
+    link(box.dir, DIR, ["bin/wt-pr"]);
+    clean(box.dir, DIR);
 
     expect(box.read("tmp/notes")).toBe("kept\n");
   });
 });
 
 describe("rewrite", () => {
-  const DIR = mirrorDir(7);
-
   test("maps a default-format diagnostic onto the real path", () => {
     const line = `${DIR}/bin/wt-pr.ts:12:3: error eslint(complexity): too complex`;
-    expect(rewrite(line, DIR, ["bin/wt-pr"])).toBe("bin/wt-pr:12:3: error eslint(complexity): too complex");
+    expect(rewrite(line, { dir: DIR, scripts: ["bin/wt-pr"] })).toBe("bin/wt-pr:12:3: error eslint(complexity): too complex");
   });
 
   // The annotation names the file twice, and GitHub reads the `file=` field.
   test("maps both paths in a github annotation", () => {
     const line = `::error file=${DIR}/bin/wt-pr.ts,line=12,title=x::${DIR}/bin/wt-pr.ts:12:3: nope`;
-    expect(rewrite(line, DIR, ["bin/wt-pr"])).toBe("::error file=bin/wt-pr,line=12,title=x::bin/wt-pr:12:3: nope");
+    expect(rewrite(line, { dir: DIR, scripts: ["bin/wt-pr"] })).toBe("::error file=bin/wt-pr,line=12,title=x::bin/wt-pr:12:3: nope");
   });
 
   test("leaves a path it was not given alone", () => {
     const line = `${DIR}/bin/other.ts:1:1: error`;
-    expect(rewrite(line, DIR, ["bin/wt-pr"])).toBe(line);
+    expect(rewrite(line, { dir: DIR, scripts: ["bin/wt-pr"] })).toBe(line);
   });
 });
 
 describe("lint-ts", () => {
   test("reports a violation in an extensionless executable against its own path", () => {
-    fixture(NESTED);
+    fixture({ executable: NESTED });
     const outcome = run();
 
     expect(outcome.status).toBe(1);
@@ -183,14 +183,14 @@ describe("lint-ts", () => {
   });
 
   test("passes an executable the thresholds allow", () => {
-    fixture("export const shallow = (a: number): number => (a ? 1 : 0)\n");
+    fixture({ executable: "export const shallow = (a: number): number => (a ? 1 : 0)\n" });
     const outcome = run();
 
     expect(outcome.status).toBe(0);
   });
 
   test("reports a violation in a .ts module oxlint finds on its own", () => {
-    fixture("export const shallow = (a: number): number => (a ? 1 : 0)\n", NESTED);
+    fixture({ executable: "export const shallow = (a: number): number => (a ? 1 : 0)\n", module: NESTED });
     const outcome = run();
 
     expect(outcome.status).toBe(1);
@@ -198,7 +198,7 @@ describe("lint-ts", () => {
   });
 
   test("leaves no mirror behind", () => {
-    fixture(NESTED);
+    fixture({ executable: NESTED });
     run();
 
     expect(existsSync(join(box.dir, MIRROR))).toBe(false);
@@ -207,7 +207,7 @@ describe("lint-ts", () => {
   // link() makes no directory for an empty list, and oxlint exits 1 on a path
   // that is not there.
   test("passes a tree with no bun executables", () => {
-    fixture(null);
+    fixture({});
 
     const outcome = run();
 
@@ -218,7 +218,7 @@ describe("lint-ts", () => {
   // A killed run leaves its mirror behind. The repo pass ignores the whole
   // mirror root, so the leftover is not linted as ordinary source.
   test("ignores a mirror another run left behind", () => {
-    fixture("export const shallow = (a: number): number => (a ? 1 : 0)\n");
+    fixture({ executable: "export const shallow = (a: number): number => (a ? 1 : 0)\n" });
     box.write("bin/stale", NESTED);
     link(box.dir, mirrorDir(999), ["bin/stale"]);
 
@@ -226,6 +226,19 @@ describe("lint-ts", () => {
 
     expect(outcome.status).toBe(0);
     expect(outcome.stdout).not.toContain("bin/stale");
+  });
+
+  // Both callers install before running this, so a missing oxlint is a tree
+  // nobody installed into rather than a lint result.
+  test("says which oxlint it could not find", () => {
+    fixture({});
+    rmSync(join(box.dir, "node_modules"));
+
+    const outcome = run();
+
+    expect(outcome.status).not.toBe(0);
+    expect(outcome.stderr).toContain("node_modules/.bin/oxlint");
+    expect(outcome.stderr).toContain("bun install");
   });
 
   test("explains itself", () => {

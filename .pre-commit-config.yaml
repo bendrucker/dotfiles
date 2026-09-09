@@ -52,7 +52,9 @@ repos:
         entry: bash -c 'bun install --frozen-lockfile && exec scripts/lint-ts --deny-warnings'
         # Not types: [ts]. identify tags an extensionless bun executable as
         # `executable` and nothing more, so a change to one of the largest
-        # TypeScript files here would not fire a hook keyed on that tag. A topic
-        # owns its own bin/, so the prefix is unanchored.
-        files: (\.ts$|^\.oxlintrc\.json$|(^|/)(bin|scripts)/[^.]+$)
+        # TypeScript files here would not fire a hook keyed on that tag. Every
+        # extensionless path matches rather than the two directories that hold
+        # one today, because the shebang is what decides which of them lint-ts
+        # mirrors and a prefix here would be a second answer to that.
+        files: (\.ts$|^\.oxlintrc\.json$|(^|/)[^./]+$)
         pass_filenames: false

@@ -15,6 +15,7 @@
         ]
       }
     ],
+    "no-control-regex": "off",
     "complexity": ["error", 20],
     "max-depth": ["error", 4],
     "max-params": ["error", 5],

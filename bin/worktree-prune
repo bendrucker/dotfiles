@@ -61,7 +61,6 @@ const LOG_LINES = 100;
 // what gum's colours and the spinner's erase codes are. Carriage returns and
 // escape forms without '[' are left alone rather than the strip being widened
 // past what gum emits.
-// oxlint-disable-next-line no-control-regex -- ESC is what the pattern is for.
 const CSI = /\x1b\[[0-9;]*[a-zA-Z]/g;
 
 export function stripAnsi(text: string): string {
