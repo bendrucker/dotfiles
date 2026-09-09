@@ -46,6 +46,17 @@ function writeScript(path: string, body: string): void {
   chmodSync(path, 0o755);
 }
 
+// Shadow git with a stub that runs `body` on a `submodule` invocation and hands
+// every other invocation to the real git.
+function stubGit(body: string): void {
+  const realGit = Bun.which("git", { PATH: parentPath });
+  if (realGit === null) throw new Error("git is not on PATH");
+  writeScript(
+    join(stubs, "git"),
+    ['for a in "$@"; do', `  [ "$a" = submodule ] && { ${body}; }`, "done", `exec ${realGit} "$@"`].join("\n"),
+  );
+}
+
 function readLog(name: string): string {
   try {
     return readFileSync(join(sandbox, name), "utf8");
@@ -149,6 +160,18 @@ test("exits 0 when the repo is already up to date", () => {
   expect(result.status).toBe(0);
   expect(result.stderr).toContain("Already up to date");
   expect(readLog("reload.log")).toBe("");
+});
+
+// A fetch with nothing to pull says nothing about the submodules. An update that
+// failed once leaves the superproject reading as current on every run after it,
+// so a sync that returned early here would strand them at the wrong revision.
+test("updates the submodules when the repo is already up to date", () => {
+  stubGit(`printf 'update\\n' >>"${join(sandbox, "submodule.log")}"`);
+
+  const result = sync();
+  expect(result.status).toBe(0);
+  expect(result.stderr).toContain("Already up to date");
+  expect(readLog("submodule.log")).toBe("update\n");
 });
 
 // A dirty working tree is caught before the sync. Without a terminal it renders
@@ -269,17 +292,7 @@ test("downgrades a failing reload to a warning", () => {
 
 test("exits 1 and notifies when the submodule update fails", () => {
   pushCommit();
-  const realGit = Bun.which("git", { PATH: parentPath });
-  if (realGit === null) throw new Error("git is not on PATH");
-  writeScript(
-    join(stubs, "git"),
-    [
-      'for a in "$@"; do',
-      '  [ "$a" = submodule ] && exit 1',
-      "done",
-      `exec ${realGit} "$@"`,
-    ].join("\n"),
-  );
+  stubGit("exit 1");
 
   const result = sync();
   expect(result.status).toBe(1);

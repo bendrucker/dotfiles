@@ -314,6 +314,13 @@ export async function run(): Promise<number> {
   // still work from. Stopping here would let one dirty file hold back brew,
   // mise, symlinks and the drift check for as long as it sat there, so the
   // failure is reported and carried to the exit status instead.
+  //
+  // A failed submodule update is the one break that leaves the tree mismatched
+  // rather than merely stale, since the superproject has already moved. It is
+  // installed from anyway: the submodules carry theme files that
+  // scripts/install symlinks and runs no installer from, so the mismatch shows
+  // up as a stale theme rather than a half-applied upgrade, and dotfiles-sync
+  // retries the update on every run until it takes.
   let syncFailure = 0;
   if (sync.status !== 0) {
     log("error", "sync failed");
