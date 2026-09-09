@@ -36,13 +36,31 @@ Bun resolves `imports` from the root `package.json` alone, so a specifier resolv
 
 ### Linting TypeScript
 
-oxlint is the repo's one devDependency, pinned in `package.json` and tracked by Renovate's bun manager like any other. The `lint` job and the pre-commit hook both run `bun install --frozen-lockfile` before `bunx oxlint --deny-warnings`.
+oxlint is the repo's one devDependency, pinned in `package.json` and tracked by Renovate's bun manager like any other. The `lint` job and the pre-commit hook both run `bun install --frozen-lockfile` before `scripts/lint-ts --deny-warnings`.
 
-That install is what makes the pin real. A bare `bunx oxlint` against a tree with no `node_modules` fetches the latest release and ignores the version in `package.json` without saying so, which is a silent wrong-version run rather than a failure.
+That install is what makes the pin real. `scripts/lint-ts` spawns `node_modules/.bin/oxlint` and stops with the path it wanted when nothing is there. A bare `bunx oxlint` instead fetches the latest release and ignores the version in `package.json` without saying so, which is a silent wrong-version run rather than a failure, and it spends a few hundred milliseconds re-resolving the package on every call.
 
 `.oxlintrc.json` runs the `correctness` category plus a `no-restricted-imports` rule that rejects a path-shaped import of anything under `packages/`. That rule is what makes the specifier table above a boundary rather than a convention, since a deep relative path into another package now fails the build.
 
-oxlint discovers files by extension, so the `bin/` executables are invisible to it: they carry a `#!/usr/bin/env bun` shebang and no `.ts` suffix, and naming one on the command line reports no files to lint. Their `bin/<script>.test.ts` neighbors are linted normally. A rule that has to hold for the executables themselves needs a different mechanism.
+`Bun.stripANSI` is what strips escape sequences from a child's output, as `zsh/zprof/zprof-format.ts` does. Use a hand-rolled regex only to strip something narrower, the way `bin/dotfiles-upgrade` keeps OSC title text a reader wants while dropping CSI. That regex holds a literal ESC, so it needs an `oxlint-disable-next-line no-control-regex`. Turning the rule off repo-wide instead would cover three deliberate patterns at the cost of every accidental control character.
+
+#### Size and Complexity
+
+`.oxlintrc.json` also caps `complexity`, `max-depth`, `max-params`, `max-statements`, `max-lines-per-function`, and `max-lines`. Every threshold sits just above what the tree already contains, so the gate keeps the line where the code sits instead of asking for a refactor. `max-depth` and `max-params` sit exactly on it, at 4 and 5, so those two fail on any increase at all. Measure the tree's distribution before tightening one, rather than reaching for the next round number down.
+
+A `**/*.test.ts` override turns off `max-lines`, `max-lines-per-function`, and `max-statements`. Those three measure the `describe` block, which is a container for cases rather than a function, so a test file grows as it covers more. `complexity`, `max-depth`, and `max-params` stay on there, since they measure the helpers inside a case.
+
+Two functions are over a threshold and carry an `oxlint-disable-next-line` naming why. `forgePass` in `bin/wt-prune` is at complexity 31, and `main` in `bin/clone-repo` at complexity 27 and 54 statements. Both are wide rather than deep: a decision table in one, a run of flag handlers in the other. The count comes from the number of arms, and no single arm is hard to read. Everything else clusters at or below 17 and 37. Splitting either is its own change.
+
+#### Linting the `bin/` Executables
+
+oxlint discovers files by extension, so the `bin/` executables are invisible to it: they carry a `#!/usr/bin/env bun` shebang and no `.ts` suffix, and naming one on the command line reports no files to lint. Since they hold the largest TypeScript in the repo, the `lint` job and the pre-commit hook run `scripts/lint-ts` instead of `oxlint` directly. It symlinks each one into `tmp/lint-ts/` under a `.ts` name and lints that mirror against the same config. The mirror paths in the output are then mapped back to the real ones, so a diagnostic names the executable rather than the link, and a CI annotation lands on the right line.
+
+The ordinary pass takes an `--ignore-pattern` for the mirror root, which is what keeps it from linting the links a second time as source. A config ignore or a `tmp/` line in `.gitignore` would not do, because both reach the mirror pass too, where a path oxlint ignores stays ignored even when named on the command line. Each run mirrors into its own directory under that root, so a hand run overlapping a pre-commit one cannot delete the links the other is reading. The mirror lives inside the repo rather than under `$TMPDIR` because the `github` formatter emits an annotation only for a path it can make relative to the working directory.
+
+The pre-commit hook keys on `files:` rather than `types: [ts]`. The `identify` library tags an extensionless bun executable as `executable` and nothing more, so a `types`-keyed hook never fires on a change to one. The pattern matches any extensionless path rather than the two directories that hold one today, since the shebang is what decides which of them get mirrored and a directory prefix in the hook would be a second answer to that. It over-fires on a `Brewfile`, which costs one run of a linter that takes under half a second.
+
+Nothing here finds an unused export across the `#`-specifier modules. oxlint 1.82.0 does not implement `import/no-unused-modules`, `no-unused-vars` reaches only within a file, and every candidate that would close the gap is a new dependency.
 
 ## Common Tasks
 
@@ -144,6 +162,7 @@ A test's name and where it sits decide which CI job runs it:
 - `*.test.ts` run in the `bun` job against a bare checkout. They stub whatever the script under test calls, so nothing they assert depends on the machine.
 - `*.integration.test.ts` run in the `bootstrap` job on Linux and macOS, after symlinks are installed and `brew bundle` has run. They read the installed config through its symlinks, which is state only bootstrap produces.
 - Tests under `.claude/skills/` run in the `skill-tests` job, whichever suffix they carry, because they need that skill's own dependencies. bun's discovery skips dot directories, so the job names the path with a leading `./` to have it read as a path rather than a filter.
+- `scripts/lint-ts.test.ts` runs in the `lint` job, which installs oxlint, and the `bun` job ignores it by path. Its cases spawn the pinned binary. Keeping the `bun` job a bare checkout is what fails a runtime dependency added to a `#`-specifier module, so an install there would cost more than the split does.
 
 An integration test carries no guard that would let it pass on an unbootstrapped machine. Failing there is correct, and the CI job is what decides when it runs. A skip guard is for a genuinely optional dependency, like the font cask that `bin/glyph-scan.integration.test.ts` needs to check a glyph renders.
 

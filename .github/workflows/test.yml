@@ -180,9 +180,13 @@ jobs:
       # The integration tests read state only bootstrap creates, so they run
       # there instead. The skill tests need duckdb and have their own job;
       # discovery skips their dot directory, and the pattern says so on purpose.
+      # lint-ts drives the pinned oxlint, so its tests run in the lint job,
+      # which installs it. This job stays a bare checkout on purpose: a #
+      # specifier resolving with no node_modules is what the 3am jobs need.
       - run: |
           bun test \
             --path-ignore-patterns='**/*.integration.test.ts' \
+            --path-ignore-patterns='**/lint-ts.test.ts' \
             --path-ignore-patterns='.claude/skills/**'
   skill-tests:
     strategy:
@@ -283,8 +287,15 @@ jobs:
       - name: Install oxlint
         run: bun install --frozen-lockfile
 
+      # Here rather than the bun job, which runs against a bare checkout:
+      # these cases spawn the pinned oxlint the step above installed.
+      - name: Test the TypeScript linter
+        run: bun test scripts/lint-ts.test.ts
+
+      # scripts/lint-ts wraps oxlint so the bin/ executables are linted too.
+      # oxlint discovers by extension and they carry none.
       - name: Lint TypeScript
-        run: bunx oxlint --deny-warnings --format=github
+        run: scripts/lint-ts --deny-warnings --format=github
 
       - name: Check for expired migrations
         run: scripts/lint-expired

@@ -291,6 +291,12 @@ function prune(options: Options): Outcome {
 
 // Exact forge-state removals over the surviving linked worktrees, plus the age
 // pass, or under -i the collection of what neither of them decided.
+//
+// Over the complexity ceiling. The branches are one decision table over merged,
+// closed, open, and unknown forge state crossed with the interactive and age
+// paths, so pulling an arm out separately would spread that table across call
+// sites rather than shrink it.
+// oxlint-disable-next-line complexity
 function forgePass(
   worktrees: Worktree[],
   options: Options,

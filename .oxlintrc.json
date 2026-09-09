@@ -14,6 +14,22 @@
           }
         ]
       }
-    ]
-  }
+    ],
+    "complexity": ["error", 20],
+    "max-depth": ["error", 4],
+    "max-params": ["error", 5],
+    "max-statements": ["error", 40],
+    "max-lines-per-function": ["error", { "max": 90, "skipBlankLines": true, "skipComments": true }],
+    "max-lines": ["error", { "max": 600, "skipBlankLines": true, "skipComments": true }]
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts"],
+      "rules": {
+        "max-lines": "off",
+        "max-lines-per-function": "off",
+        "max-statements": "off"
+      }
+    }
+  ]
 }
