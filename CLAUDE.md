@@ -216,6 +216,14 @@ Expect work tooling to be absent here: corporate cloud and SSO clients, internal
 
 Never add employer-specific tooling to a topic directory. Machines legitimately differ in what they have on `$PATH`. Before proposing a new topic for something seen in shell history, ask whether it belongs in `~/Brewfile.local` instead.
 
+## Credentials
+
+Coding agents run as this user and read whatever the shell reads, so a mode bit is no barrier to one. What keeps a secret away from an agent is the secret not being on disk: a login keychain the tool talks to, a Secure Enclave key, or an SSO session. Almost everything here already delegates. `gh` and `glab` keep their tokens in the login keychain, Docker in `credsStore`, Terraform through the `keychain` credentials helper, Linear in the system keyring, AWS through SSO with no static keys at all, and SSH through Secretive, whose private halves cannot be read by anything.
+
+`credentials/bin/credential-audit` is what keeps that true of the ones it watches. Its `CREDENTIALS` table covers npm, AWS, `gh`, `glab`, Docker, and the keys under `~/.ssh`. A finding is one line carrying the subject, a verdict, and the remedy that clears it. The verdicts reach past a literal secret to a key held under a passphrase, a mode readable beyond the owner, and a file this run could not open. A credential reached through a symlink is read and reported like any other, and its mode is left to whatever repo owns the target. Silence means every credential in the table delegates. Terraform and Linear delegate as well and sit in no table: a tool absent from it is not thereby safe. It is unexamined, so the entry covering a tool belongs in the same change that installs it.
+
+The audit reports and never removes, for the same reason `scripts/brew-drift` does. A credential in plaintext is either a leftover or the only thing keeping a login alive, and at 3am those are indistinguishable. `--enforce` is the exception, because chmod to `0600` loses nothing. `credentials/install.sh` runs it, so every install tightens what it can. The nightly report afterward carries only what a mode cannot fix. `bin/dotfiles-upgrade` files those through `reportFindings`, latched one credential at a time so a leftover key nobody has dealt with stays quiet while the rest of the set churns around it.
+
 ## Sync and Upgrade System
 
 ### Automated Nightly Upgrades (macOS)
@@ -272,7 +280,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 3. `mise install` — Install language runtimes
 4. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
 5. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
-6. Run topic `install.sh` scripts
+6. Run topic `install.sh` scripts, including `credentials/install.sh`, which chmods credential files to `0600`
 7. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
 8. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
 

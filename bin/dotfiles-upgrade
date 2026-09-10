@@ -15,13 +15,15 @@ import { realpathSync, writeSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SKIP_ESCALATION } from "#jobs/sync-gate";
-import { reportFailure, reportSuccess } from "#jobs/report";
+import { type Finding, reportFailure, reportFindings, reportSuccess } from "#jobs/report";
+import { UNREADABLE, VERDICTS } from "../credentials/bin/credential-audit";
 
 const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
 
 const JOB = "dotfiles-upgrade";
 const SYNC_JOB = "dotfiles-sync";
 const DRIFT_JOB = "brew-drift";
+const CREDENTIALS_JOB = "credential-audit";
 
 // A failure ends at the end of its log, and Things caps a note at 10,000
 // characters, so the tail is the part worth keeping.
@@ -73,6 +75,27 @@ export function logExcerpt(log: string): string {
 // too, and it is part of every latch already standing.
 export function driftFingerprint(listing: string): string {
   return `${listing.split("\n").sort(byCodeUnit).join(" ")} `;
+}
+
+// A report row. ~/.ssh is globbed, so a key filename can carry its own spaces,
+// which neither signal alone tells from the padding between columns. A verdict
+// is a known word with a column gap on both sides of it.
+const CREDENTIAL_ROW = new RegExp(`^(.+?)\\s{2,}(${[...VERDICTS, UNREADABLE].join("|")})\\s{2,}\\S`);
+
+// A subject the audit could not read is held rather than standing, so what the
+// latch already says about it survives a run that could not look.
+export function credentialFindings(output: string): { standing: Finding[]; held: string[] } {
+  const rows = output
+    .split("\n")
+    .map((line) => CREDENTIAL_ROW.exec(line.trim()))
+    .filter((row) => row !== null);
+
+  return {
+    standing: rows
+      .filter((row) => row[2] !== UNREADABLE)
+      .map((row) => ({ subject: row[1], verdict: row[2] })),
+    held: rows.filter((row) => row[2] === UNREADABLE).map((row) => row[1]),
+  };
 }
 
 function byCodeUnit(a: string, b: string): number {
@@ -299,6 +322,23 @@ function reportDrift(home: string, listing: string): number {
   });
 }
 
+// Latched one credential at a time, so a leftover nobody has dealt with stays
+// quiet while the rest of the set churns around it.
+function reportCredentials(home: string, listing: string): number {
+  return reportFindings({
+    job: CREDENTIALS_JOB,
+    // The report mixes a secret in the clear with a file anyone can read, so a
+    // title naming only the first misdirects on a finding about a mode.
+    title: "Credentials exposed on disk",
+    command: join(home, "credentials", "bin", "credential-audit"),
+    output: listing,
+    revision: currentRevision(home),
+    extraMeta: "",
+    outputHeading: "Exposed Credentials",
+    ...credentialFindings(listing),
+  });
+}
+
 export async function run(): Promise<number> {
   const home = process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles");
 
@@ -383,6 +423,21 @@ export async function run(): Promise<number> {
     if (filed !== 0) return filed;
   } else {
     reportSuccess(DRIFT_JOB);
+  }
+
+  // After the install, which ran credentials/install.sh and tightened every
+  // mode it could. What is left is what a chmod cannot fix.
+  const credentials = runCapturingStdout([
+    join(home, "credentials", "bin", "credential-audit"),
+  ]);
+  if (credentials.status !== 0) {
+    log("warn", "credential audit could not run");
+  } else if (credentials.output !== "") {
+    log("warn", "credentials in plaintext");
+    const filed = reportCredentials(home, credentials.output);
+    if (filed !== 0) return filed;
+  } else {
+    reportSuccess(CREDENTIALS_JOB);
   }
 
   reportSuccess(JOB);

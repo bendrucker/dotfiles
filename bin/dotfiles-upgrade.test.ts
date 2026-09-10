@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { skipMessage } from "#jobs/sync-gate";
 import {
+  credentialFindings,
   currentRevision,
   driftFingerprint,
   logExcerpt,
@@ -69,6 +70,49 @@ describe("logExcerpt", () => {
   // The note's closing fence sits directly after the last log line.
   test("drops the trailing blank lines a step leaves behind", () => {
     expect(logExcerpt("done\n\n\n")).toBe("done");
+  });
+});
+
+describe("credentialFindings", () => {
+  const report = [
+    "~/.npmrc               plaintext    npm publish takes a short-lived token, so remove this one",
+    "~/.ssh/id_ed25519.bak  passphrased  Secretive holds the working keys",
+  ].join("\n");
+
+  test("takes the subject and verdict out of an aligned report", () => {
+    expect(credentialFindings(report).standing).toEqual([
+      { subject: "~/.npmrc", verdict: "plaintext" },
+      { subject: "~/.ssh/id_ed25519.bak", verdict: "passphrased" },
+    ]);
+  });
+
+  // A verdict that moves is a different finding, so a key that loses its
+  // passphrase reopens the to-do rather than sitting under the old one.
+  test("reads a changed verdict on the same subject as a different finding", () => {
+    const [before] = credentialFindings("~/.ssh/id_rsa  passphrased  x").standing;
+    const [after] = credentialFindings("~/.ssh/id_rsa  unencrypted  x").standing;
+    expect(before).not.toEqual(after);
+  });
+
+  test("holds a subject it could not read rather than standing it", () => {
+    const findings = credentialFindings("~/.npmrc  unreadable  could not be read this run");
+    expect(findings.standing).toEqual([]);
+    expect(findings.held).toEqual(["~/.npmrc"]);
+  });
+
+  test("reads a clean run as nothing standing", () => {
+    expect(credentialFindings("")).toEqual({ standing: [], held: [] });
+  });
+
+  // ~/.ssh is globbed, so whatever a key is named reaches the report. Each of
+  // these defeats one of the two signals on its own: the doubled space matches
+  // a column gap, and "open" matches a verdict.
+  test.each<{ name: string; line: string; subject: string }>([
+    { name: "a single space", line: "~/.ssh/old key.pem  unencrypted  move it", subject: "~/.ssh/old key.pem" },
+    { name: "two spaces", line: "~/.ssh/old  key.pem  unencrypted  move it", subject: "~/.ssh/old  key.pem" },
+    { name: "a word that is also a verdict", line: "~/.ssh/my open key.pem  unencrypted  move it", subject: "~/.ssh/my open key.pem" },
+  ])("keeps a subject carrying $name whole", ({ line, subject }) => {
+    expect(credentialFindings(line).standing).toEqual([{ subject, verdict: "unencrypted" }]);
   });
 });
 
