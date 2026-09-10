@@ -24,9 +24,7 @@ afterEach(() => {
   box.remove();
 });
 
-// No brew on PATH, so removeCask returns before it can run anything. Which brew
-// command it runs has its own cases in packages/migrations/migration.test.ts.
-// What this file covers is the bundle.
+// No brew on PATH, so removeCask returns before it can run anything.
 function context(): Context {
   return {
     root: box.dir,
@@ -39,7 +37,6 @@ function context(): Context {
     out: {
       write() {},
       run(cmd) {
-        // gum log --level <level> <message>
         if (cmd[0] === "gum") logged.push(cmd.slice(1).join(" "));
         return 0;
       },
