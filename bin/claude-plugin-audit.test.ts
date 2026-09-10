@@ -13,11 +13,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   type Check,
+  commitFor,
   differingPaths,
   foldUnderMarketplace,
   namedPaths,
   type Outcome,
-  peeledCommit,
+  refCandidates,
   pileFor,
   plural,
   rawManifestUrl,
@@ -41,9 +42,37 @@ esac
 exit 0
 `;
 
+// A fake remote serving a ref universe, matched the way ls-remote matches: a
+// pattern answers for a ref it equals, or for one ending in `/` plus the
+// pattern. That tail rule is why a bare `v0.35.1` also answers with a release
+// branch named `ctate/v0.35.1`, and the universe lists refs/heads first the way
+// a real advertisement does.
+//
+// REMOTE_TAG adds that branch-and-tag pair, and REMOTE_BRANCH_SHA gives the
+// branch a commit of its own so the two can be told apart.
 const GIT_STUB = `#!/bin/sh
 case "$1" in
-  ls-remote) printf '%s\\trefs/heads/main\\n' "$REMOTE_SHA" ;;
+  ls-remote)
+    shift 2
+    universe="$REMOTE_SHA HEAD
+$REMOTE_SHA refs/heads/main"
+    if [ -n "\${REMOTE_TAG:-}" ]; then
+      universe="\${REMOTE_BRANCH_SHA:-$REMOTE_SHA} refs/heads/ctate/$REMOTE_TAG
+$universe
+$REMOTE_SHA refs/tags/$REMOTE_TAG"
+    fi
+    printf '%s\\n' "$universe" | while read -r sha path; do
+      [ -n "$path" ] || continue
+      for pattern; do
+        case "$path" in
+          "\${pattern%\\*}"|*/"\${pattern%\\*}")
+            printf '%s\\t%s\\n' "$sha" "$path"
+            break
+            ;;
+        esac
+      done
+    done
+    ;;
   -C)        [ "$3" = "rev-parse" ] && printf '%s\\n' "$CLONE_SHA" ;;
 esac
 exit 0
@@ -95,6 +124,8 @@ afterEach(() => {
   process.env.HOME = environment.HOME;
   process.env.PATH = environment.PATH;
   delete process.env.REMOTE_SHA;
+  delete process.env.REMOTE_BRANCH_SHA;
+  delete process.env.REMOTE_TAG;
   delete process.env.CLONE_SHA;
   globalThis.fetch = network;
   rmSync(sandbox, { recursive: true, force: true });
@@ -443,21 +474,55 @@ describe("recordedCommit", () => {
   });
 });
 
-describe("peeledCommit", () => {
+describe("commitFor", () => {
   // An annotated tag resolves to a tag object, and only its peeled line carries
   // the commit the install would hold.
-  test("prefers the first peeled line", () => {
+  test("prefers the peeled line", () => {
     expect(
-      peeledCommit(`${RECORDED_SHA}\trefs/tags/v1\n${MOVED_SHA}\trefs/tags/v1^{}\n`),
+      commitFor(`${RECORDED_SHA}\trefs/tags/v1\n${MOVED_SHA}\trefs/tags/v1^{}\n`, "refs/tags/v1"),
     ).toBe(MOVED_SHA);
   });
 
-  test("falls back to the first line", () => {
-    expect(peeledCommit(`${RECORDED_SHA}\trefs/heads/main\n`)).toBe(RECORDED_SHA);
+  test("reads a lightweight tag from its own line", () => {
+    expect(commitFor(`${RECORDED_SHA}\trefs/tags/v1\n`, "refs/tags/v1")).toBe(RECORDED_SHA);
+  });
+
+  // The bug this whole path exists for: ls-remote answers a bare `v0.35.1` with
+  // any ref whose path ends in that name, and lists refs/heads first. Reading
+  // the first line took a release branch named `ctate/v0.35.1` over the tag and
+  // called a marketplace sitting exactly on its pin stale every night.
+  test("takes the named ref rather than whichever came back first", () => {
+    const output = `${MOVED_SHA}\trefs/heads/ctate/v1\n${RECORDED_SHA}\trefs/tags/v1\n`;
+    expect(commitFor(output, "refs/tags/v1")).toBe(RECORDED_SHA);
+  });
+
+  // The glob that makes peeling work also sweeps in longer tags.
+  test("ignores a longer tag the glob swept in", () => {
+    const output = `${MOVED_SHA}\trefs/tags/v10\n${RECORDED_SHA}\trefs/tags/v1\n`;
+    expect(commitFor(output, "refs/tags/v1")).toBe(RECORDED_SHA);
+  });
+
+  test("reads a ref that is absent as no commit", () => {
+    expect(commitFor(`${RECORDED_SHA}\trefs/heads/main\n`, "refs/tags/v1")).toBe("");
   });
 
   test("reads no output as no commit", () => {
-    expect(peeledCommit("")).toBe("");
+    expect(commitFor("", "HEAD")).toBe("");
+  });
+});
+
+describe("refCandidates", () => {
+  // A version pin means the tag, so the tag is what settles it.
+  test("resolves a bare name as a tag before a branch", () => {
+    expect(refCandidates("v0.35.1")).toEqual(["refs/tags/v0.35.1", "refs/heads/v0.35.1"]);
+  });
+
+  test("leaves HEAD alone", () => {
+    expect(refCandidates("HEAD")).toEqual(["HEAD"]);
+  });
+
+  test("leaves an already-qualified ref alone", () => {
+    expect(refCandidates("refs/heads/main")).toEqual(["refs/heads/main"]);
   });
 });
 
@@ -566,6 +631,30 @@ describe("the audit over a payload tree", () => {
     const result = await audit();
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("6 checks current");
+  });
+
+  // A version pin names a tag, but ls-remote matches a bare name against the
+  // tail of every ref path and lists refs/heads first, so a repo carrying a
+  // release branch like `ctate/v0.35.1` answered with the branch as well.
+  // Resolving the pin to that branch reported a marketplace sitting exactly on
+  // its tag as stale every night, and no update ever cleared it.
+  test("resolves a version pin to its tag over a branch of the same name", async () => {
+    amendMarketplaceSource("first", { ref: "v0.35.1" });
+    process.env.REMOTE_TAG = "v0.35.1";
+    process.env.REMOTE_BRANCH_SHA = MOVED_SHA;
+    const result = await audit();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("6 checks current");
+  });
+
+  test("still flags a marketplace whose pinned tag moved", async () => {
+    amendMarketplaceSource("first", { ref: "v0.35.1" });
+    process.env.REMOTE_TAG = "v0.35.1";
+    process.env.REMOTE_SHA = MOVED_SHA;
+    const result = await audit();
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("marketplace/first");
+    expect(result.stdout).toContain("stale");
   });
 
   // Treating a materialized marketplace as unverifiable demoted every plugin
