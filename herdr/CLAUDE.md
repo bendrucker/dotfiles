@@ -79,7 +79,7 @@ pkill -f 'ghostty -e env .*herdr --session preview'
 
 ## Sidebar Tokens
 
-`bin/herdr-workspace-status` reports the `$status_*` and `$branch` workspace tokens, which the spaces rows render. The Claude status line in bendrucker/claude also reports `$title` and `$ctx_*` on panes, and `config.toml` renders neither. The Claude agent row takes herdr's built-in `terminal_title_stripped` instead, which holds the same session name with the leading state glyph removed. herdr strips escape codes from token values, so a color is a token name styled in `config.toml`, and a new color is a new name in both places.
+`bin/herdr-workspace-status` reports the `$status_*` and `$branch` workspace tokens, which the spaces rows render. The Claude status line in bendrucker/claude also reports `$title` and `$ctx_*` on panes, and `config.toml` renders neither. The Claude agent row takes herdr's built-in `terminal_title_stripped` instead, which holds the same session name with the leading state glyph removed. The one Claude-side pane token that row does render is `$review`, which the `review:human` skill's `attention.ts` in the same repo reports while a review is pending. herdr strips escape codes from token values, so a color is a token name styled in `config.toml`, and a new color is a new name in both places.
 
 ## Tests
 
