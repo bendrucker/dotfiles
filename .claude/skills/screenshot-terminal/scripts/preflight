@@ -20,7 +20,32 @@
 
 set -euo pipefail
 
-windows=$(osascript -l JavaScript <<'JXA'
+# `null` until the enumeration answers, so the catch-all below still emits a
+# parseable line when it is the enumeration itself that died. Everything the
+# trap calls is defined above it for the same reason.
+windows=null
+probe=
+
+# jq rather than a sed pattern, matching find-herdr-window and herdr-snapshot.
+# The payload gains a string field on the capture-failed path, and a regex over
+# `[^,}]*` returns a truncated value for one of those instead of failing.
+field() { jq -r ".$1" <<<"$windows"; }
+
+done_() {
+  trap - EXIT
+  [ -n "$probe" ] && rm -f "$probe"
+  echo "$1"
+  exit "$2"
+}
+
+fail() { done_ "{\"ok\":false,\"reason\":\"$1\",\"detail\":$windows}" "$2"; }
+
+# One JSON line is the whole contract, so an exit this script never planned for
+# has to produce one too. `done_` clears this on its way out, so the only exits
+# that reach it are the unplanned ones.
+trap 'fail preflight-crashed 6' EXIT
+
+enumerated=$(osascript -l JavaScript <<'JXA'
 ObjC.import('CoreGraphics');
 ObjC.import('Foundation');
 const onscreen = $.kCGWindowListOptionOnScreenOnly;
@@ -55,28 +80,12 @@ JSON.stringify({
   first_window_id: terms.length ? terms[0].kCGWindowNumber : null,
 });
 JXA
-)
+) || enumerated=
 
-# jq rather than a sed pattern, matching find-herdr-window and herdr-snapshot.
-# The payload gains a string field on the capture-failed path, and a regex over
-# `[^,}]*` returns a truncated value for one of those instead of failing.
-field() { jq -r ".$1" <<<"$windows"; }
-
-probe=
-
-done_() {
-  trap - EXIT
-  [ -n "$probe" ] && rm -f "$probe"
-  echo "$1"
-  exit "$2"
-}
-
-fail() { done_ "{\"ok\":false,\"reason\":\"$1\",\"detail\":$windows}" "$2"; }
-
-# One JSON line is the whole contract, so an exit this script never planned for
-# has to produce one too. `done_` clears this on its way out, so the only exits
-# that reach it are the unplanned ones.
-trap 'fail preflight-crashed 6' EXIT
+# Held aside until it parses, so a JXA that crashed or printed a fragment
+# leaves `windows` at `null` and the line this exits on is still JSON.
+jq -e . >/dev/null 2>&1 <<<"$enumerated" || fail preflight-crashed 6
+windows=$enumerated
 
 [ "$(field locked)" = "true" ] && fail screen-locked 2
 [ "$(field terminal_window_count)" = "0" ] && fail no-terminal-windows 3

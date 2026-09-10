@@ -74,10 +74,10 @@ EOF
 # `set -u` aborts the script with bash's own unbound-variable message before
 # any of the parsing below can report what was missing.
 flag_value() {
-  [ $# -ge 2 ] && [ -n "$2" ] || {
+  if [ $# -lt 2 ] || [ -z "$2" ]; then
     echo "herdr-preview: $1 needs a value" >&2
     return 1
-  }
+  fi
   echo "$2"
 }
 
@@ -122,18 +122,25 @@ preview_herdr() {
   HERDR_SOCKET_PATH="$(session_socket "$name")" herdr "$@"
 }
 
+# The socket of the preview this run is driving, set once its name is known.
+PREVIEW_SOCKET=''
+
 # The pane holding the client belongs to the *calling* session, so finding it
 # again means talking to that server. A shell that ran the documented
 # `export HERDR_SOCKET_PATH="$(herdr-preview socket)"` would otherwise send
 # these to the preview, where the tab does not exist, and `read` would report
-# no client pane. Drop a socket path that names a session directory and let
-# herdr fall back to its default; leave any other one alone, since that is a
-# caller who meant it.
+# no client pane.
+#
+# Only this preview's own socket is dropped. Matching the shape of a session
+# socket instead would also strip a caller running inside their own named
+# session, whose socket is equally `sessions/<name>/herdr.sock`, and send every
+# tab and pane command to the default server.
 caller_herdr() {
-  case ${HERDR_SOCKET_PATH:-} in
-    */herdr/sessions/*/herdr.sock) env -u HERDR_SOCKET_PATH herdr "$@" ;;
-    *) herdr "$@" ;;
-  esac
+  if [ -n "$PREVIEW_SOCKET" ] && [ "${HERDR_SOCKET_PATH:-}" = "$PREVIEW_SOCKET" ]; then
+    env -u HERDR_SOCKET_PATH herdr "$@"
+  else
+    herdr "$@"
+  fi
 }
 
 # herdr's own tokens are validated here, so this catches a mistyped sidebar
@@ -176,7 +183,8 @@ derive_config() {
   content=$(cat "$config") || return 1
   if [ -n "$root" ]; then
     for script in "$root"/bin/* "$root"/*/bin/*; do
-      [ -f "$script" ] && [ -x "$script" ] || continue
+      [ -f "$script" ] || continue
+      [ -x "$script" ] || continue
       name=$(basename "$script")
       case $content in
         *"command = \"$name\""*) ;;
@@ -225,6 +233,7 @@ cmd_start() {
   done
 
   check_session_name "$name" || return 1
+  PREVIEW_SOCKET=$(session_socket "$name")
 
   root=$(git rev-parse --show-toplevel 2>/dev/null)
   if [ -z "$config" ]; then
@@ -236,6 +245,12 @@ cmd_start() {
   fi
   config=$(abspath "$config")
   check_config "$config" || return 1
+
+  # The bare commands in a config should resolve to the scripts in the
+  # repository that config came from. Taking the root from this directory
+  # instead would point a config passed with --config from another checkout at
+  # whatever same-named script happens to sit here.
+  root=$(git -C "$(dirname "$config")" rev-parse --show-toplevel 2>/dev/null)
 
   # A socket file outlives the server that made it, so its presence is not
   # evidence of a live session. Ask the server: a crashed one answers nothing
@@ -291,8 +306,11 @@ cmd_start() {
     return 1
   }
 
+  # Beside the session's own state rather than in the temp directory. A
+  # predictable name under a shared /tmp is a symlink another local user can
+  # plant, and the redirection below would follow it and truncate the target.
   local errlog server_pid
-  errlog="${TMPDIR:-/tmp}/herdr-preview-$name.log"
+  errlog=$(session_dir "$name")/start.log
   : >"$errlog"
   env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
     -u HERDR_SOCKET_PATH -u HERDR_BIN_PATH \
@@ -348,13 +366,19 @@ cmd_start() {
     pane=$(caller_herdr tab create --workspace "$workspace" --cwd "$PWD" \
       --label "$(tab_label "$name")" --no-focus 2>/dev/null |
       jq -r '.result.root_pane.pane_id')
-    [ -n "$pane" ] && [ "$pane" != null ] || {
+    if [ -z "$pane" ] || [ "$pane" = null ]; then
       echo "herdr-preview: could not create a tab for the client" >&2
       abandon_start "$name" ""
       return 1
-    }
+    fi
     created_pane=$pane
   fi
+
+  # A pane passed with --pane keeps the caller's own tab label, so the label
+  # search alone would never find it again and both `read` and `stop` would
+  # report no client. Recording the id covers that, and it goes away with the
+  # session directory on stop.
+  echo "$pane" >"$(session_dir "$name")/client-pane"
 
   # Through a file rather than as a command string. `pane run` hands the
   # string to the pane's interactive shell, which expands aliases, and
@@ -398,10 +422,16 @@ EOF
   echo "$pane"
 }
 
-# The tab label is the handle, so this survives a session that has been driven
-# since it started.
+# The recorded id first, because a pane the caller supplied carries their own
+# tab label and nothing else can find it. The label search is the fallback, and
+# it is what survives a session directory that has lost the file.
 find_pane() {
-  local name=$1
+  local name=$1 recorded
+  recorded=$(cat "$(session_dir "$name")/client-pane" 2>/dev/null || true)
+  if [ -n "$recorded" ]; then
+    echo "$recorded"
+    return 0
+  fi
   caller_herdr api snapshot 2>/dev/null | jq -r --arg label "$(tab_label "$name")" '
     .result.snapshot as $s
     | [$s.tabs[]? | select(.label == $label) | .tab_id] as $tabs
@@ -431,6 +461,7 @@ cmd_read() {
     esac
   done
   check_session_name "$name" || return 1
+  PREVIEW_SOCKET=$(session_socket "$name")
   pane=$(find_pane "$name")
   [ -n "$pane" ] || {
     echo "herdr-preview: no client pane for session $name" >&2
@@ -450,6 +481,7 @@ cmd_socket() {
     esac
   done
   check_session_name "$name" || return 1
+  PREVIEW_SOCKET=$(session_socket "$name")
   session_socket "$name"
 }
 
@@ -464,6 +496,7 @@ cmd_stop() {
   done
 
   check_session_name "$name" || return 1
+  PREVIEW_SOCKET=$(session_socket "$name")
 
   pane=$(find_pane "$name")
   if [ -n "$pane" ]; then

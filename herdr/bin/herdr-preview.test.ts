@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 import { launcherContract } from "#harness/launchers";
@@ -200,20 +201,51 @@ esac`);
   expect(calls.some((c) => c.startsWith("session delete preview"))).toBe(true);
 });
 
+// A repository of the config's own, holding a script this one also has. The
+// rewrite has to resolve against it rather than against the checkout the test
+// runs in, and naming the same script is what tells the two apart.
+function configRepo(script: string): string {
+  const root = box.mkdir("elsewhere");
+  run(["git", "init", "-q", root]);
+  box.stub(`elsewhere/herdr/bin/${script}`, "exit 0");
+  return root;
+}
+
 // The server resolves a bare tab bar command against its own PATH, which is
 // the installed copy. A preview of a config whose tokens come from a script
 // under test would render those rows bare, which reads as a config bug.
 test("repoints a bare command naming a repo script at the worktree copy", () => {
-  const config = box.write("c.toml", 'tab_bar_right = [{ command = "herdr-workspace-status" }]\n');
+  configRepo("herdr-workspace-status");
+  const config = box.write(
+    "elsewhere/herdr/config.toml",
+    'tab_bar_right = [{ command = "herdr-workspace-status" }]\n',
+  );
   stubHerdrThatStarts();
   const r = preview(["start", "--config", config], { HERDR_WORKSPACE_ID: "wZZ" });
   expect(r.stderr).toContain("pointed herdr-workspace-status at the worktree copy");
+  // The tail alone: git resolves the toplevel through /private on macOS, so the
+  // absolute path it writes is not the one the sandbox handed out.
   const derived = box.read("config/herdr/sessions/preview/config.toml");
-  expect(derived).toContain(`command = "${join(repoRoot, "herdr", "bin", "herdr-workspace-status")}"`);
+  expect(derived).toContain(`${join("elsewhere", "herdr", "bin", "herdr-workspace-status")}"`);
+});
+
+// Taking the root from the working directory instead would point a config
+// passed from another checkout at whatever same-named script sits here, and
+// the preview would render rows from the wrong repository without saying so.
+test("takes the scripts from the repository holding the config", () => {
+  configRepo("herdr-workspace-status");
+  const config = box.write(
+    "elsewhere/herdr/config.toml",
+    'tab_bar_right = [{ command = "herdr-workspace-status" }]\n',
+  );
+  stubHerdrThatStarts();
+  preview(["start", "--config", config], { HERDR_WORKSPACE_ID: "wZZ" });
+  expect(box.read("config/herdr/sessions/preview/config.toml")).not.toContain(repoRoot);
 });
 
 test("leaves a command that is not a repo script alone", () => {
-  const config = box.write("c.toml", 'tab_bar_right = [{ command = "date" }]\n');
+  configRepo("herdr-workspace-status");
+  const config = box.write("elsewhere/herdr/config.toml", 'tab_bar_right = [{ command = "date" }]\n');
   stubHerdrThatStarts();
   preview(["start", "--config", config], { HERDR_WORKSPACE_ID: "wZZ" });
   expect(box.read("config/herdr/sessions/preview/config.toml")).toContain('command = "date"');
@@ -265,6 +297,51 @@ esac`);
   });
   expect(r.status).toBe(0);
   expect(log().some((c) => c.startsWith("pane read w9:p2"))).toBe(true);
+});
+
+// A pane the caller handed in keeps their own tab label, so the label search
+// alone never finds it again and both read and stop report no client.
+test("finds a pane it was handed rather than one it labelled", () => {
+  box.write("ok.toml", "onboarding = false\n");
+  stubHerdrThatStarts({ freePane: true });
+  preview(["start", "--config", box.path("ok.toml"), "--pane", "w9:p7"], {
+    HERDR_WORKSPACE_ID: "wZZ",
+  });
+  // Nothing carries the preview label, so the snapshot search comes up empty.
+  stubHerdr(`case "$1 $2" in
+"api snapshot") echo '{"result":{"snapshot":{"tabs":[],"panes":[]}}}' ;;
+*) exit 0 ;;
+esac`);
+  const r = preview(["read"]);
+  expect(r.status).toBe(0);
+  expect(log().some((c) => c.startsWith("pane read w9:p7"))).toBe(true);
+});
+
+// A caller working inside their own named session holds a socket shaped
+// exactly like a preview's. Dropping one on shape would send every tab and
+// pane command to the default server rather than the session owning the pane.
+test("keeps a caller's session socket that is not this preview's", () => {
+  stubHerdr(`case "$1 $2" in
+"api snapshot")
+  [ -z "\${HERDR_SOCKET_PATH:-}" ] && exit 1
+  echo '{"result":{"snapshot":{"tabs":[{"tab_id":"w9:t2","label":"herdr-preview:preview"}],"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}}' ;;
+*) exit 0 ;;
+esac`);
+  const r = preview(["read"], {
+    HERDR_SOCKET_PATH: `${box.path("config")}/herdr/sessions/work/herdr.sock`,
+  });
+  expect(r.status).toBe(0);
+  expect(log().some((c) => c.startsWith("pane read w9:p2"))).toBe(true);
+});
+
+// A predictable name under a shared /tmp is a symlink another local user can
+// plant, and the redirection that starts the server would follow it and
+// truncate whatever it points at.
+test("writes the server's start log beside the session state", () => {
+  box.write("ok.toml", "onboarding = false\n");
+  stubHerdrThatStarts();
+  preview(["start", "--config", box.path("ok.toml")], { HERDR_WORKSPACE_ID: "wZZ" });
+  expect(existsSync(box.path("config/herdr/sessions/preview/start.log"))).toBe(true);
 });
 
 // A start that gets the server up and then fails leaves a live server holding
@@ -369,11 +446,13 @@ test("names the flag when its value is missing", () => {
   }
 });
 
-// The Bash sandbox permits a unix-socket bind only under /tmp/claude, so a
-// test that needs a real socket roots the session directory there rather than
-// in the sandbox box.
+// A unix socket path caps near 104 bytes, and the agent sandbox permits a bind
+// only under /tmp/claude. Both rule out the harness sandbox, whose root is a
+// long scratch path. /tmp/claude exists only under that sandbox, so everywhere
+// else this falls back to the system temp directory.
 function socketRoot(): string {
-  const root = mkdtempSync(join("/tmp/claude", "herdr-preview-sock-"));
+  const base = existsSync("/tmp/claude") ? "/tmp/claude" : tmpdir();
+  const root = mkdtempSync(join(base, "hp-sock-"));
   socketRoots.push(root);
   const dir = join(root, "herdr", "sessions", "preview");
   mkdirSync(dir, { recursive: true });
