@@ -334,6 +334,26 @@ esac`);
   expect(log().some((c) => c.startsWith("pane read w9:p2"))).toBe(true);
 });
 
+// The usage tells a caller to export the preview's socket, and by `read` time
+// they have. The client's pane still belongs to whatever session ran `start`,
+// so that socket is recorded there and replayed rather than guessed at.
+test("sends pane commands back to the session that ran the start", () => {
+  const caller = `${box.path("config")}/herdr/sessions/work/herdr.sock`;
+  box.write("ok.toml", "onboarding = false\n");
+  stubHerdrThatStarts({ freePane: true });
+  preview(["start", "--config", box.path("ok.toml"), "--pane", "w9:p7"], {
+    HERDR_SOCKET_PATH: caller,
+  });
+  stubHerdr(
+    `[ "$1 $2" = "pane read" ] && echo "$HERDR_SOCKET_PATH" > ${box.path("routed")}\nexit 0`,
+  );
+  const r = preview(["read"], {
+    HERDR_SOCKET_PATH: `${box.path("config")}/herdr/sessions/preview/herdr.sock`,
+  });
+  expect(r.status).toBe(0);
+  expect(box.read("routed").trim()).toBe(caller);
+});
+
 // A predictable name under a shared /tmp is a symlink another local user can
 // plant, and the redirection that starts the server would follow it and
 // truncate whatever it points at.

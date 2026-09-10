@@ -125,22 +125,34 @@ preview_herdr() {
 # The socket of the preview this run is driving, set once its name is known.
 PREVIEW_SOCKET=''
 
+# The socket of the session that owns the client's pane. `start` takes it from
+# its own environment and records it; `read` and `stop` load it back.
+CALLER_SOCKET=''
+
 # The pane holding the client belongs to the *calling* session, so finding it
 # again means talking to that server. A shell that ran the documented
 # `export HERDR_SOCKET_PATH="$(herdr-preview socket)"` would otherwise send
 # these to the preview, where the tab does not exist, and `read` would report
 # no client pane.
 #
-# Only this preview's own socket is dropped. Matching the shape of a session
-# socket instead would also strip a caller running inside their own named
-# session, whose socket is equally `sessions/<name>/herdr.sock`, and send every
-# tab and pane command to the default server.
+# The recorded socket is what makes that exact rather than a guess. Dropping
+# the variable and letting herdr find its default is right only for a caller in
+# the default session: one working inside their own named session holds a
+# socket shaped the same as a preview's, and its panes are not the default
+# server's to find.
 caller_herdr() {
-  if [ -n "$PREVIEW_SOCKET" ] && [ "${HERDR_SOCKET_PATH:-}" = "$PREVIEW_SOCKET" ]; then
+  if [ -n "$CALLER_SOCKET" ]; then
+    HERDR_SOCKET_PATH="$CALLER_SOCKET" herdr "$@"
+  elif [ -n "$PREVIEW_SOCKET" ] && [ "${HERDR_SOCKET_PATH:-}" = "$PREVIEW_SOCKET" ]; then
     env -u HERDR_SOCKET_PATH herdr "$@"
   else
     herdr "$@"
   fi
+}
+
+# Every path that has to reach the calling session goes through this first.
+load_caller_socket() {
+  CALLER_SOCKET=$(cat "$(session_dir "$1")/client-socket" 2>/dev/null || true)
 }
 
 # herdr's own tokens are validated here, so this catches a mistyped sidebar
@@ -234,6 +246,12 @@ cmd_start() {
 
   check_session_name "$name" || return 1
   PREVIEW_SOCKET=$(session_socket "$name")
+
+  # Whatever session this was called from, unless the caller is pointing at the
+  # preview already, which they cannot be before it exists.
+  if [ "${HERDR_SOCKET_PATH:-}" != "$PREVIEW_SOCKET" ]; then
+    CALLER_SOCKET=${HERDR_SOCKET_PATH:-}
+  fi
 
   root=$(git rev-parse --show-toplevel 2>/dev/null)
   if [ -z "$config" ]; then
@@ -379,6 +397,7 @@ cmd_start() {
   # report no client. Recording the id covers that, and it goes away with the
   # session directory on stop.
   echo "$pane" >"$(session_dir "$name")/client-pane"
+  echo "$CALLER_SOCKET" >"$(session_dir "$name")/client-socket"
 
   # Through a file rather than as a command string. `pane run` hands the
   # string to the pane's interactive shell, which expands aliases, and
@@ -462,6 +481,7 @@ cmd_read() {
   done
   check_session_name "$name" || return 1
   PREVIEW_SOCKET=$(session_socket "$name")
+  load_caller_socket "$name"
   pane=$(find_pane "$name")
   [ -n "$pane" ] || {
     echo "herdr-preview: no client pane for session $name" >&2
@@ -497,6 +517,7 @@ cmd_stop() {
 
   check_session_name "$name" || return 1
   PREVIEW_SOCKET=$(session_socket "$name")
+  load_caller_socket "$name"
 
   pane=$(find_pane "$name")
   if [ -n "$pane" ]; then
