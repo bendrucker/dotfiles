@@ -391,8 +391,7 @@ function socketRoot(): string {
 // a live session locks the name out for good after any abnormal death.
 test("clears a socket no server is listening on", () => {
   box.write("ok.toml", "onboarding = false\n");
-  // A dead server's socket is still bound, so the stub refuses while the file
-  // is there and answers once the script has cleared it.
+  // A dead server's socket is still bound.
   box.stub(
     "herdr",
     `echo "$*" >> ${box.path("calls")}
