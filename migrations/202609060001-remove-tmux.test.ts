@@ -31,6 +31,7 @@ function context(): Context {
     home,
     config: box.path("home", ".config"),
     data: box.path("home", ".local", "share"),
+    applications: box.path("Applications"),
     installed: [installed],
     platform: "darwin",
     out: {

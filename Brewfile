@@ -83,7 +83,6 @@ cask 'raycast'
 cask 'slack'
 cask 'the-unarchiver'
 cask 'vibe-island'
-cask 'wispr-flow'
 cask 'zoom', args: corporate_cask_args
 
 mas '1Password for Safari', id: 1569813296
@@ -100,7 +99,6 @@ mas 'Paprika', id: 1303222628 unless corporate
 mas 'Pixelmator Pro', id: 1289583905
 mas 'Speedtest', id: 1153157709
 mas 'Streaks', id: 963034692
-mas 'UTC Bar', id: 525372278
 mas 'Xcode', id: 497799835
 
 # Weather
