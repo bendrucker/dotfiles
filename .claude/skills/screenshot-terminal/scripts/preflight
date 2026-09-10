@@ -1,14 +1,51 @@
 #!/usr/bin/env bash
-# Check whether the host can produce useful screenshots.
-# Prints a single JSON line; exits 0 if ready, non-zero otherwise.
+# Check whether the host can produce useful screenshots, by taking one.
+# Prints a single JSON line. Exits 0 if ready, non-zero otherwise.
+#
+# Enumerating windows is not evidence that capture works. Screen Recording is
+# granted to the calling terminal app, and a major macOS upgrade resets that
+# grant, so the windows are all still there and every capture fails. Asking
+# Quartz what it can see answers a different question than asking it for an
+# image, so this asks for the image.
+#
 # Failure modes covered:
 #   screen-locked        loginwindow / Display Shield topmost
 #   no-terminal-windows  nothing to capture
+#   capture-failed       screencapture would not produce an image
+#   capture-blank        it produced an image carrying no signal: one flat
+#                        color, or bytes that do not decode
+#   no-temp-file         no scratch file to capture into
+#   preflight-crashed    this script died somewhere it did not plan for
 # Usage: preflight
 
 set -euo pipefail
 
-result=$(osascript -l JavaScript <<'JXA'
+# `null` until the enumeration answers, so the catch-all below still emits a
+# parseable line when it is the enumeration itself that died. Everything the
+# trap calls is defined above it for the same reason.
+windows=null
+probe=
+
+# jq rather than a sed pattern, matching find-herdr-window and herdr-snapshot.
+# The payload gains a string field on the capture-failed path, and a regex over
+# `[^,}]*` returns a truncated value for one of those instead of failing.
+field() { jq -r ".$1" <<<"$windows"; }
+
+done_() {
+  trap - EXIT
+  [ -n "$probe" ] && rm -f "$probe"
+  echo "$1"
+  exit "$2"
+}
+
+fail() { done_ "{\"ok\":false,\"reason\":\"$1\",\"detail\":$windows}" "$2"; }
+
+# One JSON line is the whole contract, so an exit this script never planned for
+# has to produce one too. `done_` clears this on its way out, so the only exits
+# that reach it are the unplanned ones.
+trap 'fail preflight-crashed 6' EXIT
+
+enumerated=$(osascript -l JavaScript <<'JXA'
 ObjC.import('CoreGraphics');
 ObjC.import('Foundation');
 const onscreen = $.kCGWindowListOptionOnScreenOnly;
@@ -24,17 +61,88 @@ const locked = wins.some(w =>
 );
 const TERMS = /ghostty|iterm|terminal|alacritty|wezterm|kitty/i;
 const terms = wins.filter(w => TERMS.test(w.kCGWindowOwnerName || '') && (w.kCGWindowLayer || 0) === 0);
-const out = { locked, terminal_window_count: terms.length };
-if (locked)            JSON.stringify({ ok: false, reason: 'screen-locked',       detail: out });
-else if (!terms.length) JSON.stringify({ ok: false, reason: 'no-terminal-windows', detail: out });
-else                    JSON.stringify({ ok: true,                                 detail: out });
+
+// CGPreflightScreenCaptureAccess is absent from the CoreGraphics bridge
+// metadata, so it has to be declared before it can be called. It names the
+// cause when a capture fails; it does not decide the outcome.
+let access = null;
+try {
+  ObjC.bindFunction('CGPreflightScreenCaptureAccess', ['bool', []]);
+  access = $.CGPreflightScreenCaptureAccess();
+} catch (e) {
+  access = null;
+}
+
+JSON.stringify({
+  locked,
+  screen_recording: access,
+  terminal_window_count: terms.length,
+  first_window_id: terms.length ? terms[0].kCGWindowNumber : null,
+});
+JXA
+) || enumerated=
+
+# Held aside until it parses, so a JXA that crashed or printed a fragment
+# leaves `windows` at `null` and the line this exits on is still JSON.
+jq -e . >/dev/null 2>&1 <<<"$enumerated" || fail preflight-crashed 6
+windows=$enumerated
+
+[ "$(field locked)" = "true" ] && fail screen-locked 2
+[ "$(field terminal_window_count)" = "0" ] && fail no-terminal-windows 3
+
+# The real thing. A window capture rather than a rect, because that is what
+# capture-window does and what the permission actually gates.
+#
+# mktemp's own name is the probe. Appending a suffix would name a second path
+# and leave the file mktemp created behind on every run.
+probe=$(mktemp -t preflight-capture) || fail no-temp-file 6
+window_id=$(field first_window_id)
+
+# `-t png` fixes the format, so the probe needs no .png name.
+if ! error=$(screencapture -x -o -l "$window_id" -t png "$probe" 2>&1) || [ ! -s "$probe" ]; then
+  # Whatever screencapture said goes inside a JSON string, so it keeps only
+  # what cannot break out of one. Multi-line stderr is real here.
+  error=$(printf '%s' "$error" | tr -d '\\"' | tr '\n\r\t' '   ')
+  windows="${windows%\}},\"screencapture_error\":\"$error\"}"
+  fail capture-failed 4
+fi
+
+# A capture that succeeds can still come back a single flat color, which is
+# what a revoked grant used to produce and what a compositor glitch produces
+# now. A terminal window is never one color, so uniformity means no signal.
+uniform=$(PROBE="$probe" osascript -l JavaScript <<'JXA'
+ObjC.import('AppKit');
+ObjC.import('Foundation');
+const probe = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('PROBE'));
+const data = $.NSData.dataWithContentsOfFile(probe);
+const rep = data.isNil() ? $() : $.NSBitmapImageRep.imageRepWithData(data);
+// A truncated or corrupt PNG is nonempty on disk and still decodes to nil.
+// A nil rep reads its dimensions back as null and then throws on the first
+// colorAtXY, so under `set -e` this script would exit having printed no JSON
+// at all, which is the one thing every caller parses.
+let out;
+if (rep.isNil()) {
+  out = { uniform: true, decoded: false };
+} else {
+  const w = Number(rep.pixelsWide), h = Number(rep.pixelsHigh);
+  // A sparse grid rather than every pixel: enough to prove variation exists.
+  let first = null, varied = false;
+  for (let x = 0; x < 8 && !varied; x++) {
+    for (let y = 0; y < 8 && !varied; y++) {
+      const c = rep.colorAtXY(Math.floor((x + 0.5) * w / 8), Math.floor((y + 0.5) * h / 8));
+      const key = `${Math.round(c.redComponent * 255)},${Math.round(c.greenComponent * 255)},${Math.round(c.blueComponent * 255)}`;
+      if (first === null) first = key;
+      else if (key !== first) varied = true;
+    }
+  }
+  out = { uniform: !varied, decoded: true };
+}
+JSON.stringify(out);
 JXA
 )
 
-echo "$result"
-case "$result" in
-  *'"ok":true'*)                 exit 0 ;;
-  *'"reason":"screen-locked"'*)  exit 2 ;;
-  *'"reason":"no-terminal-windows"'*) exit 3 ;;
-  *)                             exit 1 ;;
+case "$uniform" in
+  *'"uniform":true'*) fail capture-blank 5 ;;
 esac
+
+done_ "{\"ok\":true,\"detail\":$windows}" 0

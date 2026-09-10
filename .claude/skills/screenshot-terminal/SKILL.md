@@ -28,7 +28,9 @@ All modes share the same primitives:
 
 ## Gotchas
 
-Always run `scripts/preflight` before capturing. It returns JSON with `ok: true` when capture is viable, or `ok: false` with a `reason` field. Exit codes: 0 ready, 2 locked, 3 no-terminals.
+Always run `scripts/preflight` before capturing. It takes a real capture rather than inferring one is possible, so `ok: true` means an image came back with something in it. Exit codes: 0 ready, 2 locked, 3 no-terminals, 4 capture-failed, 5 capture-blank, 6 preflight itself could not run, where `reason` separates `no-temp-file` from `preflight-crashed`. Every exit prints one JSON line carrying `reason` at the top level and everything else under `detail`, so the grant the calling app holds is `detail.screen_recording` and a top-level read of it comes back null. `detail.screencapture_error` is on the `capture-failed` line alone, so read it only after `reason` says so.
+
+When it reports `ok: false`, say so and switch channels rather than retrying. herdr's own chrome reads as text through a preview session: `herdr/bin/herdr-preview` runs a config in an isolated session inside a pane, and `herdr-preview read --ansi` returns the rendered sidebar with token colors intact as truecolor escapes. That works with the screen locked and with capture broken, which is most of what this skill was reached for.
 
 #### Screen lock blocks per-window and per-rect captures
 
@@ -44,7 +46,7 @@ The Claude Code sandbox segfaults JXA's access to AppKit/Quartz when `osascript 
 
 #### Screen Recording permission is on the calling app
 
-`screencapture` requires Screen Recording permission for the *calling* terminal app (Ghostty, iTerm, etc.), not for `screencapture` itself. If captures come back as a uniform color but `scripts/preflight` passes, ask the user to grant Screen Recording in `System Settings → Privacy & Security → Screen Recording`. The terminal app must be relaunched after enabling.
+`screencapture` requires Screen Recording permission for the *calling* terminal app (Ghostty, iTerm, etc.), not for `screencapture` itself. A major macOS upgrade resets that grant, which leaves every window still enumerable and every capture failing with `could not create image from window`. `scripts/preflight` reports that as `capture-failed` with `detail.screen_recording: false`. The fix is the user granting Screen Recording in `System Settings → Privacy & Security → Screen Recording`, then relaunching the terminal app. Nothing an agent can do from the shell restores it.
 
 #### JXA does not have `$.exit()`
 
@@ -64,6 +66,7 @@ Default flow when the user asks "what does my setup look like" or "review my sta
 
 ```sh
 mkdir -p tmp
+.claude/skills/screenshot-terminal/scripts/preflight || exit 1
 .claude/skills/screenshot-terminal/scripts/herdr-snapshot tmp/snapshot
 window_id=$(.claude/skills/screenshot-terminal/scripts/find-herdr-window)
 .claude/skills/screenshot-terminal/scripts/capture-window "$window_id" tmp/snapshot/full.png
