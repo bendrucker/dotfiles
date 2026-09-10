@@ -15,10 +15,12 @@ herdr api snapshot | jq '.result.snapshot' > "$out/snapshot.json"
 jq -r '.workspaces[] | [.workspace_id, .number, .label, .tab_count, .pane_count, .focused] | @tsv' \
   "$out/snapshot.json" > "$out/workspaces.tsv"
 
-jq -r '.tabs[] | [.tab_id, .workspace_id, (.label // ""), (.active // false)] | @tsv' \
+jq -r '.tabs[] | [.tab_id, .workspace_id, (.label // ""), .focused] | @tsv' \
   "$out/snapshot.json" > "$out/tabs.tsv"
 
-jq -r '.panes[] | [.pane_id, .tab_id, (.cwd // ""), (.title // "")] | @tsv' \
+# `terminal_title_stripped` rather than `terminal_title`, which carries the
+# agent's status glyph and sorts and greps badly for it.
+jq -r '.panes[] | [.pane_id, .tab_id, (.cwd // ""), (.terminal_title_stripped // "")] | @tsv' \
   "$out/snapshot.json" > "$out/panes.tsv"
 
 jq -r '.agents[] | [.pane_id, .agent, .agent_status, (.agent_session.value // "")] | @tsv' \

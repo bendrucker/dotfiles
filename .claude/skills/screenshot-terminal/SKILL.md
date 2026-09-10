@@ -81,6 +81,7 @@ For closer inspection of specific UI regions, status bar at top, prompt at botto
 ## Workflow: fresh
 
 ```sh
+.claude/skills/screenshot-terminal/scripts/preflight || exit 1
 prev=$(herdr api snapshot | jq -r '.result.snapshot.focused_workspace_id')
 ws=$(herdr workspace create --label screenshot-skill --cwd "$PWD" --focus | jq -r '.result.workspace.workspace_id')
 pane=$(herdr api snapshot | jq -r --arg w "$ws" '
@@ -93,6 +94,8 @@ window_id=$(.claude/skills/screenshot-terminal/scripts/find-herdr-window "$ws")
 herdr workspace close "$ws"
 herdr workspace focus "$prev"
 ```
+
+The preflight runs before the workspace exists. A locked screen or a revoked grant fails the capture either way, and checking first leaves no scratch workspace behind for the user to find.
 
 The workspace has to be focused for its window to be the one on screen, which is why `--focus` is passed. Capturing `$prev` first is what makes the last line able to put the user back where they were.
 
