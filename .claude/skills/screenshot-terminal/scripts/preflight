@@ -14,6 +14,8 @@
 #   capture-failed       screencapture would not produce an image
 #   capture-blank        it produced an image carrying no signal: one flat
 #                        color, or bytes that do not decode
+#   no-temp-file         no scratch file to capture into
+#   preflight-crashed    this script died somewhere it did not plan for
 # Usage: preflight
 
 set -euo pipefail
@@ -55,24 +57,44 @@ JSON.stringify({
 JXA
 )
 
-field() { echo "$windows" | sed -n "s/.*\"$1\":\([^,}]*\).*/\1/p"; }
+# jq rather than a sed pattern, matching find-herdr-window and herdr-snapshot.
+# The payload gains a string field on the capture-failed path, and a regex over
+# `[^,}]*` returns a truncated value for one of those instead of failing.
+field() { jq -r ".$1" <<<"$windows"; }
 
-fail() {
-  echo "{\"ok\":false,\"reason\":\"$1\",\"detail\":$windows}"
+probe=
+
+done_() {
+  trap - EXIT
+  [ -n "$probe" ] && rm -f "$probe"
+  echo "$1"
   exit "$2"
 }
+
+fail() { done_ "{\"ok\":false,\"reason\":\"$1\",\"detail\":$windows}" "$2"; }
+
+# One JSON line is the whole contract, so an exit this script never planned for
+# has to produce one too. `done_` clears this on its way out, so the only exits
+# that reach it are the unplanned ones.
+trap 'fail preflight-crashed 6' EXIT
 
 [ "$(field locked)" = "true" ] && fail screen-locked 2
 [ "$(field terminal_window_count)" = "0" ] && fail no-terminal-windows 3
 
 # The real thing. A window capture rather than a rect, because that is what
 # capture-window does and what the permission actually gates.
-probe=$(mktemp -t preflight-capture).png
-trap 'rm -f "$probe"' EXIT
+#
+# mktemp's own name is the probe. Appending a suffix would name a second path
+# and leave the file mktemp created behind on every run.
+probe=$(mktemp -t preflight-capture) || fail no-temp-file 6
 window_id=$(field first_window_id)
 
+# `-t png` fixes the format, so the probe needs no .png name.
 if ! error=$(screencapture -x -o -l "$window_id" -t png "$probe" 2>&1) || [ ! -s "$probe" ]; then
-  windows="${windows%\}},\"screencapture_error\":\"${error//\"/}\"}"
+  # Whatever screencapture said goes inside a JSON string, so it keeps only
+  # what cannot break out of one. Multi-line stderr is real here.
+  error=$(printf '%s' "$error" | tr -d '\\"' | tr '\n\r\t' '   ')
+  windows="${windows%\}},\"screencapture_error\":\"$error\"}"
   fail capture-failed 4
 fi
 
@@ -114,4 +136,4 @@ case "$uniform" in
   *'"uniform":true'*) fail capture-blank 5 ;;
 esac
 
-echo "{\"ok\":true,\"detail\":$windows}"
+done_ "{\"ok\":true,\"detail\":$windows}" 0

@@ -34,7 +34,11 @@ export HERDR_SOCKET_PATH="$(herdr-preview socket)"
 herdr-preview stop
 ```
 
-`start` needs the Bash sandbox off. The server sets its own priority, which the sandbox denies, and it exits before creating a socket. Everything after `start` runs sandboxed, because the project settings allow `~/.config/herdr/sessions`.
+`pane read --lines` returns the *bottom* n rows, and the spaces panel is at the top. A count short of the client's height comes back with no sidebar in it, which reads as a config that did not apply. `herdr-preview read` defaults to the pane's own height for that reason, so pass `--lines` only to read less on purpose.
+
+`start` and `stop` both need the Bash sandbox off. The server sets its own priority, which the sandbox denies, and it exits before creating a socket. `stop` deletes the saved session, which writes under `~/.config/herdr`, also denied. `read` and `socket` run sandboxed, because the project settings allow the session sockets, so a refused connection to a preview socket has some other cause.
+
+An edited config reaches a preview only through `stop` and `start`. `herdr server reload-config` re-reads the default path rather than the one `HERDR_CONFIG_PATH` named at start, so against a preview it quietly loads the user's installed config. The synthetic state goes with the restart, which is why a scene is a script rather than a sequence of commands.
 
 A `start` that fails after its server came up tears that server down, deletes the saved session, and closes the tab it created, so the next `start` is not refused by a preview nobody can see. A pane passed with `--pane` is the caller's and stays open.
 
@@ -42,7 +46,7 @@ A `start` that fails after its server came up tears that server down, deletes th
 
 The client runs inside a pane of the calling session, so `herdr pane read` returns herdr's own chrome: sidebar rows, dividers, truncation, and under `--format ansi` the exact hex a token is styled with. That is the channel to reach for first. It works with the screen locked and with `screencapture` broken, which is most of when a sidebar question comes up. Screenshots are the confirmation step, not the only one.
 
-The alt-screen caveat in the herdr skill applies to scrollback, not to the visible screen. `--source visible` sees a nested client; `--source recent` does not.
+The alt-screen caveat in the herdr skill applies to scrollback, not to the visible screen. `--source visible` sees a nested client. `--source recent` does not.
 
 ### The Two Environment Variables
 
@@ -54,12 +58,12 @@ It also keeps the socket path short. macOS caps a unix socket path near 104 byte
 
 ### What Lies
 
-Four failures here produce a plausible-looking preview rather than an error. `herdr-preview` checks all four; a hand-rolled loop has to.
+Four failures here produce a plausible-looking preview rather than an error. `herdr-preview` checks all four. A hand-rolled loop has to do the same.
 
 - A config the server cannot parse does not stop it. It warns into its own log and runs on stock defaults, so the change reads as having done nothing.
 - `herdr config check` reports `config: ok` for a file that does not exist.
 - A bare `tab_bar_right` command resolves against the server's `$PATH`, which is the installed `~/.dotfiles` copy rather than the worktree. A config whose tokens come from a script under test renders bare rows, which reads as a config bug. `herdr-preview` repoints any command naming a repo script at the worktree and says which.
-- A client that has attached can still be painting the workspace list it started with. Wait for a row it could only draw from live state rather than for the process. `herdr-preview` creates a `preview-ready-<pid>` workspace after the client attaches and waits for that label. The pid is what keeps a crashed run's saved workspace from matching.
+- A client that has attached can still be painting the workspace list it started with. Wait for a row it could only draw from live state rather than for the process. `herdr-preview` creates a `rdy<pid>` workspace after the client attaches and waits for that label. The pid keeps a crashed run's saved workspace from matching, and the label stays short because the sidebar truncates to its column width: waiting on `preview-ready-80945` never fires, since the screen holds `preview-ready…`.
 
 ### Two Ways To Launch A Client
 
@@ -67,7 +71,7 @@ Four failures here produce a plausible-looking preview rather than an error. `he
 
 Against a pane already holding a TUI, `pane run` types into that TUI and reports success. Check `herdr pane process-info --pane <id>` before running anything in a pane.
 
-Unsetting `HERDR_ENV` is what lets a client start nested; `experimental.allow_nested` is not needed. Unset `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`, `HERDR_BIN_PATH`, and above all `HERDR_SOCKET_PATH`, which would otherwise point the preview client at the live server.
+Unsetting `HERDR_ENV` is what lets a client start nested. `experimental.allow_nested` is not needed. Unset `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`, `HERDR_BIN_PATH`, and above all `HERDR_SOCKET_PATH`, which would otherwise point the preview client at the live server.
 
 A separate Ghostty window is the alternative when a real screenshot is wanted:
 
@@ -95,7 +99,7 @@ herdr pane report-agent "$pane" --source demo --agent claude --state blocked
 herdr pane report-metadata "$pane" --source demo --ttl-ms 3600000 --token 'title=Review the green branch'
 ```
 
-A review of a sidebar change is a set of named scenes, each one a script that empties the preview and rebuilds it: one state per row for the catalog, a realistic mix of workspaces and agents for the ordinary day, and the worst case with every glyph lit under a long label. The worst case decides whether the shape ships. herdr right-aligns custom tokens and truncates the label to fit them, so clutter shows up as the workspace name disappearing. Put a proposed shape in as a scene of its own before coding it, since the user is the acceptance tester and a synthetic row costs nothing to reject.
+A review of a sidebar change is a set of named scenes, each one a script that empties the preview and rebuilds it: one state per row for the catalog, a realistic mix of workspaces and agents for the ordinary day, and the worst case with every glyph lit under a long label. The worst case decides whether the shape ships. herdr right-aligns custom tokens and truncates the label to fit them, so clutter shows up as the workspace name disappearing. Read each scene back and send it, as a crop where capture works and as `herdr-preview read` text where it does not. Put a proposed shape in as a scene of its own before coding it, since the user is the acceptance tester and a synthetic row costs nothing to reject.
 
 Nerd Font glyphs pasted into a tool call can arrive as an empty string. Build them from codepoints (`python3 -c 'print(chr(0xF407))'`) and check what the snapshot holds.
 
@@ -118,6 +122,12 @@ pkill -f 'ghostty -e env .*herdr --session preview'
 ```
 
 The `pkill` closes the second Ghostty instance, which stays open on the exited client otherwise. Leave the default session's Ghostty alone.
+
+## Tab And Workspace Numbers
+
+`tab.number` in the snapshot is the ordinal a tab was created at and never moves. `workspace.number` is a live position and renumbers when a workspace closes. herdr also renames a default-named tab down to its live position, so closing the first of four tabs leaves labels `review`, `2`, `3` sitting against numbers 2, 3, 4.
+
+Anything deriving a chord digit has to count a row's place in the snapshot array. Reading `number` gives the wrong tab for the rest of that workspace's life, and it is quiet, because it is right until the first close.
 
 ## Sidebar Tokens
 

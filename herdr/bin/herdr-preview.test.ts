@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 import { launcherContract } from "#harness/launchers";
@@ -6,6 +7,7 @@ import { launcherContract } from "#harness/launchers";
 const launcher = join(repoRoot, "herdr", "bin", "herdr-preview");
 
 let box: Sandbox;
+let socketRoots: string[] = [];
 
 beforeEach(() => {
   box = sandbox("herdr-preview");
@@ -13,6 +15,8 @@ beforeEach(() => {
 
 afterEach(() => {
   box.remove();
+  for (const root of socketRoots) rmSync(root, { recursive: true, force: true });
+  socketRoots = [];
 });
 
 launcherContract("herdr", "herdr-preview");
@@ -314,12 +318,134 @@ exit 0`);
 
 // A start that crashed leaves its ready workspace in the saved session, and a
 // client replaying that state would render the label off its startup list. The
-// label has to be one only this run could have created.
-test("waits on a ready label unique to the run", () => {
+// label has to be one only this run could have created, and short enough to
+// survive the sidebar truncating it to the column width.
+test("waits on a ready label unique to the run and short enough to render", () => {
   box.write("ok.toml", "onboarding = false\n");
   stubHerdrThatStarts();
   preview(["start", "--config", box.path("ok.toml")], { HERDR_WORKSPACE_ID: "wZZ" });
   const waits = log().filter((c) => c.startsWith("pane wait-output"));
   expect(waits.length).toBe(1);
-  expect(waits[0]).toMatch(/--match preview-ready-\d+\b/);
+  const label = waits[0].match(/--match (\S+)/)?.[1] ?? "";
+  expect(label).toMatch(/^rdy\d+$/);
+  expect(label.length).toBeLessThanOrEqual(12);
+});
+
+// `pane read --lines N` returns the bottom N rows, and the spaces panel is at
+// the top, so a fixed default silently returns a screen with no sidebar in it
+// on any client taller than the number.
+test("reads as many rows as the client pane is tall", () => {
+  stubHerdr(`case "$1 $2" in
+"api snapshot") echo '{"result":{"snapshot":{"tabs":[{"tab_id":"w9:t2","label":"herdr-preview:preview"}],"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}}' ;;
+"pane layout") echo '{"result":{"layout":{"panes":[{"pane_id":"w9:p2","rect":{"height":62,"width":200}}]}}}' ;;
+*) exit 0 ;;
+esac`);
+  const r = preview(["read"]);
+  expect(r.status).toBe(0);
+  expect(log().some((c) => c.startsWith("pane read w9:p2") && c.includes("--lines 62"))).toBe(true);
+});
+
+test("falls back to a deep read when the layout gives no height", () => {
+  stubHerdr(`case "$1 $2" in
+"api snapshot") echo '{"result":{"snapshot":{"tabs":[{"tab_id":"w9:t2","label":"herdr-preview:preview"}],"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}}' ;;
+"pane layout") exit 1 ;;
+*) exit 0 ;;
+esac`);
+  preview(["read"]);
+  expect(log().some((c) => c.startsWith("pane read w9:p2") && c.includes("--lines 200"))).toBe(true);
+});
+
+test("honors an explicit --lines", () => {
+  stubHerdr(`case "$1 $2" in
+"api snapshot") echo '{"result":{"snapshot":{"tabs":[{"tab_id":"w9:t2","label":"herdr-preview:preview"}],"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}}' ;;
+*) exit 0 ;;
+esac`);
+  preview(["read", "--lines", "12"]);
+  expect(log().some((c) => c.includes("--lines 12"))).toBe(true);
+  expect(log().some((c) => c.startsWith("pane layout"))).toBe(false);
+});
+
+// `set -u` turns a flag given as the last argument into bash's own unbound
+// variable abort, which reports a line number instead of the missing flag.
+test("names the flag when its value is missing", () => {
+  stubHerdr("exit 0");
+  for (const flag of ["--config", "--session", "--pane"]) {
+    const r = preview(["start", flag]);
+    expect(r.status).toBe(2);
+    expect(r.stdout + r.stderr).toContain(`${flag} needs a value`);
+  }
+});
+
+// The Bash sandbox permits a unix-socket bind only under /tmp/claude, so a
+// test that needs a real socket roots the session directory there rather than
+// in the sandbox box.
+function socketRoot(): string {
+  const root = mkdtempSync(join("/tmp/claude", "herdr-preview-sock-"));
+  socketRoots.push(root);
+  const dir = join(root, "herdr", "sessions", "preview");
+  mkdirSync(dir, { recursive: true });
+  const r = run([
+    "python3",
+    "-c",
+    "import socket,sys\ns = socket.socket(socket.AF_UNIX)\ns.bind(sys.argv[1])",
+    join(dir, "herdr.sock"),
+  ]);
+  expect(r.status).toBe(0);
+  return root;
+}
+
+// A socket file outlives the server that made it, so treating its presence as
+// a live session locks the name out for good after any abnormal death.
+test("clears a socket no server is listening on", () => {
+  box.write("ok.toml", "onboarding = false\n");
+  // A dead server's socket is still bound, so the stub refuses while the file
+  // is there and answers once the script has cleared it.
+  box.stub(
+    "herdr",
+    `echo "$*" >> ${box.path("calls")}
+case "$1 $2" in
+"api snapshot") [ -S "$XDG_CONFIG_HOME/herdr/sessions/preview/herdr.sock" ] && exit 1 ;;
+"tab create") echo '{"result":{"root_pane":{"pane_id":"w9:p2"}}}' ;;
+esac
+exit 0`,
+  );
+  const r = preview(["start", "--config", box.path("ok.toml")], {
+    XDG_CONFIG_HOME: socketRoot(),
+    HERDR_WORKSPACE_ID: "wZZ",
+  });
+  expect(r.stderr).toContain("clearing the socket a dead preview server left behind");
+  expect(r.stdout + r.stderr).not.toContain("already running");
+});
+
+// A live server answers, and a second start against it has to refuse rather
+// than launch a second client onto the same session.
+test("refuses when the server on that socket answers", () => {
+  box.write("ok.toml", "onboarding = false\n");
+  stubHerdr("exit 0");
+  const r = preview(["start", "--config", box.path("ok.toml")], {
+    XDG_CONFIG_HOME: socketRoot(),
+    HERDR_WORKSPACE_ID: "wZZ",
+  });
+  expect(r.status).not.toBe(0);
+  expect(r.stdout + r.stderr).toContain("already running");
+});
+
+// ${var//pattern/} reads an unquoted pattern as a glob, so a name carrying a
+// metacharacter would rewrite the wrong line or none, and the preview would
+// run the installed copy of the script under test.
+test("rewrites a command whose name carries a glob character", () => {
+  const script = `${box.mkdir("repo/topic/bin")}/odd[1]-tool`;
+  box.write("repo/topic/bin/odd[1]-tool", "#!/bin/sh\n");
+  run(["chmod", "+x", script]);
+  run(["git", "init", "-q", box.path("repo")]);
+  const config = box.write("repo/c.toml", 'tab_bar_right = [{ command = "odd[1]-tool" }]\n');
+  stubHerdrThatStarts();
+  run(["bash", launcher, "start", "--config", config], {
+    cwd: box.path("repo"),
+    path: [box.bin],
+    env: { XDG_CONFIG_HOME: box.path("config"), HERDR_WORKSPACE_ID: "wZZ" },
+  });
+  const derived = box.read("config/herdr/sessions/preview/config.toml");
+  expect(derived).toContain(`/repo/topic/bin/odd[1]-tool"`);
+  expect(derived).not.toContain(`command = "odd[1]-tool"`);
 });

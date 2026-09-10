@@ -30,10 +30,14 @@ set -uo pipefail
 DEFAULT_SESSION=preview
 
 # The workspace start creates to prove the client is drawing live state rather
-# than the list it attached with. It carries this run's pid, because a start
-# that crashed leaves its workspace in the saved session, and a client
-# replaying that state would render last run's label from its startup list.
-READY_LABEL="preview-ready-$$"
+# than the list it attached with.
+#
+# It carries this run's pid, because a start that crashed leaves its workspace
+# in the saved session and a replaying client would draw last run's label off
+# its startup list. The pid leads and the whole label is short, because the
+# sidebar truncates a label to its column width: `preview-ready-80945` reaches
+# the screen as `preview-ready…` and a literal match on it never fires.
+READY_LABEL="rdy$$"
 
 usage() {
   cat <<'EOF'
@@ -45,7 +49,9 @@ usage: herdr-preview <command> [options]
         Without --pane, creates a tab in the current workspace.
 
   read  [--session <name>] [--ansi] [--lines <n>]
-        Read the rendered sidebar out of that pane.
+        Read the rendered sidebar out of that pane. Defaults to the pane's
+        own height. --lines takes the BOTTOM n rows, so a short read hides
+        the spaces panel and comes back looking like an empty sidebar.
 
   socket [--session <name>]
         Print the preview's socket path, for driving it:
@@ -56,6 +62,17 @@ usage: herdr-preview <command> [options]
 
 The config defaults to herdr/config.toml under the current repository.
 EOF
+}
+
+# A flag's value, or a refusal naming the flag. Reading $2 directly under
+# `set -u` aborts the script with bash's own unbound-variable message before
+# any of the parsing below can report what was missing.
+flag_value() {
+  [ $# -ge 2 ] && [ -n "$2" ] || {
+    echo "herdr-preview: $1 needs a value" >&2
+    return 1
+  }
+  echo "$2"
 }
 
 for tool in herdr jq git; do
@@ -149,19 +166,24 @@ pane_is_free() {
 # which reads as a config bug rather than a stale binary. Rewrite every bare
 # command naming a script in this repository to its worktree path.
 derive_config() {
-  local config=$1 dest=$2 root=$3 name script content
+  local config=$1 dest=$2 root=$3 name script content search replace
   content=$(cat "$config") || return 1
   if [ -n "$root" ]; then
-    for script in "$root"/*/bin/*; do
+    for script in "$root"/bin/* "$root"/*/bin/*; do
       [ -f "$script" ] && [ -x "$script" ] || continue
       name=$(basename "$script")
       case $content in
         *"command = \"$name\""*) ;;
         *) continue ;;
       esac
-      # Parameter substitution rather than sed, so a name carrying a regex
-      # character cannot reshape the match.
-      content=${content//command = \"$name\"/command = \"$script\"}
+      # Parameter substitution rather than sed, and the pattern quoted,
+      # because `${var//pattern/}` reads an unquoted pattern as a glob. A name
+      # carrying `*`, `?`, or `[` would otherwise match the wrong line or no
+      # line, and the preview would run the installed copy of the very script
+      # under test.
+      search="command = \"$name\""
+      replace="command = \"$script\""
+      content=${content//"$search"/"$replace"}
       echo "herdr-preview: pointed $name at the worktree copy" >&2
     done
   fi
@@ -188,9 +210,9 @@ cmd_start() {
   local config='' name=$DEFAULT_SESSION pane='' root
   while [ $# -gt 0 ]; do
     case $1 in
-      --config) config=$2; shift 2 ;;
-      --session) name=$2; shift 2 ;;
-      --pane) pane=$2; shift 2 ;;
+      --config) config=$(flag_value "$@") || return 2; shift 2 ;;
+      --session) name=$(flag_value "$@") || return 2; shift 2 ;;
+      --pane) pane=$(flag_value "$@") || return 2; shift 2 ;;
       -h | --help) usage; return 0 ;;
       *) echo "herdr-preview: unknown option $1" >&2; return 2 ;;
     esac
@@ -209,9 +231,17 @@ cmd_start() {
   config=$(abspath "$config")
   check_config "$config" || return 1
 
+  # A socket file outlives the server that made it, so its presence is not
+  # evidence of a live session. Ask the server: a crashed one answers nothing
+  # and its leftover socket gets cleared rather than refusing every later start
+  # with "already running" against nothing.
   if [ -S "$(session_socket "$name")" ]; then
-    echo "herdr-preview: session $name is already running; stop it first" >&2
-    return 1
+    if preview_herdr "$name" api snapshot >/dev/null 2>&1; then
+      echo "herdr-preview: session $name is already running; stop it first" >&2
+      return 1
+    fi
+    echo "herdr-preview: clearing the socket a dead $name server left behind" >&2
+    rm -f "$(session_socket "$name")"
   fi
 
   # macOS caps a unix socket path at 104 bytes, and the server reports the
@@ -282,6 +312,12 @@ cmd_start() {
     [ -s "$errlog" ] && sed 's/^/herdr-preview:   /' "$errlog" >&2
     grep -q PermissionDenied "$errlog" 2>/dev/null &&
       echo "herdr-preview: the server sets its own priority, which the Bash sandbox denies; start needs it off" >&2
+    # A server that never answered cannot be asked to stop, and it may have
+    # created the socket already: left alive it holds that path and the next
+    # start refuses against a preview that never worked.
+    kill "$server_pid" 2>/dev/null
+    rm -f "$socket_path"
+    abandon_start "$name" ""
     return 1
   }
 
@@ -347,6 +383,7 @@ EOF
   }
   caller_herdr pane wait-output "$pane" --match "$READY_LABEL" --source visible --timeout 30000 >/dev/null 2>&1 || {
     echo "herdr-preview: the client never rendered $READY_LABEL, so its rows are not live" >&2
+    echo "herdr-preview: a sidebar too narrow to show ${#READY_LABEL} characters would also miss it" >&2
     echo "herdr-preview: read it with 'herdr pane read $pane --source visible' before trusting anything" >&2
     abandon_start "$name" "$created_pane"
     return 1
@@ -365,12 +402,26 @@ find_pane() {
     | [$s.panes[]? | select(.tab_id as $t | $tabs | index($t)) | .pane_id] | .[0] // empty'
 }
 
+# `pane read --lines N` returns the *bottom* N rows. The spaces panel is at the
+# top of the client, so a short read comes back without the sidebar in it at
+# all, which looks like a config that did not apply rather than a short read.
+# The pane's own height is the only count that cannot cut the top off.
+pane_height() {
+  local pane=$1 height
+  height=$(caller_herdr pane layout --pane "$pane" 2>/dev/null |
+    jq -r --arg p "$pane" '.result.layout.panes[]? | select(.pane_id == $p) | .rect.height')
+  case $height in
+    '' | null | *[!0-9]*) echo 200 ;;
+    *) echo "$height" ;;
+  esac
+}
+
 cmd_read() {
-  local name=$DEFAULT_SESSION lines=70 fmt=text pane
+  local name=$DEFAULT_SESSION lines='' fmt=text pane
   while [ $# -gt 0 ]; do
     case $1 in
-      --session) name=$2; shift 2 ;;
-      --lines) lines=$2; shift 2 ;;
+      --session) name=$(flag_value "$@") || return 2; shift 2 ;;
+      --lines) lines=$(flag_value "$@") || return 2; shift 2 ;;
       --ansi) fmt=ansi; shift ;;
       -h | --help) usage; return 0 ;;
       *) echo "herdr-preview: unknown option $1" >&2; return 2 ;;
@@ -382,12 +433,19 @@ cmd_read() {
     echo "herdr-preview: no client pane for session $name" >&2
     return 1
   }
+  [ -n "$lines" ] || lines=$(pane_height "$pane")
   caller_herdr pane read "$pane" --source visible --lines "$lines" --format "$fmt"
 }
 
 cmd_socket() {
-  local name=${1:-$DEFAULT_SESSION}
-  [ "$name" = --session ] && name=${2:-$DEFAULT_SESSION}
+  local name=$DEFAULT_SESSION
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --session) name=$(flag_value "$@") || return 2; shift 2 ;;
+      -h | --help) usage; return 0 ;;
+      *) echo "herdr-preview: unknown option $1" >&2; return 2 ;;
+    esac
+  done
   check_session_name "$name" || return 1
   session_socket "$name"
 }
@@ -396,7 +454,7 @@ cmd_stop() {
   local name=$DEFAULT_SESSION pane
   while [ $# -gt 0 ]; do
     case $1 in
-      --session) name=$2; shift 2 ;;
+      --session) name=$(flag_value "$@") || return 2; shift 2 ;;
       -h | --help) usage; return 0 ;;
       *) echo "herdr-preview: unknown option $1" >&2; return 2 ;;
     esac
@@ -413,7 +471,20 @@ cmd_stop() {
   if [ -S "$(session_socket "$name")" ]; then
     preview_herdr "$name" server stop >/dev/null 2>&1
   fi
-  caller_herdr session delete "$name" >/dev/null 2>&1
+  # Deleting the saved shape writes under ~/.config/herdr, which the Bash
+  # sandbox denies. Swallowed, that leaves the session listed as stopped
+  # forever and the next start replaying its workspaces.
+  local out line
+  out=$(caller_herdr session delete "$name" 2>&1) || {
+    echo "herdr-preview: stopped the server but could not delete session $name:" >&2
+    while IFS= read -r line; do echo "herdr-preview:   $line" >&2; done <<<"$out"
+    case $out in
+      *'not permitted'*)
+        echo "herdr-preview: deleting it writes under ~/.config/herdr, which the Bash sandbox denies; stop needs it off" >&2
+        ;;
+    esac
+    return 1
+  }
 
   echo "herdr-preview: stopped $name"
 }

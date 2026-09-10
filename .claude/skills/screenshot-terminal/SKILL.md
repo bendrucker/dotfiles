@@ -28,7 +28,7 @@ All modes share the same primitives:
 
 ## Gotchas
 
-Always run `scripts/preflight` before capturing. It takes a real capture rather than inferring one is possible, so `ok: true` means an image came back with something in it. Exit codes: 0 ready, 2 locked, 3 no-terminals, 4 capture-failed, 5 capture-blank. A failure carries `screencapture_error` and `screen_recording`, the grant the calling app holds.
+Always run `scripts/preflight` before capturing. It takes a real capture rather than inferring one is possible, so `ok: true` means an image came back with something in it. Exit codes: 0 ready, 2 locked, 3 no-terminals, 4 capture-failed, 5 capture-blank, 6 preflight itself could not run. Every exit prints one JSON line carrying `reason` and `screen_recording`, the grant the calling app holds. `screencapture_error` is on the `capture-failed` line alone, so read it only after `reason` says so.
 
 When it reports `ok: false`, say so and switch channels rather than retrying. herdr's own chrome reads as text through a preview session: `herdr/bin/herdr-preview` runs a config in an isolated session inside a pane, and `herdr-preview read --ansi` returns the rendered sidebar with token colors intact as truecolor escapes. That works with the screen locked and with capture broken, which is most of what this skill was reached for.
 
