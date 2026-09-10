@@ -1,4 +1,4 @@
-# herdr/: Working With herdr Configuration Autonomously
+# herdr Configuration
 
 This session runs in a herdr pane. Everything below is about changing herdr without taking that session down. Load the `herdr:herdr` skill when a task needs pane, tab, or workspace awareness.
 
@@ -44,13 +44,13 @@ An edited config reaches a preview only through `stop` and `start`. `herdr serve
 
 A `start` that fails after its server came up tears that server down, deletes the saved session, and closes the tab it created, so the next `start` is not refused by a preview nobody can see. A pane passed with `--pane` is the caller's and stays open.
 
-### Why It Reads As Text
+### Text Before Screenshots
 
 The client runs inside a pane of the calling session, so `herdr pane read` returns herdr's own chrome: sidebar rows, dividers, truncation, and under `--format ansi` the exact hex a token is styled with. That is the channel to reach for first. It works with the screen locked and with `screencapture` broken, which is most of when a sidebar question comes up. Screenshots are the confirmation step, not the only one.
 
 The alt-screen caveat in the herdr skill applies to scrollback, not to the visible screen. `--source visible` sees a nested client. `--source recent` does not.
 
-### The Two Environment Variables
+### Environment Variables
 
 `HERDR_CONFIG_PATH` names the config file and is read once at server start. `HERDR_SESSION` names the session and roots every runtime path at `~/.config/herdr/sessions/<name>/`.
 
@@ -58,7 +58,7 @@ Between them there is no reason to touch `XDG_CONFIG_HOME`. Moving that instead 
 
 It also keeps the socket path short. macOS caps a unix socket path near 104 bytes, and a config root under a scratch directory blows through that on its own. The server reports the overflow as a startup timeout naming a socket it never tried to create, so it reads as a hang rather than a length problem.
 
-### What Lies
+### Silent Failures
 
 Four failures here produce a plausible-looking preview rather than an error. `herdr-preview` checks all four. A hand-rolled loop has to do the same.
 
@@ -67,7 +67,7 @@ Four failures here produce a plausible-looking preview rather than an error. `he
 - A bare `tab_bar_right` command resolves against the server's `$PATH`, which is the installed `~/.dotfiles` copy rather than the worktree. A config whose tokens come from a script under test renders bare rows, which reads as a config bug. `herdr-preview` repoints any command naming a repo script at the worktree and says which.
 - A client that has attached can still be painting the workspace list it started with. Wait for a row it could only draw from live state rather than for the process. `herdr-preview` creates a `rdy<pid>` workspace after the client attaches and waits for that label. The pid keeps a crashed run's saved workspace from matching, and the label stays short because the sidebar truncates to its column width: waiting on `preview-ready-80945` never fires, since the screen holds `preview-ready…`.
 
-### Two Ways To Launch A Client
+### Client Launch
 
 `herdr pane run` hands its string to the pane's *interactive* shell, which expands aliases. `colors/grc.zsh` aliases `env`, so an inline `env -u HERDR_ENV … herdr` becomes `grc --colour=auto env …` and the client renders into a pipe instead of the tty. `pane read` then shows the shell prompt and the client looks like it failed to start. Run a file instead.
 
@@ -109,7 +109,7 @@ A `tab_bar_right` command entry runs in the server *with* the session's context:
 
 ### Capture
 
-Run the `screenshot-terminal` skill's `preflight` first. It takes a real capture rather than inferring one is possible, and it reports `capture-failed` with `screen_recording: false` when the calling terminal app has lost its Screen Recording grant, which a major macOS upgrade resets. Nothing from the shell restores it. Fall back to `herdr-preview read`.
+Run the `screenshot-terminal` skill's `preflight` first, with the sandbox off. Every script under that skill's `scripts/` shells into JXA, which segfaults rather than erroring when sandboxed. `preflight` takes a real capture rather than inferring one is possible, and it reports `capture-failed` with `detail.screen_recording: false` when the calling terminal app has lost its Screen Recording grant. That skill covers what resets the grant and how the user restores it. Fall back to `herdr-preview read`.
 
 When capture does work, use `capture-window` and `crop-png`, both with the sandbox off. The sidebar was the left 760 pixels of a capture at the default window size, so re-measure when the image dimensions differ. Read the crop with the Read tool rather than describing it from the token values.
 
@@ -125,13 +125,15 @@ pkill -f 'ghostty -e env .*herdr --session preview'
 
 The `pkill` closes the second Ghostty instance, which stays open on the exited client otherwise. Leave the default session's Ghostty alone.
 
-## Editing A Script Another Agent Is Running
+## Scripts Under Live Edit
 
-bash reads a script incrementally by byte offset rather than loading it whole. A file that grows while a shell is executing it resumes at a shifted boundary and parses a fragment as a command, so the error names a line that did not exist when the run started. A sibling agent running `herdr-preview` out of this worktree hit exactly that, and reported a syntax error at a line number sixty lines past the end of the file it had launched.
+The symptom is a syntax error or an unbound variable at a line number that does not exist in the file you are looking at. Check that before reading the code, because the code is fine. A sibling agent running `herdr-preview` out of this worktree reported a syntax error sixty lines past the end of the file it had launched, and spent a round trip on a bug that was never there.
 
-Write an edit to a temporary path and rename it over the target. The rename is atomic, so a running shell keeps its descriptor on the old inode and reads a consistent file to the end. Truncating in place, which is what an ordinary write does, is the version that corrupts a live reader. This is worth knowing whenever a script here is something another agent runs.
+bash reads a script incrementally by byte offset rather than loading it whole. A file that grows while a shell is executing it resumes at a shifted boundary and parses a fragment as a command, which is where the impossible line number comes from.
 
-## Tab And Workspace Numbers
+A consumer running a script out of this tree should copy it somewhere stable and run the copy. That is the side the fix belongs on, since it holds against any writer rather than only the ones who remember. On the writing side, put an edit at a temporary path and rename it over the target: the rename is atomic, so a running shell keeps its descriptor on the old inode and reads a consistent file to the end. An ordinary write truncates in place, which is the version that corrupts a live reader.
+
+## Tab and Workspace Numbers
 
 `tab.number` in the snapshot is the ordinal a tab was created at and never moves. `workspace.number` is a live position and renumbers when a workspace closes. herdr also renames a default-named tab down to its live position, so closing the first of four tabs leaves labels `review`, `2`, `3` sitting against numbers 2, 3, 4.
 

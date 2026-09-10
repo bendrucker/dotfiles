@@ -62,6 +62,11 @@ usage: herdr-preview <command> [options]
         Stop the server, delete its saved state, and close the pane.
 
 The config defaults to herdr/config.toml under the current repository.
+
+Running this straight out of a worktree someone else is editing can fail
+in ways that have nothing to do with the code. Bash reads a script by byte
+offset, so a file rewritten mid-run reports an error at a line number that
+does not exist. Copy it somewhere stable and run the copy.
 EOF
 }
 
