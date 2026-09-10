@@ -232,3 +232,94 @@ exit 0`,
   expect(r.status).not.toBe(0);
   expect(r.stdout + r.stderr).toContain("not live");
 });
+
+// The name is a path segment before herdr sees it, so `--session ..` would put
+// the derived config on ~/.config/herdr/config.toml, the symlink to the
+// tracked one.
+test("refuses a session name that would escape the sessions directory", () => {
+  stubHerdr("exit 0");
+  for (const name of ["..", "../elsewhere", 'x"; touch /tmp/pwn; #']) {
+    const r = preview(["start", "--session", name]);
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain("session name takes letters");
+  }
+  expect(log()).toEqual([]);
+});
+
+// A shell that ran the documented `export HERDR_SOCKET_PATH=$(... socket)` has
+// to keep working: the client's tab lives in the calling session, not the
+// preview, so read must not ask the preview about it.
+test("finds the client pane with a preview socket exported", () => {
+  stubHerdr(`case "$1 $2" in
+"api snapshot")
+  [ -n "\${HERDR_SOCKET_PATH:-}" ] && exit 1
+  echo '{"result":{"snapshot":{"tabs":[{"tab_id":"w9:t2","label":"herdr-preview:preview"}],"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}}' ;;
+*) exit 0 ;;
+esac`);
+  const r = preview(["read"], {
+    HERDR_SOCKET_PATH: `${box.path("config")}/herdr/sessions/preview/herdr.sock`,
+  });
+  expect(r.status).toBe(0);
+  expect(log().some((c) => c.startsWith("pane read w9:p2"))).toBe(true);
+});
+
+// A start that gets the server up and then fails leaves a live server holding
+// the socket and a tab in the user's workspace, and the next start refuses
+// against a preview nobody can see.
+test("tears down the server and its own tab when the client never goes live", () => {
+  box.write("ok.toml", "onboarding = false\n");
+  stubHerdr(`case "$1 $2" in
+"pane wait-output") exit 1 ;;
+"tab create") echo '{"result":{"root_pane":{"pane_id":"w9:p2"}}}' ;;
+"pane get") echo '{"result":{"pane":{"tab_id":"w9:t2"}}}' ;;
+esac
+exit 0`);
+  const r = preview(["start", "--config", box.path("ok.toml")], { HERDR_WORKSPACE_ID: "wZZ" });
+  expect(r.status).not.toBe(0);
+  const calls = log();
+  expect(calls.some((c) => c.startsWith("tab close w9:t2"))).toBe(true);
+  expect(calls.some((c) => c.startsWith("server stop"))).toBe(true);
+  expect(calls.some((c) => c.startsWith("session delete preview"))).toBe(true);
+});
+
+// A pane the caller handed in is theirs, so a failed start must not close it.
+test("leaves a handed-in pane open when the start fails", () => {
+  box.write("ok.toml", "onboarding = false\n");
+  stubHerdr(`case "$1 $2" in
+"pane wait-output") exit 1 ;;
+"pane process-info") echo '{"result":{"process_info":{"foreground_processes":[]}}}' ;;
+esac
+exit 0`);
+  const r = preview(["start", "--config", box.path("ok.toml"), "--pane", "w9:p7"]);
+  expect(r.status).not.toBe(0);
+  expect(log().some((c) => c.startsWith("tab close") || c.startsWith("pane close"))).toBe(false);
+  expect(log().some((c) => c.startsWith("server stop"))).toBe(true);
+});
+
+// `pane run` against a pane that went away reports failure, and swallowing it
+// would hand back a pane id for a client that never started.
+test("reports a client launch that the server refused", () => {
+  box.write("ok.toml", "onboarding = false\n");
+  stubHerdr(`case "$1 $2" in
+"pane run") exit 1 ;;
+"tab create") echo '{"result":{"root_pane":{"pane_id":"w9:p2"}}}' ;;
+"pane get") echo '{"result":{"pane":{"tab_id":"w9:t2"}}}' ;;
+esac
+exit 0`);
+  const r = preview(["start", "--config", box.path("ok.toml")], { HERDR_WORKSPACE_ID: "wZZ" });
+  expect(r.status).not.toBe(0);
+  expect(r.stdout + r.stderr).toContain("could not launch the client");
+  expect(log().some((c) => c.startsWith("server stop"))).toBe(true);
+});
+
+// A start that crashed leaves its ready workspace in the saved session, and a
+// client replaying that state would render the label off its startup list. The
+// label has to be one only this run could have created.
+test("waits on a ready label unique to the run", () => {
+  box.write("ok.toml", "onboarding = false\n");
+  stubHerdrThatStarts();
+  preview(["start", "--config", box.path("ok.toml")], { HERDR_WORKSPACE_ID: "wZZ" });
+  const waits = log().filter((c) => c.startsWith("pane wait-output"));
+  expect(waits.length).toBe(1);
+  expect(waits[0]).toMatch(/--match preview-ready-\d+\b/);
+});

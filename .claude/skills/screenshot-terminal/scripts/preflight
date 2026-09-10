@@ -12,7 +12,8 @@
 #   screen-locked        loginwindow / Display Shield topmost
 #   no-terminal-windows  nothing to capture
 #   capture-failed       screencapture would not produce an image
-#   capture-blank        it produced a uniform image, which carries nothing
+#   capture-blank        it produced an image carrying no signal: one flat
+#                        color, or bytes that do not decode
 # Usage: preflight
 
 set -euo pipefail
@@ -83,19 +84,29 @@ ObjC.import('AppKit');
 ObjC.import('Foundation');
 const probe = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('PROBE'));
 const data = $.NSData.dataWithContentsOfFile(probe);
-const rep = $.NSBitmapImageRep.imageRepWithData(data);
-const w = Number(rep.pixelsWide), h = Number(rep.pixelsHigh);
-// A sparse grid rather than every pixel: enough to prove variation exists.
-let first = null, varied = false;
-for (let x = 0; x < 8 && !varied; x++) {
-  for (let y = 0; y < 8 && !varied; y++) {
-    const c = rep.colorAtXY(Math.floor((x + 0.5) * w / 8), Math.floor((y + 0.5) * h / 8));
-    const key = `${Math.round(c.redComponent * 255)},${Math.round(c.greenComponent * 255)},${Math.round(c.blueComponent * 255)}`;
-    if (first === null) first = key;
-    else if (key !== first) varied = true;
+const rep = data.isNil() ? $() : $.NSBitmapImageRep.imageRepWithData(data);
+// A truncated or corrupt PNG is nonempty on disk and still decodes to nil.
+// A nil rep reads its dimensions back as null and then throws on the first
+// colorAtXY, so under `set -e` this script would exit having printed no JSON
+// at all, which is the one thing every caller parses.
+let out;
+if (rep.isNil()) {
+  out = { uniform: true, decoded: false };
+} else {
+  const w = Number(rep.pixelsWide), h = Number(rep.pixelsHigh);
+  // A sparse grid rather than every pixel: enough to prove variation exists.
+  let first = null, varied = false;
+  for (let x = 0; x < 8 && !varied; x++) {
+    for (let y = 0; y < 8 && !varied; y++) {
+      const c = rep.colorAtXY(Math.floor((x + 0.5) * w / 8), Math.floor((y + 0.5) * h / 8));
+      const key = `${Math.round(c.redComponent * 255)},${Math.round(c.greenComponent * 255)},${Math.round(c.blueComponent * 255)}`;
+      if (first === null) first = key;
+      else if (key !== first) varied = true;
+    }
   }
+  out = { uniform: !varied, decoded: true };
 }
-JSON.stringify({ uniform: !varied });
+JSON.stringify(out);
 JXA
 )
 

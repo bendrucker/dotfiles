@@ -36,6 +36,8 @@ herdr-preview stop
 
 `start` needs the Bash sandbox off. The server sets its own priority, which the sandbox denies, and it exits before creating a socket. Everything after `start` runs sandboxed, because the project settings allow `~/.config/herdr/sessions`.
 
+A `start` that fails after its server came up tears that server down, deletes the saved session, and closes the tab it created, so the next `start` is not refused by a preview nobody can see. A pane passed with `--pane` is the caller's and stays open.
+
 ### Why It Reads As Text
 
 The client runs inside a pane of the calling session, so `herdr pane read` returns herdr's own chrome: sidebar rows, dividers, truncation, and under `--format ansi` the exact hex a token is styled with. That is the channel to reach for first. It works with the screen locked and with `screencapture` broken, which is most of when a sidebar question comes up. Screenshots are the confirmation step, not the only one.
@@ -57,7 +59,7 @@ Four failures here produce a plausible-looking preview rather than an error. `he
 - A config the server cannot parse does not stop it. It warns into its own log and runs on stock defaults, so the change reads as having done nothing.
 - `herdr config check` reports `config: ok` for a file that does not exist.
 - A bare `tab_bar_right` command resolves against the server's `$PATH`, which is the installed `~/.dotfiles` copy rather than the worktree. A config whose tokens come from a script under test renders bare rows, which reads as a config bug. `herdr-preview` repoints any command naming a repo script at the worktree and says which.
-- A client that has attached can still be painting the workspace list it started with. Wait for a row it could only draw from live state rather than for the process. `herdr-preview` creates a `preview-ready` workspace after the client attaches and waits for that label.
+- A client that has attached can still be painting the workspace list it started with. Wait for a row it could only draw from live state rather than for the process. `herdr-preview` creates a `preview-ready-<pid>` workspace after the client attaches and waits for that label. The pid is what keeps a crashed run's saved workspace from matching.
 
 ### Two Ways To Launch A Client
 

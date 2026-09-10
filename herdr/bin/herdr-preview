@@ -30,8 +30,10 @@ set -uo pipefail
 DEFAULT_SESSION=preview
 
 # The workspace start creates to prove the client is drawing live state rather
-# than the list it attached with.
-READY_LABEL=preview-ready
+# than the list it attached with. It carries this run's pid, because a start
+# that crashed leaves its workspace in the saved session, and a client
+# replaying that state would render last run's label from its startup list.
+READY_LABEL="preview-ready-$$"
 
 usage() {
   cat <<'EOF'
@@ -73,17 +75,42 @@ abspath() { (cd "$(dirname "$1")" 2>/dev/null && echo "$PWD/$(basename "$1")") |
 session_dir() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/herdr/sessions/$1"; }
 session_socket() { echo "$(session_dir "$1")/herdr.sock"; }
 
+# The name is a path segment and a shell word before herdr ever sees it.
+# `--session ..` puts the derived config on ~/.config/herdr/config.toml, which
+# is the symlink to the tracked one, and a name carrying a quote closes herdr's
+# argument inside the generated launcher.
+check_session_name() {
+  case $1 in
+    '' | . | .. | *[!A-Za-z0-9._-]*)
+      echo "herdr-preview: a session name takes letters, digits, dot, dash, and underscore: '$1'" >&2
+      return 1
+      ;;
+  esac
+  return 0
+}
+
 # The tab carrying the preview client, which is how `read` and `stop` find it
 # again without a state file to go stale.
 tab_label() { echo "herdr-preview:$1"; }
 
-# Every command below drives the *calling* session, so a HERDR_SOCKET_PATH
-# inherited from a preview must not leak in. Commands against the preview go
-# through preview_herdr instead.
 preview_herdr() {
   local name=$1
   shift
   HERDR_SOCKET_PATH="$(session_socket "$name")" herdr "$@"
+}
+
+# The pane holding the client belongs to the *calling* session, so finding it
+# again means talking to that server. A shell that ran the documented
+# `export HERDR_SOCKET_PATH="$(herdr-preview socket)"` would otherwise send
+# these to the preview, where the tab does not exist, and `read` would report
+# no client pane. Drop a socket path that names a session directory and let
+# herdr fall back to its default; leave any other one alone, since that is a
+# caller who meant it.
+caller_herdr() {
+  case ${HERDR_SOCKET_PATH:-} in
+    */herdr/sessions/*/herdr.sock) env -u HERDR_SOCKET_PATH herdr "$@" ;;
+    *) herdr "$@" ;;
+  esac
 }
 
 # herdr's own tokens are validated here, so this catches a mistyped sidebar
@@ -111,7 +138,7 @@ check_config() {
 # that silently failed to start.
 pane_is_free() {
   local pane=$1 fg
-  fg=$(herdr pane process-info --pane "$pane" 2>/dev/null |
+  fg=$(caller_herdr pane process-info --pane "$pane" 2>/dev/null |
     jq -r '[.result.process_info.foreground_processes[]?.name] | join(",")')
   [ -z "$fg" ]
 }
@@ -141,6 +168,22 @@ derive_config() {
   printf '%s\n' "$content" >"$dest"
 }
 
+# Everything after the server comes up can still fail, and a bare return would
+# leave a live server holding the socket, a saved session to replay, and a tab
+# in the user's own workspace. The next start then refuses with "already
+# running" against a preview nobody can see. Undo only what this run made:
+# the tab it created, never a --pane the caller handed in.
+abandon_start() {
+  local name=$1 pane=$2
+  if [ -n "$pane" ]; then
+    caller_herdr tab close "$(caller_herdr pane get "$pane" 2>/dev/null | jq -r '.result.pane.tab_id')" >/dev/null 2>&1 ||
+      caller_herdr pane close "$pane" >/dev/null 2>&1
+  fi
+  preview_herdr "$name" server stop >/dev/null 2>&1
+  caller_herdr session delete "$name" >/dev/null 2>&1
+  return 1
+}
+
 cmd_start() {
   local config='' name=$DEFAULT_SESSION pane='' root
   while [ $# -gt 0 ]; do
@@ -152,6 +195,8 @@ cmd_start() {
       *) echo "herdr-preview: unknown option $1" >&2; return 2 ;;
     esac
   done
+
+  check_session_name "$name" || return 1
 
   root=$(git rev-parse --show-toplevel 2>/dev/null)
   if [ -z "$config" ]; then
@@ -246,9 +291,11 @@ cmd_start() {
   if grep -q 'config parse error' "$(session_dir "$name")/herdr-server.log" 2>/dev/null; then
     echo "herdr-preview: the server rejected $config and fell back to defaults:" >&2
     grep -A6 'config parse error' "$(session_dir "$name")/herdr-server.log" >&2
+    abandon_start "$name" ""
     return 1
   fi
 
+  local created_pane=
   if [ -z "$pane" ]; then
     # A full-size tab rather than a split. herdr hides the sidebar below a
     # minimum width, and the sidebar is what this exists to show.
@@ -256,13 +303,15 @@ cmd_start() {
     # --workspace is not optional. `tab create` without it resolves to the
     # UI-focused workspace, which belongs to whoever last touched the
     # keyboard, so an unattended run plants its tab in someone else's session.
-    pane=$(herdr tab create --workspace "$workspace" --cwd "$PWD" \
+    pane=$(caller_herdr tab create --workspace "$workspace" --cwd "$PWD" \
       --label "$(tab_label "$name")" --no-focus 2>/dev/null |
       jq -r '.result.root_pane.pane_id')
     [ -n "$pane" ] && [ "$pane" != null ] || {
       echo "herdr-preview: could not create a tab for the client" >&2
+      abandon_start "$name" ""
       return 1
     }
+    created_pane=$pane
   fi
 
   # Through a file rather than as a command string. `pane run` hands the
@@ -280,17 +329,26 @@ exec env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \\
   herdr --session "$name"
 EOF
   chmod +x "$launcher"
-  herdr pane run "$pane" "bash $launcher" >/dev/null 2>&1
+  caller_herdr pane run "$pane" "bash $launcher" >/dev/null 2>&1 || {
+    echo "herdr-preview: could not launch the client in $pane" >&2
+    abandon_start "$name" "$created_pane"
+    return 1
+  }
 
   # A client that has painted its chrome can still be showing the workspace
   # list it started with, so waiting on the process, or on the panel headers,
   # hands back a pane whose rows are stale. This workspace is created after
   # the client attached, which makes its label a row the client can only draw
   # by having fetched live state.
-  preview_herdr "$name" workspace create --label "$READY_LABEL" --cwd "$PWD" --no-focus >/dev/null 2>&1
-  herdr pane wait-output "$pane" --match "$READY_LABEL" --source visible --timeout 30000 >/dev/null 2>&1 || {
+  preview_herdr "$name" workspace create --label "$READY_LABEL" --cwd "$PWD" --no-focus >/dev/null 2>&1 || {
+    echo "herdr-preview: the preview server would not create the $READY_LABEL workspace" >&2
+    abandon_start "$name" "$created_pane"
+    return 1
+  }
+  caller_herdr pane wait-output "$pane" --match "$READY_LABEL" --source visible --timeout 30000 >/dev/null 2>&1 || {
     echo "herdr-preview: the client never rendered $READY_LABEL, so its rows are not live" >&2
     echo "herdr-preview: read it with 'herdr pane read $pane --source visible' before trusting anything" >&2
+    abandon_start "$name" "$created_pane"
     return 1
   }
 
@@ -301,7 +359,7 @@ EOF
 # since it started.
 find_pane() {
   local name=$1
-  herdr api snapshot 2>/dev/null | jq -r --arg label "$(tab_label "$name")" '
+  caller_herdr api snapshot 2>/dev/null | jq -r --arg label "$(tab_label "$name")" '
     .result.snapshot as $s
     | [$s.tabs[]? | select(.label == $label) | .tab_id] as $tabs
     | [$s.panes[]? | select(.tab_id as $t | $tabs | index($t)) | .pane_id] | .[0] // empty'
@@ -318,17 +376,19 @@ cmd_read() {
       *) echo "herdr-preview: unknown option $1" >&2; return 2 ;;
     esac
   done
+  check_session_name "$name" || return 1
   pane=$(find_pane "$name")
   [ -n "$pane" ] || {
     echo "herdr-preview: no client pane for session $name" >&2
     return 1
   }
-  herdr pane read "$pane" --source visible --lines "$lines" --format "$fmt"
+  caller_herdr pane read "$pane" --source visible --lines "$lines" --format "$fmt"
 }
 
 cmd_socket() {
   local name=${1:-$DEFAULT_SESSION}
   [ "$name" = --session ] && name=${2:-$DEFAULT_SESSION}
+  check_session_name "$name" || return 1
   session_socket "$name"
 }
 
@@ -342,16 +402,18 @@ cmd_stop() {
     esac
   done
 
+  check_session_name "$name" || return 1
+
   pane=$(find_pane "$name")
   if [ -n "$pane" ]; then
-    herdr tab close "$(herdr pane get "$pane" 2>/dev/null | jq -r '.result.pane.tab_id')" >/dev/null 2>&1 ||
-      herdr pane close "$pane" >/dev/null 2>&1
+    caller_herdr tab close "$(caller_herdr pane get "$pane" 2>/dev/null | jq -r '.result.pane.tab_id')" >/dev/null 2>&1 ||
+      caller_herdr pane close "$pane" >/dev/null 2>&1
   fi
 
   if [ -S "$(session_socket "$name")" ]; then
     preview_herdr "$name" server stop >/dev/null 2>&1
   fi
-  herdr session delete "$name" >/dev/null 2>&1
+  caller_herdr session delete "$name" >/dev/null 2>&1
 
   echo "herdr-preview: stopped $name"
 }
