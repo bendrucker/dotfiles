@@ -331,28 +331,22 @@ test("waits on a ready label unique to the run and short enough to render", () =
   expect(label.length).toBeLessThanOrEqual(12);
 });
 
-// `pane read --lines N` returns the bottom N rows, and the spaces panel is at
-// the top, so a fixed default silently returns a screen with no sidebar in it
-// on any client taller than the number.
-test("reads as many rows as the client pane is tall", () => {
+// `pane read --lines N` returns the bottom N rows and the spaces panel is at
+// the top, so a default short of the client's height silently returns a screen
+// with no sidebar in it. The count is a ceiling, so over-reading is free, and
+// `pane layout` cannot supply the real height: its rect describes the outer
+// pane, not the screen the nested client negotiated.
+test("reads deeper than any screen by default", () => {
   stubHerdr(`case "$1 $2" in
 "api snapshot") echo '{"result":{"snapshot":{"tabs":[{"tab_id":"w9:t2","label":"herdr-preview:preview"}],"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}}' ;;
-"pane layout") echo '{"result":{"layout":{"panes":[{"pane_id":"w9:p2","rect":{"height":62,"width":200}}]}}}' ;;
 *) exit 0 ;;
 esac`);
   const r = preview(["read"]);
   expect(r.status).toBe(0);
-  expect(log().some((c) => c.startsWith("pane read w9:p2") && c.includes("--lines 62"))).toBe(true);
-});
-
-test("falls back to a deep read when the layout gives no height", () => {
-  stubHerdr(`case "$1 $2" in
-"api snapshot") echo '{"result":{"snapshot":{"tabs":[{"tab_id":"w9:t2","label":"herdr-preview:preview"}],"panes":[{"pane_id":"w9:p2","tab_id":"w9:t2"}]}}}' ;;
-"pane layout") exit 1 ;;
-*) exit 0 ;;
-esac`);
-  preview(["read"]);
-  expect(log().some((c) => c.startsWith("pane read w9:p2") && c.includes("--lines 200"))).toBe(true);
+  const read = log().find((c) => c.startsWith("pane read w9:p2")) ?? "";
+  const lines = Number(read.match(/--lines (\d+)/)?.[1]);
+  expect(lines).toBeGreaterThanOrEqual(500);
+  expect(log().some((c) => c.startsWith("pane layout"))).toBe(false);
 });
 
 test("honors an explicit --lines", () => {
@@ -362,7 +356,6 @@ test("honors an explicit --lines", () => {
 esac`);
   preview(["read", "--lines", "12"]);
   expect(log().some((c) => c.includes("--lines 12"))).toBe(true);
-  expect(log().some((c) => c.startsWith("pane layout"))).toBe(false);
 });
 
 // `set -u` turns a flag given as the last argument into bash's own unbound

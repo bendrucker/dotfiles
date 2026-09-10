@@ -49,9 +49,10 @@ usage: herdr-preview <command> [options]
         Without --pane, creates a tab in the current workspace.
 
   read  [--session <name>] [--ansi] [--lines <n>]
-        Read the rendered sidebar out of that pane. Defaults to the pane's
-        own height. --lines takes the BOTTOM n rows, so a short read hides
-        the spaces panel and comes back looking like an empty sidebar.
+        Read the rendered sidebar out of that pane. --lines takes the
+        BOTTOM n rows, so a short read hides the spaces panel and comes
+        back looking like an empty sidebar. The default reads deeper than
+        any screen, which costs nothing.
 
   socket [--session <name>]
         Print the preview's socket path, for driving it:
@@ -403,18 +404,15 @@ find_pane() {
 }
 
 # `pane read --lines N` returns the *bottom* N rows. The spaces panel is at the
-# top of the client, so a short read comes back without the sidebar in it at
-# all, which looks like a config that did not apply rather than a short read.
-# The pane's own height is the only count that cannot cut the top off.
-pane_height() {
-  local pane=$1 height
-  height=$(caller_herdr pane layout --pane "$pane" 2>/dev/null |
-    jq -r --arg p "$pane" '.result.layout.panes[]? | select(.pane_id == $p) | .rect.height')
-  case $height in
-    '' | null | *[!0-9]*) echo 200 ;;
-    *) echo "$height" ;;
-  esac
-}
+# top of the client, so a short read comes back with no sidebar in it at all,
+# which looks like a config that did not apply rather than a short read.
+#
+# Over-reading is free: the count is a ceiling, and a screen shorter than it
+# comes back whole. So this asks for more rows than a terminal has rather than
+# trying to learn the real height. `pane layout` cannot supply it, since its
+# rect describes the outer pane and not the screen the nested client
+# negotiated: a client reporting `cols=170 rows=62` sat in a rect of 44 by 36.
+DEEP_READ=1000
 
 cmd_read() {
   local name=$DEFAULT_SESSION lines='' fmt=text pane
@@ -433,7 +431,7 @@ cmd_read() {
     echo "herdr-preview: no client pane for session $name" >&2
     return 1
   }
-  [ -n "$lines" ] || lines=$(pane_height "$pane")
+  [ -n "$lines" ] || lines=$DEEP_READ
   caller_herdr pane read "$pane" --source visible --lines "$lines" --format "$fmt"
 }
 

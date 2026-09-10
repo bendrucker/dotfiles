@@ -34,7 +34,9 @@ export HERDR_SOCKET_PATH="$(herdr-preview socket)"
 herdr-preview stop
 ```
 
-`pane read --lines` returns the *bottom* n rows, and the spaces panel is at the top. A count short of the client's height comes back with no sidebar in it, which reads as a config that did not apply. `herdr-preview read` defaults to the pane's own height for that reason, so pass `--lines` only to read less on purpose.
+`pane read --lines` returns the *bottom* n rows, and the spaces panel is at the top. A count short of the client's height comes back with no sidebar in it, which reads as a config that did not apply. The count is a ceiling, so over-reading costs nothing and `herdr-preview read` asks for more rows than a terminal has. Pass `--lines` only to read less on purpose.
+
+`pane layout` cannot tell you the real height. Its rect describes the outer pane, not the screen the nested client negotiated, and the two disagree: a client logging `client connected cols=170 rows=62` sat in a rect of 44 by 36. The negotiated size appears only in the preview's own `herdr-server.log`.
 
 `start` and `stop` both need the Bash sandbox off. The server sets its own priority, which the sandbox denies, and it exits before creating a socket. `stop` deletes the saved session, which writes under `~/.config/herdr`, also denied. `read` and `socket` run sandboxed, because the project settings allow the session sockets, so a refused connection to a preview socket has some other cause.
 
@@ -52,7 +54,7 @@ The alt-screen caveat in the herdr skill applies to scrollback, not to the visib
 
 `HERDR_CONFIG_PATH` names the config file and is read once at server start. `HERDR_SESSION` names the session and roots every runtime path at `~/.config/herdr/sessions/<name>/`.
 
-Between them there is no reason to touch `XDG_CONFIG_HOME`. Moving that instead means mirroring the config directory, because `~/.config/herdr` holds runtime state next to the config — `herdr.sock`, `herdr-client.sock`, `session.json`, `session-history.json`, `sessions/`, and both logs — so a wholesale symlink points the preview client at the live server's socket and drives the user's real session. Moving only the config file leaves `plugins/` and `agent-detection/` resolving out of the real directory, which is what a faithful preview wants anyway.
+Between them there is no reason to touch `XDG_CONFIG_HOME`. Moving that instead means mirroring the config directory, because `~/.config/herdr` holds runtime state next to the config: `herdr.sock`, `herdr-client.sock`, `session.json`, `session-history.json`, `sessions/`, and both logs. A wholesale symlink therefore points the preview client at the live server's socket and drives the user's real session. Moving only the config file leaves `plugins/` and `agent-detection/` resolving out of the real directory, which is what a faithful preview wants anyway.
 
 It also keeps the socket path short. macOS caps a unix socket path near 104 bytes, and a config root under a scratch directory blows through that on its own. The server reports the overflow as a startup timeout naming a socket it never tried to create, so it reads as a hang rather than a length problem.
 
@@ -122,6 +124,12 @@ pkill -f 'ghostty -e env .*herdr --session preview'
 ```
 
 The `pkill` closes the second Ghostty instance, which stays open on the exited client otherwise. Leave the default session's Ghostty alone.
+
+## Editing A Script Another Agent Is Running
+
+bash reads a script incrementally by byte offset rather than loading it whole. A file that grows while a shell is executing it resumes at a shifted boundary and parses a fragment as a command, so the error names a line that did not exist when the run started. A sibling agent running `herdr-preview` out of this worktree hit exactly that, and reported a syntax error at a line number sixty lines past the end of the file it had launched.
+
+Write an edit to a temporary path and rename it over the target. The rename is atomic, so a running shell keeps its descriptor on the old inode and reads a consistent file to the end. Truncating in place, which is what an ordinary write does, is the version that corrupts a live reader. This is worth knowing whenever a script here is something another agent runs.
 
 ## Tab And Workspace Numbers
 
