@@ -25,7 +25,7 @@ export function up(context: Context): void {
 // this normally cannot succeed as the user and says so instead. Escalating is
 // what a migration running unattended at 3am must not do, and the leftover is
 // harmless until it is dealt with awake.
-export function removeApplication(context: Context, name: string): void {
+function removeApplication(context: Context, name: string): void {
   const app = join(context.applications, name);
   if (!exists(app)) return;
 
@@ -34,8 +34,15 @@ export function removeApplication(context: Context, name: string): void {
     log(context.out, "info", `removed ${app}`);
   } catch (error) {
     if (!denied(error)) throw error;
-    log(context.out, "warn", `${app} needs root to remove: sudo rm -rf ${JSON.stringify(app)}`);
+    log(context.out, "warn", `${app} needs root to remove: sudo rm -rf ${quote(app)}`);
   }
+}
+
+// The path is going into a line someone pastes into a shell, and this one holds
+// a space. Single quotes rather than double, which would still take a `$(…)` in
+// a name as something to run.
+function quote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 function denied(error: unknown): boolean {
