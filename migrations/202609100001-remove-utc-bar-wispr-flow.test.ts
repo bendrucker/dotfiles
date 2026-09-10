@@ -84,7 +84,10 @@ describe("remove-utc-bar-wispr-flow", () => {
     expect(logged.join("\n")).toContain("removed");
   });
 
-  test("says what to run rather than escalating when the bundle is root's", () => {
+  // The unwritable bundle is what the OS refuses, and root is refused nothing,
+  // so as root the removal would succeed and the case would assert the wrong
+  // half. CI runs as an ordinary user, which is where this means something.
+  test.skipIf(process.getuid?.() === 0)("says what to run rather than escalating when the bundle is root's", () => {
     const app = bundle(false);
 
     try {

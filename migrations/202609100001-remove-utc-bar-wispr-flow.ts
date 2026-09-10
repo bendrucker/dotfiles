@@ -14,9 +14,13 @@ import { type Context, exists, removeCask } from "#migrations/migration";
 
 export const platform = "darwin";
 
+// The bundle goes first because removeCask throws on a nonzero uninstall, and a
+// throw leaves the stamp where it was and stops the migrations behind this one.
+// Ordering the cleanup that cannot throw ahead of it keeps one flaky brew run
+// from holding the other back for a night.
 export function up(context: Context): void {
-  removeCask(context, "wispr-flow");
   removeApplication(context, "UTC Bar.app");
+  removeCask(context, "wispr-flow");
 }
 
 // `mas uninstall` needs root, so the bundle goes directly. An App Store install
