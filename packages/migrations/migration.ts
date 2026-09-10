@@ -19,6 +19,11 @@ import { log } from "#jobs/output";
 // node:os platform values, which is what `process.platform` reports.
 export type Platform = "darwin" | "linux";
 
+// Fixed on macOS, unlike the XDG directories, and meaningless on Linux. It is
+// still handed to a migration rather than read at the point of use, so a test
+// can point one at a sandbox.
+export const APPLICATIONS = "/Applications";
+
 // Every directory a migration reaches for arrives here rather than being read
 // out of the environment, which is what lets a test hand one a sandbox and know
 // nothing escaped it.
@@ -29,6 +34,10 @@ export interface Context {
   // $XDG_CONFIG_HOME and $XDG_DATA_HOME, already defaulted.
   config: string;
   data: string;
+  // Where casks and App Store apps land. Not a root removeTree will accept:
+  // everything here is owned by root and shared with every user, so a migration
+  // that removes one says so itself.
+  applications: string;
   // The dotfiles trees this machine's symlinks may point into. The runner reads
   // these to tell a fresh machine from an installed one, and a migration reads
   // them to tell a link this repo made from one someone else did.
@@ -52,18 +61,30 @@ const HOMEBREW_ENV = { HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ENV_HINTS: "1" 
 // installed or the formula already isn't, which is every machine but the one
 // this migration exists for.
 export function removeFormula(context: Context, name: string): void {
+  removePackage(context, name, []);
+}
+
+// The same for a cask. Casks are a namespace of their own, and `brew list`
+// without --cask answers only for formulae: it exits nonzero for an installed
+// cask, so sharing removeFormula here would read every cask as already gone and
+// uninstall nothing.
+export function removeCask(context: Context, name: string): void {
+  removePackage(context, name, ["--cask"]);
+}
+
+function removePackage(context: Context, name: string, scope: string[]): void {
   const brew = Bun.which("brew", { PATH: process.env.PATH });
   if (brew === null) return;
 
   const env = { ...process.env, ...HOMEBREW_ENV };
-  // --versions rather than plain `list`, which prints every file the formula
+  // --versions rather than plain `list`, which prints every file the package
   // owns and would bury the log it shares with the rest of the install.
-  if (context.out.read([brew, "list", "--versions", name], { env, stdin: "ignore" }).status !== 0) {
+  if (context.out.read([brew, "list", ...scope, "--versions", name], { env, stdin: "ignore" }).status !== 0) {
     return;
   }
 
   log(context.out, "info", `uninstalling ${name}`);
-  if (context.out.run([brew, "uninstall", name], { env, stdin: "ignore" }) !== 0) {
+  if (context.out.run([brew, "uninstall", ...scope, name], { env, stdin: "ignore" }) !== 0) {
     throw new Error(`brew uninstall ${name} failed`);
   }
 }

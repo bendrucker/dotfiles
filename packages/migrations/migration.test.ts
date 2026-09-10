@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
-import { type Context, exists, isEmpty, ownedLink, removeFormula, removeTree } from "#migrations/migration";
+import { type Context, exists, isEmpty, ownedLink, removeCask, removeFormula, removeTree } from "#migrations/migration";
 
 let box: Sandbox;
 let home: string;
@@ -32,6 +32,7 @@ function context(read: (cmd: string[]) => number = () => 0): Context {
     home,
     config: join(home, ".config"),
     data: join(home, ".local", "share"),
+    applications: join(box.dir, "Applications"),
     installed: [installed],
     platform: "darwin",
     out: {
@@ -130,6 +131,36 @@ describe("removeFormula", () => {
   test("does nothing on a machine with no brew, which is every Linux one here", () => {
     process.env.PATH = box.mkdir("empty");
     removeFormula(context(), "tmux");
+    expect(brewCalls()).toEqual([]);
+  });
+});
+
+describe("removeCask", () => {
+  const path = process.env.PATH;
+  afterEach(() => {
+    process.env.PATH = path;
+  });
+
+  // Without --cask, `brew list` answers only for formulae and exits nonzero for
+  // an installed cask, which would read as already gone and uninstall nothing.
+  test("scopes both commands to casks", () => {
+    stubBrew();
+    removeCask(context(), "wispr-flow");
+    expect(brewCalls()).toEqual([
+      ["list", "--cask", "--versions", "wispr-flow"],
+      ["uninstall", "--cask", "wispr-flow"],
+    ]);
+  });
+
+  test("leaves a cask that is not installed alone", () => {
+    stubBrew();
+    removeCask(context(() => 1), "wispr-flow");
+    expect(brewCalls()).toEqual([["list", "--cask", "--versions", "wispr-flow"]]);
+  });
+
+  test("does nothing on a machine with no brew", () => {
+    process.env.PATH = box.mkdir("empty");
+    removeCask(context(), "wispr-flow");
     expect(brewCalls()).toEqual([]);
   });
 });

@@ -56,6 +56,7 @@ function context(platform: Platform = "darwin"): Context {
     home,
     config: join(home, ".config"),
     data: join(home, ".local", "share"),
+    applications: join(box.dir, "Applications"),
     installed: [installed],
     platform,
     out: { write() {}, run: () => 0, read: () => ({ status: 0, stdout: "" }) },
