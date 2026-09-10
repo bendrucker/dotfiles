@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+#
+# Run a herdr config in an isolated preview session, rendered where an agent
+# can read it as text.
+#
+# The problem this solves: `herdr server reload-config` reads the installed
+# config, so a worktree edit is invisible to the running session until it
+# merges and syncs, and repointing the symlink experiments on the user's real
+# panes. A preview is a second server, on its own socket, holding its own
+# synthetic workspaces, running whatever config file is named.
+#
+# Two environment variables carry the whole thing, and neither needs a mirror
+# of ~/.config/herdr:
+#
+#   HERDR_CONFIG_PATH  the config file, read once when the server starts
+#   HERDR_SESSION      the session name, which roots every runtime path at
+#                      ~/.config/herdr/sessions/<name>/
+#
+# Because only the config *file* moves, plugins/ and agent-detection/ still
+# resolve out of the real config directory, which is what a faithful preview
+# wants. Because the session name roots the sockets, nothing shares a path
+# with the live server.
+#
+# The client runs inside a pane of the calling session, so the rendered
+# sidebar comes back through `herdr pane read`. That is the whole point: it
+# works with the screen locked and with screencapture broken, and it reads
+# token colors as truecolor escapes under `--format ansi`.
+set -uo pipefail
+
+DEFAULT_SESSION=preview
+
+# The workspace start creates to prove the client is drawing live state rather
+# than the list it attached with.
+READY_LABEL=preview-ready
+
+usage() {
+  cat <<'EOF'
+usage: herdr-preview <command> [options]
+
+  start [--config <path>] [--session <name>] [--pane <id>]
+        Validate the config, start an isolated server on it, and launch a
+        client in a pane of the calling session. Prints the pane id.
+        Without --pane, creates a tab in the current workspace.
+
+  read  [--session <name>] [--ansi] [--lines <n>]
+        Read the rendered sidebar out of that pane.
+
+  socket [--session <name>]
+        Print the preview's socket path, for driving it:
+          export HERDR_SOCKET_PATH="$(herdr-preview socket)"
+
+  stop  [--session <name>]
+        Stop the server, delete its saved state, and close the pane.
+
+The config defaults to herdr/config.toml under the current repository.
+EOF
+}
+
+for tool in herdr jq git; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "herdr-preview: $tool is not on PATH" >&2
+    exit 1
+  }
+done
+
+# An absolute config path, so the server resolves it whatever directory it
+# inherits. A path that does not exist is passed through for check_config to
+# report by name.
+abspath() { (cd "$(dirname "$1")" 2>/dev/null && echo "$PWD/$(basename "$1")") || echo "$1"; }
+
+# herdr roots a named session's runtime state here, so this has to resolve
+# XDG_CONFIG_HOME the same way it does rather than assuming ~/.config.
+session_dir() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/herdr/sessions/$1"; }
+session_socket() { echo "$(session_dir "$1")/herdr.sock"; }
+
+# The tab carrying the preview client, which is how `read` and `stop` find it
+# again without a state file to go stale.
+tab_label() { echo "herdr-preview:$1"; }
+
+# Every command below drives the *calling* session, so a HERDR_SOCKET_PATH
+# inherited from a preview must not leak in. Commands against the preview go
+# through preview_herdr instead.
+preview_herdr() {
+  local name=$1
+  shift
+  HERDR_SOCKET_PATH="$(session_socket "$name")" herdr "$@"
+}
+
+# herdr's own tokens are validated here, so this catches a mistyped sidebar
+# token before anything renders. Two things it does not catch on its own:
+# a path that does not exist, which it reports as `config: ok`, and the fact
+# that a server rejecting a config starts anyway on defaults.
+check_config() {
+  local config=$1 out
+  [ -f "$config" ] || {
+    echo "herdr-preview: no config at $config" >&2
+    echo "herdr-preview: (herdr config check reports ok for a missing file, so this is checked here)" >&2
+    return 1
+  }
+  out=$(HERDR_CONFIG_PATH="$config" herdr config check 2>&1) || {
+    echo "herdr-preview: $config is not valid" >&2
+    echo "$out" >&2
+    return 1
+  }
+  return 0
+}
+
+# A pane already running something is not a place to launch a client. herdr
+# hands `pane run` to the pane's interactive shell, so against a pane holding
+# a TUI it types into that TUI and reports success, which reads as a client
+# that silently failed to start.
+pane_is_free() {
+  local pane=$1 fg
+  fg=$(herdr pane process-info --pane "$pane" 2>/dev/null |
+    jq -r '[.result.process_info.foreground_processes[]?.name] | join(",")')
+  [ -z "$fg" ]
+}
+
+# The server resolves a bare command against its own PATH, which is the
+# installed ~/.dotfiles copy rather than the worktree under test. A config
+# whose tokens come from a script being changed would render its rows bare,
+# which reads as a config bug rather than a stale binary. Rewrite every bare
+# command naming a script in this repository to its worktree path.
+#
+# Each rewrite is named on stderr, so a preview never silently disagrees with
+# the file it was handed.
+derive_config() {
+  local config=$1 dest=$2 root=$3 name script content
+  content=$(cat "$config") || return 1
+  if [ -n "$root" ]; then
+    for script in "$root"/*/bin/*; do
+      [ -f "$script" ] && [ -x "$script" ] || continue
+      name=$(basename "$script")
+      case $content in
+        *"command = \"$name\""*) ;;
+        *) continue ;;
+      esac
+      # Parameter substitution rather than sed, so a name carrying a regex
+      # character cannot reshape the match.
+      content=${content//command = \"$name\"/command = \"$script\"}
+      echo "herdr-preview: pointed $name at the worktree copy" >&2
+    done
+  fi
+  printf '%s\n' "$content" >"$dest"
+}
+
+cmd_start() {
+  local config='' name=$DEFAULT_SESSION pane='' root
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --config) config=$2; shift 2 ;;
+      --session) name=$2; shift 2 ;;
+      --pane) pane=$2; shift 2 ;;
+      -h | --help) usage; return 0 ;;
+      *) echo "herdr-preview: unknown option $1" >&2; return 2 ;;
+    esac
+  done
+
+  root=$(git rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$config" ]; then
+    [ -n "$root" ] || {
+      echo "herdr-preview: not in a repository; pass --config" >&2
+      return 1
+    }
+    config="$root/herdr/config.toml"
+  fi
+  config=$(abspath "$config")
+  check_config "$config" || return 1
+
+  if [ -S "$(session_socket "$name")" ]; then
+    echo "herdr-preview: session $name is already running; stop it first" >&2
+    return 1
+  fi
+
+  # macOS caps a unix socket path at 104 bytes, and the server reports the
+  # overflow as a startup timeout naming a socket it never tried to create.
+  # A config root under a scratch directory is long enough on its own to hit
+  # this, so the length is worth saying out loud.
+  local socket_path socket_len
+  socket_path=$(session_socket "$name")
+  socket_len=${#socket_path}
+  if [ "$socket_len" -ge 104 ]; then
+    echo "herdr-preview: the socket path would be $socket_len bytes, over the 104 macOS allows:" >&2
+    echo "herdr-preview:   $socket_path" >&2
+    echo "herdr-preview: shorten XDG_CONFIG_HOME or the session name" >&2
+    return 1
+  fi
+
+  # Where the client will go, settled before anything is started so a busy
+  # pane or a missing workspace costs no server.
+  local workspace=${HERDR_WORKSPACE_ID:-}
+  if [ -n "$pane" ]; then
+    pane_is_free "$pane" || {
+      echo "herdr-preview: $pane is already running something" >&2
+      return 1
+    }
+  elif [ -z "$workspace" ]; then
+    echo "herdr-preview: no HERDR_WORKSPACE_ID; run this from a herdr pane or pass --pane" >&2
+    return 1
+  fi
+
+  # The server inherits this pane's environment, and a herdr that sees
+  # HERDR_ENV refuses to start inside another herdr. HERDR_SOCKET_PATH is the
+  # dangerous one: left set, the preview's own commands would drive the live
+  # server.
+  # The derived config lives beside the session it belongs to, so a second
+  # preview cannot overwrite the file this server is reading.
+  mkdir -p "$(session_dir "$name")"
+  local derived
+  derived=$(session_dir "$name")/config.toml
+  derive_config "$config" "$derived" "$root" || {
+    echo "herdr-preview: could not derive a config from $config" >&2
+    return 1
+  }
+
+  local errlog server_pid
+  errlog="${TMPDIR:-/tmp}/herdr-preview-$name.log"
+  : >"$errlog"
+  env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
+    -u HERDR_SOCKET_PATH -u HERDR_BIN_PATH \
+    HERDR_SESSION="$name" HERDR_CONFIG_PATH="$derived" \
+    herdr server >"$errlog" 2>&1 &
+  server_pid=$!
+
+  # Readiness is the server answering, not its socket file appearing. The file
+  # shows up before the server is listening on it.
+  local ready=
+  for _ in $(seq 1 100); do
+    preview_herdr "$name" api snapshot >/dev/null 2>&1 && {
+      ready=1
+      break
+    }
+    # A server that has already exited will never answer, and waiting out the
+    # rest of the loop hides the message it exited with.
+    kill -0 "$server_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  [ -n "$ready" ] || {
+    echo "herdr-preview: server did not come up at $socket_path" >&2
+    [ -s "$errlog" ] && sed 's/^/herdr-preview:   /' "$errlog" >&2
+    grep -q PermissionDenied "$errlog" 2>/dev/null &&
+      echo "herdr-preview: the server sets its own priority, which the Bash sandbox denies; start needs it off" >&2
+    return 1
+  }
+
+  # A config the server cannot parse does not stop it. It warns once and runs
+  # on defaults, so a preview would render stock herdr and read as a change
+  # that did nothing.
+  if grep -q 'config parse error' "$(session_dir "$name")/herdr-server.log" 2>/dev/null; then
+    echo "herdr-preview: the server rejected $config and fell back to defaults:" >&2
+    grep -A6 'config parse error' "$(session_dir "$name")/herdr-server.log" >&2
+    return 1
+  fi
+
+  if [ -z "$pane" ]; then
+    # A full-size tab rather than a split. herdr hides the sidebar below a
+    # minimum width, and the sidebar is what this exists to show.
+    #
+    # --workspace is not optional. `tab create` without it resolves to the
+    # UI-focused workspace, which belongs to whoever last touched the
+    # keyboard, so an unattended run plants its tab in someone else's session.
+    pane=$(herdr tab create --workspace "$workspace" --cwd "$PWD" \
+      --label "$(tab_label "$name")" --no-focus 2>/dev/null |
+      jq -r '.result.root_pane.pane_id')
+    [ -n "$pane" ] && [ "$pane" != null ] || {
+      echo "herdr-preview: could not create a tab for the client" >&2
+      return 1
+    }
+  fi
+
+  # Through a file rather than as a command string. `pane run` hands the
+  # string to the pane's interactive shell, which expands aliases, and
+  # colors/grc.zsh aliases `env` to a grc wrapper that pipes the client
+  # through grcat. The client then never owns the tty and `pane read` shows
+  # the shell prompt instead of a sidebar.
+  local launcher
+  launcher=$(session_dir "$name")/client.sh
+  cat >"$launcher" <<EOF
+#!/usr/bin/env bash
+exec env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \\
+  -u HERDR_SOCKET_PATH -u HERDR_BIN_PATH \\
+  HERDR_CONFIG_PATH="$derived" \\
+  herdr --session "$name"
+EOF
+  chmod +x "$launcher"
+  herdr pane run "$pane" "bash $launcher" >/dev/null 2>&1
+
+  # A client that has painted its chrome can still be showing the workspace
+  # list it started with, so waiting on the process, or on the panel headers,
+  # hands back a pane whose rows are stale. This workspace is created after
+  # the client attached, which makes its label a row the client can only draw
+  # by having fetched live state.
+  preview_herdr "$name" workspace create --label "$READY_LABEL" --cwd "$PWD" --no-focus >/dev/null 2>&1
+  herdr pane wait-output "$pane" --match "$READY_LABEL" --source visible --timeout 30000 >/dev/null 2>&1 || {
+    echo "herdr-preview: the client never rendered $READY_LABEL, so its rows are not live" >&2
+    echo "herdr-preview: read it with 'herdr pane read $pane --source visible' before trusting anything" >&2
+    return 1
+  }
+
+  echo "$pane"
+}
+
+# The tab label is the handle, so this survives a session that has been driven
+# since it started.
+find_pane() {
+  local name=$1
+  herdr api snapshot 2>/dev/null | jq -r --arg label "$(tab_label "$name")" '
+    .result.snapshot as $s
+    | [$s.tabs[]? | select(.label == $label) | .tab_id] as $tabs
+    | [$s.panes[]? | select(.tab_id as $t | $tabs | index($t)) | .pane_id] | .[0] // empty'
+}
+
+cmd_read() {
+  local name=$DEFAULT_SESSION lines=70 fmt=text pane
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --session) name=$2; shift 2 ;;
+      --lines) lines=$2; shift 2 ;;
+      --ansi) fmt=ansi; shift ;;
+      -h | --help) usage; return 0 ;;
+      *) echo "herdr-preview: unknown option $1" >&2; return 2 ;;
+    esac
+  done
+  pane=$(find_pane "$name")
+  [ -n "$pane" ] || {
+    echo "herdr-preview: no client pane for session $name" >&2
+    return 1
+  }
+  herdr pane read "$pane" --source visible --lines "$lines" --format "$fmt"
+}
+
+cmd_socket() {
+  local name=${1:-$DEFAULT_SESSION}
+  [ "$name" = --session ] && name=${2:-$DEFAULT_SESSION}
+  session_socket "$name"
+}
+
+cmd_stop() {
+  local name=$DEFAULT_SESSION pane
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --session) name=$2; shift 2 ;;
+      -h | --help) usage; return 0 ;;
+      *) echo "herdr-preview: unknown option $1" >&2; return 2 ;;
+    esac
+  done
+
+  pane=$(find_pane "$name")
+  if [ -n "$pane" ]; then
+    herdr tab close "$(herdr pane get "$pane" 2>/dev/null | jq -r '.result.pane.tab_id')" >/dev/null 2>&1 ||
+      herdr pane close "$pane" >/dev/null 2>&1
+  fi
+
+  if [ -S "$(session_socket "$name")" ]; then
+    preview_herdr "$name" server stop >/dev/null 2>&1
+  fi
+  herdr session delete "$name" >/dev/null 2>&1
+
+  echo "herdr-preview: stopped $name"
+}
+
+[ $# -gt 0 ] || {
+  usage >&2
+  exit 2
+}
+
+command=$1
+shift
+case $command in
+  start) cmd_start "$@" ;;
+  read) cmd_read "$@" ;;
+  socket) cmd_socket "$@" ;;
+  stop) cmd_stop "$@" ;;
+  -h | --help | help) usage ;;
+  *)
+    echo "herdr-preview: unknown command $command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

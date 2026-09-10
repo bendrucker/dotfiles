@@ -28,7 +28,9 @@ All modes share the same primitives:
 
 ## Gotchas
 
-Always run `scripts/preflight` before capturing. It returns JSON with `ok: true` when capture is viable, or `ok: false` with a `reason` field. Exit codes: 0 ready, 2 locked, 3 no-terminals.
+Always run `scripts/preflight` before capturing. It takes a real capture rather than inferring one is possible, so `ok: true` means an image came back with something in it. Exit codes: 0 ready, 2 locked, 3 no-terminals, 4 capture-failed, 5 capture-blank. A failure carries `screencapture_error` and `screen_recording`, the grant the calling app holds.
+
+When it reports `ok: false`, say so and switch channels rather than retrying. herdr's own chrome reads as text through a preview session: `herdr/bin/herdr-preview` runs a config in an isolated session inside a pane, and `herdr-preview read --ansi` returns the rendered sidebar with token colors intact as truecolor escapes. That works with the screen locked and with capture broken, which is most of what this skill was reached for.
 
 #### Screen lock blocks per-window and per-rect captures
 
@@ -44,7 +46,7 @@ The Claude Code sandbox segfaults JXA's access to AppKit/Quartz when `osascript 
 
 #### Screen Recording permission is on the calling app
 
-`screencapture` requires Screen Recording permission for the *calling* terminal app (Ghostty, iTerm, etc.), not for `screencapture` itself. If captures come back as a uniform color but `scripts/preflight` passes, ask the user to grant Screen Recording in `System Settings → Privacy & Security → Screen Recording`. The terminal app must be relaunched after enabling.
+`screencapture` requires Screen Recording permission for the *calling* terminal app (Ghostty, iTerm, etc.), not for `screencapture` itself. A major macOS upgrade resets that grant, which leaves every window still enumerable and every capture failing with `could not create image from window`. `scripts/preflight` reports that as `capture-failed` with `screen_recording: false`. The fix is the user granting Screen Recording in `System Settings → Privacy & Security → Screen Recording`, then relaunching the terminal app. Nothing an agent can do from the shell restores it.
 
 #### JXA does not have `$.exit()`
 

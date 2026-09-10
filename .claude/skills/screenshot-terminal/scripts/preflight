@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
-# Check whether the host can produce useful screenshots.
-# Prints a single JSON line; exits 0 if ready, non-zero otherwise.
+# Check whether the host can produce useful screenshots, by taking one.
+# Prints a single JSON line. Exits 0 if ready, non-zero otherwise.
+#
+# Enumerating windows is not evidence that capture works. Screen Recording is
+# granted to the calling terminal app, and a major macOS upgrade resets that
+# grant, so the windows are all still there and every capture fails. Asking
+# Quartz what it can see answers a different question than asking it for an
+# image, so this asks for the image.
+#
 # Failure modes covered:
 #   screen-locked        loginwindow / Display Shield topmost
 #   no-terminal-windows  nothing to capture
+#   capture-failed       screencapture would not produce an image
+#   capture-blank        it produced a uniform image, which carries nothing
 # Usage: preflight
 
 set -euo pipefail
 
-result=$(osascript -l JavaScript <<'JXA'
+windows=$(osascript -l JavaScript <<'JXA'
 ObjC.import('CoreGraphics');
 ObjC.import('Foundation');
 const onscreen = $.kCGWindowListOptionOnScreenOnly;
@@ -24,17 +33,74 @@ const locked = wins.some(w =>
 );
 const TERMS = /ghostty|iterm|terminal|alacritty|wezterm|kitty/i;
 const terms = wins.filter(w => TERMS.test(w.kCGWindowOwnerName || '') && (w.kCGWindowLayer || 0) === 0);
-const out = { locked, terminal_window_count: terms.length };
-if (locked)            JSON.stringify({ ok: false, reason: 'screen-locked',       detail: out });
-else if (!terms.length) JSON.stringify({ ok: false, reason: 'no-terminal-windows', detail: out });
-else                    JSON.stringify({ ok: true,                                 detail: out });
+
+// CGPreflightScreenCaptureAccess is absent from the CoreGraphics bridge
+// metadata, so it has to be declared before it can be called. It names the
+// cause when a capture fails; it does not decide the outcome.
+let access = null;
+try {
+  ObjC.bindFunction('CGPreflightScreenCaptureAccess', ['bool', []]);
+  access = $.CGPreflightScreenCaptureAccess();
+} catch (e) {
+  access = null;
+}
+
+JSON.stringify({
+  locked,
+  screen_recording: access,
+  terminal_window_count: terms.length,
+  first_window_id: terms.length ? terms[0].kCGWindowNumber : null,
+});
 JXA
 )
 
-echo "$result"
-case "$result" in
-  *'"ok":true'*)                 exit 0 ;;
-  *'"reason":"screen-locked"'*)  exit 2 ;;
-  *'"reason":"no-terminal-windows"'*) exit 3 ;;
-  *)                             exit 1 ;;
+field() { echo "$windows" | sed -n "s/.*\"$1\":\([^,}]*\).*/\1/p"; }
+
+fail() {
+  echo "{\"ok\":false,\"reason\":\"$1\",\"detail\":$windows}"
+  exit "$2"
+}
+
+[ "$(field locked)" = "true" ] && fail screen-locked 2
+[ "$(field terminal_window_count)" = "0" ] && fail no-terminal-windows 3
+
+# The real thing. A window capture rather than a rect, because that is what
+# capture-window does and what the permission actually gates.
+probe=$(mktemp -t preflight-capture).png
+trap 'rm -f "$probe"' EXIT
+window_id=$(field first_window_id)
+
+if ! error=$(screencapture -x -o -l "$window_id" -t png "$probe" 2>&1) || [ ! -s "$probe" ]; then
+  windows="${windows%\}},\"screencapture_error\":\"${error//\"/}\"}"
+  fail capture-failed 4
+fi
+
+# A capture that succeeds can still come back a single flat color, which is
+# what a revoked grant used to produce and what a compositor glitch produces
+# now. A terminal window is never one color, so uniformity means no signal.
+uniform=$(PROBE="$probe" osascript -l JavaScript <<'JXA'
+ObjC.import('AppKit');
+ObjC.import('Foundation');
+const probe = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('PROBE'));
+const data = $.NSData.dataWithContentsOfFile(probe);
+const rep = $.NSBitmapImageRep.imageRepWithData(data);
+const w = Number(rep.pixelsWide), h = Number(rep.pixelsHigh);
+// A sparse grid rather than every pixel: enough to prove variation exists.
+let first = null, varied = false;
+for (let x = 0; x < 8 && !varied; x++) {
+  for (let y = 0; y < 8 && !varied; y++) {
+    const c = rep.colorAtXY(Math.floor((x + 0.5) * w / 8), Math.floor((y + 0.5) * h / 8));
+    const key = `${Math.round(c.redComponent * 255)},${Math.round(c.greenComponent * 255)},${Math.round(c.blueComponent * 255)}`;
+    if (first === null) first = key;
+    else if (key !== first) varied = true;
+  }
+}
+JSON.stringify({ uniform: !varied });
+JXA
+)
+
+case "$uniform" in
+  *'"uniform":true'*) fail capture-blank 5 ;;
 esac
+
+echo "{\"ok\":true,\"detail\":$windows}"

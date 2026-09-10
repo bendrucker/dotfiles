@@ -43,4 +43,16 @@ describe("herdr", () => {
     const resolved = r.stdout.trim();
     expect(realpathSync(resolved)).toBe(realpathSync(list));
   });
+
+  // herdr validates its own tokens, so this catches a sidebar row naming a
+  // token that does not exist before a reload silently falls back to defaults.
+  // A server given a config it cannot parse starts anyway on stock settings,
+  // which renders as a change that did nothing rather than as an error.
+  test("the tracked config is one herdr accepts", () => {
+    const r = run(["herdr", "config", "check"], {
+      env: { HERDR_CONFIG_PATH: join(repoRoot, "herdr", "config.toml") },
+    });
+    expect(r.stdout + r.stderr).toContain("config: ok");
+    expect(r.status).toBe(0);
+  });
 });
