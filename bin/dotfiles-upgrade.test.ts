@@ -358,16 +358,33 @@ describe("the sync step", () => {
     expect(run.stdout).toContain("Syncing dotfiles");
   });
 
-  // An install run on top of a failed sync installs from a stale tree.
-  test("runs nothing after a failed sync", () => {
+  // A stale tree is still a tree to install from, and a sync that stays broken
+  // would otherwise hold back brew, mise, symlinks and the drift check with it.
+  test("installs from the stale tree after a failed sync", () => {
     syncStub(FAILING_SYNC);
     const marker = join(sandbox, "installed");
     installStub(`#!/bin/sh\n: > '${marker}'\n`);
     driftStub(`#!/bin/sh\n: > '${join(sandbox, "drifted")}'\n`);
 
+    const run = runUpgrade();
+    expect(existsSync(marker)).toBe(true);
+    expect(existsSync(join(sandbox, "drifted"))).toBe(true);
+    // The sync still broke, so the run still reports as one that broke.
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).not.toContain("All upgrades completed successfully");
+  });
+
+  test("files the sync failure under its own latch", () => {
+    syncStub(FAILING_SYNC);
+
     runUpgrade();
-    expect(existsSync(marker)).toBe(false);
-    expect(existsSync(join(sandbox, "drifted"))).toBe(false);
+    expect(latch("dotfiles-sync")).toBe("failed sync\n");
+    expect(latch("dotfiles-upgrade")).toBe("ok\n");
+  });
+
+  test("clears the sync latch once a sync succeeds", () => {
+    runUpgrade();
+    expect(latch("dotfiles-sync")).toBe("ok\n");
   });
 
   // A failure ends at the end of its log, and Things drops a note past 10,000
@@ -633,15 +650,15 @@ describe("the run as a whole", () => {
   });
 
   // report_failure writes the latch before it files, so a filing that dies leaves
-  // a latch claiming a to-do that was never created. The status is the filer's,
-  // not the 1 a reported failure carries, and nothing after it runs.
-  test("carries the status of a refused filing and stops there", () => {
+  // a latch claiming a to-do that was never created. The status carried out of
+  // the run is the filer's, not the 1 a reported failure carries.
+  test("carries the status of a refused sync filing", () => {
     syncStub("#!/bin/sh\nexit 1\n");
     stub("open", "#!/bin/sh\nexit 7\n");
 
     const run = runUpgrade();
     expect(run.status).toBe(7);
-    expect(latch("dotfiles-upgrade")).toBe("failed sync\n");
+    expect(latch("dotfiles-sync")).toBe("failed sync\n");
   });
 
   test("stops a drift filing that is refused before clearing the upgrade latch", () => {

@@ -9,10 +9,10 @@
 //                              which reaches the same reload through
 //                              scripts/install once its own changes are in place
 //
-// Exits 0 when the checkout was already current, or when it moved and everything
-// after that succeeded, reload failures included. Exits 1 when the gate refused,
-// the sync failed, or the submodules did. A failing bootstrap exits with its own
-// status.
+// Exits 0 when the checkout and its submodules were already current, or when it
+// moved and everything after that succeeded, reload failures included. Exits 1
+// when the gate refused, the sync failed, or the submodules did. A failing
+// bootstrap exits with its own status.
 
 import { accessSync, constants, realpathSync } from "node:fs";
 import { homedir } from "node:os";
@@ -37,8 +37,12 @@ export function run(args: string[], out: Output): number {
   const sync = syncNotify(out, home, TITLE);
   // The failure has already notified, and nothing after this ran.
   if (sync.status === "failed") return 1;
-  if (sync.status === "current") return 0;
 
+  // Every sync updates the submodules, not only one that moved the superproject.
+  // A fetch with nothing to pull says nothing about whether they reached the
+  // revisions this checkout pins: an update that failed once leaves them behind,
+  // and the superproject reads as current on every run after that. Returning
+  // early there would strand them at the wrong revision for good.
   const submodules = out.run([
     SPIN,
     "--show-error",
@@ -57,6 +61,8 @@ export function run(args: string[], out: Output): number {
     notify(TITLE, "Failed: submodules");
     return 1;
   }
+
+  if (sync.status === "current") return 0;
 
   log(out, "info", `Successfully updated to ${sync.rev}`);
   notify(TITLE, `Updated to ${sync.rev}`, "Glass");
