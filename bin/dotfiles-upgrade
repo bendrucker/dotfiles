@@ -262,23 +262,23 @@ const WARN = "WARN ";
 // first break: a sync that stays broken has to hold its to-do while the install
 // behind it reports its own state, and one latch between them would have each
 // night's second failure overwrite what the first stored.
-function reportStepFailure(
-  job: string,
-  home: string,
-  fingerprint: string,
-  title: string,
-  command: string,
-  output: string,
-): number {
+function reportStepFailure(step: {
+  job: string;
+  home: string;
+  fingerprint: string;
+  title: string;
+  command: string;
+  output: string;
+}): number {
   const status = reportFailure({
-    job,
-    title,
-    command,
-    output: logExcerpt(output),
-    revision: currentRevision(home),
+    job: step.job,
+    title: step.title,
+    command: step.command,
+    output: logExcerpt(step.output),
+    revision: currentRevision(step.home),
     extraMeta: "",
     outputHeading: "Error Output",
-    fingerprint,
+    fingerprint: step.fingerprint,
   });
   // A refused `open` took the whole run down with its own status rather than
   // the 1 that follows a reported failure.
@@ -325,14 +325,14 @@ export async function run(): Promise<number> {
   let syncFailure = 0;
   if (sync.status !== 0) {
     log("error", "sync failed");
-    syncFailure = reportStepFailure(
-      SYNC_JOB,
+    syncFailure = reportStepFailure({
+      job: SYNC_JOB,
       home,
-      syncFingerprint(sync.output),
-      "Dotfiles sync failed",
-      "dotfiles-sync",
-      sync.output,
-    );
+      fingerprint: syncFingerprint(sync.output),
+      title: "Dotfiles sync failed",
+      command: "dotfiles-sync",
+      output: sync.output,
+    });
     log("warn", "Installing from the checkout as it stands");
   } else {
     reportSuccess(SYNC_JOB);
@@ -346,14 +346,14 @@ export async function run(): Promise<number> {
     // The installer, not `brew bundle`: that is the first of its six steps, and
     // a run failing at symlinks, mise or a topic install.sh reproduces nothing
     // from it.
-    return reportStepFailure(
-      JOB,
+    return reportStepFailure({
+      job: JOB,
       home,
-      "install",
-      "Dotfiles install failed",
-      installer,
-      install.output,
-    );
+      fingerprint: "install",
+      title: "Dotfiles install failed",
+      command: installer,
+      output: install.output,
+    });
   }
 
   const cleanup = runInherited([
