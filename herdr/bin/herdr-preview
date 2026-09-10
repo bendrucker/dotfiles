@@ -121,9 +121,6 @@ pane_is_free() {
 # whose tokens come from a script being changed would render its rows bare,
 # which reads as a config bug rather than a stale binary. Rewrite every bare
 # command naming a script in this repository to its worktree path.
-#
-# Each rewrite is named on stderr, so a preview never silently disagrees with
-# the file it was handed.
 derive_config() {
   local config=$1 dest=$2 root=$3 name script content
   content=$(cat "$config") || return 1
