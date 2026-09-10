@@ -17,8 +17,6 @@ afterEach(() => {
 
 launcherContract("herdr", "herdr-preview");
 
-// A stub herdr that records every argv it was handed, so a test can assert on
-// what the script asked the server for rather than on what came back.
 function stubHerdr(body: string): void {
   box.stub("herdr", `echo "$*" >> ${box.path("calls")}\n${body}`);
 }
@@ -29,9 +27,7 @@ const log = () => box.read("calls").trim().split("\n").filter(Boolean);
 // what keeps a test off the live session directory and its running sockets.
 
 // A herdr whose `server` binds the session socket the way the real one does, so
-// `start` gets past the readiness wait and on to the pane it is filling. The
-// bind leaves the socket file behind; the sleep keeps the pid alive while the
-// script polls for it.
+// `start` gets past the readiness wait and on to the pane it is filling.
 function stubHerdrThatStarts({ freePane = false } = {}): void {
   const busy = `{"result":{"process_info":{"foreground_processes":[{"name":"herdr"}]}}}`;
   const free = `{"result":{"process_info":{"foreground_processes":[]}}}`;
@@ -73,14 +69,12 @@ test("refuses without herdr on PATH", () => {
 
 // `herdr config check` answers `config: ok` for a path that does not exist, so
 // a typo in --config would otherwise buy a green light and a server running
-// stock defaults. Checking the file is here rather than there is the only
-// reason this passes.
+// stock defaults.
 test("rejects a config path that does not exist", () => {
   stubHerdr("exit 0");
   const r = preview(["start", "--config", box.path("absent.toml")]);
   expect(r.status).not.toBe(0);
   expect(r.stdout + r.stderr).toContain("no config at");
-  // Nothing reached the server: the guard runs before the config check.
   expect(log().some((c) => c.startsWith("server"))).toBe(false);
 });
 
@@ -115,7 +109,6 @@ test("creates its tab in the calling workspace, not the focused one", () => {
   expect(log().join("\n")).toContain("--workspace wZZ");
 });
 
-// The client goes in the pane `start` was given, and nothing is created.
 test("uses the pane it was handed instead of creating a tab", () => {
   box.write("ok.toml", "onboarding = false\n");
   stubHerdrThatStarts({ freePane: true });
