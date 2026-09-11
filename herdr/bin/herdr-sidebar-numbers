@@ -1,0 +1,148 @@
+#!/usr/bin/env bun
+//
+// Report each space's position in the sidebar as herdr metadata, so the row says
+// which prefix chord jumps to it. The `$number` token in config.toml renders it.
+//
+// herdr binds switch_workspace to 1..9 but draws no index of its own, and offers
+// no built-in token for a position, so the chords are unusable without counting
+// rows.
+//
+// Position is the row's place in the sidebar as drawn, which is what the chord
+// counts. `workspace.number` is not that: it tracks the snapshot array, and the
+// spaces panel nests a repo's worktrees under the repo's own row.
+//
+// Positions past 9 get no token. Nothing binds a chord to them, and a number no
+// key reaches is worse than a bare row.
+//
+// The tab bar interval in config.toml is the only scheduler herdr offers a script
+// that is not a plugin, so this runs there beside herdr-workspace-status and
+// prints nothing.
+//
+// Only a digit that has changed is reported. A herdr CLI call costs about 150ms,
+// and reporting every row every run passes the tab bar's timeout on a session of
+// any size, which leaves the numbers permanently stale. The snapshot already
+// carries the tokens it last wrote, so comparing against it makes a steady
+// session cost the snapshot alone.
+//
+// That is also why these tokens carry no --ttl-ms, where herdr-workspace-status
+// gives its own ten minutes. A TTL is what lets a stopped reporter blank its row
+// instead of lying, and it works there because that script rewrites every token
+// every run. Here an expired token is a token the snapshot no longer carries, so
+// it reads as a disagreement and comes back on the next interval: the row would
+// blink empty for up to one interval every TTL, forever, to guard against a
+// reporter that stops. Reporting a wrong digit needs the sidebar rows to change
+// while this is not running, and the run that cannot report exits non-zero.
+
+const SOURCE = "sidebar-numbers";
+
+// switch_workspace binds 1..9.
+const HIGHEST_CHORD = 9;
+
+interface Workspace {
+  id: string;
+  number: string;
+  repo?: string;
+  isRepoRoot: boolean;
+}
+
+function fail(message: string): never {
+  console.error(`herdr-sidebar-numbers: ${message}`);
+  process.exit(1);
+}
+
+function herdr(args: string[]): Bun.SyncSubprocess | undefined {
+  try {
+    return Bun.spawnSync({ cmd: ["herdr", ...args], env: process.env });
+  } catch {
+    return undefined;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+// The snapshot is whatever the CLI printed, so every field is read through a
+// guard. A shape this does not recognize yields a workspace with no id, which
+// reports nothing, rather than a cast that defers the error to a later line.
+function workspaces(): Workspace[] {
+  const result = herdr(["api", "snapshot"]);
+  if (!result?.success) {
+    fail("could not read the herdr snapshot");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout.toString());
+  } catch {
+    return fail("could not parse the herdr snapshot");
+  }
+
+  const snapshot = isRecord(parsed) && isRecord(parsed.result) ? parsed.result.snapshot : undefined;
+  if (!isRecord(snapshot) || !Array.isArray(snapshot.workspaces)) {
+    return fail("the herdr snapshot carried no workspaces");
+  }
+
+  return snapshot.workspaces.filter(isRecord).map((workspace) => {
+    const worktree = isRecord(workspace.worktree) ? workspace.worktree : {};
+    const tokens = isRecord(workspace.tokens) ? workspace.tokens : {};
+    return {
+      id: text(workspace.workspace_id),
+      number: text(tokens.number),
+      repo: typeof worktree.repo_key === "string" ? worktree.repo_key : undefined,
+      isRepoRoot: worktree.is_linked_worktree === false,
+    };
+  });
+}
+
+// The spaces panel in the order it draws: one group per repository, each led by
+// the repo's own checkout and followed by its worktrees, with a workspace herdr
+// resolved no repository for standing alone. Groups keep the order their first
+// member has in the array, and so do the worktrees inside one.
+function drawn(spaces: Workspace[]): Workspace[] {
+  const groups = new Map<string, Workspace[]>();
+  for (const space of spaces) {
+    const key = space.repo ?? space.id;
+    const group = groups.get(key);
+    if (group) group.push(space);
+    else groups.set(key, [space]);
+  }
+
+  return [...groups.values()].flatMap((group) => {
+    const root = group.findIndex((space) => space.isRepoRoot);
+    if (root <= 0) return group;
+    return [group[root], ...group.filter((_, index) => index !== root)];
+  });
+}
+
+// A value at a reachable position, or nothing at all. The empty string passes
+// through to report(), which clears the token rather than writing it.
+function chord(position: number): string {
+  return position >= 1 && position <= HIGHEST_CHORD ? String(position) : "";
+}
+
+// A failed report is left for the next run to retry, so the run carries on and
+// reports the failure by exiting non-zero. That is what puts a digit that stays
+// wrong into the server log instead of leaving it silent.
+let failed = false;
+
+// Nothing is said about a row already showing the digit it wants, which is what
+// makes a settled session cost the snapshot alone.
+function report(space: Workspace, digit: string): void {
+  if (space.number === digit) return;
+
+  const token = digit ? ["--token", `number=${digit}`] : ["--clear-token", "number"];
+  const result = herdr(["workspace", "report-metadata", space.id, "--source", SOURCE, ...token]);
+  if (!result?.success) {
+    failed = true;
+    console.error(`herdr-sidebar-numbers: could not report number for ${space.id}`);
+  }
+}
+
+drawn(workspaces()).forEach((space, index) => report(space, chord(index + 1)));
+
+if (failed) process.exit(1);
