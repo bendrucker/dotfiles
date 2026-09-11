@@ -16,6 +16,12 @@ resume_agents_on_restore = true
 # Ghostty maps Hyper+A to the same byte (terminal/ghostty.config).
 prefix = "ctrl+s"
 
+# Jump to a row rather than cycling to it. bin/herdr-sidebar-numbers reports
+# the index the spaces rows render.
+switch_tab = "prefix+1..9"
+switch_workspace = "prefix+shift+1..9"
+focus_agent = "prefix+alt+1..9"
+
 # Native creation lands in ~/.herdr/worktrees, outside the worktrunk layout.
 # Use the worktrunk plugin bindings below.
 new_worktree = ""
@@ -38,6 +44,9 @@ enabled = false
 # The Claude row trades the agent glyph for the session name, which herdr reads
 # off the pane title. The stripped form drops the leading state glyph, which
 # would otherwise flicker with the spinner.
+#
+# No digits here. focus_agent counts the panel in its own order, which
+# agent_panel_sort below moves with the agents' states.
 [ui.sidebar.agents]
 rows = [
   [
@@ -68,10 +77,15 @@ claude = [
 # on the token name. `$status_*` is at most two glyphs, since herdr right-aligns
 # custom tokens by truncating the workspace label. Hex only, picked to read on
 # both catppuccin flavors.
+#
+# `$number` leads where the other tokens trail, because every space a chord
+# reaches has one and it is always one column wide, so the labels stay aligned
+# under each other.
 [ui.sidebar.spaces]
 rows = [
   [
     "state_icon",
+    { token = "$number", dim = true },
     "workspace",
     { token = "$status_red", fg = "#e0405a" },
     { token = "$status_yellow", fg = "#d9a33a" },
@@ -212,7 +226,14 @@ agent_panel_sort = "priority"
 # what it is for: reporting the $tokens the spaces rows render. Those carry a
 # ten minute TTL. Each worktree costs one forge list call per run, plus one per
 # open pull request.
+#
+# herdr-sidebar-numbers is the same arrangement for the spaces indexes. It
+# reports only the digits that changed, so an unchanged session costs one
+# snapshot call and a run that renumbers costs one call per row it moved. A run
+# cut short still made every call it got to, so the next one finishes the job
+# rather than starting over.
 tab_bar_right = [
+  { type = "command", command = "herdr-sidebar-numbers", interval_seconds = 10, timeout_seconds = 8 },
   { type = "command", command = "herdr-workspace-status", interval_seconds = 30, timeout_seconds = 25 },
 ]
 
