@@ -15,8 +15,8 @@
 import { createHash } from "node:crypto";
 import { stripCsi } from "#jobs/excerpt";
 
-// Enough to separate the causes one job produces. The fingerprint is compared,
-// never guessed at, and it sits in a marker line a human reads past.
+// Enough to separate the causes one job produces, and short enough to fit
+// the marker line a human reads past.
 const FINGERPRINT_LENGTH = 12;
 
 // The level tokens gum puts at the head of a line, which is how this repo's own

@@ -1,8 +1,4 @@
 // What a to-do carries of a captured log: the tail, uncoloured.
-//
-// Three callers want this now. bin/dotfiles-upgrade and bin/worktree-prune each
-// grew their own copy, and #jobs/cause needs the same strip before it can read a
-// line of output as a cause rather than as colour codes around one.
 
 // CSI sequences with numeric parameters and an alphabetic final byte, which is
 // what gum's colours and the spinner's erase codes are. CSI only: an OSC title

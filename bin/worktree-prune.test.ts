@@ -323,8 +323,6 @@ beforeEach(() => {
   process.env.HOME = sandbox;
   process.env.DOTFILES_HOME = dotfiles;
   process.env.XDG_STATE_HOME = state;
-  // A repeat looks for the to-do it filed last night, and the only store in
-  // reach must not be the one holding Ben's real to-dos.
   process.env.THINGS_DATABASE = join(sandbox, "things.sqlite");
   delete process.env.PROJECTS;
   delete process.env.WT_PRUNE_MIN_AGE;

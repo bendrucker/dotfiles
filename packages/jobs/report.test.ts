@@ -243,8 +243,7 @@ describe("reportFailure filing", () => {
   });
 });
 
-// A repeat is the case that filled Today. It appends to the to-do that already
-// stands rather than filing a second one.
+// It appends to the to-do that already stands rather than filing a second one.
 describe("reportFailure append", () => {
   test("appends the run to the to-do already standing for the cause", () => {
     fail("boom");
@@ -288,7 +287,6 @@ describe("reportFailure append", () => {
     expect(updated()).toHaveLength(0);
   });
 
-  // Finishing the to-do is how Ben says he dealt with the cause.
   test("files again once the standing to-do has been completed", () => {
     fail("boom");
     standInThings("todo-1", filedNotes(), 3);
@@ -609,8 +607,7 @@ describe("buildNotes", () => {
   });
 });
 
-// The appended block is what a repeat adds, and the note it is added to is
-// already most of the way to the limit by the time this matters.
+// The note it is added to is already most of the way to the limit by the time this matters.
 describe("appendBlock", () => {
   test("heads the block with the run and the time", () => {
     expect(appendBlock(3, "2026-09-11 03:00:04 PDT", "boom", 2000)).toContain(

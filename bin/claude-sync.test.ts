@@ -313,8 +313,6 @@ beforeEach(() => {
   process.env.HOME = sandbox;
   process.env.PATH = `${stubs}:${environment.PATH}`;
   process.env.XDG_STATE_HOME = join(sandbox, "state");
-  // A repeat looks for the to-do it filed last night, and the only store in
-  // reach must not be the one holding Ben's real to-dos.
   process.env.THINGS_DATABASE = join(sandbox, "things.sqlite");
   process.env.CLAUDE_PLUGIN_LOG = join(sandbox, "plugin.log");
   process.env.CLAUDE_UPDATE_FAILS = "";

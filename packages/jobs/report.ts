@@ -2,33 +2,17 @@
 // cause per machine, the runs after the first appended to it, and a Darwin
 // notification when a cause is new.
 //
-// Today had seventeen of these one morning, most of them the same handful of
-// causes repeating across nights and across the two machines. Three things
-// produced that, and each is answered here.
-//
-// A job latched on a constant, so every way a step could break shared one to-do:
-// the first filed and the rest were suppressed behind it. A cause is now derived
-// from the failing command and the line of output that says what went wrong, so
-// two different breaks in one step are two to-dos and one break repeating is one.
-//
-// A to-do was keyed on the short hostname, which the MacBook changes with its
-// network, so one cause on one machine filed twice. #jobs/machine keys on the
-// hardware instead.
-//
-// Nothing recognized a to-do it had already filed, so a cause that stood for a
-// week filed seven times. The to-do itself is now the record: it carries a marker
-// naming the machine, the job and the cause, and a repeat finds it and appends.
-// Finishing the to-do is what says the cause was dealt with, so its return after
-// that is news and files again.
+// The to-do itself is the record: it carries a marker naming the machine, the
+// job and the cause, and a repeat finds it and appends. Finishing the to-do is
+// what says the cause was dealt with, so its return after that is news and
+// files again.
 //
 // They land in Anytime rather than Today. Today is the working list Ben builds
-// each morning; a machine that failed overnight is real work but not work he
-// chose for today, and dropping it in there is what made the list unreadable.
-// Anytime keeps it available and countable, the `dotfiles` tag gathers the set,
-// and the run count in the title shows a cause aging without opening it. A cause
-// that has survived ESCALATE_AFTER runs has shown it will not clear itself, and
-// that one moves to Today: not slipping through the cracks is the point, and a
-// thing that has failed three nights running has earned the interruption.
+// each morning, and a machine that failed overnight is real work but not work
+// he chose for today. Anytime keeps it available and countable, the `dotfiles`
+// tag gathers the set, and the run count in the title shows a cause aging
+// without opening it. A cause that has survived ESCALATE_AFTER runs has shown
+// it will not clear itself, and that one moves to Today.
 
 import { causeFingerprint, causeOf, distinctiveLine } from "#jobs/cause";
 import { machineKey, machineName } from "#jobs/machine";
@@ -43,7 +27,6 @@ import {
   markerQuery,
 } from "#jobs/things";
 
-// Where a to-do lands, and the tag that gathers the set wherever it lands.
 const LANDING = "anytime";
 const TAG = "dotfiles";
 
@@ -296,7 +279,7 @@ function file({ report, cause, causeLine, latchJob }: Filing): number {
 function filesAgainst(job: string, cause: string, readable: boolean): boolean {
   const latch = latchValue(cause);
   const prior = readLatch(job);
-  // Moved before anything is filed, so a filing that fails leaves the failure
+  // Runs before anything is filed, so a filing that fails leaves the failure
   // quiet until the job recovers or its cause moves.
   writeLatch(job, latch);
   return readable || prior !== latch;

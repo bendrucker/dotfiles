@@ -179,8 +179,6 @@ function runUpgrade(options: { path?: string; args?: string[] } = {}) {
       PATH: options.path ?? stubs,
       DOTFILES_HOME: home,
       XDG_STATE_HOME: state,
-      // A repeat looks for the to-do it filed last night, and the only store in
-      // reach must not be the one holding Ben's real to-dos.
       THINGS_DATABASE: join(sandbox, "things.sqlite"),
     },
     stdin: "ignore",

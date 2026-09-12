@@ -86,8 +86,6 @@ describe("causeFingerprint", () => {
     expect(resolveHost).not.toBe(lockRef);
   });
 
-  // The half that `fingerprint: "install"` was missing: one command, many ways to
-  // break, and only the first of them ever filed.
   test("separates two commands that fail with the same line", () => {
     expect(causeFingerprint("scripts/install", "error: boom\n")).not.toBe(
       causeFingerprint("dotfiles-sync", "error: boom\n"),
