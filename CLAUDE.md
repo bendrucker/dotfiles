@@ -25,7 +25,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 | --- | --- |
 | `#harness` | The `bun test` harness for driving shell scripts |
 | `#history-secrets` | The commands the two history filters must drop, and the ordinary ones they must keep |
-| `#jobs/*` | What the unattended jobs share: output capture, failure reporting, machine identity, cause fingerprinting, the Things store, the sync gate, canonical JSON |
+| `#jobs/*` | What the unattended jobs share: output capture, failure reporting, machine identity, the Things store, the sync gate, canonical JSON |
 | `#migrations/*` | What a one-time migration is, and the runner behind `bin/dotfiles-migrate` |
 | `#worktree/*` | Worktrunk state, forge queries, column alignment |
 | `#plugins` | The installed Claude Code plugins |
@@ -234,21 +234,11 @@ The audit reports and never removes, for the same reason `scripts/brew-drift` do
 
 ### Failure Reporting
 
-`#jobs/report` is how every unattended job says something broke. One to-do per cause per machine. A repeat of the same cause appends that run to the to-do already standing, so a break that lasts a week is one to-do carrying seven runs.
+`#jobs/report` files one Things to-do per cause per machine, and a repeat of the same cause appends that run to the to-do already standing. A cause is the failing command plus the first output line naming the failure, normalized and hashed. A job may pass its own `fingerprint` instead, hashed verbatim. The machine is `scutil --get ComputerName`, never the hostname, which moves between networks.
 
-A cause is the failing command plus the first line of output that says what went wrong, hashed to twelve hex digits. `#jobs/cause` picks that line by looking for a diagnosis word and normalizes the spans that move between runs: timestamps, dates, durations, sizes, pids, hex blobs, and the home directory. Two different breaks in one step are therefore two to-dos, and one break repeating with a different duration in the message is one. A job passing a `fingerprint` of its own replaces the derived cause with it, which is how the brew drift check keys on the sorted package set rather than on its output. That material is hashed as given, with none of the normalization above: a caller picked it for what discriminates one cause from another, and `bin/claude-sync` passes a hex digest, which normalizing reads as a single `<hex>`.
+To-dos land in Anytime tagged `dotfiles`, carry the run count in the title, and move to Today once after `ESCALATE_AFTER` runs. Finding one again means reading Things' own SQLite store for the marker in its note, because the URL scheme only writes and `osascript` would hang under launchd. Appending needs the `things-auth-token` keychain item.
 
-The machine comes from `#jobs/machine`, never from the hostname. The MacBook answers `mac` on one network and `Ben-Druckers-MacBook-Pro` on another, so a to-do keyed on that filed a second time the moment it changed networks. `machineName` is the display name from `scutil --get ComputerName`. `machineKey` is a hash of the hardware UUID, which survives a rename, and it is what the marker is keyed on.
-
-Finding the to-do again means reading Things, and the URL scheme only writes. `#jobs/things` reads the app's own SQLite store read-only, looking for a marker line the note carries: `dotfiles-job <machineKey>/<job>/<cause>`. Never with `immutable=1`, which skips the write-ahead log and reports a to-do as open minutes after it was completed. Apple events are the sanctioned way to read Things and cannot be used here: a launchd agent is a different responsible process from the terminal that was granted Automation access, so `osascript` sending to Things at 3am blocks on an authorization decision nobody is there to make.
-
-Appending needs the auth token from Things' settings, stored in the login keychain as `things-auth-token` where a launchd job reads it without a prompt. Without it nothing can be appended, and the first note says so rather than leaving the runs after it unexplained.
-
-To-dos land in Anytime, tagged `dotfiles`. Today is the working list, and a machine that failed overnight is real work you did not choose for today. The run count in the title shows a cause aging without opening it, and a cause still failing after `ESCALATE_AFTER` runs moves to Today once: three nights of the same break have earned the interruption. The move is claimed by an `.escalated` marker beside the log rather than fired on the count equaling the threshold. A night the store cannot be read records its run without appending, so the count steps over the threshold instead of landing on it.
-
-Nothing is lost when a layer is unavailable. Every run appends to `${XDG_STATE_HOME:-~/.local/state}/dotfiles/runs/<job>-<cause>.log` before anything else happens. A store that cannot be read leaves the per-job latch to decide, which is one to-do and then silence. An append that cannot be made leaves the standing to-do alone, since it already names the cause and the log that holds the run. Filing a second to-do there instead is the flood this design exists to prevent, and a machine missing its auth token would hit it every night. Output too large for what the note has left is reduced to a pointer at that log.
-
-Finishing the to-do is how you say you dealt with a cause. Its return afterwards is news and files again rather than reopening what you closed. The replacement counts from its first run, out of a `.count` file beside the log, so it reaches the escalation threshold on its own third night. The log cannot serve as that counter, because it holds the finished to-do's runs too: the replacement would start above the threshold and walk past it without ever landing on it. The log stays cumulative, since it is the archive rather than the counter.
+Every run appends to `${XDG_STATE_HOME:-~/.local/state}/dotfiles/runs/<job>-<cause>.log` before anything else, so the archive holds it whatever the layers above manage: an unreadable store falls back to the per-job latch, a refused append leaves the standing to-do alone, and output too large for the note becomes a pointer at the log. Completing a to-do says you dealt with the cause, so its return files a new one.
 
 `reportFindings` is the variant for a set of standing findings, like the credential audit. See [Credentials](#credentials).
 
@@ -268,7 +258,7 @@ Omitting `--force` does not make `brew bundle cleanup` a dry run. It prints the 
 
 It reports the four kinds this repo's Brewfiles declare: formulae, casks, taps, and Mac App Store apps. Homebrew cleans up VS Code extensions and npm globals under the same output shape. Naming the headers rather than matching the shape keeps a package manager this repo adopts later from turning the nightly report into an extension audit. The cost is that a renamed header upstream silences that kind rather than breaking the run, because an empty parse is also what a clean machine produces.
 
-The cause keys on the sorted package set rather than on the fact of a finding, which is what the `fingerprint` in [Failure Reporting](#failure-reporting) overrides the derived cause with. A to-do left unactioned stays quiet while the same packages are undeclared. A newly installed one reopens it under its own to-do. Sorting matters because Homebrew orders the listing by a dependency sort taken over every installed package, so installing something unrelated and declared can reshuffle the undeclared names without changing the set.
+The cause keys on the sorted package set rather than on the fact of a finding, passed as the `fingerprint` in [Failure Reporting](#failure-reporting). A to-do left unactioned stays quiet while the same packages are undeclared. A newly installed one reopens it under its own to-do. Sorting matters because Homebrew orders the listing by a dependency sort taken over every installed package, so installing something unrelated and declared can reshuffle the undeclared names without changing the set.
 
 A failing drift check is contained the way a failing `reload.sh` is. The install it follows has already succeeded, and a package that is merely undeclared breaks nothing overnight.
 

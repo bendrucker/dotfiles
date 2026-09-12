@@ -1,15 +1,10 @@
-// What a failure is, reduced to something two runs can be compared on.
-//
-// A to-do is worth filing once per cause, so a cause needs an identity that
-// survives the parts of a log that differ every night and changes when the
-// failure itself does. That is the failing command plus one line of its output:
-// the first line the child tool used to say what went wrong, with the volatile
-// spans in it replaced by their shapes.
+// What a failure is, reduced to something two runs can be compared on: the
+// failing command plus the first output line saying what went wrong, with the
+// volatile spans replaced by their shapes.
 //
 // Neither half works alone. The command alone collapses every way a step can
-// break into one to-do, leaving the second kind of failure silent behind the
-// latch the first one set. The whole output alone never matches itself twice,
-// since a log carries a timestamp, a revision, or a duration somewhere in it.
+// break into one to-do. The whole output alone matches itself twice, since a log
+// carries a timestamp, a revision, or a duration somewhere in it.
 
 import { createHash } from "node:crypto";
 import { stripCsi } from "#jobs/excerpt";
@@ -20,9 +15,7 @@ const FINGERPRINT_LENGTH = 12;
 
 // The level tokens gum puts at the head of a line, which is how this repo's own
 // scripts narrate. Those lines say which step broke, which the job name already
-// says. The child's own lines say why, and that is the part a cause is built
-// from. bin/dotfiles-upgrade overrides this where a WARN line it logged is the
-// discriminating one.
+// carries, so a cause is built from the child's own lines instead.
 const GUM_LEVEL = /^(DEBU|INFO|WARN|ERRO|FATA)\b/;
 
 // Matched against the whole line because the marker is as often at the front
@@ -80,13 +73,10 @@ export function causeFingerprint(command: string, output: string): string {
 }
 
 // For a report whose cause the caller already knows: a set of standing findings,
-// or a fingerprint a job derived itself.
-//
-// Hashed as given. The volatile shapes are not taken out, because a caller that
-// picked this material picked it for what discriminates one cause from another,
-// and that is regularly something normalizeVolatile treats as noise. It reads a
-// hex digest as one `<hex>`, so every claude-sync failure would file against the
-// to-do the first one opened.
+// or a fingerprint a job derived itself. Hashed as given, because a caller picked
+// this material for what discriminates one cause from another and
+// normalizeVolatile regularly treats that as noise. It reads a hex digest as one
+// `<hex>`, which would file every claude-sync failure against one to-do.
 export function causeOf(parts: string[]): string {
   return digest(parts.map((part) => `${part}\n`).join(""));
 }

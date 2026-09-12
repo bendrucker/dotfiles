@@ -1,43 +1,34 @@
-// The two halves of talking to Things from a job nobody is awake to help.
+// The two halves of talking to Things from a job nobody is awake to help. Writes
+// go through the `things:///` URL scheme handed to `open`. Reads go through the
+// app's own SQLite store, opened read-only for three facts the URL scheme cannot
+// answer: whether a to-do this job filed still exists, its id, and how much of
+// the note budget it has spent.
 //
-// Writes go through the `things:///` URL scheme, handed to `open`. Reads go
-// through the app's own SQLite store, opened read-only.
-//
-// Apple events are the sanctioned way to read Things and they are not available
-// here. A launchd agent is a different responsible process from the terminal
-// that was granted Automation access, so `osascript` sending to Things from the
-// 3am job blocks on an authorization decision nobody is there to make. It hangs
-// rather than failing, which is the worst shape a dependency can have in an
-// unattended job. `open` needs no such grant, and reading a file in the user's
-// own group container needs none either.
-//
-// Nothing here writes to the database. It is read for three facts the URL scheme
-// cannot answer: whether a to-do this job filed still exists, what its id is, and
-// how much of the note budget it has already spent.
+// Apple events are the sanctioned way to read Things and are unusable here. A
+// launchd agent is a different responsible process from the terminal that was
+// granted Automation access, so `osascript` hangs on an authorization decision
+// nobody is there to make. `open` and a file in the user's own group container
+// need no grant.
 
 import { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// Things stores 10,000 characters of notes and silently drops the rest. It cuts
-// the tail, which is the wrong end to lose, since a job fails at the end of its
-// log.
-//
-// The unit is UTF-16 code units: the notes field is an NSString, which is what
-// Things counts, and it is also what String.length reports and what String.slice
-// cuts on. Measuring and slicing in one unit is the point. A budget counted in
-// characters and spent by a byte-wise cut disagree on every non-ASCII log.
+// Things stores 10,000 characters of notes and silently drops the rest from the
+// tail, which is the wrong end to lose when a job fails at the end of its log.
+// The unit is UTF-16 code units: the notes field is an NSString, which is also
+// what String.length reports and String.slice cuts on, so the budget and the cut
+// agree on a non-ASCII log.
 export const THINGS_NOTES_LIMIT = 10_000;
 
-// `type` 0 is a to-do, as against a project or a heading. `status` 0 is open, as
-// against 2 canceled and 3 completed. A to-do Ben has finished with is not one to
-// append tonight's run to: he dealt with the cause, so its return is news.
+// `type` 0 is a to-do, against a project or a heading. `status` 0 is open,
+// against 2 canceled and 3 completed. A completed to-do is one whose cause was
+// dealt with, so its return is news.
 //
-// The notes come back whole rather than as a `length(notes)`, which SQLite
-// counts in Unicode code points. Things counts the field in UTF-16 code units,
-// so a note carrying an emoji reads shorter than it is and the append computed
-// against it overruns the limit, taking the tail of tonight's run with it.
+// The notes come back whole rather than as a `length(notes)`, which SQLite counts
+// in Unicode code points where Things counts UTF-16 code units. A note carrying
+// an emoji would read shorter than it is and the append would overrun the limit.
 const FIND_OPEN =
   "select uuid as id, notes from TMTask" +
   " where type = 0 and trashed = 0 and status = 0 and notes like ?1 escape '\\'" +
@@ -98,17 +89,13 @@ function modifiedAt(path: string): number | undefined {
 }
 
 // Whether the store could be read at all, and what it holds if so. The two are
-// separate answers because they call for opposite handling: a store that says
-// nothing stands for this cause means the to-do was finished, so the cause
-// returning is news and files again, while a store that could not be read says
-// nothing either way and leaves the caller's latch to decide.
+// separate because a store reporting nothing standing means the to-do was
+// finished, while one that could not be read leaves the caller's latch to decide.
 export type TodoLookup = { readable: false } | { readable: true; todo?: Todo };
 
-// The open to-do whose notes match `pattern`, which markerQuery builds.
-//
-// Read-only and WAL-aware. Never with `immutable=1`, which tells SQLite to skip
-// the write-ahead log: Things leaves recent edits there, so an immutable read
-// reports a to-do as open minutes after it was completed.
+// The open to-do whose notes match `pattern`, which markerQuery builds. Read-only
+// and WAL-aware. Never with `immutable=1`, which skips the write-ahead log where
+// Things leaves recent edits, reporting a completed to-do as open.
 export function findOpenTodo(pattern: string): TodoLookup {
   const path = thingsDatabase();
   if (!path) return { readable: false };
@@ -170,10 +157,8 @@ export interface TodoEdit {
   when?: string;
 }
 
-// `update` is the one Things command that needs the token from the app's
-// settings, which lives in the login keychain so a launchd job can read it
-// without a prompt. Without it nothing can be appended, and the caller files a
-// fresh to-do instead of losing the run.
+// `update` is the one Things command needing the token from the app's settings,
+// which lives in the login keychain so a launchd job reads it without a prompt.
 export function editTodo(edit: TodoEdit): boolean {
   const token = authToken();
   if (!token) return false;

@@ -1,15 +1,10 @@
-// The full record of every run that hit one cause, kept on disk beside the job's
-// latches.
+// The full record of every run that hit one cause, kept beside the job's latches.
+// The to-do is the reading surface and this is the archive: every run appends
+// here whether or not its output also fits in the note.
 //
-// The to-do is the reading surface and the log is the archive. Every run appends
-// here whether or not its output also fits in the note, which is what makes the
-// history survive the ways the note cannot grow: a note near its limit, a Things
-// auth token that was never set up, a to-do Ben has since completed.
-//
-// The counter beside it answers a narrower question: how many runs the to-do
-// standing right now has seen. That stops being the archive's length once Ben
-// completes a to-do and the cause comes back, and it is the number the title
-// shows and the escalation to Today fires on.
+// The counter beside it holds how many runs the to-do standing right now has
+// seen, which diverges from the archive's length once a completed cause returns.
+// That is the number the title shows and the escalation to Today fires on.
 
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -52,10 +47,17 @@ export function recordRun(job: string, cause: string, run: { at: string; output:
 // they are just not this to-do's.
 export function resetRuns(job: string, cause: string): void {
   writeCount(job, cause, 1);
+  releaseEscalation(job, cause);
+}
+
+// Hands the claim back where the run that took it could not use it. A removal
+// that fails leaves the cause in Anytime, which the run count in the title still
+// shows aging.
+export function releaseEscalation(job: string, cause: string): void {
   try {
     rmSync(escalatedPath(job, cause), { force: true });
   } catch {
-    // The new to-do inherits the finished one's escalation and stays in Anytime.
+    // The escalation stays claimed.
   }
 }
 

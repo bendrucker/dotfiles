@@ -64,8 +64,8 @@ test("separates the causes of one job", () => {
   expect(recordRun("dotfiles-sync", "bbbb", { at: "monday", output: "two" })).toBe(1);
 });
 
-// A count of 1 files a to-do rather than appending to one, so a log this run
-// could not write costs a duplicate instead of losing the run.
+// The run still reaches its to-do, appended under a count that understates it.
+// Throwing here would cost the report the job came to file.
 test("reads an unwritable log as a first run", () => {
   process.env.XDG_STATE_HOME = "/dev/null/nowhere";
   expect(record("first")).toBe(1);

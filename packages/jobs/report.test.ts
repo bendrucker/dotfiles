@@ -363,6 +363,22 @@ describe("reportFailure escalation", () => {
     expect(field(updated().at(-1) ?? "", "when")).toBe("today");
   });
 
+  // The claim is taken before the update that would carry it, so an update
+  // Things refuses hands it back. Spending the one move on an edit that never
+  // landed leaves the cause in Anytime for good.
+  test("keeps the escalation where the update carrying it fails", () => {
+    repeat(ESCALATE_AFTER - 1);
+    writeStub(stub("security"), "exit 1");
+    standInThings();
+    fail("boom");
+
+    writeStub(stub("security"), 'printf "token-abc\\n"');
+    standInThings();
+    fail("boom");
+
+    expect(field(updated().at(-1) ?? "", "when")).toBe("today");
+  });
+
   // The run count that decides this is the standing to-do's, not the archive's.
   // Counting every run the cause ever had leaves the replacement starting above
   // the threshold, so it walks past it and never reaches Today again.
@@ -426,6 +442,20 @@ function night(standing: string[], held: string[] = []): number {
 describe("reportFindings latch", () => {
   test("files a to-do for a newly standing finding", () => {
     night(["alpha stale"]);
+    expect(added()).toHaveLength(1);
+  });
+
+  // A finding that left and came back has a to-do already standing for it, so an
+  // append Things refuses leaves that one alone. The ordinary failure path
+  // reaches the same answer through its latch, which this path does not carry.
+  test("leaves the standing to-do alone where the append cannot be made", () => {
+    night(["alpha stale"]);
+    standInThings();
+    writeStub(stub("security"), "exit 1");
+
+    night([]);
+    night(["alpha stale"]);
+
     expect(added()).toHaveLength(1);
   });
 
