@@ -177,12 +177,15 @@ describe("reportFailure latch", () => {
     expect(readLatch("never-run")).toBe("");
   });
 
-  test("keeps the latch it wrote when the filing itself fails", () => {
+  // A latch claiming a to-do that was never created silences the cause on every
+  // later night the store cannot be read, which is every night on a machine
+  // without Things.
+  test("puts the latch back when the filing itself fails", () => {
     writeStub(stub("open"), "exit 3");
     // The filer's own status, which is what tells a refused filing apart from a
     // failure that was filed.
     expect(fail("one plugin stale")).toBe(3);
-    expect(readLatch("drift")).toMatch(/^failed [0-9a-f]{12}$/);
+    expect(readLatch("drift")).toBe("");
   });
 
   test("treats an empty fingerprint as no fingerprint", () => {
@@ -306,6 +309,20 @@ describe("reportFailure append", () => {
 
     fail("boom");
     fail("boom");
+    fail("boom");
+
+    expect(added()).toHaveLength(1);
+  });
+
+  // The latch moves before the filing, so a filing Things refused puts it back.
+  // A later night that cannot read the store would otherwise read the latch as a
+  // to-do standing and leave the failure unreported for good.
+  test("puts the latch back where the filing was refused", () => {
+    writeStub(stub("open"), "exit 1");
+    fail("boom");
+    expect(added()).toHaveLength(0);
+
+    writeStub(stub("open"), `printf '%s\\n' "$2" >> "${join(sandbox, "urls")}"`);
     fail("boom");
 
     expect(added()).toHaveLength(1);

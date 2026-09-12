@@ -249,7 +249,8 @@ function file({ report, cause, causeLine, latchJob }: Filing): number {
     return 0;
   }
 
-  if (latchJob && !filesAgainst(latchJob, cause, lookup.readable)) {
+  const priorLatch = latchJob ? readLatch(latchJob) : "";
+  if (latchJob && !filesAgainst(latchJob, cause, lookup.readable, priorLatch)) {
     log(`${report.job} still failing - to-do already filed, staying quiet`);
     return 0;
   }
@@ -273,7 +274,13 @@ function file({ report, cause, causeLine, latchJob }: Filing): number {
 
   const title = todoTitle(report.title, machine, FIRST_RUN);
   const filed = addTodo({ title, notes, when: LANDING, tags: TAG });
-  if (filed !== 0) return filed;
+  if (filed !== 0) {
+    // Nothing was filed, so the latch goes back where it was. A later night that
+    // cannot read the store would otherwise read it as a to-do standing and
+    // leave this failure unreported for good.
+    if (latchJob) writeLatch(latchJob, priorLatch);
+    return filed;
+  }
 
   notify(title, `${report.job} failed - see Things`);
   return 0;
@@ -283,11 +290,9 @@ function file({ report, cause, causeLine, latchJob }: Filing): number {
 // with nothing standing means the to-do was completed, so the cause returning is
 // news whatever the latch says. A store that could not be read leaves the latch
 // as the whole answer.
-function filesAgainst(job: string, cause: string, finished: boolean): boolean {
+function filesAgainst(job: string, cause: string, finished: boolean, prior: string): boolean {
   const latch = latchValue(cause);
-  const prior = readLatch(job);
-  // Moves before anything is filed, so a filing that fails stays quiet until the
-  // job recovers or its cause moves.
+  // Moves before anything is filed, so a second run tonight cannot outrun it.
   writeLatch(job, latch);
   return finished || prior !== latch;
 }

@@ -660,16 +660,16 @@ describe("the run as a whole", () => {
     expect(existsSync(marker)).toBe(true);
   });
 
-  // report_failure writes the latch before it files, so a filing that dies leaves
-  // a latch claiming a to-do that was never created. The status carried out of
-  // the run is the filer's, not the 1 a reported failure carries.
+  // The status carried out of the run is the filer's, which is what tells a
+  // refused filing apart from the 1 a reported failure carries. The latch goes
+  // back, since nothing was filed for it to stand for.
   test("carries the status of a refused sync filing", () => {
     syncStub("#!/bin/sh\nexit 1\n");
     stub("open", "#!/bin/sh\nexit 7\n");
 
     const run = runUpgrade();
     expect(run.status).toBe(7);
-    expect(latch("dotfiles-sync")).toMatch(/^failed [0-9a-f]{12}\n$/);
+    expect(latch("dotfiles-sync").trim()).toBe("");
   });
 
   test("stops a drift filing that is refused before clearing the upgrade latch", () => {
