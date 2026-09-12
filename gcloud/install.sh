@@ -7,4 +7,8 @@ set -e
 
 command -v gcloud >/dev/null 2>&1 || exit 0
 
-gcloud components update --quiet
+# A failure here (no network, a rate limit, an interactive prompt this
+# machine can't answer) must not abort the rest of scripts/install: find
+# runs every topic install.sh under one set -e pipeline, and gcloud sorts
+# ahead of most other topics alphabetically.
+gcloud components update --quiet || echo "gcloud components update failed; will retry next run" >&2
