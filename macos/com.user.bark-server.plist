@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.bark-server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string>exec "$HOME/.local/share/mise/shims/bark-server" -addr 127.0.0.1:8090 -data "$HOME/.local/state/bark"</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Unconditional, unlike the PathState guard in com.user.activitywatch.plist.
+         claude/install.sh boots the agent out when the binary is absent,
+         leaving only a removal between install runs to respawn until the next
+         one. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.local/state/bark/bark-server.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.local/state/bark/bark-server.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

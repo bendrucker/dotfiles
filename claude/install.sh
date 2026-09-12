@@ -5,13 +5,14 @@ set -e
 
 # shellcheck source=../scripts/shell/symlinks.sh
 . "$(cd "$(dirname "$0")/.." && pwd)/scripts/shell/symlinks.sh"
+# shellcheck source=../macos/shell/launch-agent.sh
+. "$(cd "$(dirname "$0")/.." && pwd)/macos/shell/launch-agent.sh"
 
 CLAUDE_REPO_URL="https://github.com/bendrucker/claude.git"
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 
-NTFY_CONFIG_DIR="$HOME/.config/ntfy"
-NTFY_STATE_DIR="$HOME/.local/state/ntfy"
-NTFY_SERVER_YML="$NTFY_CONFIG_DIR/server.yml"
+BARK_SERVER_BIN="$HOME/.local/share/mise/shims/bark-server"
+BARK_STATE_DIR="$HOME/.local/state/bark"
 CHIEF_CONFIG_JSON="$HOME/.config/chief/config.json"
 
 setup_claude_repo() {
@@ -56,63 +57,31 @@ install_claude_symlinks() {
   find "$target_dir" -maxdepth 1 -type l | symlink_prune "$CLAUDE_REPO_HOME/user" "$desired"
 }
 
-ntfy_has_server() {
-  command -v ntfy >/dev/null 2>&1 && ntfy --help 2>&1 | grep -q "Server commands"
-}
+setup_bark_server() {
+  mkdir -p "$BARK_STATE_DIR"
 
-render_ntfy_config() {
-  [[ -f "$NTFY_SERVER_YML" ]] && return 0
-
-  mkdir -p "$NTFY_CONFIG_DIR" "$NTFY_STATE_DIR"
-  sed \
-    -e "s#__NTFY_BASE_URL__#${NTFY_BASE_URL:-http://127.0.0.1:2586}#" \
-    -e "s#__NTFY_STATE_DIR__#$NTFY_STATE_DIR#" \
-    "$(dirname "$0")/ntfy/server.yml" > "$NTFY_SERVER_YML"
-  echo "  ✓ $NTFY_SERVER_YML"
+  # Gated on the binary because a KeepAlive agent with a missing exec target
+  # respawns forever. mise installs it from claude/mise.toml. A machine that
+  # hasn't run mise install yet gets no agent until it does.
+  if [[ -x "$BARK_SERVER_BIN" ]]; then
+    install_launch_agent com.user.bark-server.plist "bark-server" || true
+  else
+    gum log --level warn "bark-server not installed (run mise install), skipping bark-server agent"
+    remove_launch_agent com.user.bark-server.plist
+  fi
 }
 
 setup_chief_config() {
   [[ -f "$CHIEF_CONFIG_JSON" ]] && return 0
 
-  # The Homebrew formula ships client-only on macOS (upstream tags every
-  # darwin build noserver), so `ntfy user`/`ntfy token` aren't there to run.
-  # A working server needs a self-built or Dockerized ntfy. Chief's config
-  # stays unwritten until then rather than shipping a token nothing can use.
-  if ! ntfy_has_server; then
-    gum log --level warn "ntfy has no server support on this Mac (Homebrew's build is client-only); skipping chief config"
-    return 0
-  fi
-
-  # `ntfy user`/`ntfy token` operate on auth-file directly, but ntfy only
-  # creates that file the first time a server using it starts. Boot one just
-  # long enough to provision, since there's no supervised service to reuse.
-  ntfy serve -c "$NTFY_SERVER_YML" >/dev/null 2>&1 &
-  local serve_pid=$!
-  trap 'kill "$serve_pid" 2>/dev/null || true' RETURN
-
-  local deadline=$((SECONDS + 5))
-  until curl -s -o /dev/null "http://127.0.0.1:2586/v1/health"; do
-    if ((SECONDS > deadline)); then
-      gum log --level warn "ntfy server didn't come up for provisioning; skipping chief config"
-      return 0
-    fi
-    sleep 0.2
-  done
-
-  local username="chief"
-  NTFY_PASSWORD="$(openssl rand -hex 24)" \
-    ntfy user --config "$NTFY_SERVER_YML" add --role=admin --ignore-exists "$username"
-  local token
-  token="$(ntfy token --config "$NTFY_SERVER_YML" add "$username" | grep -oE 'tk_[a-zA-Z0-9]+')"
-
-  kill "$serve_pid" 2>/dev/null || true
-  wait "$serve_pid" 2>/dev/null || true
-  trap - RETURN
-
   mkdir -p "$(dirname "$CHIEF_CONFIG_JSON")"
+  # 16 raw bytes rendered as 32 hex characters, used as a literal-UTF8-chars
+  # AES-256 key by Bark's encryption scheme (bark.ts encrypts the same way).
+  local key
+  key="$(openssl rand -hex 16)"
   cat > "$CHIEF_CONFIG_JSON" <<JSON
 {
-  "ntfy": { "url": "${NTFY_BASE_URL:-http://127.0.0.1:2586}", "topic": "chief", "replies": "chief-replies", "token": "$token" },
+  "bark": { "url": "http://127.0.0.1:8090", "devices": [], "key": "$key", "actUrl": "${CHIEF_ACT_URL:-https://<tailnet-host>:7392}" },
   "herdr": { "agent": "chief" },
   "presence": { "focusFile": "~/Library/DoNotDisturb/DB/Assertions.json", "calendar": true, "workHours": ["09:00", "18:00"] },
   "grace": { "permission": "3m", "idle": "10m" }
@@ -122,9 +91,12 @@ JSON
 }
 
 if [[ -z "${NONINTERACTIVE-}" ]]; then
-  gum log --level info "Chief's phone reaches ntfy over Tailscale Serve. Once it's running:"
-  gum log --level info "  tailscale serve --bg --https=443 http://127.0.0.1:2586"
-  gum log --level info "  then point ntfy.url in ~/.config/chief/config.json at the serve URL"
+  gum log --level info "Chief's phone reaches bark-server and the act page over Tailscale Serve. Once bark-server is running:"
+  gum log --level info "  tailscale serve --bg --https=8090 http://127.0.0.1:8090"
+  gum log --level info "  tailscale serve --bg --https=7392 http://127.0.0.1:7392"
+  gum log --level info "  then set chief's actUrl in ~/.config/chief/config.json to the tailnet URL for port 7392"
+  gum log --level info "Each phone device needs its own entry in bark.devices:"
+  gum log --level info "  install the Bark app, add a server pointing at the tailnet URL for port 8090, turn on encryption matching bark.key, then copy the device's key into its own entry in bark.devices"
 
   # presence.ts ships as a stub in this build; the Calendar reader isn't wired
   # up yet, so there's nothing to grant against until that lands.
@@ -134,5 +106,5 @@ fi
 
 setup_claude_repo
 install_claude_symlinks
-render_ntfy_config
+setup_bark_server
 setup_chief_config
