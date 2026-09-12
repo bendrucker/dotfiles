@@ -415,13 +415,9 @@ function freshMeta(fresh: Finding[]): string {
 // quiet however much the rest of the set churns around it. The cause is that
 // fresh set, so the same set reappearing appends and a different one files.
 export function reportFindings(report: FindingsReport): number {
-  const decision = decideFindings(
-    decodeFindings(readLatch(report.job)),
-    report.standing,
-    report.held,
-  );
-  // The latch moves before anything is filed, so a filing that fails leaves the
-  // finding quiet rather than retrying it every night.
+  const prior = readLatch(report.job);
+  const decision = decideFindings(decodeFindings(prior), report.standing, report.held);
+  // Moves before anything is filed, so a second run tonight cannot outrun it.
   writeLatch(report.job, encodeFindings(decision.latched));
 
   if (decision.fresh.length === 0) {
@@ -431,7 +427,7 @@ export function reportFindings(report: FindingsReport): number {
 
   log(`Reporting new ${report.job} findings`);
   const cause = causeOf(decision.fresh.map(findingKey));
-  return file({
+  const filed = file({
     report: {
       ...report,
       extraMeta: [report.extraMeta, freshMeta(decision.fresh)].filter(Boolean).join("\n"),
@@ -439,6 +435,11 @@ export function reportFindings(report: FindingsReport): number {
     cause,
     causeLine: decision.fresh.map((finding) => `${finding.subject} ${finding.verdict}`).join(", "),
   });
+
+  // Nothing was filed, so the findings go back to the verdicts they had. Left
+  // latched they would read as reported and stay quiet however long they stand.
+  if (filed !== 0) writeLatch(report.job, prior);
+  return filed;
 }
 
 export function notificationScript(title: string, message: string, sound: string): string {

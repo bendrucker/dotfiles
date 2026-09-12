@@ -491,6 +491,18 @@ describe("reportFindings latch", () => {
     expect(added()).toHaveLength(1);
   });
 
+  // A latch claiming a to-do that was never created leaves the finding quiet
+  // however long it stands.
+  test("puts the findings back where the filing was refused", () => {
+    writeStub(stub("open"), "exit 3");
+    expect(night(["alpha stale"])).toBe(3);
+
+    writeStub(stub("open"), `printf '%s\\n' "$2" >> "${join(sandbox, "urls")}"`);
+    night(["alpha stale"]);
+
+    expect(added()).toHaveLength(1);
+  });
+
   test("stays quiet while the same finding stands", () => {
     night(["alpha stale"]);
     night(["alpha stale"]);
@@ -528,10 +540,10 @@ describe("reportFindings latch", () => {
     expect(added()).toHaveLength(2);
   });
 
-  test("keeps the latch it wrote when the filing itself fails", () => {
+  test("puts the latch back when the filing itself fails", () => {
     writeStub(stub("open"), "exit 3");
     expect(night(["alpha stale"])).toBe(3);
-    expect(readLatch("drift")).toBe("standing\nalpha\tstale");
+    expect(readLatch("drift")).toBe("");
   });
 
   test("keeps its latch clear of the single-failure one", () => {
