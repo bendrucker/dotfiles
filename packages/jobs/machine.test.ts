@@ -32,12 +32,11 @@ describe("machineName", () => {
     expect(machineName()).toBe("Mac Studio");
   });
 
-  test("falls back to the hostname where scutil is absent", () => {
-    expect(machineName()).not.toBe("");
-  });
-
-  test("falls back to the hostname where scutil fails", () => {
-    writeStub("scutil", "exit 1");
+  test.each<{ name: string; stub?: string }>([
+    { name: "scutil is absent" },
+    { name: "scutil fails", stub: "exit 1" },
+  ])("falls back to the hostname where $name", ({ stub }) => {
+    if (stub) writeStub("scutil", stub);
     expect(machineName()).not.toBe("");
   });
 });

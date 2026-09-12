@@ -67,8 +67,17 @@ export function thingsDatabase(): string | undefined {
   const override = process.env.THINGS_DATABASE;
   if (override) return override;
 
-  const found = [...new Bun.Glob(DATABASE_GLOB).scanSync({ cwd: CONTAINERS, absolute: true })];
-  return newest(found);
+  return newest(containerDatabases());
+}
+
+// A machine with no group containers at all has no Things, which is every CI
+// runner. scanSync throws on the missing directory rather than yielding nothing.
+function containerDatabases(): string[] {
+  try {
+    return [...new Bun.Glob(DATABASE_GLOB).scanSync({ cwd: CONTAINERS, absolute: true })];
+  } catch {
+    return [];
+  }
 }
 
 function newest(paths: string[]): string | undefined {

@@ -295,13 +295,28 @@ describe("reportFailure append", () => {
     expect(added()).toHaveLength(2);
   });
 
-  // Without the token `update` is refused, and losing the run is worse than a
-  // duplicate.
-  test("files rather than losing the run where the append cannot be made", () => {
+  // Without the token `update` is refused, and a to-do is already standing for
+  // this cause. Filing a second one every night it repeats was the flood this
+  // whole design exists to prevent, and nothing is lost by staying quiet: the
+  // archive holds every run, and the standing note names the archive.
+  test("leaves the standing to-do alone where the append cannot be made", () => {
     fail("boom");
     standInThings();
     writeStub(stub("security"), "exit 1");
+
     fail("boom");
+    fail("boom");
+    fail("boom");
+
+    expect(added()).toHaveLength(1);
+  });
+
+  // A to-do standing for a different cause is not one this failure can append to.
+  test("still files where nothing stands for this cause", () => {
+    writeStub(stub("security"), "exit 1");
+    fail("fatal: could not resolve host\n");
+    standInThings();
+    fail("error: cannot lock ref 'HEAD'\n");
     expect(added()).toHaveLength(2);
   });
 });
@@ -331,6 +346,21 @@ describe("reportFailure escalation", () => {
   test("does not move it again on the runs after that", () => {
     repeat(ESCALATE_AFTER + 1);
     expect(field(updated().at(-1) ?? "", "when")).toBe("");
+  });
+
+  // A night the store cannot be read records its run without appending, so the
+  // count steps over the threshold rather than landing on it. Testing for
+  // equality there lost the escalation for good.
+  test("escalates on the first append past a threshold the count stepped over", () => {
+    repeat(ESCALATE_AFTER - 1);
+    process.env.THINGS_DATABASE = join(sandbox, "unreadable.sqlite");
+    fail("boom");
+
+    standInThings();
+    fail("boom");
+
+    expect(field(updated().at(-1) ?? "", "title")).toMatch(/\(4 runs\)$/);
+    expect(field(updated().at(-1) ?? "", "when")).toBe("today");
   });
 
   // The run count that decides this is the standing to-do's, not the archive's.

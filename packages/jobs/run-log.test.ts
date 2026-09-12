@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { recordRun, resetRuns, runCount, runLogPath } from "#jobs/run-log";
+import { claimEscalation, recordRun, resetRuns, runLogPath } from "#jobs/run-log";
 
 let sandbox: string;
 const state = process.env.XDG_STATE_HOME;
@@ -61,7 +61,7 @@ test("keeps the archive whole across a reset", () => {
 
 test("separates the causes of one job", () => {
   recordRun("dotfiles-sync", "aaaa", { at: "monday", output: "one" });
-  expect(runCount("dotfiles-sync", "bbbb")).toBe(1);
+  expect(recordRun("dotfiles-sync", "bbbb", { at: "monday", output: "two" })).toBe(1);
 });
 
 // A count of 1 files a to-do rather than appending to one, so a log this run
@@ -69,5 +69,18 @@ test("separates the causes of one job", () => {
 test("reads an unwritable log as a first run", () => {
   process.env.XDG_STATE_HOME = "/dev/null/nowhere";
   expect(record("first")).toBe(1);
-  expect(runCount("dotfiles-sync", "9f8e7d6c5b4a")).toBe(1);
+});
+
+// The move into Today is the one interruption a to-do gets. Escalating on every
+// run past the threshold would shove a cause Ben pulled back out of Today into
+// it again the next night.
+test("hands the escalation to one run and refuses it after", () => {
+  expect(claimEscalation("dotfiles-sync", "9f8e7d6c5b4a")).toBe(true);
+  expect(claimEscalation("dotfiles-sync", "9f8e7d6c5b4a")).toBe(false);
+});
+
+test("gives the to-do that replaces a finished one its own escalation", () => {
+  claimEscalation("dotfiles-sync", "9f8e7d6c5b4a");
+  resetRuns("dotfiles-sync", "9f8e7d6c5b4a");
+  expect(claimEscalation("dotfiles-sync", "9f8e7d6c5b4a")).toBe(true);
 });

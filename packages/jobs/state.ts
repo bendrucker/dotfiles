@@ -35,8 +35,13 @@ export function readLatch(job: string): string {
 
 export function writeLatch(job: string, value: string): void {
   const path = statusFile(job);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${value}\n`);
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${value}\n`);
+  } catch {
+    // A latch that cannot be written costs a duplicate to-do tomorrow, where
+    // throwing here costs the report this job came to file.
+  }
 }
 
 export function clearLatch(job: string): void {

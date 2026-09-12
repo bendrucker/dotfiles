@@ -16,7 +16,7 @@
 
 import { causeFingerprint, causeOf, distinctiveLine } from "#jobs/cause";
 import { machineKey, machineName } from "#jobs/machine";
-import { recordRun, resetRuns, runLogPath } from "#jobs/run-log";
+import { claimEscalation, recordRun, resetRuns, runLogPath } from "#jobs/run-log";
 import { TRAILING_NEWLINES, readLatch, writeLatch } from "#jobs/state";
 import {
   THINGS_NOTES_LIMIT,
@@ -239,12 +239,12 @@ function file({ report, cause, causeLine, latchJob }: Filing): number {
 
   const lookup = findOpenTodo(markerQuery(marker));
   const standing = lookup.readable ? lookup.todo : undefined;
-  if (standing && appendRun(standing, report, { at, runs })) {
+  if (standing && appendRun(standing, { report, machine }, { at, runs, cause })) {
     log(`${report.job} still failing on the same cause - appended run ${runs}`);
     return 0;
   }
 
-  if (latchJob && !filesAgainst(latchJob, cause, lookup.readable)) {
+  if (latchJob && !filesAgainst(latchJob, cause, lookup.readable && !standing)) {
     log(`${report.job} still failing - to-do already filed, staying quiet`);
     return 0;
   }
@@ -276,39 +276,43 @@ function file({ report, cause, causeLine, latchJob }: Filing): number {
 
 // Whether a to-do should be filed, with the latch moved either way.
 //
-// A store that was read and holds nothing standing for this cause means the
-// to-do was finished, so the cause returning is news whatever the latch says.
-// A store that could not be read says nothing, and the latch is the whole
-// answer: it keeps a cause that is still standing from filing again every night,
-// at the cost of staying quiet about one Ben completed.
-function filesAgainst(job: string, cause: string, readable: boolean): boolean {
+// `finished` is a store that was read and holds nothing standing for this cause,
+// so Ben completed the to-do and the cause returning is news whatever the latch
+// says. Everything else leaves the latch as the whole answer: a store that could
+// not be read says nothing either way, and a to-do standing that could not be
+// appended to has already been filed once.
+function filesAgainst(job: string, cause: string, finished: boolean): boolean {
   const latch = latchValue(cause);
   const prior = readLatch(job);
   // Runs before anything is filed, so a filing that fails leaves the failure
   // quiet until the job recovers or its cause moves.
   writeLatch(job, latch);
-  return readable || prior !== latch;
+  return finished || prior !== latch;
 }
 
 function appendRun(
   standing: { id: string; notesLength: number },
-  report: FailureReport,
-  run: { at: string; runs: number },
+  from: { report: FailureReport; machine: string },
+  run: { at: string; runs: number; cause: string },
 ): boolean {
   const block = appendBlock(
     run.runs,
     run.at,
-    report.output,
+    from.report.output,
     THINGS_NOTES_LIMIT - standing.notesLength,
   );
+
+  // Claimed rather than tested for equality, which is once either way. A night
+  // the store could not be read records its run without appending, stepping the
+  // count over the threshold instead of landing on it, and equality there loses
+  // the escalation for good.
+  const escalating = run.runs >= ESCALATE_AFTER && claimEscalation(from.report.job, run.cause);
 
   return editTodo({
     id: standing.id,
     appendNotes: block,
-    title: todoTitle(report.title, machineName(), run.runs),
-    // Exactly at the threshold, so a cause Ben has since pulled back out of Today
-    // is not shoved into it again on every later run.
-    when: run.runs === ESCALATE_AFTER ? "today" : undefined,
+    title: todoTitle(from.report.title, from.machine, run.runs),
+    when: escalating ? "today" : undefined,
   });
 }
 

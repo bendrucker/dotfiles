@@ -47,27 +47,28 @@ describe("distinctiveLine", () => {
 // failure, and each is why a to-do was filed a second time for a cause already
 // standing.
 describe("normalizeVolatile", () => {
-  test("replaces a duration", () => {
-    expect(normalizeVolatile("failed after 30012 ms")).toBe("failed after <duration>");
-  });
-
-  test("replaces a timestamp and a bare date", () => {
-    expect(normalizeVolatile("at 2026-09-11T03:00:04Z")).toBe("at <time>");
-    expect(normalizeVolatile("since 2026-09-11 fell behind")).toBe("since <date> fell behind");
-  });
-
-  test("replaces a git object name", () => {
-    expect(normalizeVolatile("bad object 4f2a9c1b8e")).toBe("bad object <hex>");
-  });
-
-  test("replaces a byte count", () => {
-    expect(normalizeVolatile("only 4.2 MB free")).toBe("only <size> free");
-  });
-
-  test("reduces the home directory to a tilde, which is what the two machines share", () => {
-    expect(normalizeVolatile("cannot read /Users/someone/.dotfiles/x")).toBe(
-      "cannot read ~/.dotfiles/x",
-    );
+  test.each<{ name: string; line: string; normalized: string }>([
+    {
+      name: "a duration",
+      line: "failed after 30012 ms",
+      normalized: "failed after <duration>",
+    },
+    { name: "a timestamp", line: "at 2026-09-11T03:00:04Z", normalized: "at <time>" },
+    {
+      name: "a bare date",
+      line: "since 2026-09-11 fell behind",
+      normalized: "since <date> fell behind",
+    },
+    { name: "a git object name", line: "bad object 4f2a9c1b8e", normalized: "bad object <hex>" },
+    { name: "a byte count", line: "only 4.2 MB free", normalized: "only <size> free" },
+    {
+      // The two machines share the tilde and nothing after the user name.
+      name: "the home directory",
+      line: "cannot read /Users/someone/.dotfiles/x",
+      normalized: "cannot read ~/.dotfiles/x",
+    },
+  ])("replaces $name", ({ line, normalized }) => {
+    expect(normalizeVolatile(line)).toBe(normalized);
   });
 });
 

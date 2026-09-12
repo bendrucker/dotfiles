@@ -11,7 +11,7 @@
 // completes a to-do and the cause comes back, and it is the number the title
 // shows and the escalation to Today fires on.
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TRAILING_NEWLINES, stateDir } from "#jobs/state";
 
@@ -26,6 +26,10 @@ export function runLogPath(job: string, cause: string): string {
 
 function countPath(job: string, cause: string): string {
   return join(stateDir(), RUNS, `${job}-${cause}.count`);
+}
+
+function escalatedPath(job: string, cause: string): string {
+  return join(stateDir(), RUNS, `${job}-${cause}.escalated`);
 }
 
 // A log that cannot be written reports the run as the first, which files a to-do
@@ -48,10 +52,24 @@ export function recordRun(job: string, cause: string, run: { at: string; output:
 // they are just not this to-do's.
 export function resetRuns(job: string, cause: string): void {
   writeCount(job, cause, 1);
+  try {
+    rmSync(escalatedPath(job, cause), { force: true });
+  } catch {
+    // The new to-do inherits the finished one's escalation and stays in Anytime.
+  }
 }
 
-export function runCount(job: string, cause: string): number {
-  return Math.max(storedCount(job, cause), 1);
+// Takes the one move into Today this to-do gets, and answers false to every run
+// after. Exclusive creation is what decides it, and resetRuns clearing the
+// marker is what gives the next to-do its own.
+export function claimEscalation(job: string, cause: string): boolean {
+  try {
+    mkdirSync(join(stateDir(), RUNS), { recursive: true });
+    writeFileSync(escalatedPath(job, cause), "", { flag: "wx" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function storedCount(job: string, cause: string): number {
