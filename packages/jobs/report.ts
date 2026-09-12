@@ -144,9 +144,8 @@ export function appendBlock(run: number, at: string, output: string, budget: num
     return `${heading}${fences}${trimmed.replace(TRAILING_NEWLINES, "")}\n\`\`\``;
   }
 
-  // A note with no room left for even the pointer appends nothing. An empty
-  // append-notes drops out of the URL, so the run count in the title still
-  // lands and the run is still in the log.
+  // An empty append-notes drops out of the URL, so the run count in the title
+  // still lands and the run is still in the log.
   const pointer = `${heading}${POINTER}`;
   return pointer.length <= budget ? pointer : "";
 }

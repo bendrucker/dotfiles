@@ -29,8 +29,8 @@ export function machineName(): string {
   return capture(["scutil", "--get", "ComputerName"]) || shortHostname();
 }
 
-// A stable, opaque identifier for this machine. Hashed rather than used raw so
-// the marker it lands in stays short and carries nothing about the hardware.
+// Hashed rather than used raw so the marker it lands in stays short and carries
+// nothing about the hardware.
 export function machineKey(): string {
   return createHash("sha1").update(machineIdentity()).digest("hex").slice(0, KEY_LENGTH);
 }

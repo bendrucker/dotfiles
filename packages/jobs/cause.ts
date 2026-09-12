@@ -7,10 +7,9 @@
 // spans in it replaced by their shapes.
 //
 // Neither half works alone. The command alone collapses every way a step can
-// break into one to-do, which is what `fingerprint: "install"` did: the first
-// install failure filed, and every different one after it stayed silent behind
-// the latch. The whole output alone never matches itself twice, since a log
-// carries a timestamp, a revision, or a duration somewhere in it.
+// break into one to-do, leaving the second kind of failure silent behind the
+// latch the first one set. The whole output alone never matches itself twice,
+// since a log carries a timestamp, a revision, or a duration somewhere in it.
 
 import { createHash } from "node:crypto";
 import { stripCsi } from "#jobs/excerpt";
@@ -26,9 +25,8 @@ const FINGERPRINT_LENGTH = 12;
 // discriminating one.
 const GUM_LEVEL = /^(DEBU|INFO|WARN|ERRO|FATA)\b/;
 
-// Words a tool uses when it is reporting a failure rather than describing its
-// work. Matched against the whole line because the marker is as often at the
-// front ("fatal: ...") as buried in it ("... : Permission denied").
+// Matched against the whole line because the marker is as often at the front
+// ("fatal: ...") as buried in it ("... : Permission denied").
 const DIAGNOSIS =
   /\b(error|errors|fatal|failed|failure|cannot|can't|unable|denied|refused|missing|no such|not found|timed out|aborted)\b/i;
 
