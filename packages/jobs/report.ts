@@ -243,6 +243,9 @@ function file({ report, cause, causeLine, latchJob }: Filing): number {
         ? `${report.job} still failing on the same cause - appended run ${runs}`
         : `${report.job} still failing - the to-do already standing could not be appended to`,
     );
+    // The latch follows the to-do it can see, so a later night that cannot read
+    // the store holds the same answer instead of filing what it is blind to.
+    if (latchJob) writeLatch(latchJob, latchValue(cause));
     return 0;
   }
 

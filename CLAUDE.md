@@ -234,7 +234,7 @@ The audit reports and never removes, for the same reason `scripts/brew-drift` do
 
 ### Failure Reporting
 
-`#jobs/report` files one Things to-do per cause per machine, and a repeat of the same cause appends that run to the to-do already standing. A cause is the failing command plus the first output line naming the failure, normalized and hashed. A job may pass its own `fingerprint` instead, hashed verbatim. The machine is `scutil --get ComputerName`, never the hostname, which moves between networks.
+`#jobs/report` files one Things to-do per cause per machine, and a repeat of the same cause appends that run to the to-do already standing. A cause is the failing command plus the first output line naming the failure, normalized and hashed. A job may pass its own `fingerprint` instead, hashed verbatim. The machine comes from `scutil --get ComputerName`, which holds steady where the hostname moves between networks.
 
 To-dos land in Anytime tagged `dotfiles`, carry the run count in the title, and move to Today once after `ESCALATE_AFTER` runs. Finding one again means reading Things' own SQLite store for the marker in its note, because the URL scheme only writes and `osascript` would hang under launchd. Appending needs the `things-auth-token` keychain item.
 

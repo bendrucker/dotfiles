@@ -311,6 +311,21 @@ describe("reportFailure append", () => {
     expect(added()).toHaveLength(1);
   });
 
+  // A recovery clears the latch while the to-do it filed stays standing, so the
+  // append has to put the cause back. Otherwise a later night that cannot read
+  // the store reads the stale latch and files what it is blind to.
+  test("re-latches a cause returning to a to-do that still stands", () => {
+    fail("boom");
+    standInThings();
+    reportSuccess("drift");
+    fail("boom");
+
+    process.env.THINGS_DATABASE = join(sandbox, "unreadable.sqlite");
+    fail("boom");
+
+    expect(added()).toHaveLength(1);
+  });
+
   // A to-do standing for a different cause is not one this failure can append to.
   test("still files where nothing stands for this cause", () => {
     writeStub(stub("security"), "exit 1");
