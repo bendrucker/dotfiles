@@ -1,0 +1,10 @@
+# Rendered to ~/.config/ntfy/server.yml by claude/install.sh, which substitutes
+# __NTFY_BASE_URL__ and __NTFY_STATE_DIR__. base-url has no real value here: a
+# tailnet hostname doesn't belong in a public repo, and install.sh defaults it
+# to the loopback address until chief's phone reaches this over Tailscale Serve.
+listen-http: "127.0.0.1:2586"
+base-url: "__NTFY_BASE_URL__"
+auth-file: "__NTFY_STATE_DIR__/auth.db"
+auth-default-access: deny-all
+cache-file: "__NTFY_STATE_DIR__/cache.db"
+upstream-base-url: "https://ntfy.sh"

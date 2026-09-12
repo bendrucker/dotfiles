@@ -7,6 +7,10 @@ cask 'claude-devtools'
 cask 'commander'
 brew 'agent-browser'
 brew 'ast-grep'
+# The macOS build ships client-only (upstream tags every darwin target
+# `noserver`), so there's no `ntfy serve` and no service to start here.
+# claude/install.sh warns when chief's local ntfy setup needs a server build.
+brew 'ntfy'
 brew 'rjyo/moshi/moshi-hook', start_service: true
 if OS.mac?
   brew 'steipete/tap/peekaboo'
