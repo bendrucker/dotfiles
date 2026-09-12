@@ -28,8 +28,7 @@ function countPath(job: string, cause: string): string {
   return join(stateDir(), RUNS, `${job}-${cause}.count`);
 }
 
-// Archives one run and answers how many the standing to-do has now seen. A log
-// that cannot be written reports the run as the first, which files a to-do
+// A log that cannot be written reports the run as the first, which files a to-do
 // rather than appending to one: a duplicate is the better failure.
 export function recordRun(job: string, cause: string, run: { at: string; output: string }): number {
   try {

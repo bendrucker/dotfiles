@@ -38,8 +38,8 @@ export const ESCALATE_AFTER = 3;
 // The run just archived is its first, whatever the archive holds from to-dos before it.
 const FIRST_RUN = 1;
 
-// What the marker line is recognized by. Distinctive enough that a to-do written
-// by anything else cannot be mistaken for one of these.
+// The prefix is distinctive enough that a to-do written by anything else cannot
+// be mistaken for one of ours.
 const MARKER_PREFIX = "dotfiles-job";
 
 export function elisionMarker(elided: number, total: number): string {

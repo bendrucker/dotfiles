@@ -58,7 +58,7 @@ beforeEach(() => {
   process.env.PATH = stubs;
   process.env.XDG_STATE_HOME = join(sandbox, "state");
   // Pointed at nothing by default, which is a machine where Things cannot be
-  // read: the latch alone decides, as it did before any of this.
+  // read: the latch alone decides.
   process.env.THINGS_DATABASE = join(sandbox, "absent.sqlite");
 
   // A stub that failed to shadow the real command would file real Things to-dos
