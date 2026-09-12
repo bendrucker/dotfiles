@@ -34,8 +34,11 @@ beforeEach(() => {
       '      echo "$key=$value" >> "$FIXTURES/gitconfig"',
       '      i=$((i + 1))',
       '    done',
+      '    if grep -qx "$2" "$FIXTURES/tap-fails" 2>/dev/null; then exit 128; fi',
       '    ;;',
-      '  trust) shift; echo "$*" >> "$FIXTURES/trusted" ;;',
+      '  trust) shift; echo "$*" >> "$FIXTURES/trusted"',
+      '    if [ -f "$FIXTURES/trust-fails" ]; then exit 1; fi',
+      '    ;;',
       "esac",
     ].join("\n"),
   );
@@ -64,6 +67,14 @@ function installed(...taps: string[]) {
 function shallow(tap: string) {
   const [user, repo] = splitTap(tap);
   box.write(`repo/Library/Taps/${user}/homebrew-${repo}/.git/shallow`, "");
+}
+
+function tapFails(...taps: string[]) {
+  box.write("tap-fails", `${taps.join("\n")}\n`);
+}
+
+function trustFails() {
+  box.write("trust-fails", "");
 }
 
 function staleTrust() {
@@ -224,5 +235,59 @@ describe("install-trust", () => {
     const r = runScript();
     expect(r.status).toBe(0);
     expect(tapped()).toBe("oven-sh/bun");
+  });
+
+  // scripts/install runs under `set -e` well before brew bundle, mise and the
+  // symlinks, so a tap that exits nonzero used to take the whole install with
+  // it and leave the machine without every formula a Brewfile declares.
+  describe("a tap that cannot be cloned", () => {
+    test("does not stop the taps after it", () => {
+      declared("greptileai/tap", "schpet/tap");
+      tapFails("greptileai/tap");
+
+      const r = runScript();
+      expect(r.status).toBe(0);
+      expect(tapped()).toBe("greptileai/tap\nschpet/tap");
+    });
+
+    test("is named on stderr", () => {
+      declared("greptileai/tap", "schpet/tap");
+      tapFails("greptileai/tap");
+
+      const r = runScript();
+      expect(r.stderr).toContain("greptileai/tap");
+      expect(r.stderr).not.toContain("schpet/tap");
+    });
+
+    test("is left out of the trust list", () => {
+      declared("greptileai/tap", "schpet/tap");
+      tapFails("greptileai/tap");
+
+      const r = runScript();
+      expect(r.status).toBe(0);
+      expect(trusted()).toBe("--tap schpet/tap");
+    });
+
+    test("trusts nothing when it was the only tap declared", () => {
+      declared("greptileai/tap");
+      tapFails("greptileai/tap");
+
+      const r = runScript();
+      expect(r.status).toBe(0);
+      expect(trusted()).toBe("");
+    });
+  });
+
+  // A tap on disk still installs from it. What trust gates is brew bundle
+  // reading a formula out of one, which is next run's problem rather than a
+  // reason to abandon the install steps after this.
+  test("carries on when brew trust itself fails", () => {
+    declared("oven-sh/bun");
+    installed("oven-sh/bun");
+    trustFails();
+
+    const r = runScript();
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain("brew trust failed");
   });
 });
