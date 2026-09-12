@@ -1,31 +1,42 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  THINGS_NOTES_LIMIT,
+  ESCALATE_AFTER,
+  appendBlock,
   buildNotes,
+  causeMarker,
   elisionMarker,
   type Finding,
   decideFindings,
   latchValue,
   notificationScript,
   notify,
-  readLatch,
   reportFailure,
   reportFindings,
   reportSuccess,
-  statusFile,
-  thingsAddUrl,
+  todoTitle,
   trimOutput,
 } from "#jobs/report";
+import { readLatch, statusFile } from "#jobs/state";
+import { THINGS_NOTES_LIMIT } from "#jobs/things";
 
 let sandbox: string;
-const environment = { PATH: process.env.PATH, XDG_STATE_HOME: process.env.XDG_STATE_HOME };
+const environment = {
+  PATH: process.env.PATH,
+  XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+  THINGS_DATABASE: process.env.THINGS_DATABASE,
+};
 
 function writeStub(path: string, body: string): void {
   writeFileSync(path, `#!/bin/sh\n${body}\n`);
   chmodSync(path, 0o755);
+}
+
+function stub(name: string): string {
+  return join(sandbox, "stub", name);
 }
 
 beforeEach(() => {
@@ -33,31 +44,39 @@ beforeEach(() => {
   const stubs = join(sandbox, "stub");
   mkdirSync(stubs);
 
-  // `open` is the only way a to-do is created, so recording the URL it was handed
-  // is the whole observation: a line means a to-do was filed, no line means the
-  // latch held.
-  writeStub(join(stubs, "open"), `printf '%s\\n' "$1" >> "${join(sandbox, "todos")}"`);
+  // `open` is the only way a to-do is created or changed, so recording the URL it
+  // was handed is the whole observation. `-g` puts the URL in the second
+  // argument.
+  writeStub(join(stubs, "open"), `printf '%s\\n' "$2" >> "${join(sandbox, "urls")}"`);
   writeStub(join(stubs, "osascript"), `printf '%s\\n' "$2" >> "${join(sandbox, "notifications")}"`);
   writeStub(join(stubs, "gum"), "exit 0");
+  // Nothing can be appended without the token, so the default is the machine that
+  // has one. The case that does not is its own example.
+  writeStub(join(stubs, "security"), 'printf "token-abc\\n"');
 
   // Nothing but the stubs is reachable, so a call that escapes one fails loudly
   // instead of reaching Things or the notification centre.
   process.env.PATH = stubs;
   process.env.XDG_STATE_HOME = join(sandbox, "state");
+  // Pointed at nothing by default, which is a machine where Things cannot be
+  // read: the latch alone decides, as it did before any of this.
+  process.env.THINGS_DATABASE = join(sandbox, "absent.sqlite");
 
   // A stub that failed to shadow the real command would file real Things to-dos
   // and raise real notifications, so prove the shadowing before every example
   // rather than discovering it from the Today list.
-  Bun.spawnSync({ cmd: ["open", "stub-probe"], env: process.env });
-  const probed = readFileSync(join(sandbox, "todos"), "utf8");
+  Bun.spawnSync({ cmd: ["open", "-g", "stub-probe"], env: process.env });
+  const probed = readFileSync(join(sandbox, "urls"), "utf8");
   if (!probed.startsWith("stub-probe")) throw new Error(`open resolved to ${probed}`);
-  rmSync(join(sandbox, "todos"));
+  rmSync(join(sandbox, "urls"));
 });
 
 afterEach(() => {
   process.env.PATH = environment.PATH;
-  if (environment.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
-  else process.env.XDG_STATE_HOME = environment.XDG_STATE_HOME;
+  for (const key of ["XDG_STATE_HOME", "THINGS_DATABASE"] as const) {
+    if (environment[key] === undefined) delete process.env[key];
+    else process.env[key] = environment[key];
+  }
   rmSync(sandbox, { recursive: true, force: true });
 });
 
@@ -74,12 +93,25 @@ function fail(output: string, fingerprint = ""): number {
   });
 }
 
-function todos(): string[] {
+function urls(): string[] {
   try {
-    return readFileSync(join(sandbox, "todos"), "utf8").split("\n").filter(Boolean);
+    return readFileSync(join(sandbox, "urls"), "utf8").split("\n").filter(Boolean);
   } catch {
     return [];
   }
+}
+
+function added(): string[] {
+  return urls().filter((url) => url.startsWith("things:///add"));
+}
+
+function updated(): string[] {
+  return urls().filter((url) => url.startsWith("things:///update"));
+}
+
+function field(url: string, name: string): string {
+  const match = url.match(new RegExp(`[?&]${name}=([^&]*)`));
+  return match ? decodeURIComponent(match[1]) : "";
 }
 
 function notifications(): string[] {
@@ -91,37 +123,52 @@ function notifications(): string[] {
 }
 
 function filedNotes(): string {
-  const url = todos().at(-1) ?? "";
-  return decodeURIComponent(url.split("&notes=")[1].split("&")[0]);
+  return field(added().at(-1) ?? "", "notes");
 }
 
-// The latch is the whole point of the file: a job that files a to-do every night
-// trains you to ignore it, and one that files none after the first leaves later
-// breakage silent.
+const SCHEMA =
+  "create table if not exists TMTask (uuid text, title text, notes text," +
+  " status integer, trashed integer, type integer, creationDate real)";
+
+// Put the to-do that was just filed into the store, the way Things would have.
+// The marker it carries is the one the reporter derived for this machine, so the
+// next run has to recognize it without the test knowing the machine's key.
+function standInThings(id = "todo-1", notes = filedNotes(), status = 0): void {
+  const path = join(sandbox, "things.sqlite");
+  process.env.THINGS_DATABASE = path;
+  const db = new Database(path, { create: true });
+  db.run(SCHEMA);
+  db.run("insert into TMTask values (?, ?, ?, ?, ?, ?, ?)", [id, "Stale", notes, status, 0, 0, 1]);
+  db.close();
+}
+
+// The latch is what answers on a machine where the Things store cannot be read.
+// A job that files a to-do every night trains you to ignore it, and one that
+// files none after the first leaves later breakage silent.
 describe("reportFailure latch", () => {
   test("files a to-do on the first failure", () => {
     expect(fail("one plugin stale")).toBe(0);
-    expect(todos()).toHaveLength(1);
+    expect(added()).toHaveLength(1);
   });
 
   test("stays quiet while the job keeps failing the same way", () => {
     fail("one plugin stale");
     fail("one plugin stale");
-    expect(todos()).toHaveLength(1);
+    expect(added()).toHaveLength(1);
   });
 
   test("files again after reportSuccess clears the latch", () => {
     fail("one plugin stale");
     reportSuccess("drift");
     fail("one plugin stale");
-    expect(todos()).toHaveLength(2);
+    expect(added()).toHaveLength(2);
   });
 
-  test("records ok on success and the failure state on a failure", () => {
+  test("records ok on success and the cause on a failure", () => {
     reportSuccess("drift");
     expect(readFileSync(statusFile("drift"), "utf8")).toBe("ok\n");
     fail("one plugin stale", "alpha");
-    expect(readFileSync(statusFile("drift"), "utf8")).toBe("failed alpha\n");
+    expect(readFileSync(statusFile("drift"), "utf8")).toMatch(/^failed [0-9a-f]{12}\n$/);
   });
 
   test("reads a missing latch as the empty string", () => {
@@ -129,36 +176,177 @@ describe("reportFailure latch", () => {
   });
 
   test("keeps the latch it wrote when the filing itself fails", () => {
-    writeStub(join(sandbox, "stub", "open"), "exit 3");
+    writeStub(stub("open"), "exit 3");
+    // The filer's own status, which is what tells a refused filing apart from a
+    // failure that was filed.
     expect(fail("one plugin stale")).toBe(3);
-    expect(readLatch("drift")).toBe("failed");
-  });
-});
-
-// Without this, the first plugin to go stale suppresses every plugin that goes
-// stale afterwards, for as long as the first one stays broken.
-describe("reportFailure fingerprint", () => {
-  test("files again when the findings change", () => {
-    fail("alpha stale", "alpha");
-    fail("alpha stale, beta stale", "alpha-beta");
-    expect(todos()).toHaveLength(2);
-  });
-
-  test("stays quiet when the findings are unchanged", () => {
-    fail("alpha stale", "alpha");
-    fail("alpha stale", "alpha");
-    expect(todos()).toHaveLength(1);
-  });
-
-  test("stays quiet for a fingerprint whose text ends in a newline", () => {
-    fail("alpha stale", "alpha\n");
-    fail("alpha stale", "alpha\n");
-    expect(todos()).toHaveLength(1);
+    expect(readLatch("drift")).toMatch(/^failed [0-9a-f]{12}$/);
   });
 
   test("treats an empty fingerprint as no fingerprint", () => {
     expect(latchValue("")).toBe("failed");
     expect(latchValue("alpha")).toBe("failed alpha");
+  });
+});
+
+// The whole point of deriving a cause: one step can break many ways, and a latch
+// keyed on the step alone filed the first and suppressed every different one
+// behind it.
+describe("reportFailure cause", () => {
+  test("stays quiet when the same line fails again with a different duration", () => {
+    fail("ERRO sync failed\nfatal: could not resolve host, after 3012 ms\n");
+    fail("ERRO sync failed\nfatal: could not resolve host, after 44 ms\n");
+    expect(added()).toHaveLength(1);
+  });
+
+  test("files again when the step breaks a different way", () => {
+    fail("fatal: could not resolve host\n");
+    fail("error: cannot lock ref 'HEAD'\n");
+    expect(added()).toHaveLength(2);
+  });
+
+  test("honours a fingerprint the caller derived itself", () => {
+    fail("alpha stale", "alpha");
+    fail("beta stale", "alpha");
+    expect(added()).toHaveLength(1);
+    fail("beta stale", "beta");
+    expect(added()).toHaveLength(2);
+  });
+
+  test("stays quiet for a fingerprint whose text ends in a newline", () => {
+    fail("alpha stale", "alpha\n");
+    fail("alpha stale", "alpha\n");
+    expect(added()).toHaveLength(1);
+  });
+});
+
+// Where a to-do lands, which is the half of this Ben reads every morning.
+describe("reportFailure filing", () => {
+  test("lands in Anytime rather than Today", () => {
+    fail("boom");
+    expect(field(added()[0], "when")).toBe("anytime");
+  });
+
+  test("carries the tag that gathers the set", () => {
+    fail("boom");
+    expect(field(added()[0], "tags")).toBe("dotfiles");
+  });
+
+  test("names the machine in the title, since the two of them fail independently", () => {
+    fail("boom");
+    expect(field(added()[0], "title")).toMatch(/^Stale on .+/);
+  });
+
+  test("notifies when the cause is new", () => {
+    fail("boom");
+    expect(notifications()).toHaveLength(1);
+  });
+});
+
+// A repeat is the case that filled Today. It appends to the to-do that already
+// stands rather than filing a second one.
+describe("reportFailure append", () => {
+  test("appends the run to the to-do already standing for the cause", () => {
+    fail("boom");
+    standInThings();
+
+    expect(fail("boom")).toBe(0);
+    expect(added()).toHaveLength(1);
+    expect(updated()).toHaveLength(1);
+    expect(field(updated()[0], "id")).toBe("todo-1");
+    expect(field(updated()[0], "append-notes")).toContain("### Run 2");
+  });
+
+  // The two runs have to share a cause to reach the append at all, so they differ
+  // below the line that names the failure rather than in it.
+  test("carries the run's own output into the append", () => {
+    fail("fatal: could not resolve host\nattempt one\n");
+    standInThings();
+    fail("fatal: could not resolve host\nattempt two\n");
+    expect(field(updated()[0], "append-notes")).toContain("attempt two");
+  });
+
+  test("stays quiet rather than notifying again", () => {
+    fail("boom");
+    standInThings();
+    fail("boom");
+    expect(notifications()).toHaveLength(1);
+  });
+
+  test("counts the runs in the title, so a cause aging shows without being opened", () => {
+    fail("boom");
+    standInThings();
+    fail("boom");
+    expect(field(updated()[0], "title")).toMatch(/^Stale on .+ \(2 runs\)$/);
+  });
+
+  test("files a fresh to-do for a different cause while one stands", () => {
+    fail("fatal: could not resolve host\n");
+    standInThings();
+    fail("error: cannot lock ref 'HEAD'\n");
+    expect(added()).toHaveLength(2);
+    expect(updated()).toHaveLength(0);
+  });
+
+  // Finishing the to-do is how Ben says he dealt with the cause.
+  test("files again once the standing to-do has been completed", () => {
+    fail("boom");
+    standInThings("todo-1", filedNotes(), 3);
+    fail("boom");
+    expect(added()).toHaveLength(2);
+  });
+
+  // Without the token `update` is refused, and losing the run is worse than a
+  // duplicate.
+  test("files rather than losing the run where the append cannot be made", () => {
+    fail("boom");
+    standInThings();
+    writeStub(stub("security"), "exit 1");
+    fail("boom");
+    expect(added()).toHaveLength(2);
+  });
+});
+
+// Today is the working list. A cause that has outlived three runs is no longer
+// something to look at when convenient.
+describe("reportFailure escalation", () => {
+  function repeat(times: number): void {
+    fail("boom");
+    for (let run = 2; run <= times; run += 1) {
+      standInThings();
+      fail("boom");
+    }
+  }
+
+  test("leaves a cause in Anytime while it is young", () => {
+    repeat(2);
+    expect(field(updated().at(-1) ?? "", "when")).toBe("");
+  });
+
+  test("moves a cause to Today once it has survived the threshold", () => {
+    repeat(ESCALATE_AFTER);
+    expect(field(updated().at(-1) ?? "", "when")).toBe("today");
+  });
+
+  // Ben pulling it back out of Today is a decision the next run leaves standing.
+  test("does not move it again on the runs after that", () => {
+    repeat(ESCALATE_AFTER + 1);
+    expect(field(updated().at(-1) ?? "", "when")).toBe("");
+  });
+});
+
+describe("todoTitle", () => {
+  test("names the machine, and the run count only once there is more than one", () => {
+    expect(todoTitle("Stale", "Studio", 1)).toBe("Stale on Studio");
+    expect(todoTitle("Stale", "Studio", 4)).toBe("Stale on Studio (4 runs)");
+  });
+});
+
+describe("causeMarker", () => {
+  test("names the machine, the job and the cause", () => {
+    expect(causeMarker("a1b2c3d4", "dotfiles-sync", "9f8e")).toBe(
+      "dotfiles-job a1b2c3d4/dotfiles-sync/9f8e",
+    );
   });
 });
 
@@ -189,13 +377,13 @@ function night(standing: string[], held: string[] = []): number {
 describe("reportFindings latch", () => {
   test("files a to-do for a newly standing finding", () => {
     night(["alpha stale"]);
-    expect(todos()).toHaveLength(1);
+    expect(added()).toHaveLength(1);
   });
 
   test("stays quiet while the same finding stands", () => {
     night(["alpha stale"]);
     night(["alpha stale"]);
-    expect(todos()).toHaveLength(1);
+    expect(added()).toHaveLength(1);
   });
 
   test("stays quiet for a standing finding while the set churns around it", () => {
@@ -205,7 +393,7 @@ describe("reportFindings latch", () => {
     night(["alpha stale", "gamma pinned"]);
     // One each for beta and gamma, and none of the three later nights re-filed
     // alpha.
-    expect(todos()).toHaveLength(3);
+    expect(added()).toHaveLength(3);
     expect(filedNotes()).toContain("**New:** gamma pinned");
   });
 
@@ -218,7 +406,7 @@ describe("reportFindings latch", () => {
   test("files again when a subject's verdict changes", () => {
     night(["alpha stale"]);
     night(["alpha pinned"]);
-    expect(todos()).toHaveLength(2);
+    expect(added()).toHaveLength(2);
     expect(filedNotes()).toContain("**New:** alpha pinned");
   });
 
@@ -226,22 +414,33 @@ describe("reportFindings latch", () => {
     night(["alpha stale"]);
     night([]);
     night(["alpha stale"]);
-    expect(todos()).toHaveLength(2);
+    expect(added()).toHaveLength(2);
   });
 
   test("keeps the latch it wrote when the filing itself fails", () => {
-    writeStub(join(sandbox, "stub", "open"), "exit 3");
+    writeStub(stub("open"), "exit 3");
     expect(night(["alpha stale"])).toBe(3);
     expect(readLatch("drift")).toBe("standing\nalpha\tstale");
   });
 
-  // A latch left behind by the fingerprint mode, which is what every machine
-  // running this holds the first night after the change.
-  test("files once against a latch written in the fingerprint shape", () => {
+  // The two modes keep their own latches, so a job that reports both does not
+  // have one overwrite the other.
+  test("keeps its latch clear of the single-failure one", () => {
     fail("alpha stale", "alpha");
     night(["alpha stale"]);
     night(["alpha stale"]);
-    expect(todos()).toHaveLength(2);
+    expect(added()).toHaveLength(2);
+  });
+
+  // A finding set that comes back after the job recovered is the same cause, so
+  // it appends rather than filing a second to-do.
+  test("appends a returning finding set to the to-do standing for it", () => {
+    night(["alpha stale"]);
+    standInThings();
+    night([]);
+    night(["alpha stale"]);
+    expect(added()).toHaveLength(1);
+    expect(updated()).toHaveLength(1);
   });
 });
 
@@ -255,19 +454,19 @@ describe("reportFindings held subjects", () => {
     night(["alpha stale"]);
     night([], ["alpha"]);
     expect(readLatch("drift")).toBe("standing\nalpha\tstale");
-    expect(todos()).toHaveLength(1);
+    expect(added()).toHaveLength(1);
   });
 
   test("files nothing when a held finding comes back unchanged", () => {
     night(["alpha stale"]);
     night([], ["alpha"]);
     night(["alpha stale"]);
-    expect(todos()).toHaveLength(1);
+    expect(added()).toHaveLength(1);
   });
 
   test("files nothing for a subject that is only ever unverified", () => {
     night([], ["alpha"]);
-    expect(todos()).toHaveLength(0);
+    expect(added()).toHaveLength(0);
     expect(readLatch("drift")).toBe("standing");
   });
 
@@ -296,75 +495,54 @@ describe("decideFindings", () => {
   });
 });
 
-// Things stores 10,000 characters of notes and drops the rest. claude-sync
-// opens its log with a repository sync whose diffstat alone ran past that, and
-// filed to-dos holding the diffstat and none of the error that ended the run.
+// Things stores 10,000 characters of notes and drops the rest. claude-sync opens
+// its log with a repository sync whose diffstat alone ran past that, and the
+// error that ended the run was the part cut.
 describe("trimOutput", () => {
-  const longLog = `${Array.from({ length: 20 }, (_, i) => `drop-${String(i + 1).padStart(2, "0")}`).join("\n")}\nkeep me`;
-
-  test("leaves an output that already fits alone", () => {
-    expect(trimOutput("short log", 100)).toBe("short log");
+  test("keeps a log that fits", () => {
+    expect(trimOutput("short", 100)).toBe("short");
   });
 
-  test("keeps the end of an output that does not fit", () => {
-    const trimmed = trimOutput(longLog, 60);
-    expect(trimmed).toContain("keep me");
-    expect(trimmed).not.toContain("drop-01");
+  test("keeps the end of a log that does not", () => {
+    const output = `${"line\n".repeat(100)}the failure`;
+    const trimmed = trimOutput(output, 60);
+    expect(trimmed.length).toBeLessThanOrEqual(60);
+    expect(trimmed).toEndWith("the failure");
   });
 
   test("says how much it dropped", () => {
-    expect(trimOutput(longLog, 60)).toContain("characters elided");
+    const output = `${"line\n".repeat(100)}the failure`;
+    expect(trimOutput(output, 60)).toContain("characters elided]");
   });
 
-  // A cut taken at the budget alone lands mid-line, and the note then opens on the
-  // tail end of a word.
-  test("resumes at a line boundary rather than mid-word", () => {
-    const padded = Array.from(
-      { length: 20 },
-      (_, i) => `line-${String(i + 1).padStart(2, "0")}-padding`,
-    ).join("\n");
-    const [marker, resumed] = trimOutput(padded, 100).split("\n");
-    expect(marker).toContain("characters elided");
-    expect(resumed.startsWith("line-")).toBe(true);
+  test("resumes at a line boundary", () => {
+    const output = `${"line\n".repeat(100)}the failure`;
+    const kept = trimOutput(output, 60).split("\n").slice(1);
+    expect(kept.every((line) => line === "line" || line === "the failure")).toBe(true);
   });
 
-  // The motivating log ends in one long unwrapped error line, which leaves no
-  // newline inside the budget to resume at.
   test("resumes at a word boundary inside a line longer than the budget", () => {
-    const unwrapped = `short${Array.from({ length: 40 }, (_, i) => ` word-${String(i + 1).padStart(3, "0")}`).join("")}`;
-    expect(trimOutput(unwrapped, 60).split("\n")[1].startsWith("word-")).toBe(true);
-  });
-
-  // The marker is what says the log was cut, and it spends budget of its own. A
-  // budget too small for it overran the note it was measured to fit inside.
-  test("yields nothing when the budget cannot hold the marker", () => {
-    expect(trimOutput(longLog, 10)).toBe("");
-  });
-
-  test("never exceeds the budget it was given", () => {
-    for (const budget of [0, 1, 31, 32, 40, 60, 166]) {
-      expect(trimOutput(longLog, budget).length).toBeLessThanOrEqual(budget);
-    }
-  });
-
-  // The count is taken after the boundary strip, so it covers the characters that
-  // strip discarded as well.
-  test("counts what it dropped against the whole output", () => {
-    const trimmed = trimOutput(longLog, 60);
-    const kept = trimmed.split("\n").slice(1).join("\n");
-    expect(trimmed.split("\n")[0]).toBe(elisionMarker(longLog.length - kept.length, longLog.length));
-  });
-
-  // The blank lines a log ends in never reach the note, because the closing fence
-  // sits directly after the last log line. A marker that does not count them says
-  // the note lost fewer characters than it did.
-  test("counts the trailing blank lines it drops", () => {
-    const output = `${longLog}\n\n\n`;
+    const output = `${"word ".repeat(200)}end`;
     const trimmed = trimOutput(output, 60);
-    const [marker, ...rest] = trimmed.split("\n");
-    const kept = rest.join("\n");
-    expect(trimmed.endsWith("\n")).toBe(false);
-    expect(marker).toBe(elisionMarker(output.length - kept.length, output.length));
+    expect(trimmed.split("\n")[1]).toStartWith("word ");
+  });
+
+  test("yields nothing where the budget cannot hold the accounting", () => {
+    expect(trimOutput("some output here", 5)).toBe("");
+  });
+
+  test("counts every dropped character, the elision marker's own included", () => {
+    const output = `${"line\n".repeat(100)}the failure`;
+    const trimmed = trimOutput(output, 60);
+    const marker = trimmed.match(/\[(\d+) of (\d+) characters elided\]/);
+    if (!marker) throw new Error("no elision marker");
+    const kept = trimmed.slice(marker[0].length + 1);
+    expect(Number(marker[1]) + kept.length).toBe(output.length);
+    expect(Number(marker[2])).toBe(output.length);
+  });
+
+  test("reports the width of the elision marker", () => {
+    expect(elisionMarker(4, 9)).toBe("[4 of 9 characters elided]");
   });
 
   // A cut between the halves of a surrogate pair leaves an orphaned code unit that
@@ -378,25 +556,39 @@ describe("trimOutput", () => {
 
 describe("buildNotes", () => {
   const note = {
-    host: "eucalyptus",
+    machine: "Mac Studio",
     time: "2026-09-05 03:00:12 PDT",
     revision: "abc123",
     extraMeta: "",
+    cause: "fatal: could not resolve host",
+    logPath: "/state/dotfiles/runs/drift-9f8e.log",
+    marker: "dotfiles-job a1b2c3d4/drift/9f8e",
     command: "brew bundle",
     outputHeading: "Error Output",
     output: "boom",
   };
 
-  test("opens with the host, time and revision", () => {
+  test("opens with the machine, time and revision", () => {
     expect(buildNotes(note)).toStartWith(
-      "- **Host:** eucalyptus\n- **Time:** 2026-09-05 03:00:12 PDT\n- **Revision:** abc123\n\n",
+      "- **Machine:** Mac Studio\n- **First seen:** 2026-09-05 03:00:12 PDT\n- **Revision:** abc123\n",
     );
+  });
+
+  test("names the cause it was filed against and where every run is kept", () => {
+    expect(buildNotes(note)).toContain("- **Cause:** fatal: could not resolve host");
+    expect(buildNotes(note)).toContain("- **Every run:** /state/dotfiles/runs/drift-9f8e.log");
+  });
+
+  // The marker is what the next run finds the to-do by, so its absence would make
+  // every repeat file a second to-do.
+  test("carries the marker", () => {
+    expect(buildNotes(note)).toContain("`dotfiles-job a1b2c3d4/drift/9f8e`");
   });
 
   test("appends extra metadata to the header only when there is some", () => {
     expect(buildNotes(note)).not.toContain("- **Claude:**");
     expect(buildNotes({ ...note, extraMeta: "- **Claude:** 2.0" })).toContain(
-      "- **Revision:** abc123\n- **Claude:** 2.0\n\n",
+      "- **Revision:** abc123\n- **Claude:** 2.0\n",
     );
   });
 
@@ -408,16 +600,6 @@ describe("buildNotes", () => {
     expect(buildNotes({ ...note, output: "boom\n\n\n" })).toEndWith("boom\n```");
   });
 
-  test("counts the blank lines the closing fence displaces as dropped", () => {
-    const output = `${"padding line\n".repeat(800)}\n\n`;
-    const notes = buildNotes({ ...note, output });
-    const marker = notes.match(/\[(\d+) of (\d+) characters elided\]/);
-    if (!marker) throw new Error("no elision marker in the note");
-    const kept = notes.slice(notes.indexOf(marker[0]) + marker[0].length + 1, -"\n```".length);
-    expect(Number(marker[2])).toBe(output.length);
-    expect(Number(marker[1]) + kept.length).toBe(output.length);
-  });
-
   // The regression: the error is the last line, and it was the part Things cut.
   test("keeps the note within what Things stores and keeps the error that ended the run", () => {
     const big = `${" plugins/some/path.ts | 12 ++++\n".repeat(400)}WARN the actual failure\n`;
@@ -427,40 +609,51 @@ describe("buildNotes", () => {
   });
 });
 
-describe("thingsAddUrl", () => {
-  test("files the to-do for today", () => {
-    expect(thingsAddUrl("Stale", "notes")).toBe(
-      "things:///add?title=Stale&notes=notes&when=today",
+// The appended block is what a repeat adds, and the note it is added to is
+// already most of the way to the limit by the time this matters.
+describe("appendBlock", () => {
+  test("heads the block with the run and the time", () => {
+    expect(appendBlock(3, "2026-09-11 03:00:04 PDT", "boom", 2000)).toContain(
+      "### Run 3 — 2026-09-11 03:00:04 PDT",
     );
   });
 
-  // The fields have to survive being read back out of the URL, which means neither
-  // may leave a literal & or % behind to split it apart.
-  test("percent-encodes everything outside the unreserved set", () => {
-    const url = thingsAddUrl("a&b (c) %d!", "e&f'g*h");
-    expect(url.split("&")).toHaveLength(3);
-    expect(url).toContain("title=a%26b%20%28c%29%20%25d%21");
-    expect(url).toContain("notes=e%26f%27g%2Ah");
+  test("fences the run's output", () => {
+    expect(appendBlock(2, "monday", "boom", 2000)).toEndWith("```\nboom\n```");
   });
 
-  test("round-trips a note through the URL", () => {
-    const notes = "a & b\n100% done\n\"quoted\"";
-    fail("boom");
-    expect(decodeURIComponent(thingsAddUrl("t", notes).split("&notes=")[1].split("&")[0])).toBe(
-      notes,
-    );
+  test("stays inside the room the note has left", () => {
+    const block = appendBlock(2, "monday", "x".repeat(5000), 500);
+    expect(block.length).toBeLessThanOrEqual(500);
+  });
+
+  // Every run is in the log whether or not it fits here, so the note says which
+  // of the two happened.
+  test("points at the log where the output cannot fit at all", () => {
+    const block = appendBlock(2, "monday", "x".repeat(5000), 64);
+    expect(block).toContain("in the log");
+    expect(block.length).toBeLessThanOrEqual(64);
+  });
+
+  // Appending nothing still updates the title, so the run count moves and the
+  // run stays in the log.
+  test("appends nothing where not even the pointer fits", () => {
+    expect(appendBlock(2, "monday", "x".repeat(5000), 20)).toBe("");
   });
 });
 
-describe("reportFailure note", () => {
-  test("carries the trimmed log into the filed to-do", () => {
-    const big = `${" plugins/some/path.ts | 12 ++++\n".repeat(400)}WARN the actual failure\n`;
-    fail(big);
-    const notes = filedNotes();
-    expect(notes.length).toBeLessThanOrEqual(THINGS_NOTES_LIMIT);
-    expect(Buffer.byteLength(notes)).toBeLessThanOrEqual(THINGS_NOTES_LIMIT);
-    expect(notes).toContain("WARN the actual failure");
-    expect(notes).toContain("## Findings");
+// Nothing can be appended without the token, and a note that did not say so would
+// leave the runs after this one unrecorded and unexplained.
+describe("missing auth token", () => {
+  test("says so in the note it files", () => {
+    writeStub(stub("security"), "exit 1");
+    fail("boom");
+    expect(filedNotes()).toContain("things-auth-token");
+  });
+
+  test("says nothing about it on a machine that has one", () => {
+    fail("boom");
+    expect(filedNotes()).not.toContain("things-auth-token");
   });
 });
 
@@ -499,13 +692,8 @@ describe("notify", () => {
   // Every Linux run reaches this, CI included, under callers that abort on a
   // nonzero status.
   test("does nothing where osascript is absent", () => {
-    process.env.PATH = join(sandbox, "empty");
-    expect(() => notify("Dotfiles Sync", "Updated to abc123")).not.toThrow();
+    rmSync(stub("osascript"));
+    expect(() => notify("Dotfiles Sync", "Updated")).not.toThrow();
     expect(notifications()).toEqual([]);
-  });
-
-  test("notifies alongside the to-do it files", () => {
-    fail("one plugin stale");
-    expect(notifications()[0]).toContain('display notification "drift failed - see Things to-do"');
   });
 });

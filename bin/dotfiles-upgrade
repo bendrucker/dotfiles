@@ -15,6 +15,7 @@ import { realpathSync, writeSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SKIP_ESCALATION } from "#jobs/sync-gate";
+import { logExcerpt, stripCsi } from "#jobs/excerpt";
 import { type Finding, reportFailure, reportFindings, reportSuccess } from "#jobs/report";
 import { UNREADABLE, VERDICTS } from "../credentials/bin/credential-audit";
 
@@ -33,29 +34,6 @@ const SYNC_TITLE = "Syncing dotfiles";
 
 const TRAILING_NEWLINES = /\n+$/;
 
-// Colour and cursor escapes from the child tools would otherwise render as
-// garbage in the Things note. CSI only: an OSC title sequence carries text a
-// reader may want and does not end in a letter.
-// oxlint-disable-next-line no-control-regex -- ESC is what the pattern is for.
-const CSI = /\u001b\[[0-9;]*[a-zA-Z]/g;
-
-export function stripCsi(text: string): string {
-  return text.replace(CSI, "");
-}
-
-export function tailLines(text: string, count: number): string {
-  const lines = text.split("\n");
-  // The newline a log ends with terminates its last line rather than opening
-  // another one.
-  if (lines.at(-1) === "") lines.pop();
-  return lines.slice(-count).join("\n");
-}
-
-// What a failure to-do carries: the end of the step's log, legible, and with no
-// trailing blank lines to push the note's closing fence away from the text.
-export function logExcerpt(log: string): string {
-  return stripCsi(tailLines(log, LOG_TAIL_LINES)).replace(TRAILING_NEWLINES, "");
-}
 
 // Drift is a standing finding rather than a break, so the latch keys on the
 // package set. An unactioned to-do stays quiet while the same packages are
@@ -276,7 +254,11 @@ export function syncFingerprint(output: string): string {
     const message = line.slice(WARN.length).trim();
     if (SKIP_ESCALATION.test(message)) return `sync ${message}`;
   }
-  return "sync";
+  // No escalation line means the sync broke on something other than the gate,
+  // and the empty string hands the cause to the generic derivation. Answering
+  // "sync" here collapsed every such break into one to-do, so the first filed
+  // and each different one after it was suppressed behind the latch.
+  return "";
 }
 
 const WARN = "WARN ";
@@ -297,7 +279,7 @@ function reportStepFailure(step: {
     job: step.job,
     title: step.title,
     command: step.command,
-    output: logExcerpt(step.output),
+    output: logExcerpt(step.output, LOG_TAIL_LINES),
     revision: currentRevision(step.home),
     extraMeta: "",
     outputHeading: "Error Output",
@@ -389,7 +371,7 @@ export async function run(): Promise<number> {
     return reportStepFailure({
       job: JOB,
       home,
-      fingerprint: "install",
+      fingerprint: "",
       title: "Dotfiles install failed",
       command: installer,
       output: install.output,

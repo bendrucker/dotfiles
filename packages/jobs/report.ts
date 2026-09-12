@@ -1,23 +1,60 @@
-// Failure reporting for the unattended (3am launchd) jobs: a per-job latch, a
-// Things to-do filed through `open`, and a Darwin notification.
-
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { hostname, homedir } from "node:os";
-import { dirname, join } from "node:path";
-
-// Things stores 10,000 characters of notes and silently drops the rest. It cuts
-// the tail, which is the wrong end to lose, since a job fails at the end of its
-// log.
+// Failure reporting for the unattended (3am launchd) jobs: one Things to-do per
+// cause per machine, the runs after the first appended to it, and a Darwin
+// notification when a cause is new.
 //
-// The unit is UTF-16 code units: the notes field is an NSString, which is what
-// Things counts, and it is also what String.length reports and what String.slice
-// cuts on. Measuring and slicing in one unit is the point. A budget counted in
-// characters and spent by a byte-wise cut disagree on every non-ASCII log.
-export const THINGS_NOTES_LIMIT = 10_000;
+// Today had seventeen of these one morning, most of them the same handful of
+// causes repeating across nights and across the two machines. Three things
+// produced that, and each is answered here.
+//
+// A job latched on a constant, so every way a step could break shared one to-do:
+// the first filed and the rest were suppressed behind it. A cause is now derived
+// from the failing command and the line of output that says what went wrong, so
+// two different breaks in one step are two to-dos and one break repeating is one.
+//
+// A to-do was keyed on the short hostname, which the MacBook changes with its
+// network, so one cause on one machine filed twice. #jobs/machine keys on the
+// hardware instead.
+//
+// Nothing recognized a to-do it had already filed, so a cause that stood for a
+// week filed seven times. The to-do itself is now the record: it carries a marker
+// naming the machine, the job and the cause, and a repeat finds it and appends.
+// Finishing the to-do is what says the cause was dealt with, so its return after
+// that is news and files again.
+//
+// They land in Anytime rather than Today. Today is the working list Ben builds
+// each morning; a machine that failed overnight is real work but not work he
+// chose for today, and dropping it in there is what made the list unreadable.
+// Anytime keeps it available and countable, the `dotfiles` tag gathers the set,
+// and the run count in the title shows a cause aging without opening it. A cause
+// that has survived ESCALATE_AFTER runs has shown it will not clear itself, and
+// that one moves to Today: not slipping through the cracks is the point, and a
+// thing that has failed three nights running has earned the interruption.
 
-// Reading a latch file back strips its trailing newline, so anything compared
-// against one has to be stripped the same way.
-const TRAILING_NEWLINES = /\n+$/;
+import { causeFingerprint, causeOf, distinctiveLine } from "#jobs/cause";
+import { machineKey, machineName } from "#jobs/machine";
+import { recordRun, runLogPath } from "#jobs/run-log";
+import { TRAILING_NEWLINES, readLatch, writeLatch } from "#jobs/state";
+import {
+  THINGS_NOTES_LIMIT,
+  addTodo,
+  authToken,
+  editTodo,
+  findOpenTodo,
+  markerQuery,
+} from "#jobs/things";
+
+// Where a to-do lands, and the tag that gathers the set wherever it lands.
+const LANDING = "anytime";
+const TAG = "dotfiles";
+
+// Runs on one cause before it moves to Today. Two nights of grace: a transient
+// network failure or a flaky upstream clears by the second run, and what is left
+// after three is something only Ben can fix.
+export const ESCALATE_AFTER = 3;
+
+// What the marker line is recognized by. Distinctive enough that a to-do written
+// by anything else cannot be mistaken for one of these.
+const MARKER_PREFIX = "dotfiles-job";
 
 export function elisionMarker(elided: number, total: number): string {
   return `[${elided} of ${total} characters elided]`;
@@ -64,11 +101,18 @@ function isLowSurrogate(unit: number): boolean {
   return unit >= 0xdc00 && unit <= 0xdfff;
 }
 
+export function causeMarker(machine: string, job: string, cause: string): string {
+  return `${MARKER_PREFIX} ${machine}/${job}/${cause}`;
+}
+
 export interface FailureNote {
-  host: string;
+  machine: string;
   time: string;
   revision: string;
   extraMeta: string;
+  cause: string;
+  logPath: string;
+  marker: string;
   command: string;
   outputHeading: string;
   output: string;
@@ -76,10 +120,16 @@ export interface FailureNote {
 
 export function buildNotes(note: FailureNote): string {
   let notes =
-    `- **Host:** ${note.host}\n` +
-    `- **Time:** ${note.time}\n` +
+    `- **Machine:** ${note.machine}\n` +
+    `- **First seen:** ${note.time}\n` +
     `- **Revision:** ${note.revision}`;
   if (note.extraMeta) notes += `\n${note.extraMeta}`;
+  if (note.cause) notes += `\n- **Cause:** ${note.cause}`;
+  notes += `\n- **Every run:** ${note.logPath}`;
+  // Without the token nothing can be appended here, so the note says so once
+  // rather than the runs after this one going unrecorded and unexplained.
+  if (!authToken()) notes += `\n- **Appends are off:** ${TOKEN_REMEDY}`;
+  notes += `\n\n\`${note.marker}\``;
 
   const suffix = "\n```";
   notes += `\n\n\`\`\`sh\n${note.command}\n\`\`\`\n\n## ${note.outputHeading}\n\`\`\`\n`;
@@ -91,6 +141,32 @@ export function buildNotes(note: FailureNote): string {
   // trailing blank lines in the log would otherwise push it away from the text.
   return notes + trimmed.replace(TRAILING_NEWLINES, "") + suffix;
 }
+
+const TOKEN_REMEDY =
+  "store the Things auth token as the `things-auth-token` keychain item";
+
+// What a repeat adds to a to-do that already exists. Sized to what the note has
+// left, and reduced to a pointer at the log where a run's output will not fit at
+// all. The run is recorded either way, so the note says which of the two happened
+// rather than leaving a reader to infer it from the size of the block.
+export function appendBlock(run: number, at: string, output: string, budget: number): string {
+  const heading = `\n\n---\n\n### Run ${run} — ${at}\n`;
+  const fences = "```\n";
+  const remaining = budget - heading.length - fences.length - "```".length - 1;
+
+  const trimmed = remaining < 0 ? "" : trimOutput(output, remaining);
+  if (trimmed !== "") {
+    return `${heading}${fences}${trimmed.replace(TRAILING_NEWLINES, "")}\n\`\`\``;
+  }
+
+  // A note with no room left for even the pointer appends nothing. An empty
+  // append-notes drops out of the URL, so the run count in the title still
+  // lands and the run is still in the log.
+  const pointer = `${heading}${POINTER}`;
+  return pointer.length <= budget ? pointer : "";
+}
+
+const POINTER = "Output did not fit. It is in the log.";
 
 export function timestamp(at = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -110,45 +186,12 @@ export function timestamp(at = new Date()): string {
   );
 }
 
-// Percent-encode everything outside the unreserved set, so neither field can leave
-// a literal % or & behind to split the URL apart. encodeURIComponent spares
-// !'()*, which the unreserved set does not.
-function encodeField(value: string): string {
-  return encodeURIComponent(value).replace(
-    /[!'()*]/g,
-    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-}
-
-export function thingsAddUrl(title: string, notes: string): string {
-  return `things:///add?title=${encodeField(title)}&notes=${encodeField(notes)}&when=today`;
-}
-
-export function statusFile(job: string): string {
-  const state = process.env.XDG_STATE_HOME || join(process.env.HOME || homedir(), ".local", "state");
-  return join(state, "dotfiles", `${job}.status`);
-}
-
-// A missing latch is a job's first-ever failure, and reads as the empty string so
-// it compares unequal to any latch value and files.
-export function readLatch(job: string): string {
-  try {
-    return readFileSync(statusFile(job), "utf8").replace(TRAILING_NEWLINES, "");
-  } catch {
-    return "";
-  }
-}
-
-// The counterpart to writeLatch, so a caller clearing a latch needs no more
-// knowledge of where it sits on disk than one writing to it.
-export function clearLatch(job: string): void {
-  rmSync(statusFile(job), { force: true });
-}
-
-export function writeLatch(job: string, value: string): void {
-  const path = statusFile(job);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${value}\n`);
+// The machine belongs in the title because the two machines fail independently
+// and their to-dos sync into one list. The run count belongs there because it is
+// how a cause that is not clearing shows itself without being opened.
+export function todoTitle(title: string, machine: string, runs: number): string {
+  const named = `${title} on ${machine}`;
+  return runs > 1 ? `${named} (${runs} runs)` : named;
 }
 
 export function latchValue(fingerprint: string): string {
@@ -170,42 +213,123 @@ export interface FailureReport {
   revision: string;
   extraMeta: string;
   outputHeading: string;
+  // Cause material the caller knows better than the generic derivation can. Empty
+  // is the normal case, and means the cause comes from the command and the line
+  // of output that names the failure.
   fingerprint: string;
 }
 
-// File a Things to-do describing the failure and notify, but only on the
-// transition into a failed state. Returns the exit status the CLI should carry:
-// nonzero only when `open` refused the URL.
+// File a Things to-do for the failure, or append this run to the one already
+// standing for it. Returns the exit status the CLI should carry: nonzero only
+// when Things refused the URL.
 export function reportFailure(report: FailureReport): number {
-  const latch = latchValue(report.fingerprint);
-  const prior = readLatch(report.job);
-  // The latch moves before anything is filed. A filing that fails therefore
-  // leaves a latch claiming a to-do exists, and the failure stays quiet until the
-  // job recovers or its fingerprint moves.
-  writeLatch(report.job, latch);
+  const cause = report.fingerprint
+    ? causeOf([report.fingerprint])
+    : causeFingerprint(report.command, report.output);
 
-  if (prior === latch) {
+  return file({
+    report,
+    cause,
+    causeLine: distinctiveLine(report.output),
+    latchJob: report.job,
+  });
+}
+
+interface Filing {
+  report: FailureReport;
+  cause: string;
+  // The line of output the cause was read from, for the note to name.
+  causeLine: string;
+  // The job whose latch stands in for Things where the store cannot be read.
+  // Omitted by a caller that has already decided this report is new, which is
+  // what reportFindings' own latch does.
+  latchJob?: string;
+}
+
+function file({ report, cause, causeLine, latchJob }: Filing): number {
+  const machine = machineName();
+  const marker = causeMarker(machineKeyOf(), report.job, cause);
+  const at = timestamp();
+  const runs = recordRun(report.job, cause, { at, output: report.output });
+
+  const lookup = findOpenTodo(markerQuery(marker));
+  const standing = lookup.readable ? lookup.todo : undefined;
+  if (standing && appendRun(standing, report, { at, runs })) {
+    log(`${report.job} still failing on the same cause - appended run ${runs}`);
+    return 0;
+  }
+
+  if (latchJob && !filesAgainst(latchJob, cause, lookup.readable)) {
     log(`${report.job} still failing - to-do already filed, staying quiet`);
     return 0;
   }
 
   log(`Creating Things to-do for ${report.job} failure`);
-
   const notes = buildNotes({
-    host: hostname().split(".")[0],
-    time: timestamp(),
+    machine,
+    time: at,
     revision: report.revision,
     extraMeta: report.extraMeta,
+    cause: causeLine,
+    logPath: runLogPath(report.job, cause),
+    marker,
     command: report.command,
     outputHeading: report.outputHeading,
     output: report.output,
   });
 
-  const opened = run(["open", thingsAddUrl(report.title, notes)], "inherit");
-  if (opened !== 0) return opened;
+  const title = todoTitle(report.title, machine, runs);
+  const filed = addTodo({ title, notes, when: LANDING, tags: TAG });
+  if (filed !== 0) return filed;
 
-  notify(report.title, `${report.job} failed - see Things to-do`);
+  notify(title, `${report.job} failed - see Things`);
   return 0;
+}
+
+// Whether a to-do should be filed, with the latch moved either way.
+//
+// A store that was read and holds nothing standing for this cause means the
+// to-do was finished, so the cause returning is news whatever the latch says.
+// A store that could not be read says nothing, and the latch is the whole
+// answer: it keeps a cause that is still standing from filing again every night,
+// at the cost of staying quiet about one Ben completed.
+function filesAgainst(job: string, cause: string, readable: boolean): boolean {
+  const latch = latchValue(cause);
+  const prior = readLatch(job);
+  // Moved before anything is filed, so a filing that fails leaves the failure
+  // quiet until the job recovers or its cause moves.
+  writeLatch(job, latch);
+  return readable || prior !== latch;
+}
+
+function appendRun(
+  standing: { id: string; notesLength: number },
+  report: FailureReport,
+  run: { at: string; runs: number },
+): boolean {
+  const block = appendBlock(
+    run.runs,
+    run.at,
+    report.output,
+    THINGS_NOTES_LIMIT - standing.notesLength,
+  );
+
+  return editTodo({
+    id: standing.id,
+    appendNotes: block,
+    title: todoTitle(report.title, machineName(), run.runs),
+    // Exactly at the threshold, so a cause Ben has since pulled back out of Today
+    // is not shoved into it again on every later run.
+    when: run.runs === ESCALATE_AFTER ? "today" : undefined,
+  });
+}
+
+// Cached for the run: it costs two subprocesses and cannot change underneath one.
+let machineKeyCache: string | undefined;
+
+function machineKeyOf(): string {
+  machineKeyCache ??= machineKey();
+  return machineKeyCache;
 }
 
 // A finding is a subject and the verdict standing against it. The pair is the
@@ -290,8 +414,12 @@ function freshMeta(fresh: Finding[]): string {
 
 // File a Things to-do for a job that reports a set of findings rather than one
 // failure, but only for findings that are newly standing. A finding already
-// latched stays quiet however long it stands and however much the rest of the
-// set churns around it. Returns nonzero only when `open` refused the URL.
+// latched stays quiet however long it stands and however much the rest of the set
+// churns around it.
+//
+// The cause is the set of findings that are newly standing, so the same set
+// reappearing after the job recovers appends to the to-do it already has, and a
+// different one files its own.
 export function reportFindings(report: FindingsReport): number {
   const decision = decideFindings(
     decodeFindings(readLatch(report.job)),
@@ -307,23 +435,16 @@ export function reportFindings(report: FindingsReport): number {
     return 0;
   }
 
-  log(`Creating Things to-do for new ${report.job} findings`);
-
-  const notes = buildNotes({
-    host: hostname().split(".")[0],
-    time: timestamp(),
-    revision: report.revision,
-    extraMeta: [report.extraMeta, freshMeta(decision.fresh)].filter(Boolean).join("\n"),
-    command: report.command,
-    outputHeading: report.outputHeading,
-    output: report.output,
+  log(`Reporting new ${report.job} findings`);
+  const cause = causeOf(decision.fresh.map(findingKey));
+  return file({
+    report: {
+      ...report,
+      extraMeta: [report.extraMeta, freshMeta(decision.fresh)].filter(Boolean).join("\n"),
+    },
+    cause,
+    causeLine: decision.fresh.map((finding) => `${finding.subject} ${finding.verdict}`).join(", "),
   });
-
-  const opened = run(["open", thingsAddUrl(report.title, notes)], "inherit");
-  if (opened !== 0) return opened;
-
-  notify(report.title, `${report.job} has new findings - see Things to-do`);
-  return 0;
 }
 
 export function notificationScript(title: string, message: string, sound: string): string {
@@ -342,10 +463,11 @@ function appleScriptString(value: string): string {
 
 // Nothing notifies where osascript is absent, which is every Linux run and CI.
 // Resolving the binary rather than reading process.platform is what makes that
-// observable: a caller that puts its own osascript on PATH sees the call, and
-// the check answers the question the call actually depends on. The callers here
-// abort on any nonzero status, so the resolution failure has to be caught before
-// the spawn, and osascript's own failure stays discarded.
+// observable: a caller that puts its own osascript on PATH sees the call, and the
+// check answers the question the call actually depends on.
+//
+// `display notification` is not an Apple event to another app, so unlike reading
+// Things it needs no Automation grant and works from launchd.
 export function notify(title: string, message: string, sound = "Basso"): void {
   const osascript = Bun.which("osascript", { PATH: process.env.PATH });
   if (!osascript) return;

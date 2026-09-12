@@ -16,6 +16,7 @@
 import { writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { logExcerpt, stripCsi } from "#jobs/excerpt";
 import { reportFailure, reportSuccess } from "#jobs/report";
 
 // The leading blank line separates each block from the host/time/revision list
@@ -57,28 +58,8 @@ are \`wt step prune\` no longer detecting the integration and the forge lookup i
 // what the notes field holds.
 const LOG_LINES = 100;
 
-// CSI sequences with numeric parameters and an alphabetic final byte, which is
-// what gum's colours and the spinner's erase codes are. Carriage returns and
-// escape forms without '[' are left alone rather than the strip being widened
-// past what gum emits.
-// oxlint-disable-next-line no-control-regex -- ESC is what the pattern is for.
-const CSI = /\x1b\[[0-9;]*[a-zA-Z]/g;
-
-export function stripAnsi(text: string): string {
-  return text.replace(CSI, "");
-}
-
-export function lastLines(text: string, count: number): string {
-  if (text === "") return "";
-  const trailing = text.endsWith("\n");
-  const lines = (trailing ? text.slice(0, -1) : text).split("\n");
-  const kept = lines.slice(-count).join("\n");
-  return trailing ? `${kept}\n` : kept;
-}
-
-// What a captured log looks like in a to-do: the tail, uncoloured.
 export function capturedLog(text: string): string {
-  return stripAnsi(lastLines(text, LOG_LINES)).replace(/\n+$/, "");
+  return logExcerpt(text, LOG_LINES);
 }
 
 export interface Finding {
@@ -111,7 +92,7 @@ export function parseFinding(line: string): Finding | undefined {
 const BLANK_LINE = /^[ \t\n\v\f\r]*$/;
 
 export function auditRows(stdout: string): string[] {
-  return stripAnsi(stdout)
+  return stripCsi(stdout)
     .split("\n")
     .filter((line) => !BLANK_LINE.test(line));
 }
