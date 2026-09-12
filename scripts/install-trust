@@ -48,6 +48,13 @@ fi
 
 taps=$(brew bundle list --file "$DOTFILES_ROOT/Brewfile" --tap)
 
+# One tap that cannot be cloned is not a reason to leave the rest untapped, or
+# to fail an install that has not reached brew, mise or the symlinks yet. A tap
+# nothing could clone is left out of the trust list rather than asked for by
+# name, since brew trust answers for the whole list at once.
+failed=""
+reachable=""
+
 for tap in $taps; do
   # Tap#path is HOMEBREW_TAP_DIRECTORY/<user>/homebrew-<repo>, downcased
   name=$(printf '%s/homebrew-%s' "${tap%%/*}" "${tap#*/}" | tr '[:upper:]' '[:lower:]')
@@ -59,13 +66,27 @@ for tap in $taps; do
     # git matches an insteadOf prefix literally, and a tap declared with
     # capitals can be cloned from the downcased URL its path is built from.
     [ "$url" = "https://github.com/$name" ] || pin_https "https://github.com/$name"
-    brew tap "$tap"
+    if ! brew tap "$tap"; then
+      failed="$failed  $tap
+"
+      continue
+    fi
   fi
+
+  reachable="$reachable $tap"
 done
+
+if [ -n "$failed" ]; then
+  {
+    echo "WARNING: taps that could not be tapped:"
+    printf '%s' "$failed"
+  } >&2
+fi
 
 rm -f "$XDG_CONFIG_HOME/homebrew/trust.json"
 
-[ -n "$taps" ] || exit 0
+[ -n "$reachable" ] || exit 0
 
 # shellcheck disable=SC2086 # tap names never contain whitespace
-brew trust --tap $taps
+brew trust --tap $reachable ||
+  echo "WARNING: brew trust failed - bundle cannot install from a tap this run" >&2
