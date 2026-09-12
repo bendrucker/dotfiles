@@ -40,7 +40,7 @@ const VOLATILE: Array<[RegExp, string]> = [
   [/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?/g, "<time>"],
   [/\b\d{4}-\d{2}-\d{2}\b/g, "<date>"],
   [/\b\d{2}:\d{2}:\d{2}\b/g, "<time>"],
-  // "after 30012 ms", "took 1.4s". A slow failure and a slower one are one cause.
+  // "after 30012 ms", "took 1.4s".
   [/\b\d+(\.\d+)?\s?(ms|s|m|h|secs?|seconds?|mins?|minutes?|hours?)\b/g, "<duration>"],
   [/\b\d+(\.\d+)?\s?[KMGTP]i?B\b/gi, "<size>"],
   [/\bpid\s+\d+/gi, "pid <n>"],

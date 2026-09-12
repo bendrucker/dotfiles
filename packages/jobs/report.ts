@@ -35,8 +35,7 @@ const TAG = "dotfiles";
 // after three is something only Ben can fix.
 export const ESCALATE_AFTER = 3;
 
-// What a to-do this run is filing shows and escalates from. The run just
-// archived is its first, whatever the archive holds from to-dos before it.
+// The run just archived is its first, whatever the archive holds from to-dos before it.
 const FIRST_RUN = 1;
 
 // What the marker line is recognized by. Distinctive enough that a to-do written
@@ -228,8 +227,7 @@ interface Filing {
   // The line of output the cause was read from, for the note to name.
   causeLine: string;
   // The job whose latch stands in for Things where the store cannot be read.
-  // Omitted by a caller that has already decided this report is new, which is
-  // what reportFindings' own latch does.
+  // Omitted by a caller that has already decided this report is new.
   latchJob?: string;
 }
 

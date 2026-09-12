@@ -39,8 +39,6 @@ export function writeLatch(job: string, value: string): void {
   writeFileSync(path, `${value}\n`);
 }
 
-// The counterpart to writeLatch, so a caller clearing a latch needs no more
-// knowledge of where it sits on disk than one writing to it.
 export function clearLatch(job: string): void {
   rmSync(statusFile(job), { force: true });
 }

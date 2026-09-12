@@ -50,8 +50,7 @@ beforeEach(() => {
   writeStub(join(stubs, "open"), `printf '%s\\n' "$2" >> "${join(sandbox, "urls")}"`);
   writeStub(join(stubs, "osascript"), `printf '%s\\n' "$2" >> "${join(sandbox, "notifications")}"`);
   writeStub(join(stubs, "gum"), "exit 0");
-  // Nothing can be appended without the token, so the default is the machine that
-  // has one. The case that does not is its own example.
+  // Nothing can be appended without the token, so the default is the machine that has one.
   writeStub(join(stubs, "security"), 'printf "token-abc\\n"');
 
   // Nothing but the stubs is reachable, so a call that escapes one fails loudly
@@ -246,7 +245,6 @@ describe("reportFailure filing", () => {
   });
 });
 
-// It appends to the to-do that already stands rather than filing a second one.
 describe("reportFailure append", () => {
   test("appends the run to the to-do already standing for the cause", () => {
     fail("boom");

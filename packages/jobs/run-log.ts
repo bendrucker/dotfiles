@@ -17,8 +17,7 @@ import { TRAILING_NEWLINES, stateDir } from "#jobs/state";
 
 const RUNS = "runs";
 
-// Opens a run's entry in the archive. Distinctive enough that a log line
-// reproducing it would have to be deliberate.
+// Distinctive enough that a log line reproducing it would have to be deliberate.
 const RUN_HEADER = "=== run ";
 
 export function runLogPath(job: string, cause: string): string {

@@ -3,8 +3,7 @@
 //
 // The short hostname moves. The MacBook answers `mac` on one network and
 // `Ben-Druckers-MacBook-Pro` on another, so a to-do keyed on it files a second
-// time for a cause already filed the moment the machine changes networks. That
-// is half of why Today collected the same failure over and over.
+// time for a cause already filed the moment the machine changes networks.
 //
 // The two answers here are deliberately different. `machineName` is what a reader
 // sees, so it is the name set in System Settings. `machineKey` is what the to-do
