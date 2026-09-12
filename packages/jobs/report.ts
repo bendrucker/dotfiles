@@ -35,7 +35,6 @@ const TAG = "dotfiles";
 // after three is something only Ben can fix.
 export const ESCALATE_AFTER = 3;
 
-// The run just archived is its first, whatever the archive holds from to-dos before it.
 const FIRST_RUN = 1;
 
 // The prefix is distinctive enough that a to-do written by anything else cannot

@@ -472,8 +472,6 @@ describe("reportFindings latch", () => {
     expect(readLatch("drift")).toBe("standing\nalpha\tstale");
   });
 
-  // The two modes keep their own latches, so a job that reports both does not
-  // have one overwrite the other.
   test("keeps its latch clear of the single-failure one", () => {
     fail("alpha stale", "alpha");
     night(["alpha stale"]);
@@ -481,8 +479,6 @@ describe("reportFindings latch", () => {
     expect(added()).toHaveLength(2);
   });
 
-  // A finding set that comes back after the job recovered is the same cause, so
-  // it appends rather than filing a second to-do.
   test("appends a returning finding set to the to-do standing for it", () => {
     night(["alpha stale"]);
     standInThings();
@@ -658,7 +654,6 @@ describe("buildNotes", () => {
   });
 });
 
-// The note it is added to is already most of the way to the limit by the time this matters.
 describe("appendBlock", () => {
   test("heads the block with the run and the time", () => {
     expect(appendBlock(3, "2026-09-11 03:00:04 PDT", "boom", 2000)).toContain(
