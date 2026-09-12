@@ -25,7 +25,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 | --- | --- |
 | `#harness` | The `bun test` harness for driving shell scripts |
 | `#history-secrets` | The commands the two history filters must drop, and the ordinary ones they must keep |
-| `#jobs/*` | What the unattended jobs share: output capture, failure reporting, the sync gate, canonical JSON |
+| `#jobs/*` | What the unattended jobs share: output capture, failure reporting, machine identity, the Things store, the sync gate, canonical JSON |
 | `#migrations/*` | What a one-time migration is, and the runner behind `bin/dotfiles-migrate` |
 | `#worktree/*` | Worktrunk state, forge queries, column alignment |
 | `#plugins` | The installed Claude Code plugins |
@@ -230,7 +230,17 @@ The audit reports and never removes, for the same reason `scripts/brew-drift` do
 
 - `macos/com.user.dotfiles-upgrade.plist` runs `bin/dotfiles-upgrade` daily at 3am
 - Syncs dotfiles, runs `scripts/install`, runs `brew cleanup`, reports undeclared packages
-- Creates a Things task on failure with error output
+- Files a Things to-do on failure, one per cause per machine (see [Failure Reporting](#failure-reporting))
+
+### Failure Reporting
+
+`#jobs/report` files one Things to-do per cause per machine, and a repeat of the same cause appends that run to the to-do already standing. A cause is the failing command plus the first output line naming the failure, normalized and hashed. A job may pass its own `fingerprint` instead, hashed verbatim. The machine comes from `scutil --get ComputerName`, which holds steady where the hostname moves between networks.
+
+To-dos land in Anytime tagged `dotfiles`, carry the run count in the title, and move to Today once after `ESCALATE_AFTER` runs. Finding one again means reading Things' own SQLite store for the marker in its note, because the URL scheme only writes and `osascript` would hang under launchd. Appending needs the `things-auth-token` keychain item.
+
+Every run appends to `${XDG_STATE_HOME:-~/.local/state}/dotfiles/runs/<job>-<cause>.log` before anything else, so the archive holds it whatever the layers above manage: an unreadable store falls back to the per-job latch, a refused append leaves the standing to-do alone, and output too large for the note becomes a pointer at the log. Completing a to-do says you dealt with the cause, so its return files a new one.
+
+`reportFindings` is the variant for a set of standing findings, like the credential audit. See [Credentials](#credentials).
 
 ### Package Drift
 
@@ -248,7 +258,7 @@ Omitting `--force` does not make `brew bundle cleanup` a dry run. It prints the 
 
 It reports the four kinds this repo's Brewfiles declare: formulae, casks, taps, and Mac App Store apps. Homebrew cleans up VS Code extensions and npm globals under the same output shape. Naming the headers rather than matching the shape keeps a package manager this repo adopts later from turning the nightly report into an extension audit. The cost is that a renamed header upstream silences that kind rather than breaking the run, because an empty parse is also what a clean machine produces.
 
-The to-do latch keys on the sorted package set rather than on the fact of a finding. A to-do left unactioned stays quiet while the same packages are undeclared. A newly installed one reopens it under its own to-do. Sorting matters because Homebrew orders the listing by a dependency sort taken over every installed package, so installing something unrelated and declared can reshuffle the undeclared names without changing the set.
+The cause keys on the sorted package set rather than on the fact of a finding, passed as the `fingerprint` in [Failure Reporting](#failure-reporting). A to-do left unactioned stays quiet while the same packages are undeclared. A newly installed one reopens it under its own to-do. Sorting matters because Homebrew orders the listing by a dependency sort taken over every installed package, so installing something unrelated and declared can reshuffle the undeclared names without changing the set.
 
 A failing drift check is contained the way a failing `reload.sh` is. The install it follows has already succeeded, and a package that is merely undeclared breaks nothing overnight.
 

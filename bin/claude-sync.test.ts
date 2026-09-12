@@ -33,6 +33,7 @@ const environment = {
   HOME: process.env.HOME,
   PATH: process.env.PATH,
   XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+  THINGS_DATABASE: process.env.THINGS_DATABASE,
   CLAUDE_REPO_HOME: process.env.CLAUDE_REPO_HOME,
 };
 
@@ -276,8 +277,12 @@ beforeEach(() => {
   );
   // A to-do is filed by handing a things:/// URL to `open`, so a logged line is
   // the whole observation of whether a latch let one through.
-  writeScript(join(stubs, "open"), `printf '%s\\n' "$1" >>"${join(sandbox, "todos")}"`);
+  writeScript(join(stubs, "open"), `printf '%s\\n' "$2" >>"${join(sandbox, "todos")}"`);
   writeScript(join(stubs, "osascript"), `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
+  // A to-do names the machine it was filed from and is keyed on the hardware, so
+  // both answers come from a stub rather than from whichever machine runs this.
+  writeScript(join(stubs, "scutil"), `printf '%s\\n' 'Testbox'`);
+  writeScript(join(stubs, "ioreg"), `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST`);
   // Both installers rewrite the repo's settings.json, which is the whole of what
   // the install step has to sort out. herdr writes before it can fail, so a
   // failed run still leaves an entry for the discard to take back. A failing
@@ -308,6 +313,7 @@ beforeEach(() => {
   process.env.HOME = sandbox;
   process.env.PATH = `${stubs}:${environment.PATH}`;
   process.env.XDG_STATE_HOME = join(sandbox, "state");
+  process.env.THINGS_DATABASE = join(sandbox, "things.sqlite");
   process.env.CLAUDE_PLUGIN_LOG = join(sandbox, "plugin.log");
   process.env.CLAUDE_UPDATE_FAILS = "";
   process.env.CLAUDE_UPDATE_FAILS_ONCE = "";
@@ -349,6 +355,8 @@ afterEach(() => {
   process.env.PATH = environment.PATH;
   if (environment.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
   else process.env.XDG_STATE_HOME = environment.XDG_STATE_HOME;
+  if (environment.THINGS_DATABASE === undefined) delete process.env.THINGS_DATABASE;
+  else process.env.THINGS_DATABASE = environment.THINGS_DATABASE;
   if (environment.CLAUDE_REPO_HOME === undefined) delete process.env.CLAUDE_REPO_HOME;
   else process.env.CLAUDE_REPO_HOME = environment.CLAUDE_REPO_HOME;
   delete process.env.CLAUDE_PLUGIN_LOG;

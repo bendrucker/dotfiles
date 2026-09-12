@@ -19,11 +19,9 @@ import {
   type Finding,
   findingsTable,
   investigation,
-  lastLines,
   main,
   parseFinding,
   repoPath,
-  stripAnsi,
 } from "./worktree-prune";
 
 const SCRIPT = join(import.meta.dir, "worktree-prune");
@@ -33,52 +31,7 @@ function finding(repo: string, branch: string, reason: string, path: string): Fi
   return { repo, branch, reason, path };
 }
 
-describe("stripAnsi", () => {
-  test.each<{ name: string; text: string; expected: string }>([
-    {
-      name: "removes a colour sequence",
-      text: `${ESC}[32mgreen${ESC}[0m`,
-      expected: "green",
-    },
-    {
-      name: "removes the erase-line sequence a spinner redraws with",
-      text: `\r${ESC}[K⠋  1/9`,
-      expected: "\r⠋  1/9",
-    },
-    // The strip covers CSI sequences with an alphabetic final byte and nothing
-    // else, so a wider pattern cannot quietly eat log text.
-    {
-      name: "leaves an escape without a bracket alone",
-      text: `${ESC}(Btext`,
-      expected: `${ESC}(Btext`,
-    },
-    {
-      name: "leaves text with no escapes alone",
-      text: "repo\tbranch",
-      expected: "repo\tbranch",
-    },
-  ])("$name", ({ text, expected }) => {
-    expect(stripAnsi(text)).toBe(expected);
-  });
-});
-
-describe("lastLines", () => {
-  const hundred = Array.from({ length: 150 }, (_, index) => `line ${index}`).join("\n");
-
-  test("keeps the last lines of a longer log", () => {
-    expect(lastLines(hundred, 100).split("\n")).toEqual(
-      Array.from({ length: 100 }, (_, index) => `line ${index + 50}`),
-    );
-  });
-
-  test("keeps a shorter log whole", () => {
-    expect(lastLines("a\nb\n", 100)).toBe("a\nb\n");
-  });
-
-  test("keeps nothing from an empty log", () => {
-    expect(lastLines("", 100)).toBe("");
-  });
-
+describe("capturedLog", () => {
   // The to-do is plain text, so `wt`'s colour would ride into it as raw escapes.
   test("strips colour from the tail it keeps", () => {
     const coloured = Array.from({ length: 3 }, (_, index) => `${ESC}[32mline ${index}${ESC}[0m`);
@@ -248,6 +201,7 @@ const environment = {
   XDG_STATE_HOME: process.env.XDG_STATE_HOME,
   PROJECTS: process.env.PROJECTS,
   WT_PRUNE_MIN_AGE: process.env.WT_PRUNE_MIN_AGE,
+  THINGS_DATABASE: process.env.THINGS_DATABASE,
 };
 
 let sandbox: string;
@@ -351,9 +305,15 @@ beforeEach(() => {
   // A drift run files a Things to-do, and on the Mac this suite also runs on
   // that is a real to-do in the real Today list. The drift path is one example
   // away at all times, so `open` and `osascript` are not optional.
-  writeStub("open", `#!/bin/sh\nprintf '%s\\n' "$1" >> ${shQuote(todosFile)}\n`);
+  writeStub("open", `#!/bin/sh\nprintf '%s\\n' "$2" >> ${shQuote(todosFile)}\n`);
   writeStub("gum", `#!/bin/sh\nprintf '%s\\t%s\\n' "$3" "$4" >> ${shQuote(gumFile)}\n`);
   writeStub("osascript", "#!/bin/sh\nexit 0\n");
+
+  // A to-do names the machine it was filed from and is keyed on the hardware, so
+  // both answers come from a stub rather than from whichever machine is running
+  // the suite.
+  writeStub("scutil", `#!/bin/sh\nprintf '%s\\n' ${shQuote(MACHINE)}\n`);
+  writeStub("ioreg", `#!/bin/sh\nprintf '"IOPlatformUUID" = "%s"\\n' 0000-TEST\n`);
 
   // Nothing but the stubs is reachable, so a call that escapes one finds no
   // command at all rather than this machine's. It also keeps git off the path,
@@ -363,13 +323,14 @@ beforeEach(() => {
   process.env.HOME = sandbox;
   process.env.DOTFILES_HOME = dotfiles;
   process.env.XDG_STATE_HOME = state;
+  process.env.THINGS_DATABASE = join(sandbox, "things.sqlite");
   delete process.env.PROJECTS;
   delete process.env.WT_PRUNE_MIN_AGE;
 
   // A stub that failed to shadow the real command would file real to-dos, so
   // prove the shadowing before every example rather than discovering it from
   // the Today list.
-  Bun.spawnSync({ cmd: ["open", "stub-probe"], env: process.env });
+  Bun.spawnSync({ cmd: ["open", "-g", "stub-probe"], env: process.env });
   const filed = readFileSync(todosFile, "utf8");
   if (!filed.startsWith("stub-probe")) throw new Error(`open resolved to ${filed}`);
   rmSync(todosFile);
@@ -380,6 +341,7 @@ afterEach(() => {
   restore("HOME", environment.HOME);
   restore("DOTFILES_HOME", environment.DOTFILES_HOME);
   restore("XDG_STATE_HOME", environment.XDG_STATE_HOME);
+  restore("THINGS_DATABASE", environment.THINGS_DATABASE);
   restore("PROJECTS", environment.PROJECTS);
   restore("WT_PRUNE_MIN_AGE", environment.WT_PRUNE_MIN_AGE);
   rmSync(sandbox, { recursive: true, force: true });
@@ -401,6 +363,8 @@ function spawnPrune(): { stdout: string; stderr: string; status: number } {
   return { stdout: run.stdout.toString(), stderr: run.stderr.toString(), status: run.exitCode };
 }
 
+const MACHINE = "Testbox";
+
 const LEAK = "bendrucker/dotfiles\tfeature\tintegrated (empty)\t/wt/feature\n";
 const SECOND_LEAK = "other/repo\tsecond\tmerged PR survived\t/wt/second\n";
 
@@ -418,7 +382,7 @@ describe("the prune pass", () => {
 
     const [todo] = todos();
     expect(todos()).toHaveLength(1);
-    expect(todo.title).toBe("Nightly worktree prune failed");
+    expect(todo.title).toBe(`Nightly worktree prune failed on ${MACHINE}`);
     expect(todo.notes).toContain("```sh\nwt all prune --before\n```");
     expect(todo.notes).toContain("## Error Output");
     // stderr is merged into stdout, so the diagnosis reaches the to-do
@@ -431,7 +395,7 @@ describe("the prune pass", () => {
     stubWtAll({ prune: { status: 1 } });
 
     expect(await main()).toBe(1);
-    expect(latch("worktree-prune")).toBe("failed");
+    expect(latch("worktree-prune")).toMatch(/^failed [0-9a-f]{12}$/);
     expect(latch("wt-prune-audit-failed")).toBeUndefined();
     expect(latch("wt-prune-drift")).toBeUndefined();
   });
@@ -456,7 +420,7 @@ describe("the prune pass", () => {
     expect(await main()).toBe(1);
 
     const [todo] = todos();
-    expect(todo.title).toBe("Nightly worktree prune failed");
+    expect(todo.title).toBe(`Nightly worktree prune failed on ${MACHINE}`);
     expect(todo.notes).toContain(join(dotfiles, "bin", "wt-all"));
   });
 
@@ -470,7 +434,7 @@ describe("the prune pass", () => {
 
     expect(await main()).toBe(0);
     expect(calls()).toEqual(["prune --before\tunset", "prune-audit\t1"]);
-    expect(todos()[0].title).toBe("Worktree prune leaked 1 worktree");
+    expect(todos()[0].title).toBe(`Worktree prune leaked 1 worktree on ${MACHINE}`);
   });
 
   test("clears the prune latch on a green prune", async () => {
@@ -520,11 +484,11 @@ describe("the audit pass", () => {
     expect(await main()).toBe(0);
     const [failed, drift] = todos();
     expect(todos()).toHaveLength(2);
-    expect(failed.title).toBe("Worktree prune audit could not run");
+    expect(failed.title).toBe(`Worktree prune audit could not run on ${MACHINE}`);
     expect(failed.notes).toContain("```sh\nwt all prune-audit\n```");
     expect(failed.notes).toContain("fatal: not a git repository");
     expect(failed.notes).toContain("The drift tripwire itself failed in one or more repos");
-    expect(drift.title).toBe("Worktree prune leaked 1 worktree");
+    expect(drift.title).toBe(`Worktree prune leaked 1 worktree on ${MACHINE}`);
   });
 
   // stdout and stderr are captured apart, unlike the prune's, because anything
@@ -534,7 +498,7 @@ describe("the audit pass", () => {
 
     expect(await main()).toBe(0);
     expect(todos()).toHaveLength(1);
-    expect(todos()[0].title).toBe("Worktree prune audit could not run");
+    expect(todos()[0].title).toBe(`Worktree prune audit could not run on ${MACHINE}`);
     expect(logLines()).toContain("info\tNo prune drift");
   });
 
@@ -544,7 +508,7 @@ describe("the audit pass", () => {
     expect(await main()).toBe(0);
     const [todo] = todos();
     expect(todos()).toHaveLength(1);
-    expect(todo.title).toBe("Worktree prune audit output could not be parsed");
+    expect(todo.title).toBe(`Worktree prune audit output could not be parsed on ${MACHINE}`);
     expect(todo.notes).toContain("```sh\nWT_ALL_RAW=1 wt all prune-audit\n```");
     expect(todo.notes).toContain("some/repo unexpected free-form line");
     expect(todo.notes).toContain("no line of it parsed as a finding");
@@ -554,14 +518,35 @@ describe("the audit pass", () => {
     expect(logLines()).toContain("error\tprune audit output could not be parsed");
   });
 
-  // Both conditions share a job name, so the latch the first one writes silences
-  // the second within the same run.
-  test("files once when the audit both fails and prints nothing parsable", async () => {
+  // Repos that could not be audited and output that parsed as nothing are two
+  // separate things to fix, and the old latch on the shared job name filed the
+  // first and lost the second. They are two causes now, so both are filed.
+  test("files each condition when the audit both fails and prints nothing parsable", async () => {
     stubWtAll({ audit: { stdout: "free-form\n", stderr: "boom\n", status: 1 } });
 
     expect(await main()).toBe(0);
-    expect(todos().map((todo) => todo.title)).toEqual(["Worktree prune audit could not run"]);
-    expect(latch("wt-prune-audit-failed")).toBe("failed");
+    expect(todos().map((todo) => todo.title)).toEqual([
+      `Worktree prune audit could not run on ${MACHINE}`,
+      `Worktree prune audit output could not be parsed on ${MACHINE}`,
+    ]);
+    expect(latch("wt-prune-audit-failed")).toMatch(/^failed [0-9a-f]{12}$/);
+  });
+});
+
+// A refused `open` means nothing was recorded anywhere a person will see it.
+// Carrying the filer's own status out says that, where the 1 a reported failure
+// already exits with, or the 0 a drift report does, reads as a handled run.
+describe("a filing Things refused", () => {
+  test.each([
+    { name: "the prune failed", stubs: { prune: { status: 1 } } },
+    { name: "the audit could not run", stubs: { audit: { stderr: "boom\n", status: 1 } } },
+    { name: "the audit printed nothing parsable", stubs: { audit: { stdout: "free-form\n" } } },
+    { name: "the audit found drift", stubs: { audit: { stdout: LEAK } } },
+  ])("carries the refusal out when $name", async ({ stubs }) => {
+    stubWtAll(stubs);
+    writeStub("open", "#!/bin/sh\nexit 7\n");
+
+    expect(await main()).toBe(7);
   });
 });
 
@@ -571,7 +556,7 @@ describe("drift", () => {
 
     expect(await main()).toBe(0);
     const [todo] = todos();
-    expect(todo.title).toBe("Worktree prune leaked 2 worktrees");
+    expect(todo.title).toBe(`Worktree prune leaked 2 worktrees on ${MACHINE}`);
     expect(todo.notes).toContain("## Leaked worktrees");
     expect(todo.notes).toContain("bendrucker/dotfiles  feature  integrated (empty)");
     expect(todo.notes).toContain("other/repo           second   merged PR survived");
@@ -641,8 +626,8 @@ describe("drift", () => {
     await main();
 
     expect(todos().map((todo) => todo.title)).toEqual([
-      "Worktree prune leaked 1 worktree",
-      "Worktree prune leaked 2 worktrees",
+      `Worktree prune leaked 1 worktree on ${MACHINE}`,
+      `Worktree prune leaked 2 worktrees on ${MACHINE}`,
     ]);
   });
 });

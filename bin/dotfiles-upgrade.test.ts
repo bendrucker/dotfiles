@@ -16,62 +16,10 @@ import {
   credentialFindings,
   currentRevision,
   driftFingerprint,
-  logExcerpt,
   syncFingerprint,
-  tailLines,
 } from "./dotfiles-upgrade";
 
 const ESC = "\u001b";
-
-describe("tailLines", () => {
-  const numbered = (count: number): string =>
-    `${Array.from({ length: count }, (_, index) => `line ${index + 1}`).join("\n")}\n`;
-
-  test("keeps only the last lines of a log longer than the count", () => {
-    const kept = tailLines(numbered(153), 100).split("\n");
-    expect(kept.length).toBe(100);
-    expect(kept[0]).toBe("line 54");
-    expect(kept.at(-1)).toBe("line 153");
-  });
-
-  test("keeps a log shorter than the count whole", () => {
-    expect(tailLines("one\ntwo\n", 100)).toBe("one\ntwo");
-  });
-
-  // The newline a log ends with terminates its last line. Counting it as a line
-  // of its own costs a line of the tail and leaves the excerpt one short.
-  test("reads the terminating newline as part of the last line", () => {
-    expect(tailLines("first\nsecond\n", 1)).toBe("second");
-  });
-
-  test("keeps a last line that has no terminating newline", () => {
-    expect(tailLines("first\nsecond", 1)).toBe("second");
-  });
-});
-
-describe("logExcerpt", () => {
-  test("strips the colour escapes the child tools write", () => {
-    expect(logExcerpt(`${ESC}[31mfatal${ESC}[0m: could not read\n`)).toBe(
-      "fatal: could not read",
-    );
-  });
-
-  test("strips a cursor-positioning escape", () => {
-    expect(logExcerpt(`${ESC}[2K${ESC}[1Gprogress\n`)).toBe("progress");
-  });
-
-  // An OSC sequence carries the title text a reader may want, and it does not
-  // end in a letter, so the CSI pattern would take an arbitrary bite out of it.
-  test("leaves an OSC title sequence alone", () => {
-    const osc = `${ESC}]0;installing${ESC}done`;
-    expect(logExcerpt(`${osc}\n`)).toBe(osc);
-  });
-
-  // The note's closing fence sits directly after the last log line.
-  test("drops the trailing blank lines a step leaves behind", () => {
-    expect(logExcerpt("done\n\n\n")).toBe("done");
-  });
-});
 
 describe("credentialFindings", () => {
   const report = [
@@ -215,6 +163,8 @@ function driftStub(body: string): void {
   writeExecutable(join(home, "scripts", "brew-drift"), body);
 }
 
+const MACHINE = "Testbox";
+
 interface Run {
   status: number;
   stdout: string;
@@ -229,6 +179,7 @@ function runUpgrade(options: { path?: string; args?: string[] } = {}) {
       PATH: options.path ?? stubs,
       DOTFILES_HOME: home,
       XDG_STATE_HOME: state,
+      THINGS_DATABASE: join(sandbox, "things.sqlite"),
     },
     stdin: "ignore",
     stdout: "pipe",
@@ -282,10 +233,14 @@ beforeEach(() => {
   for (const utility of UTILITIES) symlinkSync(utility, join(stubs, basename(utility)));
 
   stub("gum", GUM_STUB);
-  stub("open", `#!/bin/sh\nprintf '%s\\n' "$1" >> '${opened}'\n`);
+  stub("open", `#!/bin/sh\nprintf '%s\\n' "$2" >> '${opened}'\n`);
   stub("osascript", "#!/bin/sh\nexit 0\n");
   // Unstubbed, a `brew cleanup` here runs against this machine's Homebrew cache.
   stub("brew", "#!/bin/sh\nexit 0\n");
+  // A to-do names the machine it was filed from and is keyed on the hardware, so
+  // both answers come from a stub rather than from whichever machine runs this.
+  stub("scutil", `#!/bin/sh\nprintf '%s\\n' '${MACHINE}'\n`);
+  stub("ioreg", `#!/bin/sh\nprintf '"IOPlatformUUID" = "%s"\\n' 0000-TEST\n`);
 
   syncStub("#!/bin/sh\nexit 0\n");
   installStub("#!/bin/sh\nexit 0\n");
@@ -308,6 +263,7 @@ describe("syncFingerprint", () => {
   // The gate prints the dirty tree's diff to the stream this reads, and the
   // phrase is tracked text in this repo, so an uncommitted edit to a test file
   // that carries it would otherwise forge an escalation out of diff content.
+  // Nothing is the answer that hands the cause to the generic derivation.
   test("ignores the phrase outside a WARN line the gate logged", () => {
     const diff = [
       "ERRO Local changes present - skipping sync",
@@ -315,7 +271,7 @@ describe("syncFingerprint", () => {
       `+    skipped('echo "WARN ${skipMessage(2)}" >&2\\n');`,
     ].join("\n");
 
-    expect(syncFingerprint(diff)).toBe("sync");
+    expect(syncFingerprint(diff)).toBe("");
   });
 });
 
@@ -341,7 +297,7 @@ describe("the sync step", () => {
 
     const run = runUpgrade();
     const [todo] = filedTodos();
-    expect(field(todo, "title")).toBe("Dotfiles sync failed");
+    expect(field(todo, "title")).toBe(`Dotfiles sync failed on ${MACHINE}`);
     expect(field(todo, "notes")).toContain("could not read from remote");
     expect(field(todo, "notes")).toContain("dotfiles-sync");
     expect(run.stdout).toContain("could not read from remote");
@@ -390,7 +346,7 @@ describe("the sync step", () => {
     expect(run.status).toBe(1);
     const todos = filedTodos();
     expect(todos.length).toBe(2);
-    expect(field(todos[1], "title")).toBe("Dotfiles install failed");
+    expect(field(todos[1], "title")).toBe(`Dotfiles install failed on ${MACHINE}`);
   });
 
   // The step title rides into the captured log, because the redirection that
@@ -422,7 +378,7 @@ describe("the sync step", () => {
     syncStub(FAILING_SYNC);
 
     runUpgrade();
-    expect(latch("dotfiles-sync")).toBe("failed sync\n");
+    expect(latch("dotfiles-sync")).toMatch(/^failed [0-9a-f]{12}\n$/);
     expect(latch("dotfiles-upgrade")).toBe("ok\n");
   });
 
@@ -528,7 +484,7 @@ describe("the drift check", () => {
     expect(run.status).toBe(0);
     expect(run.stderr).toContain("undeclared packages installed");
     const [todo] = filedTodos();
-    expect(field(todo, "title")).toBe("Undeclared Homebrew packages");
+    expect(field(todo, "title")).toBe(`Undeclared Homebrew packages on ${MACHINE}`);
     expect(field(todo, "notes")).toContain("brew 'cmake'");
     expect(field(todo, "notes")).toContain("Undeclared Packages");
     expect(field(todo, "notes")).toContain(join(home, "scripts", "brew-drift"));
@@ -570,11 +526,22 @@ describe("the drift check", () => {
     expect(run.stderr).toContain("to-do already filed");
   });
 
-  test("latches on the sorted package set", () => {
+  // The latch is what the next night compares against, so a set that reordered
+  // and a set that changed have to reach it as different values.
+  test("latches on the package set rather than the order it was printed in", () => {
     listing("cask 'figma'\nbrew 'cmake'");
     runUpgrade();
+    const sorted = latch("brew-drift");
 
-    expect(latch("brew-drift")).toBe("failed brew 'cmake' cask 'figma' \n");
+    rmSync(join(state, "dotfiles"), { recursive: true });
+    listing("brew 'cmake'\ncask 'figma'");
+    runUpgrade();
+    expect(latch("brew-drift")).toBe(sorted);
+
+    rmSync(join(state, "dotfiles"), { recursive: true });
+    listing("brew 'cmake'");
+    runUpgrade();
+    expect(latch("brew-drift")).not.toBe(sorted);
   });
 
   // The to-do keeps Homebrew's own order, which is the order a reader sees when
@@ -622,7 +589,7 @@ describe("the drift check", () => {
     expect(run.status).toBe(0);
     expect(run.stderr).toContain("brew drift check could not run");
     expect(filedTodos().length).toBe(1);
-    expect(latch("brew-drift")).toBe("failed brew 'cmake' \n");
+    expect(latch("brew-drift")).toMatch(/^failed [0-9a-f]{12}\n$/);
   });
 
   // scripts/brew-drift says on stderr why it has nothing to report, and the
@@ -693,16 +660,16 @@ describe("the run as a whole", () => {
     expect(existsSync(marker)).toBe(true);
   });
 
-  // report_failure writes the latch before it files, so a filing that dies leaves
-  // a latch claiming a to-do that was never created. The status carried out of
-  // the run is the filer's, not the 1 a reported failure carries.
+  // The status carried out of the run is the filer's, which is what tells a
+  // refused filing apart from the 1 a reported failure carries. The latch goes
+  // back, since nothing was filed for it to stand for.
   test("carries the status of a refused sync filing", () => {
     syncStub("#!/bin/sh\nexit 1\n");
     stub("open", "#!/bin/sh\nexit 7\n");
 
     const run = runUpgrade();
     expect(run.status).toBe(7);
-    expect(latch("dotfiles-sync")).toBe("failed sync\n");
+    expect(latch("dotfiles-sync").trim()).toBe("");
   });
 
   test("stops a drift filing that is refused before clearing the upgrade latch", () => {

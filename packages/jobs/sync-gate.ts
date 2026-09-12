@@ -24,7 +24,8 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { log, type Output } from "#jobs/output";
-import { clearLatch, notify, readLatch, writeLatch } from "#jobs/report";
+import { notify } from "#jobs/report";
+import { clearLatch, readLatch, writeLatch } from "#jobs/state";
 import { canonicalJson } from "#jobs/json";
 
 // ~/.dotfiles is a symlink to the checkout, so the sibling commands are found
