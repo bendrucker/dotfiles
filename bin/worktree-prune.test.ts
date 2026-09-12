@@ -533,6 +533,23 @@ describe("the audit pass", () => {
   });
 });
 
+// A refused `open` means nothing was recorded anywhere a person will see it.
+// Carrying the filer's own status out says that, where the 1 a reported failure
+// already exits with, or the 0 a drift report does, reads as a handled run.
+describe("a filing Things refused", () => {
+  test.each([
+    { name: "the prune failed", stubs: { prune: { status: 1 } } },
+    { name: "the audit could not run", stubs: { audit: { stderr: "boom\n", status: 1 } } },
+    { name: "the audit printed nothing parsable", stubs: { audit: { stdout: "free-form\n" } } },
+    { name: "the audit found drift", stubs: { audit: { stdout: LEAK } } },
+  ])("carries the refusal out when $name", async ({ stubs }) => {
+    stubWtAll(stubs);
+    writeStub("open", "#!/bin/sh\nexit 7\n");
+
+    expect(await main()).toBe(7);
+  });
+});
+
 describe("drift", () => {
   test("names each leaked worktree and still exits 0", async () => {
     stubWtAll({ audit: { stdout: LEAK + SECOND_LEAK } });

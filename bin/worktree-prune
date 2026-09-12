@@ -302,7 +302,7 @@ export async function main(): Promise<number> {
   const prune = await runPrune(wtAll);
   if (prune.status !== 0) {
     log("error", "worktree prune failed");
-    reportFailure({
+    const filed = reportFailure({
       job: "worktree-prune",
       title: "Nightly worktree prune failed",
       command: "wt all prune --before",
@@ -314,7 +314,7 @@ export async function main(): Promise<number> {
     });
     // The audit re-derives the survivor set this prune should have produced, so
     // running it now would report drift the prune never had a chance to clear.
-    return 1;
+    return filed !== 0 ? filed : 1;
   }
 
   reportSuccess("worktree-prune");
@@ -329,9 +329,10 @@ export async function main(): Promise<number> {
   // look" reads identically to "the oracle found nothing" once it reaches the
   // latch. The repos that did answer still emitted their findings, so the run
   // carries on into the drift analysis below.
+  let audited = 0;
   if (audit.status !== 0) {
     log("error", "prune audit failed");
-    reportFailure({
+    audited = reportFailure({
       job: "wt-prune-audit-failed",
       title: "Worktree prune audit could not run",
       command: "wt all prune-audit",
@@ -348,7 +349,7 @@ export async function main(): Promise<number> {
   if (rows.length === 0) {
     reportSuccess("wt-prune-drift");
     log("info", "No prune drift");
-    return 0;
+    return audited;
   }
 
   log("warn", "prune drift detected");
@@ -362,7 +363,7 @@ export async function main(): Promise<number> {
     // to-do would latch the drift job and suppress the next real drift, so
     // surface the unparsed text itself and leave that latch alone.
     log("error", "prune audit output could not be parsed");
-    reportFailure({
+    const filed = reportFailure({
       job: "wt-prune-audit-failed",
       title: "Worktree prune audit output could not be parsed",
       command: "WT_ALL_RAW=1 wt all prune-audit",
@@ -372,7 +373,7 @@ export async function main(): Promise<number> {
       outputHeading: "Error Output",
       fingerprint: "",
     });
-    return 0;
+    return refused(filed, audited);
   }
 
   const base = process.env.PROJECTS || join(home(), "src");
@@ -380,7 +381,7 @@ export async function main(): Promise<number> {
   // what actually happened rather than worktrunk's default.
   const minAge = process.env.WT_PRUNE_MIN_AGE || "1d";
 
-  reportFailure({
+  const filed = reportFailure({
     job: "wt-prune-drift",
     title: driftTitle(findings.length),
     command: investigation(findings, base, minAge),
@@ -390,7 +391,14 @@ export async function main(): Promise<number> {
     outputHeading: "Leaked worktrees",
     fingerprint: driftFingerprint(findings),
   });
-  return 0;
+  return refused(filed, audited);
+}
+
+// The status a run that filed more than one report carries out. The first
+// refusal wins: it names why Things took nothing, and a run that reported
+// nothing is not a run that handled anything.
+function refused(...statuses: number[]): number {
+  return statuses.find((status) => status !== 0) ?? 0;
 }
 
 if (import.meta.main) process.exit(await main());

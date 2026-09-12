@@ -67,6 +67,17 @@ describe("findOpenTodo", () => {
     });
   });
 
+  // Things counts the field in UTF-16 code units, and so does String.length.
+  // SQLite's own length() counts code points, so a note carrying an emoji read
+  // shorter than it is and the append computed against it overran the limit,
+  // losing the tail of the run it was there to record.
+  test("measures a note in the units Things spends its limit in", () => {
+    const notes = `\u{1F525}\u{1F525}\n\`${MARKER}\``;
+    const found = find([{ uuid: "abc", notes }]);
+    expect(found.readable && found.todo?.notesLength).toBe(notes.length);
+    expect(notes.length).toBe([...notes].length + 2);
+  });
+
   test("ignores a to-do carrying a different marker", () => {
     const rows = [{ uuid: "abc", notes: "dotfiles-job a1b2c3d4/dotfiles-sync/other" }];
     expect(find(rows)).toEqual({ readable: true, todo: undefined });

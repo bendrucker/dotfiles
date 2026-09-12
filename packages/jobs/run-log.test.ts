@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { recordRun, runCount, runLogPath } from "#jobs/run-log";
+import { recordRun, resetRuns, runCount, runLogPath } from "#jobs/run-log";
 
 let sandbox: string;
 const state = process.env.XDG_STATE_HOME;
@@ -30,6 +30,28 @@ test("counts the run it just recorded", () => {
 
 test("keeps every run, which is what survives a note that cannot grow", () => {
   record("first", "monday");
+  record("second", "tuesday");
+
+  const log = readFileSync(runLogPath("dotfiles-sync", "9f8e7d6c5b4a"), "utf8");
+  expect(log).toContain("=== run monday ===\nfirst");
+  expect(log).toContain("=== run tuesday ===\nsecond");
+});
+
+// Escalation to Today fires on the third run of the standing to-do. A count that
+// kept climbing past a to-do Ben finished would walk straight past the threshold
+// and never escalate again.
+test("counts from one again for the to-do that replaces a finished one", () => {
+  record("first");
+  record("second");
+
+  resetRuns("dotfiles-sync", "9f8e7d6c5b4a");
+
+  expect(record("third")).toBe(2);
+});
+
+test("keeps the archive whole across a reset", () => {
+  record("first", "monday");
+  resetRuns("dotfiles-sync", "9f8e7d6c5b4a");
   record("second", "tuesday");
 
   const log = readFileSync(runLogPath("dotfiles-sync", "9f8e7d6c5b4a"), "utf8");

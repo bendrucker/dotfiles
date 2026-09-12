@@ -81,10 +81,16 @@ export function causeFingerprint(command: string, output: string): string {
   return digest(`${command}\n${normalizeVolatile(distinctiveLine(output))}`);
 }
 
-// For a report whose cause is a set rather than a line, such as a findings job
-// filing on the findings that are newly standing.
+// For a report whose cause the caller already knows: a set of standing findings,
+// or a fingerprint a job derived itself.
+//
+// Hashed as given. The volatile shapes are not taken out, because a caller that
+// picked this material picked it for what discriminates one cause from another,
+// and that is regularly something normalizeVolatile treats as noise. It reads a
+// hex digest as one `<hex>`, so every claude-sync failure would file against the
+// to-do the first one opened.
 export function causeOf(parts: string[]): string {
-  return digest(parts.map((part) => `${normalizeVolatile(part)}\n`).join(""));
+  return digest(parts.map((part) => `${part}\n`).join(""));
 }
 
 function digest(material: string): string {

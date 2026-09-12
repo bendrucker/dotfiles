@@ -16,7 +16,7 @@
 
 import { causeFingerprint, causeOf, distinctiveLine } from "#jobs/cause";
 import { machineKey, machineName } from "#jobs/machine";
-import { recordRun, runLogPath } from "#jobs/run-log";
+import { recordRun, resetRuns, runLogPath } from "#jobs/run-log";
 import { TRAILING_NEWLINES, readLatch, writeLatch } from "#jobs/state";
 import {
   THINGS_NOTES_LIMIT,
@@ -34,6 +34,10 @@ const TAG = "dotfiles";
 // network failure or a flaky upstream clears by the second run, and what is left
 // after three is something only Ben can fix.
 export const ESCALATE_AFTER = 3;
+
+// What a to-do this run is filing shows and escalates from. The run just
+// archived is its first, whatever the archive holds from to-dos before it.
+const FIRST_RUN = 1;
 
 // What the marker line is recognized by. Distinctive enough that a to-do written
 // by anything else cannot be mistaken for one of these.
@@ -248,6 +252,9 @@ function file({ report, cause, causeLine, latchJob }: Filing): number {
   }
 
   log(`Creating Things to-do for ${report.job} failure`);
+  // The new to-do counts from its own first run. Everything the finished one
+  // carried stays in the archive, where it is history rather than this to-do's.
+  resetRuns(report.job, cause);
   const notes = buildNotes({
     machine,
     time: at,
@@ -261,7 +268,7 @@ function file({ report, cause, causeLine, latchJob }: Filing): number {
     output: report.output,
   });
 
-  const title = todoTitle(report.title, machine, runs);
+  const title = todoTitle(report.title, machine, FIRST_RUN);
   const filed = addTodo({ title, notes, when: LANDING, tags: TAG });
   if (filed !== 0) return filed;
 

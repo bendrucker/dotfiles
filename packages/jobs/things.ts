@@ -33,8 +33,13 @@ export const THINGS_NOTES_LIMIT = 10_000;
 // `type` 0 is a to-do, as against a project or a heading. `status` 0 is open, as
 // against 2 canceled and 3 completed. A to-do Ben has finished with is not one to
 // append tonight's run to: he dealt with the cause, so its return is news.
+//
+// The notes come back whole rather than as a `length(notes)`, which SQLite
+// counts in Unicode code points. Things counts the field in UTF-16 code units,
+// so a note carrying an emoji reads shorter than it is and the append computed
+// against it overruns the limit, taking the tail of tonight's run with it.
 const FIND_OPEN =
-  "select uuid as id, length(notes) as notesLength from TMTask" +
+  "select uuid as id, notes from TMTask" +
   " where type = 0 and trashed = 0 and status = 0 and notes like ?1 escape '\\'" +
   " order by creationDate desc limit 1";
 
@@ -103,7 +108,7 @@ export function findOpenTodo(pattern: string): TodoLookup {
   try {
     db = new Database(path, { readonly: true });
     const row = db.query(FIND_OPEN).get(pattern);
-    return { readable: true, todo: isTodo(row) ? row : undefined };
+    return { readable: true, todo: toTodo(row) };
   } catch {
     return { readable: false };
   } finally {
@@ -111,10 +116,11 @@ export function findOpenTodo(pattern: string): TodoLookup {
   }
 }
 
-function isTodo(row: unknown): row is Todo {
-  if (typeof row !== "object" || row === null) return false;
+function toTodo(row: unknown): Todo | undefined {
+  if (typeof row !== "object" || row === null) return undefined;
   const fields = row as Record<string, unknown>;
-  return typeof fields.id === "string" && typeof fields.notesLength === "number";
+  if (typeof fields.id !== "string" || typeof fields.notes !== "string") return undefined;
+  return { id: fields.id, notesLength: fields.notes.length };
 }
 
 // Percent-encode everything outside the unreserved set, so no field can leave a

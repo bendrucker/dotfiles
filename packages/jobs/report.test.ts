@@ -138,6 +138,9 @@ function standInThings(id = "todo-1", notes = filedNotes(), status = 0): void {
   process.env.THINGS_DATABASE = path;
   const db = new Database(path, { create: true });
   db.run(SCHEMA);
+  // Things edits a to-do in place, so calling this again for one already in the
+  // store has to replace it rather than leave the earlier version standing too.
+  db.run("delete from TMTask where uuid = ?", [id]);
   db.run("insert into TMTask values (?, ?, ?, ?, ?, ?, ?)", [id, "Stale", notes, status, 0, 0, 1]);
   db.close();
 }
@@ -330,6 +333,26 @@ describe("reportFailure escalation", () => {
   test("does not move it again on the runs after that", () => {
     repeat(ESCALATE_AFTER + 1);
     expect(field(updated().at(-1) ?? "", "when")).toBe("");
+  });
+
+  // The run count that decides this is the standing to-do's, not the archive's.
+  // Counting every run the cause ever had leaves the replacement starting above
+  // the threshold, so it walks past it and never reaches Today again.
+  test("escalates the to-do that replaces a completed one on its own third run", () => {
+    repeat(ESCALATE_AFTER);
+    standInThings("todo-1", filedNotes(), 3);
+
+    fail("boom");
+    expect(field(added().at(-1) ?? "", "title")).toMatch(/^Stale on [^(]+$/);
+
+    standInThings("todo-2");
+    fail("boom");
+    standInThings("todo-2");
+    fail("boom");
+
+    expect(field(updated().at(-1) ?? "", "id")).toBe("todo-2");
+    expect(field(updated().at(-1) ?? "", "title")).toMatch(/\(3 runs\)$/);
+    expect(field(updated().at(-1) ?? "", "when")).toBe("today");
   });
 });
 

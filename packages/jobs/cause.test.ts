@@ -99,7 +99,10 @@ describe("causeOf", () => {
     expect(causeOf(["alpha stale"])).not.toBe(causeOf(["beta stale"]));
   });
 
-  test("normalizes its parts, so a volatile span cannot refile a standing cause", () => {
-    expect(causeOf(["stale as of 2026-09-11"])).toBe(causeOf(["stale as of 2026-09-12"]));
+  test("keeps two hex fingerprints apart", () => {
+    // normalizeVolatile reads any 7+ hex run as one <hex>, which collapsed every
+    // caller that hands over a digest into a single cause: bin/claude-sync files
+    // on the sha1 of which plugins failed, so one to-do covered all of them.
+    expect(causeOf(["9f8e7d6c5b4a"])).not.toBe(causeOf(["1a2b3c4d5e6f"]));
   });
 });
