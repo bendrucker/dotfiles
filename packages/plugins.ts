@@ -274,7 +274,10 @@ export function declaredMarketplaces(): Declaration {
 // also from a bare `marketplace add`, so it holds more than settings.json names.
 export function knownMarketplaces(): Registry {
   const path = join(claudePluginsDir(), "known_marketplaces.json");
-  if (!isFile(path)) return { ok: true, names: [] };
+  // Absence is the only shape that reads as an empty registry. A path that is
+  // there and is not a readable file falls through to the read below and arrives
+  // as a failure, rather than as a prune that quietly found nothing to do.
+  if (!existsSync(path)) return { ok: true, names: [] };
 
   let captured: string;
   try {

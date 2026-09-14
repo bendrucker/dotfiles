@@ -498,6 +498,13 @@ describe("knownMarketplaces", () => {
     writeRegistry(["first"]);
     expect(knownMarketplaces().ok).toBe(false);
   });
+
+  // Only absence reads as an empty registry. A path that is there and cannot be
+  // read is a prune that would report success over registrations it never saw.
+  test("fails when the registry path is not a readable file", () => {
+    mkdirSync(join(plugins, "known_marketplaces.json"), { recursive: true });
+    expect(knownMarketplaces().ok).toBe(false);
+  });
 });
 
 describe("pluginMarketplaces", () => {
