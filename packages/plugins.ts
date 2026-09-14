@@ -303,9 +303,9 @@ export function pluginMarketplaces(): MarketplaceUse {
   return { ok: true, names };
 }
 
-// Split on the last `@`. A plugin name may carry one of its own, so the
-// marketplace is whatever follows the final separator. An id with no separator
-// names neither half on its own, and its callers read it as both.
+// A plugin name may carry an `@` of its own, so the marketplace is whatever
+// follows the final separator. An id with no separator names neither half on
+// its own, and its callers read it as both.
 export function splitPluginId(id: string): { name: string; marketplace: string } {
   const separator = id.lastIndexOf("@");
   if (separator === -1) return { name: id, marketplace: id };
