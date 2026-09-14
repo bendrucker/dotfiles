@@ -12,6 +12,7 @@ import {
   installAgentHooks,
   keptPlugins,
   main,
+  pruneMarketplaces,
   prunePlugins,
   reportDrift,
   repoRevision,
@@ -172,6 +173,12 @@ const claudeStub = [
   "    esac",
   "    ;;",
   "  install) printf 'install %s\\n' \"$3\" >>\"$CLAUDE_PLUGIN_LOG\" ;;",
+  // The name follows the verb, so a remove is `plugin marketplace remove <name>`.
+  "  marketplace)",
+  '    [ "$3" = "remove" ] || exit 0',
+  "    printf 'marketplace remove %s\\n' \"$4\" >>\"$CLAUDE_PLUGIN_LOG\"",
+  '    case " $CLAUDE_REMOVE_FAILS " in *" $4 "*) exit 1 ;; esac',
+  "    ;;",
   "  uninstall)",
   // The id is the last argument, because the call names its scope in front of it.
   "    for last; do :; done",
@@ -185,12 +192,13 @@ const claudeStub = [
 interface Listed {
   id: string;
   installPath: string;
+  scope?: string;
 }
 
 function writePluginList(listed: Listed[]): void {
   writeFileSync(
     join(sandbox, "plugin-list.json"),
-    JSON.stringify(listed.map((row) => ({ ...row, scope: "user", enabled: true }))),
+    JSON.stringify(listed.map((row) => ({ scope: "user", ...row, enabled: true }))),
   );
 }
 
@@ -213,9 +221,26 @@ function writeMarketplace(name: string, entries: unknown[]): void {
   writeFileSync(join(dir, "marketplace.json"), JSON.stringify({ name, plugins: entries }));
 }
 
-function writeSettings(enabled: Record<string, boolean>): void {
+function writeSettings(
+  enabled: Record<string, boolean>,
+  marketplaces: Record<string, unknown> = {},
+): void {
   mkdirSync(join(sandbox, ".claude"), { recursive: true });
-  writeFileSync(join(sandbox, ".claude", "settings.json"), JSON.stringify({ enabledPlugins: enabled }));
+  writeFileSync(
+    join(sandbox, ".claude", "settings.json"),
+    JSON.stringify({ enabledPlugins: enabled, extraKnownMarketplaces: marketplaces }),
+  );
+}
+
+// The registry Claude Code keeps for itself, which is what a marketplace prune
+// reads rather than the clones on disk.
+function writeKnownMarketplaces(names: string[]): void {
+  const dir = join(sandbox, ".claude", "plugins");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "known_marketplaces.json"),
+    JSON.stringify(Object.fromEntries(names.map((name) => [name, { source: { source: "github" } }]))),
+  );
 }
 
 // alpha, beta and gamma are installed and offered by their marketplaces. The
@@ -232,7 +257,11 @@ function writePluginFixture(): void {
     { name: "gamma", source: "./plugins/gamma" },
   ]);
   writeMarketplace("third", [{ name: "beta", source: "./plugins/beta" }]);
-  writeSettings({ "alpha@first": true, "beta@third": true, "gamma@first": true, "disabled@first": false });
+  writeSettings(
+    { "alpha@first": true, "beta@third": true, "gamma@first": true, "disabled@first": false },
+    { first: {}, third: {} },
+  );
+  writeKnownMarketplaces(["first", "third"]);
 }
 
 const GUARDED_HOOK = '/bin/sh -c [ -x "$HOME/.vibe-island/bin/vibe-island-bridge" ] && exit 0';
@@ -318,6 +347,7 @@ beforeEach(() => {
   process.env.CLAUDE_UPDATE_FAILS = "";
   process.env.CLAUDE_UPDATE_FAILS_ONCE = "";
   process.env.CLAUDE_UNINSTALL_FAILS = "";
+  process.env.CLAUDE_REMOVE_FAILS = "";
   process.env.CLAUDE_DRAINS_STDIN = "";
   process.env.AGENT_HOOK_REPO = repo;
   process.env.HERDR_FAILS = "";
@@ -557,6 +587,82 @@ describe("prunePlugins", () => {
 
     expect(prunePlugins(out, process.env)).toBe(true);
     expect(readLog("plugin.log")).toBe("");
+  });
+});
+
+describe("pruneMarketplaces", () => {
+  test("removes a registration settings.json no longer names", () => {
+    writeKnownMarketplaces(["first", "third", "stray"]);
+
+    expect(pruneMarketplaces(out, process.env)).toBe(true);
+    expect(readLog("plugin.log")).toContain("marketplace remove stray");
+    expect(readLog("plugin.log")).not.toContain("marketplace remove first");
+  });
+
+  // Claude Code installs a project's plugins at project scope without writing a
+  // user-scope key for either the plugin or its marketplace, so the declaration
+  // alone would remove the marketplace out from under one.
+  test("keeps a marketplace a plugin outside the user scope came from", () => {
+    writePluginList([
+      { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
+      { id: "delta@second", installPath: payload("second", "delta", "1.0.0"), scope: "project" },
+    ]);
+    writeKnownMarketplaces(["first", "second"]);
+
+    expect(pruneMarketplaces(out, process.env)).toBe(true);
+    expect(readLog("plugin.log")).toBe("");
+  });
+
+  test("removes nothing when nothing is registered", () => {
+    rmSync(join(sandbox, ".claude", "plugins", "known_marketplaces.json"), { force: true });
+
+    expect(pruneMarketplaces(out, process.env)).toBe(true);
+    expect(readLog("plugin.log")).toBe("");
+  });
+
+  // A declaration that could not be read accounts for nothing, and acting on it
+  // would remove every marketplace on the machine.
+  test("removes nothing when the declaration cannot be read", () => {
+    writeFileSync(join(sandbox, ".claude", "settings.json"), "not json\n");
+
+    expect(pruneMarketplaces(out, process.env)).toBe(false);
+    expect(readLog("plugin.log")).toBe("");
+    expect(out.captured()).toContain("claude-marketplaces:");
+  });
+
+  // The shape a broken symlink into the config repo leaves behind.
+  test("removes nothing when settings.json is not there", () => {
+    rmSync(join(sandbox, ".claude", "settings.json"), { force: true });
+
+    expect(pruneMarketplaces(out, process.env)).toBe(false);
+    expect(readLog("plugin.log")).toBe("");
+  });
+
+  // A listing that could not be read names no marketplace as in use, so every
+  // registration would read as unaccounted for.
+  test("removes nothing when the installed plugins cannot be enumerated", () => {
+    writeFileSync(join(sandbox, "plugin-list.json"), "not json\n");
+    writeKnownMarketplaces(["first", "stray"]);
+
+    expect(pruneMarketplaces(out, process.env)).toBe(false);
+    expect(readLog("plugin.log")).toBe("");
+  });
+
+  // Reading an unparseable registry as empty would report success over a prune
+  // that never ran.
+  test("fails when the registry cannot be read", () => {
+    writeFileSync(join(sandbox, ".claude", "plugins", "known_marketplaces.json"), "not json\n");
+
+    expect(pruneMarketplaces(out, process.env)).toBe(false);
+    expect(out.captured()).toContain("claude-marketplaces:");
+  });
+
+  test("fails when a removal fails", () => {
+    writeKnownMarketplaces(["first", "third", "stray"]);
+    process.env.CLAUDE_REMOVE_FAILS = "stray";
+
+    expect(pruneMarketplaces(out, process.env)).toBe(false);
+    expect(out.captured()).toContain("Failed to remove stray");
   });
 });
 
@@ -1094,6 +1200,19 @@ describe("sync", () => {
     const log = out.captured();
     expect(log.indexOf("Syncing Claude repository")).toBeLessThan(log.indexOf("Installing herdr"));
     expect(log.indexOf("Installing moshi")).toBeLessThan(log.indexOf("Updating marketplaces"));
+  });
+
+  // The marketplace prune sits between the two, so a marketplace whose last
+  // plugin went tonight goes with it and its clone is not fetched on the way out.
+  test("prunes marketplaces after the plugins and before the refresh", () => {
+    expect(sync(out, repo, { audit: auditStub(0) })).toBe(0);
+    const log = out.captured();
+    expect(log.indexOf("Pruning undeclared plugins")).toBeLessThan(
+      log.indexOf("Pruning undeclared marketplaces"),
+    );
+    expect(log.indexOf("Pruning undeclared marketplaces")).toBeLessThan(
+      log.indexOf("Updating marketplaces"),
+    );
   });
 
   test("fails when a hook install fails, and still updates the plugins", () => {

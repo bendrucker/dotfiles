@@ -20,11 +20,14 @@ import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  declaredMarketplaces,
   declaredPlugins,
   type InstalledPlugin,
   installedPlugins,
+  knownMarketplaces,
   pluginDependencies,
   pluginInventory,
+  pluginMarketplaces,
   pluginSource,
 } from "#plugins";
 import {
@@ -202,6 +205,66 @@ export function prunePlugins(out: Output, env: Record<string, string | undefined
 
   if (failed > 0) {
     log(out, "warn", `${failed} plugin(s) failed to uninstall`);
+    return false;
+  }
+  return true;
+}
+
+// Remove the marketplaces settings.json no longer names.
+//
+// `claude plugin marketplace add` writes the name into extraKnownMarketplaces,
+// and Claude Code also registers one on its own when a session browses it, so
+// the registry holds names the declaration never carried. Without this a
+// marketplace nothing declares stays registered and is re-fetched every night.
+//
+// A marketplace backing an installed plugin is kept whatever the declaration
+// says. The listing covers every scope rather than the user scope the update
+// pass works in, because a project installs a plugin without writing a user-
+// scope key and removing its marketplace leaves it with no source.
+//
+// The removal names no scope. The CLI refuses a user-scoped one for a
+// marketplace with no user declaration, which is exactly the set this removes.
+export function pruneMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
+  log(out, "info", "Pruning undeclared marketplaces...");
+
+  // None of the three failures can be read as an empty set: an unreadable
+  // declaration or plugin listing accounts for nothing and would take every
+  // marketplace with it, and an unreadable registry would report success over a
+  // prune that never ran.
+  const declared = declaredMarketplaces();
+  if (!declared.ok) {
+    log(out, "warn", "Could not read which marketplaces settings.json declares");
+    out.write(2, `claude-marketplaces: ${declared.reason}\n`);
+    return false;
+  }
+
+  const used = pluginMarketplaces();
+  if (!used.ok) {
+    log(out, "warn", "Could not read which marketplaces have plugins installed");
+    out.write(2, `claude-marketplaces: ${used.reason}\n`);
+    return false;
+  }
+
+  const known = knownMarketplaces();
+  if (!known.ok) {
+    log(out, "warn", "Could not enumerate registered marketplaces");
+    out.write(2, `claude-marketplaces: ${known.reason}\n`);
+    return false;
+  }
+
+  let failed = 0;
+  for (const name of known.names) {
+    if (name === "" || declared.ids.has(name) || used.names.has(name)) continue;
+
+    log(out, "info", `Removing ${name} (no longer declared)...`);
+    if (claude(out, ["plugin", "marketplace", "remove", name], env) !== 0) {
+      log(out, "warn", `Failed to remove ${name}`);
+      failed += 1;
+    }
+  }
+
+  if (failed > 0) {
+    log(out, "warn", `${failed} marketplace(s) failed to remove`);
     return false;
   }
   return true;
@@ -495,6 +558,11 @@ export function sync(out: Output, repoDir: string, options: AuditOptions = {}): 
 
   // Before the update pass, so a payload on its way out is not refreshed first.
   if (!prunePlugins(out, env)) status = 1;
+
+  // After the plugin prune, so a marketplace whose last plugin went tonight goes
+  // with it, and before the marketplace update, so a clone on its way out is not
+  // fetched first.
+  if (!pruneMarketplaces(out, env)) status = 1;
 
   updateMarketplaces(out, env);
 

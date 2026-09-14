@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   claudePluginsDir,
+  declaredMarketplaces,
   declaredPlugins,
   installedPlugins,
+  knownMarketplaces,
   pluginDependencies,
   pluginInventory,
+  pluginMarketplaces,
   pluginSource,
   splitPluginId,
 } from "#plugins";
@@ -118,6 +121,13 @@ function declared(): string[] {
   const read = declaredPlugins();
   if (!read.ok) throw new Error(`declaration failed: ${read.reason}`);
   return [...read.ids].sort();
+}
+
+function writeRegistry(registry: unknown): void {
+  writeFileSync(
+    join(plugins, "known_marketplaces.json"),
+    typeof registry === "string" ? registry : JSON.stringify(registry),
+  );
 }
 
 function writeManifest(marketplace: string, manifest: unknown): void {
@@ -423,6 +433,102 @@ describe("installedPlugins", () => {
   test("fails when the CLI could not be read", () => {
     process.env.CLAUDE_LIST_STATUS = "1";
     expect(installedPlugins().ok).toBe(false);
+  });
+});
+
+describe("declaredMarketplaces", () => {
+  test("names the keys settings.json declares", () => {
+    writeSettings({ extraKnownMarketplaces: { first: {}, second: {} } });
+    const read = declaredMarketplaces();
+    if (!read.ok) throw new Error(read.reason);
+    expect([...read.ids].sort()).toEqual(["first", "second"]);
+  });
+
+  // A file that is there and names no marketplaces is a real declaration of
+  // none, which is a different answer from a file nothing could read.
+  test("declares nothing when the file names no marketplaces", () => {
+    writeSettings({ env: {} });
+    const read = declaredMarketplaces();
+    if (!read.ok) throw new Error(read.reason);
+    expect([...read.ids]).toEqual([]);
+  });
+
+  // The shape a broken symlink into the config repo leaves behind. Reading it as
+  // an empty declaration is what would remove every marketplace on the machine.
+  test("fails when settings.json is not there", () => {
+    rmSync(join(sandbox, ".claude", "settings.json"), { force: true });
+    expect(declaredMarketplaces().ok).toBe(false);
+  });
+
+  test("fails on a settings.json nothing can parse", () => {
+    writeSettings("not json\n");
+    expect(declaredMarketplaces().ok).toBe(false);
+  });
+
+  test("fails when extraKnownMarketplaces is not an object", () => {
+    writeSettings({ extraKnownMarketplaces: ["first"] });
+    expect(declaredMarketplaces().ok).toBe(false);
+  });
+});
+
+describe("knownMarketplaces", () => {
+  test("names what the registry holds", () => {
+    writeRegistry({ first: { source: {} }, second: { source: {} } });
+    const read = knownMarketplaces();
+    if (!read.ok) throw new Error(read.reason);
+    expect(read.names.sort()).toEqual(["first", "second"]);
+  });
+
+  // Nothing registered is a real answer rather than a failure: it names nothing
+  // for a prune to remove, so there is no decision to get wrong.
+  test("names nothing when the registry is not there", () => {
+    const read = knownMarketplaces();
+    if (!read.ok) throw new Error(read.reason);
+    expect(read.names).toEqual([]);
+  });
+
+  // Reading an unparseable registry as empty would let a prune report success
+  // over registrations it never saw.
+  test("fails on a registry nothing can parse", () => {
+    writeRegistry("not json\n");
+    expect(knownMarketplaces().ok).toBe(false);
+  });
+
+  test("fails when the registry does not hold an object", () => {
+    writeRegistry(["first"]);
+    expect(knownMarketplaces().ok).toBe(false);
+  });
+});
+
+describe("pluginMarketplaces", () => {
+  function used(): string[] {
+    const read = pluginMarketplaces();
+    if (!read.ok) throw new Error(read.reason);
+    return [...read.names].sort();
+  }
+
+  // The update pass works at user scope, but a marketplace backs its plugins at
+  // every scope, and removing one out from under a project plugin leaves it with
+  // no source.
+  test("reads every scope rather than the user one", () => {
+    writeList([
+      { id: "alpha@first", scope: "user", installPath: "" },
+      { id: "delta@second", scope: "project", installPath: "" },
+      { id: "epsilon@third", scope: "local", installPath: "" },
+    ]);
+    expect(used()).toEqual(["first", "second", "third"]);
+  });
+
+  // An id with no separator names neither half on its own, so it is kept as a
+  // marketplace name too. Over-keeping is the safe direction for a prune.
+  test("reads an id with no separator as its own marketplace", () => {
+    writeList([{ id: "loose", scope: "user", installPath: "" }]);
+    expect(used()).toEqual(["loose"]);
+  });
+
+  test("fails when the CLI could not be read", () => {
+    process.env.CLAUDE_LIST_STATUS = "1";
+    expect(pluginMarketplaces().ok).toBe(false);
   });
 });
 
