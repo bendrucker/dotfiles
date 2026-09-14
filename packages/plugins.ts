@@ -164,28 +164,32 @@ function enabledPlugins(): InstalledPlugin[] {
     .map(([id]) => ({ id, installPath: "" }));
 }
 
-// Every id settings.json names, an explicitly disabled one included. A key set
-// to false declares a plugin that is installed and turned off, so its payload is
-// meant to stay.
-export function declaredPlugins(): Declaration {
+// A file that is not there declares nothing and permits nothing. It is the shape
+// a broken symlink into the config repo leaves behind, and reading it as an
+// empty declaration would remove everything the key governs. A file that is
+// there and names nothing is a real declaration of none.
+function readDeclaration(key: string, subject: string): Declaration {
   let named: Record<string, unknown> | undefined;
   try {
-    named = settingsPlugins();
+    named = settingsMap(key);
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
 
-  // A file that is not there declares nothing and permits nothing. It is the
-  // shape a broken symlink into the config repo leaves behind, and reading it as
-  // an empty declaration would uninstall every plugin on the machine. A file
-  // that is there and names no plugins is a real declaration of none.
   if (named === undefined) {
     return {
       ok: false,
-      reason: "settings.json is not there, so nothing declares which plugins belong",
+      reason: `settings.json is not there, so nothing declares which ${subject} belong`,
     };
   }
   return { ok: true, ids: new Set(Object.keys(named)) };
+}
+
+// Every id settings.json names, an explicitly disabled one included. A key set
+// to false declares a plugin that is installed and turned off, so its payload is
+// meant to stay.
+export function declaredPlugins(): Declaration {
+  return readDeclaration("enabledPlugins", "plugins");
 }
 
 // The user-scope payloads `claude plugin list` reports, without the
@@ -246,22 +250,7 @@ export type Registry = { ok: true; names: string[] } | { ok: false; reason: stri
 export type MarketplaceUse = { ok: true; names: Set<string> } | { ok: false; reason: string };
 
 export function declaredMarketplaces(): Declaration {
-  let named: Record<string, unknown> | undefined;
-  try {
-    named = settingsMap("extraKnownMarketplaces");
-  } catch (error) {
-    return { ok: false, reason: describe(error) };
-  }
-
-  // Absent means nothing declares what belongs, and reading that as an empty
-  // declaration would remove every marketplace on the machine.
-  if (named === undefined) {
-    return {
-      ok: false,
-      reason: "settings.json is not there, so nothing declares which marketplaces belong",
-    };
-  }
-  return { ok: true, ids: new Set(Object.keys(named)) };
+  return readDeclaration("extraKnownMarketplaces", "marketplaces");
 }
 
 // The registry Claude Code keeps for itself, which is what `claude plugin

@@ -294,6 +294,15 @@ describe("unreadable inventory", () => {
       arrange: () => writeList([{ id: 7, scope: "user", installPath: "" }]),
       reason: "plugin id",
     },
+    // A malformed row outside the user scope stops the read rather than being
+    // skipped as out of the update pass's reach. pruneMarketplaces builds its
+    // keep-set from every scope's id, so a row dropped here would under-count
+    // what is still installed and remove a marketplace a project is using.
+    {
+      name: "a record outside the user scope is malformed",
+      arrange: () => writeList([{ id: 7, scope: "project", installPath: "" }]),
+      reason: "plugin id",
+    },
     {
       name: "settings.json does not parse",
       arrange: () => writeSettings("not json\n"),

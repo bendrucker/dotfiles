@@ -345,8 +345,14 @@ function updatePlugin(
 
 // Denied the job's stdin, so a prompt-happy CLI cannot swallow what the job is
 // working through and leave every plugin after it silently unattempted.
+//
+// Run from the root rather than from wherever the caller stood. An uninstall and
+// a marketplace removal both name no scope, and `claude` resolves a project
+// scope from its working directory, so a hand run started inside a checkout
+// would edit that project's own .claude/settings.json. launchd already gives the
+// nightly run the root, so this is what the automated path has always done.
 function claude(out: Output, args: string[], env: Record<string, string | undefined>): number {
-  return out.run(["claude", ...args], { env, stdin: "ignore" });
+  return out.run(["claude", ...args], { cwd: "/", env, stdin: "ignore" });
 }
 
 // herdr owns user/hooks/herdr-agent-state.sh. Its installer writes the script
