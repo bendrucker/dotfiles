@@ -126,11 +126,10 @@ function runList() {
   }
 }
 
-// One of settings.json's maps, keys and values both, or undefined when the file
-// is not there. Reading it separately from the views below is what keeps them
-// from disagreeing about what the file names, and the absent case is theirs to
-// interpret: it enables nothing, and it declares nothing either, which are
-// different answers to a caller that uninstalls.
+// Reading it separately from the views below is what keeps them from disagreeing
+// about what the file names, and the absent case is theirs to interpret: it
+// enables nothing, and it declares nothing either, which are different answers
+// to a caller that uninstalls.
 function settingsMap(key: string): Record<string, unknown> | undefined {
   const path = join(home(), ".claude", "settings.json");
   if (!isFile(path)) return undefined;
@@ -238,17 +237,14 @@ function bestPath(recorded: string[]): string {
   return best;
 }
 
-// The marketplace names Claude Code has registered, or why the registry could
-// not be read. A file that is not there is a machine with nothing registered,
-// which is a real answer: it names nothing for a prune to remove.
+// A file that is not there is a machine with nothing registered, which is a real
+// answer: it names nothing for a prune to remove.
 export type Registry = { ok: true; names: string[] } | { ok: false; reason: string };
 
-// The marketplaces backing a plugin, or why the listing could not be read. Same
-// reasoning as the inventory: an empty set read off a failure would remove every
-// marketplace whose plugins the listing never reported.
+// An empty set read off a failure would remove every marketplace whose plugins
+// the listing never reported.
 export type MarketplaceUse = { ok: true; names: Set<string> } | { ok: false; reason: string };
 
-// Every name settings.json declares under extraKnownMarketplaces.
 export function declaredMarketplaces(): Declaration {
   let named: Record<string, unknown> | undefined;
   try {
@@ -257,9 +253,8 @@ export function declaredMarketplaces(): Declaration {
     return { ok: false, reason: describe(error) };
   }
 
-  // Absent means the same here as it does for the plugins: nothing declares what
-  // belongs, and reading that as an empty declaration would remove every
-  // marketplace on the machine.
+  // Absent means nothing declares what belongs, and reading that as an empty
+  // declaration would remove every marketplace on the machine.
   if (named === undefined) {
     return {
       ok: false,
