@@ -5,10 +5,18 @@
 -- nvim happened to finish installing the parsers first, which is a race against
 -- the fire-and-forget install in config.treesitter.
 
--- One budget across every attempt, so a stalled download cannot multiply into
--- the CI job's own timeout and replace these diagnostics with a killed runner.
-local INSTALL_BUDGET_MS = 600000
-local ATTEMPTS = 3
+-- A healthy install of every language completes in under a minute. Bounding
+-- each attempt separately caps what one stalled download can consume, leaving
+-- the rest of the budget for the retries.
+local INSTALL_BUDGET_MS = 300000
+local ATTEMPT_TIMEOUT_MS = 120000
+
+-- Backoff seconds. A 504 from the tarball host clears within seconds, which
+-- outlasts back-to-back retries. curl's own --retry does not cover it: the 504
+-- arrives mid-transfer and surfaces as exit 56 rather than an HTTP status,
+-- which is outside curl's transient-error set.
+local BACKOFF_S = { 5, 10, 20, 40 }
+local ATTEMPTS = #BACKOFF_S + 1
 
 local failures = {}
 
@@ -54,20 +62,34 @@ end
 -- linked would otherwise never be attempted again.
 local started = vim.uv.hrtime()
 local pending = languages
+local attempts_made = 0
 for attempt = 1, ATTEMPTS do
-  local remaining = INSTALL_BUDGET_MS - (vim.uv.hrtime() - started) / 1e6
+  local budget = INSTALL_BUDGET_MS - (vim.uv.hrtime() - started) / 1e6
+  local remaining = math.floor(math.min(ATTEMPT_TIMEOUT_MS, budget))
   if remaining <= 0 then
+    note("install budget of %ds exhausted after %d attempt(s)", math.floor(INSTALL_BUDGET_MS / 1000), attempt - 1)
     break
   end
 
-  require("nvim-treesitter").install(pending, { force = attempt > 1 }):wait(remaining)
+  attempts_made = attempt
+  -- pwait, because wait() raises on timeout, replacing the FAIL: lines with a
+  -- traceback.
+  local finished, reason =
+    require("nvim-treesitter").install(pending, { force = attempt > 1 }):pwait(remaining)
   pending = not_installed(pending)
   if #pending == 0 then
     break
   end
+  if not finished then
+    -- The task is still running, and a second install() writes the same
+    -- download cache.
+    note("attempt %d stopped after %ds: %s", attempt, math.floor(remaining / 1000), tostring(reason))
+    break
+  end
   if attempt < ATTEMPTS then
-    note("attempt %d left %d parser(s) uninstalled, retrying: %s",
-      attempt, #pending, table.concat(pending, ", "))
+    note("attempt %d left %d parser(s) uninstalled, retrying in %ds: %s",
+      attempt, #pending, BACKOFF_S[attempt], table.concat(pending, ", "))
+    vim.uv.sleep(BACKOFF_S[attempt] * 1000)
   end
 end
 
@@ -76,7 +98,7 @@ end
 local unavailable = {}
 for _, lang in ipairs(pending) do
   unavailable[lang] = true
-  fail("%s: parser missing from %s after %d install attempts", lang, parser_dir, ATTEMPTS)
+  fail("%s: parser missing from %s after %d install attempt(s)", lang, parser_dir, attempts_made)
 end
 
 -- Make the parsers installed above visible to language.add() in this session.
