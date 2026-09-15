@@ -5,8 +5,10 @@ import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 const support = join(repoRoot, "neovim", "support");
 
 // A cold runner starts nvim slowly and builds a treesitter parser per declared
-// language, both well past the 5s a bun test gets by default.
-const timeout = 300_000;
+// language, both well past the 5s a bun test gets by default. Sits above the
+// budget treesitter_check.lua enforces, so that script stops a stalled download
+// and reports which language stalled.
+const timeout = 420_000;
 
 // nvim drops an nvim.log beside wherever it was started when something goes
 // wrong, so it starts somewhere disposable rather than in the repo.
