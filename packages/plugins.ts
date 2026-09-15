@@ -69,9 +69,11 @@ export function pluginInventory(): Inventory {
   return { ok: true, plugins: chooseInstallPaths(rows) };
 }
 
-// `claude plugin update` works at user scope, so a plugin a project or a
-// settings.local.json enabled is out of scope and not this job's to update.
-function listedPlugins(): InstalledPlugin[] {
+interface ListedPlugin extends InstalledPlugin {
+  scope: string;
+}
+
+function listedRows(): ListedPlugin[] {
   const run = runList();
   if (run.exitCode !== 0) throw new Error("claude plugin list failed");
 
@@ -81,19 +83,27 @@ function listedPlugins(): InstalledPlugin[] {
   const listed = captured === "" ? [] : parse(captured, "claude plugin list");
   if (!Array.isArray(listed)) throw new Error("claude plugin list did not report an array");
 
-  const rows: InstalledPlugin[] = [];
+  const rows: ListedPlugin[] = [];
   for (const entry of listed) {
     if (entry === null) continue;
     if (!isRecord(entry)) {
       throw new Error("claude plugin list reported an entry that is not an object");
     }
-    if (entry.scope !== "user") continue;
     rows.push({
       id: text(entry.id, "a plugin id"),
       installPath: text(entry.installPath, "an installPath"),
+      scope: text(entry.scope, "a scope"),
     });
   }
   return rows;
+}
+
+// `claude plugin update` works at user scope, so a project's plugin is not this
+// job's to update.
+function listedPlugins(): InstalledPlugin[] {
+  return listedRows()
+    .filter((row) => row.scope === "user")
+    .map(({ id, installPath }) => ({ id, installPath }));
 }
 
 function runList() {
@@ -116,12 +126,9 @@ function runList() {
   }
 }
 
-// settings.json's whole enabledPlugins map, keys and values both, or undefined
-// when the file is not there. Reading it separately from the two views below is
-// what keeps them from disagreeing about which plugins the file names, and the
-// absent case is theirs to interpret: it enables nothing, and it declares
-// nothing either, which are different answers to a caller that uninstalls.
-function settingsPlugins(): Record<string, unknown> | undefined {
+// The absent case is the caller's to interpret. Enabling nothing and declaring
+// nothing are different answers to a caller that uninstalls.
+function settingsMap(key: string): Record<string, unknown> | undefined {
   const path = join(home(), ".claude", "settings.json");
   if (!isFile(path)) return undefined;
 
@@ -136,10 +143,14 @@ function settingsPlugins(): Record<string, unknown> | undefined {
   if (settings === null) return {};
   if (!isRecord(settings)) throw new Error("settings.json does not hold an object");
 
-  const enabled = settings.enabledPlugins;
-  if (enabled === undefined || enabled === null || enabled === false) return {};
-  if (!isRecord(enabled)) throw new Error("settings.json enabledPlugins is not an object");
-  return enabled;
+  const named = settings[key];
+  if (named === undefined || named === null || named === false) return {};
+  if (!isRecord(named)) throw new Error(`settings.json ${key} is not an object`);
+  return named;
+}
+
+function settingsPlugins(): Record<string, unknown> | undefined {
+  return settingsMap("enabledPlugins");
 }
 
 function enabledPlugins(): InstalledPlugin[] {
@@ -151,28 +162,29 @@ function enabledPlugins(): InstalledPlugin[] {
     .map(([id]) => ({ id, installPath: "" }));
 }
 
-// Every id settings.json names, an explicitly disabled one included. A key set
-// to false declares a plugin that is installed and turned off, so its payload is
-// meant to stay.
-export function declaredPlugins(): Declaration {
+// What a broken symlink into the config repo leaves behind. Reading it as an
+// empty declaration would remove everything the key governs.
+function readDeclaration(key: string, subject: string): Declaration {
   let named: Record<string, unknown> | undefined;
   try {
-    named = settingsPlugins();
+    named = settingsMap(key);
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
 
-  // A file that is not there declares nothing and permits nothing. It is the
-  // shape a broken symlink into the config repo leaves behind, and reading it as
-  // an empty declaration would uninstall every plugin on the machine. A file
-  // that is there and names no plugins is a real declaration of none.
   if (named === undefined) {
     return {
       ok: false,
-      reason: "settings.json is not there, so nothing declares which plugins belong",
+      reason: `settings.json is not there, so nothing declares which ${subject} belong`,
     };
   }
   return { ok: true, ids: new Set(Object.keys(named)) };
+}
+
+// A key set to false declares a plugin installed and turned off, so its payload
+// is meant to stay.
+export function declaredPlugins(): Declaration {
+  return readDeclaration("enabledPlugins", "plugins");
 }
 
 // The user-scope payloads `claude plugin list` reports, without the
@@ -224,9 +236,61 @@ function bestPath(recorded: string[]): string {
   return best;
 }
 
-// Split on the last `@`. A plugin name may carry one of its own, so the
-// marketplace is whatever follows the final separator. An id with no separator
-// names neither half on its own, and both callers below read it as both.
+export type Registry = { ok: true; names: string[] } | { ok: false; reason: string };
+
+export type MarketplaceUse = { ok: true; names: Set<string> } | { ok: false; reason: string };
+
+export function declaredMarketplaces(): Declaration {
+  return readDeclaration("extraKnownMarketplaces", "marketplaces");
+}
+
+// What `claude plugin marketplace update` walks. A bare `marketplace add` lands
+// here too, so it holds more than settings.json names.
+export function knownMarketplaces(): Registry {
+  const path = join(claudePluginsDir(), "known_marketplaces.json");
+  // Only absence reads as an empty registry; an unreadable file fails below.
+  if (!existsSync(path)) return { ok: true, names: [] };
+
+  let captured: string;
+  try {
+    captured = readFileSync(path, "utf8");
+  } catch (error) {
+    return { ok: false, reason: `known_marketplaces.json could not be read: ${describe(error)}` };
+  }
+
+  let registered: unknown;
+  try {
+    registered = parse(captured, "known_marketplaces.json");
+  } catch (error) {
+    return { ok: false, reason: describe(error) };
+  }
+  if (registered === null) return { ok: true, names: [] };
+  if (!isRecord(registered)) {
+    return { ok: false, reason: "known_marketplaces.json does not hold an object" };
+  }
+  return { ok: true, names: Object.keys(registered) };
+}
+
+// At every scope: a project's plugin gets no user-scope key, so a prune reading
+// the declaration alone would remove its marketplace out from under it.
+export function pluginMarketplaces(): MarketplaceUse {
+  let rows: ListedPlugin[];
+  try {
+    rows = listedRows();
+  } catch (error) {
+    return { ok: false, reason: describe(error) };
+  }
+
+  const names = new Set<string>();
+  for (const row of rows) {
+    if (row.id === "") continue;
+    names.add(splitPluginId(row.id).marketplace);
+  }
+  return { ok: true, names };
+}
+
+// A plugin name may carry an `@` of its own, so the marketplace follows the
+// final separator. An id with no separator is read as both halves.
 export function splitPluginId(id: string): { name: string; marketplace: string } {
   const separator = id.lastIndexOf("@");
   if (separator === -1) return { name: id, marketplace: id };

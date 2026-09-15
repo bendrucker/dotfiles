@@ -20,11 +20,14 @@ import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  declaredMarketplaces,
   declaredPlugins,
   type InstalledPlugin,
   installedPlugins,
+  knownMarketplaces,
   pluginDependencies,
   pluginInventory,
+  pluginMarketplaces,
   pluginSource,
 } from "#plugins";
 import {
@@ -207,6 +210,53 @@ export function prunePlugins(out: Output, env: Record<string, string | undefined
   return true;
 }
 
+// Claude Code registers a marketplace on its own when a session browses one, so
+// the registry outgrows the declaration and re-fetches what nothing names. A
+// marketplace backing an installed plugin is kept anyway, at every scope. The
+// removal names no scope, which the CLI refuses without a user declaration.
+export function pruneMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
+  log(out, "info", "Pruning undeclared marketplaces...");
+
+  // No failure below reads as an empty set, which would take every marketplace.
+  const declared = declaredMarketplaces();
+  if (!declared.ok) {
+    log(out, "warn", "Could not read which marketplaces settings.json declares");
+    out.write(2, `claude-marketplaces: ${declared.reason}\n`);
+    return false;
+  }
+
+  const used = pluginMarketplaces();
+  if (!used.ok) {
+    log(out, "warn", "Could not read which marketplaces have plugins installed");
+    out.write(2, `claude-marketplaces: ${used.reason}\n`);
+    return false;
+  }
+
+  const known = knownMarketplaces();
+  if (!known.ok) {
+    log(out, "warn", "Could not enumerate registered marketplaces");
+    out.write(2, `claude-marketplaces: ${known.reason}\n`);
+    return false;
+  }
+
+  let failed = 0;
+  for (const name of known.names) {
+    if (name === "" || declared.ids.has(name) || used.names.has(name)) continue;
+
+    log(out, "info", `Removing ${name} (no longer declared)...`);
+    if (claude(out, ["plugin", "marketplace", "remove", name], env) !== 0) {
+      log(out, "warn", `Failed to remove ${name}`);
+      failed += 1;
+    }
+  }
+
+  if (failed > 0) {
+    log(out, "warn", `${failed} marketplace(s) failed to remove`);
+    return false;
+  }
+  return true;
+}
+
 export function updatePlugins(out: Output, env: Record<string, string | undefined>): boolean {
   log(out, "info", "Updating plugins...");
 
@@ -281,9 +331,11 @@ function updatePlugin(
 }
 
 // Denied the job's stdin, so a prompt-happy CLI cannot swallow what the job is
-// working through and leave every plugin after it silently unattempted.
+// working through and leave every plugin after it silently unattempted. Run from
+// the root, where launchd already puts the nightly: `claude` resolves a project
+// scope from its cwd, and the scopeless removals would edit that project.
 function claude(out: Output, args: string[], env: Record<string, string | undefined>): number {
-  return out.run(["claude", ...args], { env, stdin: "ignore" });
+  return out.run(["claude", ...args], { cwd: "/", env, stdin: "ignore" });
 }
 
 // herdr owns user/hooks/herdr-agent-state.sh. Its installer writes the script
@@ -495,6 +547,10 @@ export function sync(out: Output, repoDir: string, options: AuditOptions = {}): 
 
   // Before the update pass, so a payload on its way out is not refreshed first.
   if (!prunePlugins(out, env)) status = 1;
+
+  // After the plugin prune so a marketplace losing its last plugin goes with it,
+  // before the update so a clone on its way out is not fetched first.
+  if (!pruneMarketplaces(out, env)) status = 1;
 
   updateMarketplaces(out, env);
 
