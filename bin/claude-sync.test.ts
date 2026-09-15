@@ -232,8 +232,6 @@ function writeSettings(
   );
 }
 
-// The registry Claude Code keeps for itself, which is what a marketplace prune
-// reads rather than the clones on disk.
 function writeKnownMarketplaces(names: string[]): void {
   const dir = join(sandbox, ".claude", "plugins");
   mkdirSync(dir, { recursive: true });
@@ -599,9 +597,7 @@ describe("pruneMarketplaces", () => {
     expect(readLog("plugin.log")).not.toContain("marketplace remove first");
   });
 
-  // Claude Code installs a project's plugins at project scope without writing a
-  // user-scope key for either the plugin or its marketplace, so the declaration
-  // alone would remove the marketplace out from under one.
+  // A project's plugins get no user-scope key.
   test("keeps a marketplace a plugin outside the user scope came from", () => {
     writePluginList([
       { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
@@ -620,8 +616,7 @@ describe("pruneMarketplaces", () => {
     expect(readLog("plugin.log")).toBe("");
   });
 
-  // A declaration that could not be read accounts for nothing, and acting on it
-  // would remove every marketplace on the machine.
+  // Acting on a declaration nothing could read would remove every marketplace.
   test("removes nothing when the declaration cannot be read", () => {
     writeFileSync(join(sandbox, ".claude", "settings.json"), "not json\n");
 
@@ -638,8 +633,7 @@ describe("pruneMarketplaces", () => {
     expect(readLog("plugin.log")).toBe("");
   });
 
-  // A listing that could not be read names no marketplace as in use, so every
-  // registration would read as unaccounted for.
+  // An unreadable listing names nothing in use, so every name reads unaccounted.
   test("removes nothing when the installed plugins cannot be enumerated", () => {
     writeFileSync(join(sandbox, "plugin-list.json"), "not json\n");
     writeKnownMarketplaces(["first", "stray"]);
@@ -648,8 +642,7 @@ describe("pruneMarketplaces", () => {
     expect(readLog("plugin.log")).toBe("");
   });
 
-  // Reading an unparseable registry as empty would report success over a prune
-  // that never ran.
+  // Reading it as empty would report success over a prune that never ran.
   test("fails when the registry cannot be read", () => {
     writeFileSync(join(sandbox, ".claude", "plugins", "known_marketplaces.json"), "not json\n");
 
@@ -1202,8 +1195,7 @@ describe("sync", () => {
     expect(log.indexOf("Installing moshi")).toBeLessThan(log.indexOf("Updating marketplaces"));
   });
 
-  // The marketplace prune sits between the two, so a marketplace whose last
-  // plugin went tonight goes with it and its clone is not fetched on the way out.
+  // So a marketplace losing its last plugin goes with it, unfetched on the way.
   test("prunes marketplaces after the plugins and before the refresh", () => {
     expect(sync(out, repo, { audit: auditStub(0) })).toBe(0);
     const log = out.captured();

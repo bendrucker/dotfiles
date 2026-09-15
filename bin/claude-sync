@@ -210,27 +210,14 @@ export function prunePlugins(out: Output, env: Record<string, string | undefined
   return true;
 }
 
-// Remove the marketplaces settings.json no longer names.
-//
-// `claude plugin marketplace add` writes the name into extraKnownMarketplaces,
-// and Claude Code also registers one on its own when a session browses it, so
-// the registry holds names the declaration never carried. Without this a
-// marketplace nothing declares stays registered and is re-fetched every night.
-//
-// A marketplace backing an installed plugin is kept whatever the declaration
-// says. The listing covers every scope rather than the user scope the update
-// pass works in, because a project installs a plugin without writing a user-
-// scope key and removing its marketplace leaves it with no source.
-//
-// The removal names no scope. The CLI refuses a user-scoped one for a
-// marketplace with no user declaration, which is exactly the set this removes.
+// Claude Code registers a marketplace on its own when a session browses one, so
+// the registry outgrows the declaration and re-fetches what nothing names. A
+// marketplace backing an installed plugin is kept anyway, at every scope. The
+// removal names no scope, which the CLI refuses without a user declaration.
 export function pruneMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
   log(out, "info", "Pruning undeclared marketplaces...");
 
-  // None of the three failures can be read as an empty set: an unreadable
-  // declaration or plugin listing accounts for nothing and would take every
-  // marketplace with it, and an unreadable registry would report success over a
-  // prune that never ran.
+  // No failure below reads as an empty set, which would take every marketplace.
   const declared = declaredMarketplaces();
   if (!declared.ok) {
     log(out, "warn", "Could not read which marketplaces settings.json declares");
@@ -344,13 +331,9 @@ function updatePlugin(
 }
 
 // Denied the job's stdin, so a prompt-happy CLI cannot swallow what the job is
-// working through and leave every plugin after it silently unattempted.
-//
-// Run from the root rather than from wherever the caller stood. An uninstall and
-// a marketplace removal both name no scope, and `claude` resolves a project
-// scope from its working directory, so a hand run started inside a checkout
-// would edit that project's own .claude/settings.json. launchd already gives the
-// nightly run the root, so this is what the automated path has always done.
+// working through and leave every plugin after it silently unattempted. Run from
+// the root, where launchd already puts the nightly: `claude` resolves a project
+// scope from its cwd, and the scopeless removals would edit that project.
 function claude(out: Output, args: string[], env: Record<string, string | undefined>): number {
   return out.run(["claude", ...args], { cwd: "/", env, stdin: "ignore" });
 }
@@ -565,9 +548,8 @@ export function sync(out: Output, repoDir: string, options: AuditOptions = {}): 
   // Before the update pass, so a payload on its way out is not refreshed first.
   if (!prunePlugins(out, env)) status = 1;
 
-  // After the plugin prune, so a marketplace whose last plugin went tonight goes
-  // with it, and before the marketplace update, so a clone on its way out is not
-  // fetched first.
+  // After the plugin prune so a marketplace losing its last plugin goes with it,
+  // before the update so a clone on its way out is not fetched first.
   if (!pruneMarketplaces(out, env)) status = 1;
 
   updateMarketplaces(out, env);

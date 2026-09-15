@@ -294,10 +294,8 @@ describe("unreadable inventory", () => {
       arrange: () => writeList([{ id: 7, scope: "user", installPath: "" }]),
       reason: "plugin id",
     },
-    // A malformed row outside the user scope stops the read rather than being
-    // skipped as out of the update pass's reach. pruneMarketplaces builds its
-    // keep-set from every scope's id, so a row dropped here would under-count
-    // what is still installed and remove a marketplace a project is using.
+    // pruneMarketplaces keys on every scope's id, so skipping a malformed
+    // non-user row would under-count what is installed.
     {
       name: "a record outside the user scope is malformed",
       arrange: () => writeList([{ id: 7, scope: "project", installPath: "" }]),
@@ -453,8 +451,6 @@ describe("declaredMarketplaces", () => {
     expect([...read.ids].sort()).toEqual(["first", "second"]);
   });
 
-  // A file that is there and names no marketplaces is a real declaration of
-  // none, which is a different answer from a file nothing could read.
   test("declares nothing when the file names no marketplaces", () => {
     writeSettings({ env: {} });
     const read = declaredMarketplaces();
@@ -462,8 +458,7 @@ describe("declaredMarketplaces", () => {
     expect([...read.ids]).toEqual([]);
   });
 
-  // The shape a broken symlink into the config repo leaves behind. Reading it as
-  // an empty declaration is what would remove every marketplace on the machine.
+  // What a broken symlink into the config repo leaves behind.
   test("fails when settings.json is not there", () => {
     rmSync(join(sandbox, ".claude", "settings.json"), { force: true });
     expect(declaredMarketplaces().ok).toBe(false);
@@ -488,16 +483,12 @@ describe("knownMarketplaces", () => {
     expect(read.names.sort()).toEqual(["first", "second"]);
   });
 
-  // Nothing registered is a real answer rather than a failure: it names nothing
-  // for a prune to remove, so there is no decision to get wrong.
   test("names nothing when the registry is not there", () => {
     const read = knownMarketplaces();
     if (!read.ok) throw new Error(read.reason);
     expect(read.names).toEqual([]);
   });
 
-  // Reading an unparseable registry as empty would let a prune report success
-  // over registrations it never saw.
   test("fails on a registry nothing can parse", () => {
     writeRegistry("not json\n");
     expect(knownMarketplaces().ok).toBe(false);
@@ -508,8 +499,7 @@ describe("knownMarketplaces", () => {
     expect(knownMarketplaces().ok).toBe(false);
   });
 
-  // Only absence reads as an empty registry. A path that is there and cannot be
-  // read is a prune that would report success over registrations it never saw.
+  // Only absence reads as empty, never an unreadable path.
   test("fails when the registry path is not a readable file", () => {
     mkdirSync(join(plugins, "known_marketplaces.json"), { recursive: true });
     expect(knownMarketplaces().ok).toBe(false);
@@ -523,9 +513,7 @@ describe("pluginMarketplaces", () => {
     return [...read.names].sort();
   }
 
-  // The update pass works at user scope, but a marketplace backs its plugins at
-  // every scope, and removing one out from under a project plugin leaves it with
-  // no source.
+  // Removing one out from under a project plugin leaves it with no source.
   test("reads every scope rather than the user one", () => {
     writeList([
       { id: "alpha@first", scope: "user", installPath: "" },
@@ -535,8 +523,7 @@ describe("pluginMarketplaces", () => {
     expect(used()).toEqual(["first", "second", "third"]);
   });
 
-  // An id with no separator names neither half on its own, so it is kept as a
-  // marketplace name too. Over-keeping is the safe direction for a prune.
+  // Over-keeping is the safe direction for a prune.
   test("reads an id with no separator as its own marketplace", () => {
     writeList([{ id: "loose", scope: "user", installPath: "" }]);
     expect(used()).toEqual(["loose"]);

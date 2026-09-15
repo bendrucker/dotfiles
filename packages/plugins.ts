@@ -98,8 +98,8 @@ function listedRows(): ListedPlugin[] {
   return rows;
 }
 
-// `claude plugin update` works at user scope, so a plugin a project or a
-// settings.local.json enabled is out of scope and not this job's to update.
+// `claude plugin update` works at user scope, so a project's plugin is not this
+// job's to update.
 function listedPlugins(): InstalledPlugin[] {
   return listedRows()
     .filter((row) => row.scope === "user")
@@ -126,10 +126,8 @@ function runList() {
   }
 }
 
-// Reading it separately from the views below is what keeps them from disagreeing
-// about what the file names, and the absent case is theirs to interpret: it
-// enables nothing, and it declares nothing either, which are different answers
-// to a caller that uninstalls.
+// The absent case is the caller's to interpret. Enabling nothing and declaring
+// nothing are different answers to a caller that uninstalls.
 function settingsMap(key: string): Record<string, unknown> | undefined {
   const path = join(home(), ".claude", "settings.json");
   if (!isFile(path)) return undefined;
@@ -164,10 +162,8 @@ function enabledPlugins(): InstalledPlugin[] {
     .map(([id]) => ({ id, installPath: "" }));
 }
 
-// A file that is not there declares nothing and permits nothing. It is the shape
-// a broken symlink into the config repo leaves behind, and reading it as an
-// empty declaration would remove everything the key governs. A file that is
-// there and names nothing is a real declaration of none.
+// What a broken symlink into the config repo leaves behind. Reading it as an
+// empty declaration would remove everything the key governs.
 function readDeclaration(key: string, subject: string): Declaration {
   let named: Record<string, unknown> | undefined;
   try {
@@ -185,9 +181,8 @@ function readDeclaration(key: string, subject: string): Declaration {
   return { ok: true, ids: new Set(Object.keys(named)) };
 }
 
-// Every id settings.json names, an explicitly disabled one included. A key set
-// to false declares a plugin that is installed and turned off, so its payload is
-// meant to stay.
+// A key set to false declares a plugin installed and turned off, so its payload
+// is meant to stay.
 export function declaredPlugins(): Declaration {
   return readDeclaration("enabledPlugins", "plugins");
 }
@@ -241,26 +236,19 @@ function bestPath(recorded: string[]): string {
   return best;
 }
 
-// A file that is not there is a machine with nothing registered, which is a real
-// answer: it names nothing for a prune to remove.
 export type Registry = { ok: true; names: string[] } | { ok: false; reason: string };
 
-// An empty set read off a failure would remove every marketplace whose plugins
-// the listing never reported.
 export type MarketplaceUse = { ok: true; names: Set<string> } | { ok: false; reason: string };
 
 export function declaredMarketplaces(): Declaration {
   return readDeclaration("extraKnownMarketplaces", "marketplaces");
 }
 
-// The registry Claude Code keeps for itself, which is what `claude plugin
-// marketplace update` walks. A name reaches it from a settings declaration and
-// also from a bare `marketplace add`, so it holds more than settings.json names.
+// What `claude plugin marketplace update` walks. A bare `marketplace add` lands
+// here too, so it holds more than settings.json names.
 export function knownMarketplaces(): Registry {
   const path = join(claudePluginsDir(), "known_marketplaces.json");
-  // Absence is the only shape that reads as an empty registry. A path that is
-  // there and is not a readable file falls through to the read below and arrives
-  // as a failure, rather than as a prune that quietly found nothing to do.
+  // Only absence reads as an empty registry; an unreadable file fails below.
   if (!existsSync(path)) return { ok: true, names: [] };
 
   let captured: string;
@@ -283,10 +271,8 @@ export function knownMarketplaces(): Registry {
   return { ok: true, names: Object.keys(registered) };
 }
 
-// The marketplaces an installed plugin came from, at every scope rather than the
-// user scope the update pass works in. A project or a settings.local.json
-// installs a plugin without writing a user-scope key for it, so a prune reading
-// the user declaration alone would remove the marketplace out from under it.
+// At every scope: a project's plugin gets no user-scope key, so a prune reading
+// the declaration alone would remove its marketplace out from under it.
 export function pluginMarketplaces(): MarketplaceUse {
   let rows: ListedPlugin[];
   try {
@@ -303,9 +289,8 @@ export function pluginMarketplaces(): MarketplaceUse {
   return { ok: true, names };
 }
 
-// A plugin name may carry an `@` of its own, so the marketplace is whatever
-// follows the final separator. An id with no separator names neither half on
-// its own, and its callers read it as both.
+// A plugin name may carry an `@` of its own, so the marketplace follows the
+// final separator. An id with no separator is read as both halves.
 export function splitPluginId(id: string): { name: string; marketplace: string } {
   const separator = id.lastIndexOf("@");
   if (separator === -1) return { name: id, marketplace: id };
