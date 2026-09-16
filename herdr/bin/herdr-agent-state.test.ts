@@ -193,6 +193,20 @@ describe("herdr-agent-state", () => {
     expect(reported(box)).toEqual([]);
   });
 
+  // Working again is the only thing that clears this one, a turn that herdr
+  // called done included. A question answered inside one poll gap leaves the
+  // mark up, which is the direction chosen: a question still waiting is never
+  // drawn as finished.
+  test("holds a blocked latch through a turn that ended", () => {
+    snapshot(box, [
+      { pane_id: "p1", agent: "claude", agent_status: "done", tokens: { agent_blocked: "?" } },
+    ]);
+    seed(box, { p1: { lastStatus: "blocked", lastWorkingAt: Date.now() } });
+
+    expect(state(box).status).toBe(0);
+    expect(reported(box)).toEqual([]);
+  });
+
   test("clears a blocked latch when the agent works again", () => {
     snapshot(box, [
       { pane_id: "p1", agent: "claude", agent_status: "working", tokens: { agent_blocked: "?" } },
