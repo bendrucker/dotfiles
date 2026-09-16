@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+# Usage: brew-managed-machine [managed-preferences-dir]
+#
+# Exit 0 where another manager owns this machine's applications, which tells
+# scripts/install to set HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS. See the
+# Externally Managed Casks section of CLAUDE.md.
+
+[ "$(uname -s)" = "Darwin" ] || exit 1
+
+# The same test the root Brewfile makes for `corporate`. Keep the two in step.
+managed="${1:-/Library/Managed Preferences}"
+[ -d "$managed" ] || exit 1
+
+# A directory that cannot be listed answers "managed". Leaving a self-updating
+# cask alone costs nothing, guessing the other way reproduces the failure.
+if ! profiles=$(ls -A "$managed" 2>/dev/null); then
+  echo "brew-managed-machine: cannot list $managed, so this machine is treated as managed." >&2
+  exit 0
+fi
+
+[ -n "$profiles" ]
