@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 
 const script = join(repoRoot, "scripts", "install-topics");
@@ -17,11 +16,9 @@ afterEach(() => {
   box.remove();
 });
 
+/** An installer that records the path it ran as, so order is assertable. */
 function installer(path: string) {
-  const target = join(root, path);
-  mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, `#!/bin/sh\necho ${path} >> "$LOG"\n`);
-  chmodSync(target, 0o755);
+  box.stub(join("root", path), `echo ${path} >> "$LOG"`);
 }
 
 /** The url key is what a section carries besides path, so the read has to pass it over. */
@@ -29,7 +26,7 @@ function submodules(...paths: string[]) {
   const sections = paths.map(
     (path) => `[submodule "${path}"]\n\tpath = ${path}\n\turl = https://example.test/${path}.git\n`,
   );
-  writeFileSync(join(root, ".gitmodules"), sections.join(""));
+  box.write("root/.gitmodules", sections.join(""));
 }
 
 function install() {
@@ -102,11 +99,23 @@ describe("install-topics", () => {
     expect(ran()).toEqual(["bat/install.sh"]);
   });
 
+  test("refuses to guess when .gitmodules cannot be read", () => {
+    box.write("root/.gitmodules", "this is not a config file\n");
+    installer("vendor/install.sh");
+
+    // Reading an unparsable .gitmodules as "declares nothing" would run the
+    // installer of whatever it does declare.
+    const result = install();
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("cannot read .gitmodules");
+    expect(ran()).toEqual([]);
+  });
+
   test("stops at a failing installer", () => {
     installer("a-topic/install.sh");
     installer("b-topic/install.sh");
     installer("c-topic/install.sh");
-    writeFileSync(join(root, "b-topic", "install.sh"), "#!/bin/sh\nexit 3\n");
+    box.stub(join("root", "b-topic", "install.sh"), "exit 3");
 
     // The glob is sorted, so b-topic runs between the other two.
     const result = install();

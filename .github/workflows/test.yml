@@ -277,6 +277,26 @@ jobs:
             echo "$deep"
             exit 1
           fi
+      - name: Check topic installers are discoverable
+        run: |
+          # scripts/install-topics globs <topic>/install.sh. One nested deeper
+          # is never found, and one without the exec bit aborts the install.
+          bad=$(find . -name 'install.sh' -not -path './.git/*' \
+            -not -path './node_modules/*' -not -perm -u+x)
+          if [[ -n "$bad" ]]; then
+            echo "ERROR: a topic installer that is not executable aborts scripts/install."
+            echo "Run chmod +x on:"
+            echo "$bad"
+            exit 1
+          fi
+          deep=$(find . -mindepth 3 -name 'install.sh' -not -path './.git/*' \
+            -not -path './node_modules/*')
+          if [[ -n "$deep" ]]; then
+            echo "ERROR: scripts/install-topics only globs one level down."
+            echo "Move to <topic>/install.sh:"
+            echo "$deep"
+            exit 1
+          fi
       - name: Check private-use glyphs are declared
         run: bin/glyph-scan
 

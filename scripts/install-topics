@@ -24,16 +24,30 @@ cd "$DOTFILES_ROOT"
 # submodules at all and let their installers run.
 declares_submodule() {
   [ -f .gitmodules ] || return 1
+
   # --fixed-value compares the value literally, so a path holding a space or a
   # regex metacharacter matches as itself. A section name may hold a space too,
   # which is why the match is git's to make rather than something to cut apart.
   git config -f .gitmodules --get-regexp --fixed-value \
     '^submodule\..*\.path$' "$1" >/dev/null
+  status=$?
+
+  # 1 is "no section matched", the answer for an ordinary topic. Anything else
+  # is a .gitmodules this run could not read, and reading that as "not a
+  # submodule" runs an installer that is not ours. A condition context turns
+  # off set -e, so the abort has to be spelled out here.
+  case $status in
+    0 | 1) return $status ;;
+  esac
+  echo "install-topics: cannot read .gitmodules (git config exited $status)" >&2
+  exit $status
 }
 
 for installer in */install.sh; do
-  # A glob that matches nothing stays literal in sh
-  [ -f "$installer" ] || continue
+  # A glob that matches nothing stays literal in sh. -e rather than -f so that
+  # an install.sh which is somehow a directory fails loudly on the exec below
+  # instead of reading as a topic that has no installer.
+  [ -e "$installer" ] || continue
 
   topic=${installer%/install.sh}
   # scripts/install sources mise/install.sh ahead of this, so the runtimes it
