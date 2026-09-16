@@ -35,7 +35,7 @@ function stubHerdr(box: Sandbox, reportStatus = 0): void {
 
 const statePath = "state/dotfiles/herdr-agent-state.json";
 
-/** Seed the record the script reads back, which is how a test sets the clock. */
+/** This is how a test sets the clock. */
 function seed(box: Sandbox, activity: Record<string, { lastStatus: string; lastWorkingAt: number }>): void {
   box.write(statePath, JSON.stringify(activity));
 }
