@@ -222,6 +222,14 @@ describe("herdr-agent-state", () => {
     expect(reported(box)).toEqual([]);
   });
 
+  test("ignores a pane the snapshot gave no id", () => {
+    snapshot(box, [{ pane_id: "", agent: "claude", agent_status: "blocked" }]);
+
+    expect(state(box).status).toBe(0);
+    expect(reported(box)).toEqual([]);
+    expect(recorded(box)).toEqual({});
+  });
+
   test("forgets a pane the snapshot no longer carries", () => {
     snapshot(box, [{ pane_id: "p2", agent: "claude", agent_status: "working" }]);
     seed(box, {
@@ -248,6 +256,17 @@ describe("herdr-agent-state", () => {
     expect(r.stderr).toContain("could not report");
     expect(linesFor(box, "p1")).toContain("--token agent_blocked=?");
     expect(linesFor(box, "p2")).toContain("--token agent_done=✓");
+  });
+
+  // Advancing lastStatus past the transition would retire the only evidence the
+  // mark was due, so the pane would sit unmarked until it worked again.
+  test("leaves a failed mark's transition in the record for the next run", () => {
+    stubHerdr(box, 1);
+    snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "idle" }]);
+    seed(box, { p1: { lastStatus: "working", lastWorkingAt: Date.now() } });
+
+    expect(state(box).status).not.toBe(0);
+    expect(recorded(box).p1.lastStatus).toBe("working");
   });
 
   test("refuses a snapshot carrying no panes", () => {

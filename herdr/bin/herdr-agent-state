@@ -96,8 +96,8 @@ function text(value: unknown): string {
 }
 
 // The snapshot is whatever the CLI printed, so every field is read through a
-// guard. A shape this does not recognize yields a pane with no id, which
-// reports nothing, rather than a cast that defers the error to a later line.
+// guard. A shape this does not recognize yields a pane with no id, which is
+// dropped, rather than a cast that defers the error to a later line.
 function panes(): Pane[] {
   const result = herdr(["api", "snapshot"]);
   if (!result?.success) {
@@ -118,7 +118,7 @@ function panes(): Pane[] {
 
   return snapshot.panes
     .filter(isRecord)
-    .filter((pane) => text(pane.agent) !== "")
+    .filter((pane) => text(pane.pane_id) !== "" && text(pane.agent) !== "")
     .map((pane) => ({
       id: text(pane.pane_id),
       status: text(pane.agent_status),
@@ -181,7 +181,8 @@ function mark(pane: Pane, last: Activity): Mark {
 
 // Nothing is said about a pane already showing the mark it wants, which is what
 // makes a settled session cost the snapshot alone.
-function report(pane: Pane, wanted: Mark): void {
+function report(pane: Pane, wanted: Mark): boolean {
+  let reported = true;
   for (const name of MARK_NAMES) {
     const value = name === wanted ? MARKS[name] : "";
     if (text(pane.tokens[name]) === value) continue;
@@ -190,9 +191,11 @@ function report(pane: Pane, wanted: Mark): void {
     const result = herdr(["pane", "report-metadata", pane.id, "--source", SOURCE, ...token]);
     if (!result?.success) {
       failed = true;
+      reported = false;
       console.error(`herdr-agent-state: could not report ${name} for ${pane.id}`);
     }
   }
+  return reported;
 }
 
 const previous = readActivity();
@@ -202,9 +205,13 @@ for (const pane of panes()) {
   // A pane seen for the first time counts as having just worked, so a fresh
   // state file does not read every idle pane as abandoned at once.
   const last = previous[pane.id] ?? { lastStatus: "", lastWorkingAt: now };
-  report(pane, mark(pane, last));
+
+  // A mark that did not take leaves lastStatus where it was, so the transition
+  // that earned it is still there to be read on the next run. Advancing it
+  // would retire the only evidence the mark was ever due.
+  const reported = report(pane, mark(pane, last));
   current[pane.id] = {
-    lastStatus: pane.status,
+    lastStatus: reported ? pane.status : last.lastStatus,
     lastWorkingAt: pane.status === "working" ? now : last.lastWorkingAt,
   };
 }
