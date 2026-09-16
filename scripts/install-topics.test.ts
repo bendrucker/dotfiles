@@ -85,6 +85,15 @@ describe("install-topics", () => {
     expect(ran()).toEqual(["git/install.sh"]);
   });
 
+  test("leaves a submodule alone whose path carries a space", () => {
+    submodules("some vendor");
+    installer("git/install.sh");
+    installer("some vendor/install.sh");
+
+    install();
+    expect(ran()).toEqual(["git/install.sh"]);
+  });
+
   test("runs the topic a nested submodule sits under", () => {
     submodules("bat/catppuccin");
     installer("bat/install.sh");
