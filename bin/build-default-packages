@@ -1,22 +1,36 @@
 #!/usr/bin/env bash
 
-# Dynamically aggregate default-*-packages files and write to ~/.default-*-packages
+# Aggregate the topics' default-*-packages files into ~/.default-*-packages,
+# which mise reads to seed every runtime it installs.
 
 set -e
 cd "$(dirname "$0")/.."
 
-# Find all default-*-packages files and group by package type
-find . -name "default-*-packages" -type f | while read -r file; do
-    # Extract package type from filename (e.g., npm from default-npm-packages)
-    if [[ $(basename "$file") =~ ^default-([^-]+)-packages$ ]]; then
-        package_type="${BASH_REMATCH[1]}"
-        output_file="$HOME/.default-${package_type}-packages"
+# An unmatched glob expands to nothing rather than to itself, so a package type
+# nobody declares drops out instead of arriving as a literal filename.
+shopt -s nullglob
 
-        {
-            echo "# Auto-generated from dotfiles - do not edit directly"
-            find . -name "default-${package_type}-packages" -type f -exec sh -c 'echo "# From $(dirname "$1" | sed s,^./,,)"; cat "$1"; echo' _ {} \;
-        } > "$output_file"
+# A topic's package list is <topic>/default-<type>-packages and never anything
+# deeper, the same bound scripts/install-topics puts on topic installers. The
+# recursive walk this replaces descended into the git worktrees under
+# .worktrees/, so every branch checked out there appended its own copy, and a
+# package dropped on main kept being installed from a stale one.
+types=$(for file in */default-*-packages; do
+  name=${file##*/default-}
+  echo "${name%-packages}"
+done | sort -u)
 
-        echo "Updated ~/.default-${package_type}-packages"
-    fi
-done | sort -u
+for package_type in $types; do
+  output_file="$HOME/.default-${package_type}-packages"
+
+  {
+    echo "# Auto-generated from dotfiles - do not edit directly"
+    for file in */"default-${package_type}-packages"; do
+      echo "# From $(dirname "$file")"
+      cat "$file"
+      echo
+    done
+  } > "$output_file"
+
+  echo "Updated ~/.default-${package_type}-packages"
+done
