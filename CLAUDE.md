@@ -99,6 +99,18 @@ end
 
 This means `brew bundle` from the repo root installs everything from all topic Brewfiles. The root Brewfile also conditionally skips casks/MAS in CI and some apps on corporate machines.
 
+#### Externally Managed Casks
+
+`scripts/brew-managed-machine` exits 0 where another manager owns this machine's applications, and `scripts/install` answers by exporting `HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS` before `brew bundle`. It exits 1 on a machine carrying no MDM configuration profiles, which is what keeps an unmanaged machine's behavior identical. The default path it tests is the one the root Brewfile tests for `corporate`, so a change to either has to move both.
+
+Homebrew upgrades a cask by moving the app out of `/Applications` back into the Caskroom before installing the replacement. An MDM installs its apps as root, so that move shells out to sudo, and the 3am job has no terminal to read a password from. The run dies on `sudo: a terminal is required`, leaving a real app directory in the Caskroom where a symlink belongs. Every run after it fails earlier still, on `It seems there is already an App at '<caskroom path>'`. The second shape is the residue of the first, and both clear once nothing attempts the upgrade.
+
+That variable decides whether Homebrew attempts one at all. A cask declaring `auto_updates` ships its own updater, and Homebrew left those alone until `HOMEBREW_UPGRADE_AUTO_UPDATES_CASKS` became the default. It now reads the installed app bundle's own version rather than the version the Caskroom recorded, and upgrades whenever the tap is ahead of that. Chrome's Keystone and VS Code's ShipIt keep their apps current on their own schedule, so the tap leads the bundle only in the window before one of them has run, or for as long as a policy holds the app at a pinned build. Homebrew then tries to do the updater's job, and on a managed machine the attempt is the failure above.
+
+Turning the default back off leaves those casks to their own updater. Nothing else moves: a cask without the flag upgrades as before, and a first install runs a branch the variable is never read on, so a newly enrolled machine missing an app still gets it. Keying on the flag rather than a list of tokens covers an app the MDM starts pushing the day it happens, and leaves no file naming `google-chrome`.
+
+`--adopt` does not reach this. `brew bundle` already passes it on every cask it installs, so asking for it in a Brewfile changes nothing, and `brew upgrade` has no such switch: the upgrade branch runs `brew upgrade --cask <token>` with no arguments at all and drops whatever `args:` asked for. Adoption answers for the first install and nothing after it. `HOMEBREW_CASK_OPTS` carries only the `--*dir` options, `--language`, `--require-sha` and `--no-binaries`.
+
 The root Brewfile additionally evaluates `~/Brewfile.local` when present. Use it for machine-specific packages (e.g. corporate-mandated tools) so they're managed by `brew bundle` without being flagged by `brew bundle cleanup`. See [Machine-Local Configuration](#machine-local-configuration) for the other `.local` include points.
 
 #### mise Aggregation
@@ -285,7 +297,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 ### Installation Flow
 
 `scripts/install` is the main entry point:
-1. `brew bundle` — Install Brewfile dependencies
+1. `brew bundle` — Install Brewfile dependencies, leaving the self-updating casks alone where `scripts/brew-managed-machine` says another manager owns them
 2. Symlink `*/mise.toml` → `~/.config/mise/conf.d/`
 3. `mise install` — Install language runtimes
 4. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run

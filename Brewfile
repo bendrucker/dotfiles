@@ -38,8 +38,9 @@ else
   def mas(*args) end unless $stdin.tty?
 end
 
+# A managed machine, the same test scripts/brew-managed-machine makes. Keep the
+# two in step.
 corporate = Dir.exist?('/Library/Managed Preferences') && !Dir.empty?('/Library/Managed Preferences')
-corporate_cask_args = corporate ? { adopt: true } : {}
 
 cask_args appdir: '/Applications'
 
@@ -70,7 +71,7 @@ cask 'dash'
 cask 'figma'
 cask 'geekbench'
 cask 'ghostty@tip'
-cask 'google-chrome', args: corporate_cask_args
+cask 'google-chrome'
 cask 'hazel'
 cask 'jordanbaird-ice'
 cask 'istat-menus'
@@ -83,7 +84,7 @@ cask 'raycast'
 cask 'slack'
 cask 'the-unarchiver'
 cask 'vibe-island'
-cask 'zoom', args: corporate_cask_args
+cask 'zoom'
 
 mas '1Password for Safari', id: 1569813296
 mas 'Actions', id: 1586435171

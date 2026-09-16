@@ -18,6 +18,13 @@ fi
 # install over (see the script for why)
 ./scripts/install-cask-variants
 
+# Leave the casks that update themselves to whatever else manages this machine.
+# Homebrew cannot move a root-owned app aside without sudo, and 3am has no
+# terminal. An `if` condition is exempt from `set -e`.
+if ./scripts/brew-managed-machine; then
+  export HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1
+fi
+
 brew bundle
 
 # Expose brew configuration to installers
