@@ -417,6 +417,19 @@ describe("sweeping a repo", () => {
     expect(sweep().rows).toEqual([["removed", "no git metadata", orphan]]);
   });
 
+  // Nothing under a symlinked root is inside the tree that authorized it, and
+  // the candidates would carry the target's prefix into the removal.
+  test("refuses to enumerate a root that is a symlink", () => {
+    const elsewhere = join(box, "elsewhere");
+    mkdirSync(join(elsewhere, "project"), { recursive: true });
+    writeFileSync(join(elsewhere, "project", "work"), "x");
+    rmSync(root, { recursive: true, force: true });
+    Bun.spawnSync({ cmd: ["ln", "-s", elsewhere, root], env: process.env });
+
+    expect(sweep().rows).toEqual([["kept", "symlinked root", root]]);
+    expect(existsSync(join(elsewhere, "project"))).toBe(true);
+  });
+
   // A root read as absent when it is merely unreadable would report the repo
   // swept while nothing looked inside it.
   test("reports a root it could not read and still sweeps the rest", () => {

@@ -246,6 +246,15 @@ export function sweep(dryRun: boolean): Outcome {
   const rows: Row[] = [];
   const problems: string[] = [];
   for (const root of sweepRoots(repo, registered, managedRoots())) {
+    // Enumerating through a symlink would carry its target's prefix into every
+    // removal, so a root that is one reaches outside the tree that authorized
+    // it. git reports real paths, which leaves the repo's own .worktrees as the
+    // only component here nothing has already resolved.
+    if (lstat(root)?.isSymbolicLink() === true) {
+      rows.push({ verdict: KEPT, detail: "symlinked root", path: root });
+      continue;
+    }
+
     const listing = candidates(root);
     if (listing.problem !== undefined) problems.push(listing.problem);
     for (const path of listing.paths) rows.push(...judge(path, context));
