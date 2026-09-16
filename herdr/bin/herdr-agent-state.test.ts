@@ -85,6 +85,22 @@ describe("herdr-agent-state", () => {
     expect(readFileSync(config, "utf8")).toContain('command = "herdr-agent-state"');
   });
 
+  // A mark with no cell is published to a sidebar that draws nothing for it, and
+  // renaming one breaks that quietly: herdr validates the name and never learns
+  // what writes it.
+  test("gives every mark it can publish a cell to render it", () => {
+    const source = readFileSync(script, "utf8");
+    const marks = source
+      .slice(source.indexOf("const MARKS = {"), source.indexOf("} as const;"))
+      .matchAll(/^ {2}(\w+):/gm);
+    const names = [...marks].map(([, name]) => name);
+
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      expect(readFileSync(config, "utf8")).toContain(`token = "$${name}"`);
+    }
+  });
+
   // bun stays reachable for the shebang. herdr is what the case takes away.
   test("refuses when herdr does not answer", () => {
     const r = run([script], { onlyPath: [dirname(process.execPath), "/usr/bin", "/bin"] });
@@ -267,6 +283,40 @@ describe("herdr-agent-state", () => {
 
     expect(state(box).status).not.toBe(0);
     expect(recorded(box).p1.lastStatus).toBe("working");
+  });
+
+  // A pane whose mark moves needs the old one cleared and the new one set. Two
+  // calls at about 150ms each crosses the tab bar's 4s timeout on a session that
+  // comes back to a dozen finished turns at once.
+  test("spends one call on a pane however many of its marks moved", () => {
+    snapshot(box, [
+      { pane_id: "p1", agent: "claude", agent_status: "blocked", tokens: { agent_stale: "\u25e6" } },
+    ]);
+
+    expect(state(box).status).toBe(0);
+    expect(reported(box)).toHaveLength(1);
+    expect(linesFor(box, "p1")).toContain("--clear-token agent_stale");
+    expect(linesFor(box, "p1")).toContain("--token agent_blocked=?");
+  });
+
+  // Absent is the first run. Present and unparseable reseeds every elapsed clock
+  // on every run from then on, so no pane ever reads as parked again.
+  test("reports a state file it cannot parse, having marked what it could", () => {
+    box.write(statePath, "{ not json");
+    snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "blocked" }]);
+
+    const r = state(box);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("could not read");
+    expect(linesFor(box, "p1")).toContain("--token agent_blocked=?");
+  });
+
+  test("ignores an activity entry whose timestamp is not a finite number", () => {
+    snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "idle" }]);
+    box.write(statePath, JSON.stringify({ p1: { lastStatus: "idle", lastWorkingAt: null } }));
+
+    expect(state(box).status).toBe(0);
+    expect(reported(box)).toEqual([]);
   });
 
   test("refuses a snapshot carrying no panes", () => {
