@@ -19,7 +19,6 @@ afterEach(() => {
   box.remove();
 });
 
-/** An installer that records the path it was run as, relative to the root. */
 function installer(path: string) {
   const target = join(root, path);
   mkdirSync(dirname(target), { recursive: true });
