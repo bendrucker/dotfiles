@@ -70,7 +70,7 @@ Nothing here finds an unused export across the `#`-specifier modules. oxlint 1.8
 2. Add configuration files as needed:
    - `<topic>/<tool>.zsh` for shell configuration
    - Add a `symlinks.conf` in the topic directory for config files targeting `~/.config/<tool>/`
-   - `<topic>/install.sh` only if non-symlink setup is needed (plugin managers, system config)
+   - `<topic>/install.sh` only if non-symlink setup is needed (plugin managers, system config). `scripts/install-topics` globs one level, so an installer nested any deeper never runs
    - `<topic>/reload.sh` only if the tool holds its config in memory and can re-read it without restarting (see [Config Reloads](#config-reloads))
    - `<topic>/Brewfile` for dependencies
 3. Run `scripts/install` to install links and run topic installers
@@ -302,7 +302,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 3. `mise install` — Install language runtimes
 4. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
 5. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
-6. Run topic `install.sh` scripts, including `credentials/install.sh`, which chmods credential files to `0600`
+6. Run `scripts/install-topics`, which runs each `<topic>/install.sh`, including `credentials/install.sh`, which chmods credential files to `0600`
 7. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
 8. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
 

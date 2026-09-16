@@ -58,13 +58,7 @@ fi
 
 ./scripts/install-symlinks
 
-# Build exclusions for mise and any git submodules
-local -a excludes=("!" "-path" "./mise/*")
-for sm_path in ${(f)"$(git submodule foreach --quiet 'echo $sm_path' 2>/dev/null)"}; do
-  excludes+=("!" "-path" "./$sm_path/*")
-done
-
-find . -name install.sh "${excludes[@]}" | while read -r installer; do "${installer}"; done
+./scripts/install-topics
 
 # Reconcile theme-managed configs to the active flavor. Runs after every
 # installer so each config exists; failures here shouldn't abort an otherwise

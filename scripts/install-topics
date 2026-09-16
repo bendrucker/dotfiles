@@ -1,0 +1,43 @@
+#!/usr/bin/env sh
+# Usage: install-topics [dotfiles-root]
+#
+# Run every topic installer.
+#
+# A topic is a directory at the repository root, so an installer is
+# <root>/<topic>/install.sh and never anything deeper. Globbing one level is
+# what keeps the search inside this repo. A git worktree under .worktrees/
+# holds a whole second copy of the tree, and a recursive walk found the
+# installers in it and ran them. That fails rather than merely repeating work,
+# because an installer operates on $ZSH, the installed tree. A copy from
+# another branch sources a path this repo has since renamed, and the nightly
+# job dies on a file that does not exist. The same bound keeps .git,
+# node_modules, tmp's contents, and a submodule's own tree out without naming
+# any of them.
+set -e
+
+DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
+cd "$DOTFILES_ROOT"
+
+# scripts/install sources mise/install.sh ahead of this, so the runtimes it
+# installs are on $PATH for everything that follows. A submodule is another
+# project's repo and its installer is not ours to run. A nested one is already
+# out of the glob's reach and never matches a topic name.
+skip=" mise "
+# foreach runs the command in a shell of its own, where $sm_path is the name it
+# exports. Expanding it here would leave the command empty.
+# shellcheck disable=SC2016
+for sm_path in $(git submodule foreach --quiet 'echo "$sm_path"' 2>/dev/null); do
+  skip="$skip$sm_path "
+done
+
+for installer in */install.sh; do
+  # A glob that matches nothing stays literal in sh
+  [ -f "$installer" ] || continue
+
+  topic=${installer%/install.sh}
+  case $skip in
+    *" $topic "*) continue ;;
+  esac
+
+  "./$installer"
+done
