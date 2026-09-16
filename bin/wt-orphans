@@ -30,6 +30,7 @@ import {
   rmSync,
   writeSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { minAge, parseDuration, pathAgeSecs } from "#worktree/state";
@@ -41,15 +42,18 @@ const USAGE = [
   "  --dry-run   name what would be removed, remove nothing",
 ].join("\n");
 
-// Both worktrunk's default layout and Claude Code's in-repo root name the
-// directory they collect worktrees in. A registered worktree below one of those
-// names is what marks the directory holding it as dedicated to worktrees, and
-// that is the whole licence to read an unregistered sibling as garbage. Outside
-// such a tree the parent of a worktree is merely some directory that happens to
-// hold one, and every project beside it would read as an orphan.
 const DEDICATED = new Set(["worktrees", ".worktrees"]);
 
 const GITDIR = /^gitdir:(.*)$/m;
+
+// worktrunk's configured layout, down to the literal prefix its path template
+// starts with. Read from the file rather than from `wt config show`, which
+// formats for a reader.
+const WORKTREE_PATH = /^\s*worktree-path\s*=\s*"([^"]*)"/m;
+
+const HERDR_ROOT = [".herdr", "worktrees"];
+
+const NOT_A_REPO = /not a git repository/i;
 
 export interface Outcome {
   status: number;
@@ -79,8 +83,33 @@ export function parseWorktrees(porcelain: string): string[] {
     .map((line) => line.slice(prefix.length));
 }
 
+// The trees the tools that create worktrees own outright, which is the whole
+// licence to read an unregistered directory inside one as garbage. A worktree
+// anywhere else sits in a directory that merely happens to hold one, and its
+// siblings are somebody's projects.
+export function managedRoots(): string[] {
+  const configured = process.env.WT_SWEEP_ROOTS;
+  const roots =
+    configured !== undefined && configured !== ""
+      ? configured.split(":")
+      : [worktrunkRoot(), join(homedir(), ...HERDR_ROOT)];
+  // A root has to name itself. A template whose literal prefix is a bare home
+  // directory would otherwise authorize every project under it.
+  return roots.filter((root) => root !== undefined && DEDICATED.has(basename(root)));
+}
+
+function worktrunkRoot(): string | undefined {
+  const home = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const template = WORKTREE_PATH.exec(read(join(home, "worktrunk", "config.toml")) ?? "")?.[1];
+  const literal = template?.split("{{")[0]?.replace(/\/+$/, "");
+  // No configured layout leaves worktrunk's tree unswept rather than guessed
+  // at. Its own default lives in worktrunk and could change under us.
+  if (literal === undefined || literal === "") return undefined;
+  return literal.startsWith("~/") ? join(homedir(), literal.slice(2)) : literal;
+}
+
 // The directories this repo's worktrees are collected in.
-export function sweepRoots(repo: string, registered: string[]): string[] {
+export function sweepRoots(repo: string, registered: string[], managed: string[]): string[] {
   // Claude Code creates .worktrees/agent-<id> and .worktrees/wf_<id> inside the
   // repo for its isolated runs. The path is fixed, so this root is swept
   // whether or not a live worktree currently sits in it, which is the case the
@@ -89,18 +118,9 @@ export function sweepRoots(repo: string, registered: string[]): string[] {
   for (const worktree of registered) {
     if (worktree === repo) continue;
     const parent = dirname(worktree);
-    if (inDedicatedTree(parent)) roots.add(parent);
+    if (managed.some((root) => parent === root || parent.startsWith(`${root}/`))) roots.add(parent);
   }
   return [...roots];
-}
-
-function inDedicatedTree(dir: string): boolean {
-  for (let at = dir; ; ) {
-    if (DEDICATED.has(basename(at))) return true;
-    const up = dirname(at);
-    if (up === at) return false;
-    at = up;
-  }
 }
 
 // What git can still resolve for a directory.
@@ -150,16 +170,25 @@ export function classify(facts: Facts): string | undefined {
   return facts.metadata === "none" ? "no git metadata" : "git metadata gone";
 }
 
-function candidates(root: string): string[] {
+interface Listing {
+  paths: string[];
+  problem?: string;
+}
+
+function candidates(root: string): Listing {
   let entries;
   try {
     entries = readdirSync(root, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    const code = errorCode(error);
     // A root that has never been created, which is most repos.
-    return [];
+    if (code === "ENOENT" || code === "ENOTDIR") return { paths: [] };
+    // Anything else read as absent would report a clean sweep of a directory
+    // nothing looked inside.
+    return { paths: [], problem: `${root}: ${code}` };
   }
 
-  return entries
+  const paths = entries
     // A symlink reports false here, so a link into a worktree is never followed
     // and never removed.
     .filter((entry) => entry.isDirectory())
@@ -168,6 +197,7 @@ function candidates(root: string): string[] {
     .filter((entry) => !entry.name.startsWith("."))
     .map((entry) => join(root, entry.name))
     .sort();
+  return { paths };
 }
 
 function removeOrphan(path: string, reason: string): Row {
@@ -198,41 +228,74 @@ export function sweep(dryRun: boolean): Outcome {
     return { status: 1, stdout: "", stderr: said };
   }
 
-  const registered = parseWorktrees(capture(["git", "worktree", "list", "--porcelain"]) ?? "");
+  const listed = capture(["git", "worktree", "list", "--porcelain"]);
+  if (listed.status !== 0) return notListed(listed.stderr);
+
+  const registered = parseWorktrees(listed.stdout);
   const repo = registered[0];
   if (repo === undefined) return { status: 0, stdout: "", stderr: "" };
 
   const commonDir = capture(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  const common = (commonDir ?? "").trim() || join(repo, ".git");
-  const known = new Set(registered.map(real));
+  const context: Context = {
+    common: commonDir.stdout.trim() || join(repo, ".git"),
+    known: new Set(registered.map(real)),
+    floor,
+    dryRun,
+  };
 
   const rows: Row[] = [];
-  for (const root of sweepRoots(repo, registered)) {
-    for (const path of candidates(root)) {
-      const metadata = readMetadata(path, common);
-      // Reported rather than skipped: leaving it out would put it back in the
-      // silence this pass exists to break, and it is the one shape here that
-      // wants a decision from someone awake.
-      if (metadata === "foreign") {
-        rows.push({ verdict: KEPT, detail: "stranded by another repo", path });
-        continue;
-      }
-
-      const reason = classify({
-        registered: known.has(real(path)),
-        metadata,
-        minAge: floor,
-        age: () => pathAgeSecs(path),
-      });
-      if (reason === undefined) continue;
-      const removal = dryRun
-        ? { verdict: WOULD_REMOVE, detail: reason, path }
-        : removeOrphan(path, reason);
-      rows.push(removal);
-    }
+  const problems: string[] = [];
+  for (const root of sweepRoots(repo, registered, managedRoots())) {
+    const listing = candidates(root);
+    if (listing.problem !== undefined) problems.push(listing.problem);
+    for (const path of listing.paths) rows.push(...judge(path, context));
   }
 
-  return { status: 0, stdout: render(rows), stderr: "" };
+  return {
+    // A root that went unread still reports whatever the others found, and
+    // still fails, because a repo nothing looked in reads as a repo with
+    // nothing in it.
+    status: problems.length === 0 ? 0 : 1,
+    stdout: render(rows),
+    stderr: problems.map((problem) => `wt orphans: ${problem}\n`).join(""),
+  };
+}
+
+// Outside a repo there is nothing to sweep. Every other failure means the
+// registration list never arrived, and sweeping against an empty one would read
+// every worktree this repo has as unregistered.
+function notListed(stderr: string): Outcome {
+  if (NOT_A_REPO.test(stderr)) return { status: 0, stdout: "", stderr: "" };
+  const said = stderr.trim() || "git worktree list failed";
+  return { status: 1, stdout: "", stderr: `wt orphans: ${said}\n` };
+}
+
+interface Context {
+  common: string;
+  known: Set<string>;
+  floor: number;
+  dryRun: boolean;
+}
+
+function judge(path: string, context: Context): Row[] {
+  const metadata = readMetadata(path, context.common);
+  // Reported rather than skipped: leaving it out would put it back in the
+  // silence this pass exists to break, and it is the one shape here that wants
+  // a decision from someone awake.
+  if (metadata === "foreign") {
+    return [{ verdict: KEPT, detail: "stranded by another repo", path }];
+  }
+
+  const reason = classify({
+    registered: context.known.has(real(path)),
+    metadata,
+    minAge: context.floor,
+    age: () => pathAgeSecs(path),
+  });
+  if (reason === undefined) return [];
+  return [
+    context.dryRun ? { verdict: WOULD_REMOVE, detail: reason, path } : removeOrphan(path, reason),
+  ];
 }
 
 // Tab-separated rows under the fan-out, which parses the fields, and an aligned
@@ -290,16 +353,21 @@ function read(path: string): string | undefined {
   }
 }
 
+interface Captured {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
+
 // Bun otherwise resolves a bare command name against the PATH it captured at
 // startup, so the environment goes over explicitly. A git that is not installed
-// throws rather than returning a status, and that reads as no worktrees, which
-// sweeps nothing.
-function capture(cmd: string[]): string | undefined {
+// throws rather than returning a status, and reads here as the failure it is.
+function capture(cmd: string[]): Captured {
   try {
-    const run = Bun.spawnSync({ cmd, env: process.env, stdin: "ignore", stderr: "ignore" });
-    return run.exitCode === 0 ? run.stdout.toString() : undefined;
-  } catch {
-    return undefined;
+    const run = Bun.spawnSync({ cmd, env: process.env, stdin: "ignore" });
+    return { status: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() };
+  } catch (error) {
+    return { status: 127, stdout: "", stderr: `${cmd[0]}: ${errorCode(error)}\n` };
   }
 }
 

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import {
   classify,
   type Facts,
+  managedRoots,
   type Metadata,
   parseWorktrees,
   readMetadata,
@@ -45,9 +46,11 @@ describe("parseWorktrees", () => {
   });
 });
 
+const MANAGED = ["/src/.worktrees", "/home/.herdr/worktrees"];
+
 describe("sweepRoots", () => {
   test("always sweeps the repo's own .worktrees, registered or not", () => {
-    expect(sweepRoots("/src/repo", ["/src/repo"])).toEqual(["/src/repo/.worktrees"]);
+    expect(sweepRoots("/src/repo", ["/src/repo"], MANAGED)).toEqual(["/src/repo/.worktrees"]);
   });
 
   test.each([
@@ -55,28 +58,56 @@ describe("sweepRoots", () => {
     { name: "herdr's tree", worktree: "/home/.herdr/worktrees/repo/feature" },
     { name: "the repo's own tree", worktree: "/src/repo/.worktrees/agent-1" },
   ])("sweeps the parent of a worktree inside $name", ({ worktree }) => {
-    expect(sweepRoots("/src/repo", ["/src/repo", worktree])).toContain(
+    expect(sweepRoots("/src/repo", ["/src/repo", worktree], MANAGED)).toContain(
       worktree.slice(0, worktree.lastIndexOf("/")),
     );
   });
 
   // The whole safety argument for treating an unregistered sibling as garbage
-  // is that the directory exists to hold worktrees. `git worktree add ../beside`
+  // is that the tree exists to hold worktrees. `git worktree add ../beside`
   // puts one in a directory full of unrelated projects, and sweeping there would
   // read every one of them as an orphan.
-  test("refuses a worktree parent that is not a directory of worktrees", () => {
-    expect(sweepRoots("/src/repo", ["/src/repo", "/src/beside"])).toEqual([
+  test("refuses a worktree parent outside every managed tree", () => {
+    expect(sweepRoots("/src/repo", ["/src/repo", "/src/beside"], MANAGED)).toEqual([
       "/src/repo/.worktrees",
     ]);
   });
 
+  // A directory named worktrees that no tool was configured to create is
+  // somebody's own, and a worktree registered inside one says nothing about
+  // what its siblings are.
+  test("refuses a tree named like a collection that nothing manages", () => {
+    const roots = sweepRoots("/src/repo", ["/src/repo", "/home/worktrees/project/live"], MANAGED);
+    expect(roots).toEqual(["/src/repo/.worktrees"]);
+  });
+
   test("reports each root once when several worktrees share one", () => {
-    const roots = sweepRoots("/src/repo", [
+    const roots = sweepRoots(
       "/src/repo",
-      "/src/.worktrees/owner/repo/one",
-      "/src/.worktrees/owner/repo/two",
-    ]);
+      ["/src/repo", "/src/.worktrees/owner/repo/one", "/src/.worktrees/owner/repo/two"],
+      MANAGED,
+    );
     expect(roots).toEqual(["/src/repo/.worktrees", "/src/.worktrees/owner/repo"]);
+  });
+});
+
+describe("managedRoots", () => {
+  const configured = process.env.WT_SWEEP_ROOTS;
+  afterEach(() => {
+    if (configured === undefined) delete process.env.WT_SWEEP_ROOTS;
+    else process.env.WT_SWEEP_ROOTS = configured;
+  });
+
+  test("takes the roots named in the environment", () => {
+    process.env.WT_SWEEP_ROOTS = "/a/.worktrees:/b/worktrees";
+    expect(managedRoots()).toEqual(["/a/.worktrees", "/b/worktrees"]);
+  });
+
+  // A misconfigured template could resolve to a home directory, and every
+  // project under it would then be a sibling of some worktree.
+  test("refuses a root that does not name itself a worktree collection", () => {
+    process.env.WT_SWEEP_ROOTS = "/home/ben:/b/worktrees";
+    expect(managedRoots()).toEqual(["/b/worktrees"]);
   });
 });
 
@@ -252,8 +283,16 @@ describe("sweeping a repo", () => {
       cmd: [SCRIPT, ...args],
       cwd: repo,
       // WT_ALL is what the fan-out sets, and it selects the tab-separated rows
-      // a caller parses over the table a reader gets.
-      env: { ...process.env, WT_PRUNE_MIN_AGE: NO_FLOOR, WT_ALL: "1", ...env },
+      // a caller parses over the table a reader gets. WT_SWEEP_ROOTS keeps the
+      // managed trees inside the sandbox rather than whatever this machine has
+      // worktrunk and herdr configured to use.
+      env: {
+        ...process.env,
+        WT_PRUNE_MIN_AGE: NO_FLOOR,
+        WT_ALL: "1",
+        WT_SWEEP_ROOTS: join(box, ".worktrees"),
+        ...env,
+      },
       stdin: "ignore",
     });
     return {
@@ -378,6 +417,35 @@ describe("sweeping a repo", () => {
     expect(sweep().rows).toEqual([["removed", "no git metadata", orphan]]);
   });
 
+  // A root read as absent when it is merely unreadable would report the repo
+  // swept while nothing looked inside it.
+  test("reports a root it could not read and still sweeps the rest", () => {
+    const orphan = husk("agent-abc");
+    const outside = join(box, ".worktrees", "owner", "repo");
+    mkdirSync(outside, { recursive: true });
+    git(["-C", repo, "worktree", "add", "-q", "-b", "elsewhere", join(outside, "elsewhere")]);
+    chmodSync(outside, 0o000);
+
+    const result = sweep();
+    chmodSync(outside, 0o755);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${outside}: EACCES`);
+    expect(result.rows).toEqual([["removed", "no git metadata", orphan]]);
+  });
+
+  // An empty registration list is what a directory outside a repo produces, so
+  // reading a broken repo as one would leave every worktree it has looking
+  // unregistered.
+  test("refuses to sweep when git cannot list the worktrees", () => {
+    const orphan = husk("agent-abc");
+    writeFileSync(join(repo, ".git", "config"), "[core\n");
+
+    const result = sweep();
+    expect(result.status).toBe(1);
+    expect(result.rows).toEqual([]);
+    expect(existsSync(orphan)).toBe(true);
+  });
+
   test("refuses a duration it cannot read rather than sweeping against a guess", () => {
     const orphan = husk("agent-abc");
 
@@ -392,7 +460,7 @@ describe("sweeping a repo", () => {
     const run = Bun.spawnSync({
       cmd: [SCRIPT],
       cwd: outside,
-      env: { ...process.env, WT_PRUNE_MIN_AGE: NO_FLOOR, WT_ALL: "1" },
+      env: { ...process.env, WT_PRUNE_MIN_AGE: NO_FLOOR, WT_ALL: "1", WT_SWEEP_ROOTS: outside },
       stdin: "ignore",
     });
     rmSync(outside, { recursive: true, force: true });
@@ -407,7 +475,12 @@ describe("sweeping a repo", () => {
     const run = Bun.spawnSync({
       cmd: [SCRIPT, "--dry-run"],
       cwd: repo,
-      env: { ...process.env, WT_PRUNE_MIN_AGE: NO_FLOOR, WT_ALL: "" },
+      env: {
+        ...process.env,
+        WT_PRUNE_MIN_AGE: NO_FLOOR,
+        WT_ALL: "",
+        WT_SWEEP_ROOTS: join(box, ".worktrees"),
+      },
       stdin: "ignore",
     });
     expect(run.stdout.toString()).toContain("VERDICT");
