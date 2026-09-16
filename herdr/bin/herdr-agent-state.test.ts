@@ -35,7 +35,6 @@ function stubHerdr(box: Sandbox, reportStatus = 0): void {
 
 const statePath = "state/dotfiles/herdr-agent-state.json";
 
-/** This is how a test sets the clock. */
 function seed(box: Sandbox, activity: Record<string, { lastStatus: string; lastWorkingAt: number }>): void {
   box.write(statePath, JSON.stringify(activity));
 }
@@ -85,9 +84,8 @@ describe("herdr-agent-state", () => {
     expect(readFileSync(config, "utf8")).toContain('command = "herdr-agent-state"');
   });
 
-  // A mark with no cell is published to a sidebar that draws nothing for it, and
-  // renaming one breaks that quietly: herdr validates the name and never learns
-  // what writes it.
+  // herdr validates a token name and never learns what writes it, so a mark with
+  // no cell is published to a sidebar that draws nothing for it.
   test("gives every mark it can publish a cell to render it", () => {
     const source = readFileSync(script, "utf8");
     const marks = source
@@ -135,7 +133,6 @@ describe("herdr-agent-state", () => {
     expect(linesFor(box, "p1")).toContain("--token agent_done=✓");
   });
 
-  // Watching a turn finish is the whole of what the mark is for.
   test("latches nothing when the turn ends on the focused pane", () => {
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "idle", focused: true }]);
     seed(box, { p1: { lastStatus: "working", lastWorkingAt: Date.now() } });
@@ -193,10 +190,8 @@ describe("herdr-agent-state", () => {
     expect(reported(box)).toEqual([]);
   });
 
-  // Working again is the only thing that clears this one, a turn that herdr
-  // called done included. A question answered inside one poll gap leaves the
-  // mark up, which is the direction chosen: a question still waiting is never
-  // drawn as finished.
+  // A question answered inside one poll gap leaves the mark up. That direction is
+  // chosen: a question still waiting is never drawn as finished.
   test("holds a blocked latch through a turn that ended", () => {
     snapshot(box, [
       { pane_id: "p1", agent: "claude", agent_status: "done", tokens: { agent_blocked: "?" } },
@@ -241,8 +236,6 @@ describe("herdr-agent-state", () => {
     expect(reported(box)).toEqual([]);
   });
 
-  // A herdr call costs about 150ms, so reporting every pane every run passes the
-  // tab bar's timeout and the marks never settle.
   test("says nothing about a pane already showing the mark it wants", () => {
     snapshot(box, [
       { pane_id: "p1", agent: "claude", agent_status: "blocked", tokens: { agent_blocked: "?" } },
@@ -272,7 +265,7 @@ describe("herdr-agent-state", () => {
   });
 
   // The tab bar logs a status command that exits non-zero. Exiting 0 would leave
-  // a pane showing a mark for something that already happened, silently.
+  // a stuck mark silent.
   test("exits non-zero when a mark would not take, having tried the rest", () => {
     stubHerdr(box, 1);
     snapshot(box, [
@@ -288,8 +281,6 @@ describe("herdr-agent-state", () => {
     expect(linesFor(box, "p2")).toContain("--token agent_done=✓");
   });
 
-  // Advancing lastStatus past the transition would retire the only evidence the
-  // mark was due, so the pane would sit unmarked until it worked again.
   test("leaves a failed mark's transition in the record for the next run", () => {
     stubHerdr(box, 1);
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "idle" }]);
@@ -299,9 +290,6 @@ describe("herdr-agent-state", () => {
     expect(recorded(box).p1.lastStatus).toBe("working");
   });
 
-  // A pane whose mark moves needs the old one cleared and the new one set. Two
-  // calls at about 150ms each crosses the tab bar's 4s timeout on a session that
-  // comes back to a dozen finished turns at once.
   test("spends one call on a pane however many of its marks moved", () => {
     snapshot(box, [
       { pane_id: "p1", agent: "claude", agent_status: "blocked", tokens: { agent_stale: "\u25e6" } },
@@ -313,8 +301,6 @@ describe("herdr-agent-state", () => {
     expect(linesFor(box, "p1")).toContain("--token agent_blocked=?");
   });
 
-  // Absent is the first run. Present and unparseable reseeds every elapsed clock
-  // on every run from then on, so no pane ever reads as parked again.
   test("reports a state file it cannot parse, having marked what it could", () => {
     box.write(statePath, "{ not json");
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "blocked" }]);

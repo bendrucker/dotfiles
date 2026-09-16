@@ -36,7 +36,7 @@ herdr-preview stop
 
 `pane read --lines` returns the *bottom* n rows, and the spaces panel is at the top. A count short of the client's height comes back with no sidebar in it, which reads as a config that did not apply. The count is a ceiling, so over-reading costs nothing and `herdr-preview read` asks for more rows than a terminal has. Pass `--lines` only to read less on purpose.
 
-The client also drops the sidebar entirely below roughly 60 columns, drawing a compact top bar instead, so a `read` taken while the window is narrow comes back with no rows to review. The sidebar column itself is a fixed 25 wide, the width a scene's truncation has to be judged against.
+The client drops the sidebar below roughly 60 columns and draws a compact top bar instead, so a `read` taken while the window is narrow comes back with no rows to review. The sidebar column is a fixed 25 wide, the width a scene's truncation has to be judged against.
 
 `pane layout` cannot tell you the real height. Its rect describes the outer pane, not the screen the nested client negotiated, and the two disagree: a client logging `client connected cols=170 rows=62` sat in a rect of 44 by 36. The negotiated size appears only in the preview's own `herdr-server.log`.
 
@@ -148,7 +148,7 @@ Anything deriving a chord digit has to count a row's place in the snapshot array
 
 `bin/herdr-workspace-status` reports the `$status_*` and `$branch` workspace tokens, which the spaces rows render. The Claude status line in bendrucker/claude also reports `$title` and `$ctx_*` on panes, and `config.toml` renders neither. The Claude agent row takes herdr's built-in `terminal_title_stripped` instead, which holds the same session name with the leading state glyph removed. The one Claude-side pane token that row does render is `$review`, which the `review:human` skill's `attention.ts` in the same repo reports while a review is pending. herdr strips escape codes from token values, so a color is a token name styled in `config.toml`, and a new color is a new name in both places.
 
-`bin/herdr-agent-state` reports `$agent_blocked`, `$agent_done` and `$agent_stale` on panes, which the agent rows render. They say what has happened to a session nobody has looked at, where herdr's own `state_icon` says only what is true now. `done` collapses into `idle` within seconds, `blocked` is recognized from the question on screen and vanishes when the pane redraws, and `idle` reads the same a minute after a turn as a week after one. At most one mark is lit, and both latches are read back out of the pane's own tokens. The state file under `$XDG_STATE_HOME/dotfiles` holds only the last-worked time, the one thing the snapshot carries nowhere.
+`bin/herdr-agent-state` reports `$agent_blocked`, `$agent_done` and `$agent_stale` on panes, which the agent rows render. They are sticky where `state_icon` is live: `done` collapses into `idle` within seconds, `blocked` vanishes when the pane redraws out of recognition, and `idle` reads the same a minute after a turn as a week after one. At most one is lit. Both latches are read back out of the pane's own tokens, and the state file under `$XDG_STATE_HOME/dotfiles` holds the last-worked time alone, the one thing the snapshot carries nowhere.
 
 `herdr config check` validates token names, rejecting a custom token that does not start with `$` along with unknown keys and bad enum variants. It reports `config: ok` for a file that does not exist.
 

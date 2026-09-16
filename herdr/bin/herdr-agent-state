@@ -1,37 +1,13 @@
 #!/usr/bin/env bun
 //
-// Report what a pane's agent has done that you have not seen yet, as herdr pane
-// metadata. The `$agent_blocked`, `$agent_done` and `$agent_stale` tokens in
-// config.toml render them on the agent rows.
+// Report the `$agent_blocked`, `$agent_done` and `$agent_stale` pane tokens that
+// config.toml draws on the agent rows, once per tab bar interval.
 //
-// herdr's own state_icon says what an agent is doing right now and nothing
-// else. `done` collapses into `idle` within seconds, so a turn that finished
-// while you were looking elsewhere leaves no trace. `blocked` is recognized
-// from the shape of the question on screen, so focusing the pane can redraw it
-// out of recognition while the question still waits. And `idle` reads the same
-// a minute after a turn as a week after one. With a dozen panes open, one
-// parked session is indistinguishable from the next.
+// The snapshot carries no activity timestamp, which is all the state file holds.
+// Every other input is read back out of the pane's own tokens.
 //
-// At most one token is set on a pane. Precedence is blocked, then done, then
-// stale.
-//
-// Both latches are read back out of the pane's own tokens in the snapshot,
-// rather than out of a file, so the record and the display cannot drift. The
-// one thing that cannot be derived is elapsed time: the snapshot carries no
-// activity timestamp anywhere, which is what the state file is for.
-//
-// The tab bar interval in config.toml is the only scheduler herdr offers a
-// script that is not a plugin, so this runs there beside herdr-sidebar-numbers
-// and prints nothing.
-//
-// Only a token that disagrees with the snapshot is reported. A herdr call costs
-// about 150ms, so rewriting every pane every run passes the tab bar's timeout on
-// a session of any size and the marks never settle.
-//
-// That is also why these carry no --ttl-ms. An expired token is a token the
-// snapshot no longer carries, so it reads as a disagreement and comes back on
-// the next interval, blinking the mark off for up to one interval every TTL. The
-// run that cannot report exits non-zero instead.
+// No --ttl-ms. An expired token reads as a disagreement and comes back on the
+// next interval, blinking the mark off once every TTL.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -39,11 +15,9 @@ import { dirname, join } from "node:path";
 
 const SOURCE = "agent-state";
 
-// A pane that has not worked for this long is parked rather than between turns.
 const STALE_AFTER_MS = 120 * 60 * 1000;
 
-// The value is what the sidebar draws. Plain Unicode, so no font install and no
-// font-codepoint-map entry.
+// Plain Unicode, so no font install and no font-codepoint-map entry.
 const MARKS = {
   agent_blocked: "?",
   agent_done: "✓",
@@ -95,9 +69,6 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-// The snapshot is whatever the CLI printed, so every field is read through a
-// guard. A shape this does not recognize yields a pane with no id, which is
-// dropped, rather than a cast that defers the error to a later line.
 function panes(): Pane[] {
   const result = herdr(["api", "snapshot"]);
   if (!result?.success) {
@@ -127,13 +98,9 @@ function panes(): Pane[] {
     }));
 }
 
-// A file this cannot read is a file every pane gets seeded from, which reads
-// every pane as having just worked. That is the conservative direction: a
-// restart marks nothing stale rather than marking everything stale at once.
-//
-// No file at all is the first run and says nothing. A file that is there and
-// will not parse reseeds every pane on every run from then on, which is a stale
-// mark that silently never appears, so that one is reported.
+// An absent file is the first run. One that is there and will not parse reseeds
+// every clock on every run after it, so that one says so. Either way every pane
+// seeds as having just worked, which marks nothing stale rather than everything.
 function readActivity(): Record<string, Activity> {
   let raw: string;
   try {
@@ -157,8 +124,6 @@ function readActivity(): Record<string, Activity> {
 
   const activity: Record<string, Activity> = {};
   for (const [id, entry] of Object.entries(parsed)) {
-    // A number that is not finite reaches the stale arithmetic as a comparison
-    // that can never come true, which reads as a pane that is never parked.
     if (!isRecord(entry) || typeof entry.lastWorkingAt !== "number") continue;
     if (!Number.isFinite(entry.lastWorkingAt)) continue;
     activity[id] = { lastStatus: text(entry.lastStatus), lastWorkingAt: entry.lastWorkingAt };
@@ -166,9 +131,6 @@ function readActivity(): Record<string, Activity> {
   return activity;
 }
 
-// A failed report is left for the next run to retry, so the run carries on and
-// reports the failure by exiting non-zero. That is what puts a mark that stays
-// wrong into the server log instead of leaving it silent.
 let failed = false;
 
 function unreadable(): void {
@@ -176,9 +138,8 @@ function unreadable(): void {
   console.error(`herdr-agent-state: could not read ${STATE_PATH}`);
 }
 
-// Written to one side and renamed over the target, because an ordinary write
-// truncates in place and the tab bar kills a run that passes its timeout. A
-// half-written file is one this cannot read, which is every elapsed clock.
+// Renamed into place. An ordinary write truncates, and the tab bar kills a run
+// that passes its timeout.
 function writeActivity(activity: Record<string, Activity>): void {
   const pending = `${STATE_PATH}.${process.pid}`;
   try {
@@ -195,12 +156,9 @@ function mark(pane: Pane, last: Activity): Mark {
   if (pane.status === "working") return "";
   if (pane.status === "blocked") return "agent_blocked";
 
-  // Seeing a question is not answering it, so focus does not clear this one. It
-  // goes when the agent works again, which is the branch above.
+  // Seeing a question is not answering it, so focus does not clear this one.
   if (text(pane.tokens.agent_blocked)) return "agent_blocked";
 
-  // A turn just ended, or one ended earlier and nobody has looked since.
-  // Focusing the pane is looking.
   if (last.lastStatus === "working" || pane.status === "done" || text(pane.tokens.agent_done)) {
     return pane.focused ? "" : "agent_done";
   }
@@ -208,10 +166,8 @@ function mark(pane: Pane, last: Activity): Mark {
   return now - last.lastWorkingAt > STALE_AFTER_MS ? "agent_stale" : "";
 }
 
-// Nothing is said about a pane already showing the mark it wants, which is what
-// makes a settled session cost the snapshot alone. A pane that does disagree
-// spends one call however many tokens moved, the way herdr-workspace-status
-// reports a branch and its colours together.
+// A settled pane costs nothing and a moved one costs a single call, because a
+// herdr call is about 150ms against the tab bar's 4s timeout.
 function report(pane: Pane, wanted: Mark): boolean {
   const tokens: string[] = [];
   for (const name of MARK_NAMES) {
@@ -233,13 +189,10 @@ const previous = readActivity();
 const current: Record<string, Activity> = {};
 
 for (const pane of panes()) {
-  // A pane seen for the first time counts as having just worked, so a fresh
-  // state file does not read every idle pane as abandoned at once.
   const last = previous[pane.id] ?? { lastStatus: "", lastWorkingAt: now };
 
-  // A mark that did not take leaves lastStatus where it was, so the transition
-  // that earned it is still there to be read on the next run. Advancing it
-  // would retire the only evidence the mark was ever due.
+  // A mark that did not take leaves lastStatus where it was, so the next run
+  // still has the transition that earned it.
   const reported = report(pane, mark(pane, last));
   current[pane.id] = {
     lastStatus: reported ? pane.status : last.lastStatus,
