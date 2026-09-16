@@ -1,6 +1,6 @@
-// The worktree facts bin/wt-prune and bin/wt-prune-audit both read: how old a
-// checkout is, what the forge says about its branch, which branch the repo
-// treats as its default, and what `wt list` reports about the tree. The two
+// The worktree facts bin/wt-prune, bin/wt-prune-audit and bin/wt-orphans read:
+// how old a checkout is, what the forge says about its branch, which branch the
+// repo treats as its default, and what `wt list` reports about the tree. The
 // scripts decide what to remove from these, and the audit exists to catch the
 // pruner missing something, so a disagreement between them about a fact would
 // read as drift in the pruner.
@@ -63,6 +63,16 @@ export function worktreeAgeSecs(worktreePath: string): number | undefined {
   if (gitdir === undefined || gitdir === "") return undefined;
 
   const created = birthSeconds(gitdir) ?? modifiedSeconds(join(gitdir, "commondir"));
+  if (created === undefined) return undefined;
+  return nowSeconds() - created;
+}
+
+// Seconds since a path itself appeared, on the same clock as above. An orphaned
+// worktree has no git dir left to date it by, so the directory is all there is
+// to read. Its mtime is when the removal that stranded it gave up rather than
+// when it was created, which is why birth time leads here too.
+export function pathAgeSecs(path: string): number | undefined {
+  const created = birthSeconds(path) ?? modifiedSeconds(path);
   if (created === undefined) return undefined;
   return nowSeconds() - created;
 }

@@ -2,22 +2,28 @@
 //
 // Nightly worktree prune across every repo, run unattended from launchd.
 //
-// Two fleet-wide passes, each latched under its own job name so one to-do never
-// stands in for another. `wt all prune --before` does the pruning; the tripwire
+// Three fleet-wide passes, each latched under its own job name so one to-do
+// never stands in for another. `wt all prune --before` does the pruning.
+// `wt all orphans` removes the worktree directories git has already forgotten,
+// which every git-based pass here is blind to by construction. The tripwire
 // `wt all prune-audit` is an independent oracle that re-derives the survivor set
-// and names any worktree a healthy prune should already have removed. A prune
-// that fails stops the run, because the audit would report drift the prune never
-// had a chance to clear.
+// and names any worktree a healthy prune should already have removed.
 //
-// Raw mode keeps the "<repo>\t<branch>\t<reason>\t<path>" fields intact, so the
-// drift to-do can name each worktree and build a command that jumps straight to
-// it.
+// A prune that fails stops the run before the audit, because the audit would
+// report drift the prune never had a chance to clear. The sweep runs either way:
+// an orphan is a directory git has already lost track of, so nothing about it
+// depends on the prune, and a prune that died partway through a removal is one
+// of the things that leaves one behind.
+//
+// Raw mode keeps the fields of both passes intact, so the drift to-do can name
+// each worktree and build a command that jumps straight to it.
 
 import { writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { logExcerpt, stripCsi } from "#jobs/excerpt";
-import { reportFailure, reportSuccess } from "#jobs/report";
+import { reportFailure, reportFindings, reportSuccess } from "#jobs/report";
+import { FAILED } from "./wt-orphans";
 
 // The leading blank line separates each block from the host/time/revision list
 // the reporter emits above it, so the first heading renders as one. The
@@ -54,6 +60,26 @@ passes from its repo so you can see which one stopped matching. Common causes
 are \`wt step prune\` no longer detecting the integration and the forge lookup in
 \`bin/wt-prune\` returning nothing for the branch.`;
 
+const SWEEP_FAILED_EXPLANATION = `
+The orphan sweep itself failed in one or more repos. A repo it could not reach
+went unswept, and a directory git has already forgotten is invisible to every
+other pass here, so nothing else reports what is piling up in it.`;
+
+const ORPHAN_EXPLANATION = `
+## What this means
+
+Each directory below is a worktree git no longer knows about, and the sweep
+could not remove it. Removal dies on a file it may not unlink, and whatever it
+cleared before that stays cleared. The offenders so far are vendored inside
+\`node_modules\`: \`.idea/\`, \`.gitconfig\`, \`.gitmodules\` and \`.mcp.json\`.
+
+## What to do
+
+Remove each path below by hand. There is nothing upstream to fix: the sweep
+found the orphan and named it, and the only thing it could not do is unlink one
+file. A path that clears stays cleared, and the rest reopen under their own
+to-do.`;
+
 // How much of a captured log reaches a to-do. The reporter trims further, to
 // what the notes field holds.
 const LOG_LINES = 100;
@@ -85,6 +111,28 @@ export function parseFinding(line: string): Finding | undefined {
   };
 }
 
+export interface Orphan {
+  repo: string;
+  verdict: string;
+  detail: string;
+  path: string;
+}
+
+// A row is "<repo>\t<verdict>\t<detail>\t<path>", `wt all`'s repo key over
+// `wt orphans`'s own row. A row with no verdict is anything else a repo printed.
+export function parseOrphan(line: string): Orphan | undefined {
+  const fields = line.split("\t");
+  const verdict = fields[1] ?? "";
+  if (verdict === "") return undefined;
+  return {
+    repo: fields[0] ?? "",
+    verdict,
+    detail: fields[2] ?? "",
+    // A path may hold a tab, so everything past the third field is the path.
+    path: fields.slice(3).join("\t").replace(/\t+$/, ""),
+  };
+}
+
 // The POSIX space class, not JavaScript's \s. `grep -v '^[[:space:]]*$'` does
 // not count U+00A0 or U+2028 as blank, so a line made only of those kept the
 // audit output non-empty and took the could-not-parse branch. Under \s it
@@ -100,7 +148,10 @@ export function auditRows(stdout: string): string[] {
 // `column -t -s $'\t'`: every column but the last padded to its widest cell plus
 // two spaces.
 export function findingsTable(findings: Finding[]): string {
-  const rows = findings.map((finding) => [finding.repo, finding.branch, finding.reason]);
+  return columns(findings.map((finding) => [finding.repo, finding.branch, finding.reason]));
+}
+
+function columns(rows: string[][]): string {
   const widths = rows.reduce(
     (widest, row) => row.map((cell, index) => Math.max(widest[index] ?? 0, cell.length)),
     [] as number[],
@@ -113,6 +164,10 @@ export function findingsTable(findings: Finding[]): string {
         .replace(/\s+$/, ""),
     )
     .join("\n");
+}
+
+export function orphanTable(orphans: Orphan[]): string {
+  return columns(orphans.map((orphan) => [orphan.repo, orphan.detail, orphan.path]));
 }
 
 // Branch names and worktree paths admit a single quote, and the commands below
@@ -294,31 +349,118 @@ function spawnFailure(wtAll: string, error: unknown): Capture {
   return { status: 127, output: `worktree-prune: ${wtAll}: ${reason}\n` };
 }
 
+// The streams are kept apart for the same reason the audit's are: stdout is
+// parsed as rows and anything the sweep said about itself would parse as one.
+export function runSweep(wtAll: string): AuditCapture {
+  try {
+    const sweep = Bun.spawnSync({
+      cmd: [wtAll, "orphans"],
+      env: { ...process.env, WT_ALL_RAW: "1" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return {
+      status: sweep.exitCode,
+      stdout: sweep.stdout.toString(),
+      stderr: sweep.stderr.toString(),
+    };
+  } catch (error) {
+    const failure = spawnFailure(wtAll, error);
+    return { status: failure.status, stdout: "", stderr: failure.output };
+  }
+}
+
+const STUCK_VERDICT = "could not be removed";
+
+function sweepOrphans(wtAll: string, revision: string): number {
+  const sweep = runSweep(wtAll);
+  // Echoed rather than only parsed. These rows are the whole record of what the
+  // sweep deleted, and /tmp/worktree-prune.log is where it is kept.
+  if (sweep.stdout !== "") writeAll(1, Buffer.from(stripCsi(sweep.stdout)));
+
+  // A nonzero status means repos failed outright, so their roots were never
+  // swept. Reported on its own, because a repo nothing looked at is the blind
+  // spot this pass exists to close rather than a repo that came back clean. The
+  // repos that did answer still emitted their rows, so the run carries on.
+  let failed = 0;
+  if (sweep.status !== 0) {
+    log("error", "orphan sweep failed");
+    failed = reportFailure({
+      job: "wt-orphan-sweep-failed",
+      title: "Orphan sweep could not run",
+      command: "wt all orphans",
+      output: capturedLog(sweep.stderr),
+      revision,
+      extraMeta: SWEEP_FAILED_EXPLANATION,
+      outputHeading: "Error Output",
+      fingerprint: "",
+    });
+  } else {
+    reportSuccess("wt-orphan-sweep-failed");
+  }
+
+  const orphans = auditRows(sweep.stdout)
+    .map(parseOrphan)
+    .filter((orphan): orphan is Orphan => orphan !== undefined);
+  const stuck = orphans.filter((orphan) => orphan.verdict === FAILED);
+  if (stuck.length > 0) log("warn", `${stuck.length} orphaned worktrees could not be removed`);
+
+  // Latched one path at a time, so a husk nobody has cleared by hand stays quiet
+  // while the rest of the set churns around it.
+  const filed = reportFindings({
+    job: "wt-orphan-sweep",
+    title: "Orphaned worktree directories could not be removed",
+    command: stuck.map((orphan) => `rm -rf ${quote(orphan.path)}`).join("\n"),
+    output: orphanTable(stuck),
+    revision,
+    extraMeta: ORPHAN_EXPLANATION,
+    outputHeading: "Orphans left behind",
+    standing: stuck.map((orphan) => ({ subject: orphan.path, verdict: STUCK_VERDICT })),
+    // Nothing is deferred here. A repo the sweep could not reach reports under
+    // its own job above, and it cannot name the paths it never looked at.
+    held: [],
+  });
+
+  return refused(failed, filed);
+}
+
+function reportPrune(prune: Capture, revision: string): number {
+  if (prune.status === 0) {
+    reportSuccess("worktree-prune");
+    log("info", "Worktree prune completed successfully");
+    return 0;
+  }
+
+  log("error", "worktree prune failed");
+  return reportFailure({
+    job: "worktree-prune",
+    title: "Nightly worktree prune failed",
+    command: "wt all prune --before",
+    output: capturedLog(prune.output),
+    revision,
+    extraMeta: "",
+    outputHeading: "Error Output",
+    fingerprint: "",
+  });
+}
+
 export async function main(): Promise<number> {
   const wtAll = join(dotfilesHome(), "bin", "wt-all");
   const revision = revisionOf(dotfilesHome());
 
   log("info", "Running worktree prune");
   const prune = await runPrune(wtAll);
+  const pruned = reportPrune(prune, revision);
+
+  log("info", "Sweeping orphaned worktree directories");
+  const swept = sweepOrphans(wtAll, revision);
+
   if (prune.status !== 0) {
-    log("error", "worktree prune failed");
-    const filed = reportFailure({
-      job: "worktree-prune",
-      title: "Nightly worktree prune failed",
-      command: "wt all prune --before",
-      output: capturedLog(prune.output),
-      revision,
-      extraMeta: "",
-      outputHeading: "Error Output",
-      fingerprint: "",
-    });
     // The audit re-derives the survivor set this prune should have produced, so
     // running it now would report drift the prune never had a chance to clear.
-    return filed !== 0 ? filed : 1;
+    return pruned !== 0 ? pruned : 1;
   }
-
-  reportSuccess("worktree-prune");
-  log("info", "Worktree prune completed successfully");
 
   log("info", "Auditing for prune drift");
   const audit = runAudit(wtAll);
@@ -349,7 +491,7 @@ export async function main(): Promise<number> {
   if (rows.length === 0) {
     reportSuccess("wt-prune-drift");
     log("info", "No prune drift");
-    return audited;
+    return refused(audited, swept);
   }
 
   log("warn", "prune drift detected");
@@ -373,7 +515,7 @@ export async function main(): Promise<number> {
       outputHeading: "Error Output",
       fingerprint: "",
     });
-    return refused(filed, audited);
+    return refused(filed, audited, swept);
   }
 
   const base = process.env.PROJECTS || join(home(), "src");
@@ -391,7 +533,7 @@ export async function main(): Promise<number> {
     outputHeading: "Leaked worktrees",
     fingerprint: driftFingerprint(findings),
   });
-  return refused(filed, audited);
+  return refused(filed, audited, swept);
 }
 
 // The status a run that filed more than one report carries out. The first

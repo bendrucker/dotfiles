@@ -1,0 +1,319 @@
+#!/usr/bin/env bun
+//
+// wt orphans [--dry-run]: remove worktree directories git has already forgotten.
+//
+// `git worktree remove` deletes the metadata before the last file, so a removal
+// that dies partway through leaves the directory on disk with nothing pointing
+// at it. `wt list`, `git worktree list` and `wt prune-audit` all enumerate
+// through git, so none of them can see what is left, and the leftovers are
+// whole checkouts: twenty-nine of them reached 31GB in one repo before anyone
+// looked at the directory rather than at git.
+//
+// The safe shape is narrow on purpose. A directory is an orphan only when it
+// sits directly inside a root this repo keeps worktrees in, git resolves no
+// metadata for it, and it has outlived the pruner's age floor. Anything git can
+// still resolve is left alone whatever else is true of it: erring toward
+// removal is the direction that loses uncommitted work.
+//
+// Prints "<verdict>\t<detail>\t<path>" per directory acted on, and nothing at
+// all when there are none. Removals are rows rather than silence because a pass
+// that deletes without saying so is indistinguishable from the bug it closes. A
+// "kept" row names a directory this declined to remove and expects someone to
+// decide about; it is the only verdict that is not an action.
+
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeSync,
+} from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { parseArgs } from "node:util";
+import { minAge, parseDuration, pathAgeSecs } from "#worktree/state";
+import { alignColumns } from "#worktree/table";
+
+const USAGE = [
+  "Usage: wt orphans [--dry-run]",
+  "Remove worktree directories git has already forgotten.",
+  "  --dry-run   name what would be removed, remove nothing",
+].join("\n");
+
+// Both worktrunk's default layout and Claude Code's in-repo root name the
+// directory they collect worktrees in. A registered worktree below one of those
+// names is what marks the directory holding it as dedicated to worktrees, and
+// that is the whole licence to read an unregistered sibling as garbage. Outside
+// such a tree the parent of a worktree is merely some directory that happens to
+// hold one, and every project beside it would read as an orphan.
+const DEDICATED = new Set(["worktrees", ".worktrees"]);
+
+const GITDIR = /^gitdir:(.*)$/m;
+
+export interface Outcome {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface Row {
+  verdict: string;
+  detail: string;
+  path: string;
+}
+
+export const REMOVED = "removed";
+export const WOULD_REMOVE = "would remove";
+export const FAILED = "failed";
+export const KEPT = "kept";
+
+// Worktree paths, main worktree first, as `git worktree list --porcelain`
+// reports them. Empty for anything that is not a git repo, which leaves nothing
+// to sweep and no root to sweep it in.
+export function parseWorktrees(porcelain: string): string[] {
+  const prefix = "worktree ";
+  return porcelain
+    .split("\n")
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length));
+}
+
+// The directories this repo's worktrees are collected in.
+export function sweepRoots(repo: string, registered: string[]): string[] {
+  // Claude Code creates .worktrees/agent-<id> and .worktrees/wf_<id> inside the
+  // repo for its isolated runs. The path is fixed, so this root is swept
+  // whether or not a live worktree currently sits in it, which is the case the
+  // 31GB accumulated in.
+  const roots = new Set([join(repo, ".worktrees")]);
+  for (const worktree of registered) {
+    if (worktree === repo) continue;
+    const parent = dirname(worktree);
+    if (inDedicatedTree(parent)) roots.add(parent);
+  }
+  return [...roots];
+}
+
+function inDedicatedTree(dir: string): boolean {
+  for (let at = dir; ; ) {
+    if (DEDICATED.has(basename(at))) return true;
+    const up = dirname(at);
+    if (up === at) return false;
+    at = up;
+  }
+}
+
+// What git can still resolve for a directory.
+//
+// "present" covers a .git directory (a clone standing in the root), a .git file
+// whose target exists, and a .git this cannot read at all, because a file we
+// failed to parse says nothing about whether git would.
+//
+// "foreign" is a .git file naming a git dir under some repo other than the one
+// sweeping, which is what a repo that moved or was re-cloned leaves behind. The
+// tree under it is usually intact rather than half-deleted, and nothing here
+// can say whether it holds work, so it is reported and not touched.
+export type Metadata = "none" | "dangling" | "foreign" | "present";
+
+export function readMetadata(dir: string, commonDir: string): Metadata {
+  const dotGit = join(dir, ".git");
+  const info = lstat(dotGit);
+  if (info === undefined) return "none";
+  if (!info.isFile()) return "present";
+
+  const target = GITDIR.exec(read(dotGit) ?? "")?.[1]?.trim();
+  if (target === undefined || target === "") return "present";
+  const gitdir = isAbsolute(target) ? target : resolve(dir, target);
+  if (existsSync(gitdir)) return "present";
+  return gitdir.startsWith(`${commonDir}/`) ? "dangling" : "foreign";
+}
+
+export interface Facts {
+  registered: boolean;
+  metadata: Metadata;
+  minAge: number;
+  // Seconds since the directory appeared, resolved only once the cheaper checks
+  // have failed to answer.
+  age: () => number | undefined;
+}
+
+// Why this directory is an orphan, or undefined when it is not one.
+export function classify(facts: Facts): string | undefined {
+  if (facts.registered || facts.metadata === "present" || facts.metadata === "foreign") {
+    return undefined;
+  }
+  // An age that will not read counts as too young, which is the opposite of how
+  // `wt prune-audit` reads the same gap. There an unreadable clock must not hide
+  // drift; here it must not authorize a removal. The floor is also what keeps
+  // this off a worktree that is still being created.
+  if ((facts.age() ?? 0) < facts.minAge) return undefined;
+  return facts.metadata === "none" ? "no git metadata" : "git metadata gone";
+}
+
+function candidates(root: string): string[] {
+  let entries;
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    // A root that has never been created, which is most repos.
+    return [];
+  }
+
+  return entries
+    // A symlink reports false here, so a link into a worktree is never followed
+    // and never removed.
+    .filter((entry) => entry.isDirectory())
+    // Hidden entries in a worktree root are tool state rather than checkouts:
+    // Claude Code keeps its own .claude/ beside the agent worktrees it makes.
+    .filter((entry) => !entry.name.startsWith("."))
+    .map((entry) => join(root, entry.name))
+    .sort();
+}
+
+function removeOrphan(path: string, reason: string): Row {
+  try {
+    rmSync(path, { recursive: true, force: true });
+    return { verdict: REMOVED, detail: reason, path };
+  } catch (error) {
+    // A removal dying on a nested file is what creates these in the first
+    // place, so it is the expected failure rather than an exceptional one.
+    // Whatever was cleared stays cleared, the rest is reported, and the next
+    // run tries again from where this one stopped.
+    return { verdict: FAILED, detail: errorCode(error), path };
+  }
+}
+
+function errorCode(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("code" in error)) return "error";
+  return typeof error.code === "string" ? error.code : "error";
+}
+
+export function sweep(dryRun: boolean): Outcome {
+  const floor = parseDuration(minAge());
+  // A misconfigured duration returns nonzero, which flags the repo as failed
+  // under `wt all` and puts the reason in front of someone, rather than
+  // silently sweeping against a threshold nobody chose.
+  if (floor === undefined) {
+    const said = `wt orphans: cannot parse WT_PRUNE_MIN_AGE=${minAge()}\n`;
+    return { status: 1, stdout: "", stderr: said };
+  }
+
+  const registered = parseWorktrees(capture(["git", "worktree", "list", "--porcelain"]) ?? "");
+  const repo = registered[0];
+  if (repo === undefined) return { status: 0, stdout: "", stderr: "" };
+
+  const commonDir = capture(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const common = (commonDir ?? "").trim() || join(repo, ".git");
+  const known = new Set(registered.map(real));
+
+  const rows: Row[] = [];
+  for (const root of sweepRoots(repo, registered)) {
+    for (const path of candidates(root)) {
+      const metadata = readMetadata(path, common);
+      // Reported rather than skipped: leaving it out would put it back in the
+      // silence this pass exists to break, and it is the one shape here that
+      // wants a decision from someone awake.
+      if (metadata === "foreign") {
+        rows.push({ verdict: KEPT, detail: "stranded by another repo", path });
+        continue;
+      }
+
+      const reason = classify({
+        registered: known.has(real(path)),
+        metadata,
+        minAge: floor,
+        age: () => pathAgeSecs(path),
+      });
+      if (reason === undefined) continue;
+      const removal = dryRun
+        ? { verdict: WOULD_REMOVE, detail: reason, path }
+        : removeOrphan(path, reason);
+      rows.push(removal);
+    }
+  }
+
+  return { status: 0, stdout: render(rows), stderr: "" };
+}
+
+// Tab-separated rows under the fan-out, which parses the fields, and an aligned
+// table standalone, which someone reads.
+function render(rows: Row[]): string {
+  if (rows.length === 0) return "";
+  const cells = rows.map((row) => [row.verdict, row.detail, row.path]);
+  if ((process.env.WT_ALL ?? "") !== "") return cells.map((row) => `${row.join("\t")}\n`).join("");
+  return `${alignColumns([["VERDICT", "DETAIL", "PATH"], ...cells]).join("\n")}\n`;
+}
+
+export function run(args: string[]): Outcome {
+  let values;
+  try {
+    ({ values } = parseArgs({
+      args,
+      allowPositionals: false,
+      options: {
+        "dry-run": { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { status: 2, stdout: "", stderr: `wt orphans: ${message}\n${USAGE}\n` };
+  }
+
+  if (values.help) return { status: 0, stdout: `${USAGE}\n`, stderr: "" };
+  return sweep(values["dry-run"]);
+}
+
+// A path that cannot be resolved is compared as it stands: git reports real
+// paths, so a candidate that fails here was never going to match one anyway.
+function real(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+function lstat(path: string) {
+  try {
+    return lstatSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function read(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+// Bun otherwise resolves a bare command name against the PATH it captured at
+// startup, so the environment goes over explicitly. A git that is not installed
+// throws rather than returning a status, and that reads as no worktrees, which
+// sweeps nothing.
+function capture(cmd: string[]): string | undefined {
+  try {
+    const run = Bun.spawnSync({ cmd, env: process.env, stdin: "ignore", stderr: "ignore" });
+    return run.exitCode === 0 ? run.stdout.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// A write followed by process.exit delivers only one pipe buffer, and `wt all`
+// reads this through a pipe. A repo holding a backlog of orphans outruns that.
+function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let written = 0;
+  while (written < bytes.length) written += writeSync(fd, bytes, written);
+}
+
+if (import.meta.main) {
+  const outcome = run(process.argv.slice(2));
+  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
+  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
+  process.exit(outcome.status);
+}

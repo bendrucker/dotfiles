@@ -20,7 +20,10 @@ import {
   findingsTable,
   investigation,
   main,
+  type Orphan,
+  orphanTable,
   parseFinding,
+  parseOrphan,
   repoPath,
 } from "./worktree-prune";
 
@@ -83,6 +86,47 @@ describe("parseFinding", () => {
     },
   ])("$name", ({ line, expected }) => {
     expect(parseFinding(line)).toEqual(expected);
+  });
+});
+
+describe("parseOrphan", () => {
+  function orphan(repo: string, verdict: string, detail: string, path: string): Orphan {
+    return { repo, verdict, detail, path };
+  }
+
+  test.each<{ name: string; line: string; expected: Orphan | undefined }>([
+    {
+      name: "reads repo, verdict, detail and path",
+      line: "bendrucker/claude\tremoved\tno git metadata\t/wt/agent-1",
+      expected: orphan("bendrucker/claude", "removed", "no git metadata", "/wt/agent-1"),
+    },
+    {
+      name: "keeps a path holding a tab whole",
+      line: "repo\tfailed\tEPERM\t/a\tb",
+      expected: orphan("repo", "failed", "EPERM", "/a\tb"),
+    },
+    {
+      name: "rejects a line carrying no verdict",
+      line: "some free-form line",
+      expected: undefined,
+    },
+  ])("$name", ({ line, expected }) => {
+    expect(parseOrphan(line)).toEqual(expected);
+  });
+});
+
+describe("orphanTable", () => {
+  // The verdict is deliberately absent: every row in this table failed, and the
+  // column would say so over and over.
+  test("aligns repo and detail against the path", () => {
+    const table = orphanTable([
+      { repo: "bendrucker/claude", verdict: "failed", detail: "EPERM", path: "/wt/a" },
+      { repo: "x/y", verdict: "failed", detail: "ENOTEMPTY", path: "/wt/b" },
+    ]);
+    expect(table).toBe(
+      "bendrucker/claude  EPERM      /wt/a\n" + //
+        "x/y                ENOTEMPTY  /wt/b",
+    );
   });
 });
 
@@ -230,10 +274,10 @@ function passBody(pass: Pass): string {
   return lines.join("\n");
 }
 
-// One stub answers both passes, because one run makes both calls. It records
-// what it was called as and what WT_ALL_RAW held, which is how an example tells
-// the raw audit apart from the prune.
-function stubWtAll(passes: { prune?: Pass; audit?: Pass }): void {
+// One stub answers all three passes, because one run makes all three calls. It
+// records what it was called as and what WT_ALL_RAW held, which is how an
+// example tells the raw passes apart from the prune.
+function stubWtAll(passes: { prune?: Pass; audit?: Pass; sweep?: Pass }): void {
   const path = join(dotfiles, "bin", "wt-all");
   writeFileSync(
     path,
@@ -241,6 +285,9 @@ function stubWtAll(passes: { prune?: Pass; audit?: Pass }): void {
 printf '%s\\t%s\\n' "$*" "\${WT_ALL_RAW:-unset}" >> ${shQuote(callsFile)}
 if [ "$1" = "prune-audit" ]; then
 ${passBody(passes.audit ?? {})}
+fi
+if [ "$1" = "orphans" ]; then
+${passBody(passes.sweep ?? {})}
 fi
 ${passBody(passes.prune ?? {})}
 `,
@@ -280,9 +327,11 @@ function todos(): Todo[] {
 }
 
 // The script's own status lines. The reporter logs through gum too, and those
-// lines say what it filed rather than what this decided.
+// lines say what it filed or held quiet rather than what this decided.
 function logLines(): string[] {
-  return readLines(gumFile).filter((line) => !line.includes("to-do"));
+  return readLines(gumFile).filter(
+    (line) => !line.includes("to-do") && !line.includes("staying quiet"),
+  );
 }
 
 function latch(job: string): string | undefined {
@@ -368,6 +417,10 @@ const MACHINE = "Testbox";
 const LEAK = "bendrucker/dotfiles\tfeature\tintegrated (empty)\t/wt/feature\n";
 const SECOND_LEAK = "other/repo\tsecond\tmerged PR survived\t/wt/second\n";
 
+const SWEPT = "bendrucker/claude\tremoved\tno git metadata\t/wt/agent-1\n";
+const STUCK = "bendrucker/claude\tfailed\tEPERM\t/wt/agent-2\n";
+const SECOND_STUCK = "other/repo\tfailed\tENOTEMPTY\t/wt/agent-3\n";
+
 describe("the prune pass", () => {
   test("files a to-do naming the failure and stops before the audit", async () => {
     stubWtAll({
@@ -377,8 +430,10 @@ describe("the prune pass", () => {
 
     expect(await main()).toBe(1);
     // The audit re-derives the survivor set this prune should have produced, so
-    // a prune that did not finish must not be audited.
-    expect(calls()).toEqual(["prune --before\tunset"]);
+    // a prune that did not finish must not be audited. The sweep has no such
+    // dependency, and a prune that died partway through a removal is one of the
+    // things that strands a worktree directory.
+    expect(calls()).toEqual(["prune --before\tunset", "orphans\t1"]);
 
     const [todo] = todos();
     expect(todos()).toHaveLength(1);
@@ -433,7 +488,7 @@ describe("the prune pass", () => {
     stubWtAll({ audit: { stdout: LEAK } });
 
     expect(await main()).toBe(0);
-    expect(calls()).toEqual(["prune --before\tunset", "prune-audit\t1"]);
+    expect(calls()).toEqual(["prune --before\tunset", "orphans\t1", "prune-audit\t1"]);
     expect(todos()[0].title).toBe(`Worktree prune leaked 1 worktree on ${MACHINE}`);
   });
 
@@ -452,6 +507,7 @@ describe("the prune pass", () => {
     expect(logLines()).toEqual([
       "info\tRunning worktree prune",
       "info\tWorktree prune completed successfully",
+      "info\tSweeping orphaned worktree directories",
       "info\tAuditing for prune drift",
       "info\tNo prune drift",
     ]);
@@ -463,7 +519,7 @@ describe("the audit pass", () => {
     stubWtAll({});
 
     await main();
-    expect(calls()).toEqual(["prune --before\tunset", "prune-audit\t1"]);
+    expect(calls()).toEqual(["prune --before\tunset", "orphans\t1", "prune-audit\t1"]);
   });
 
   test("clears the audit latch when the audit runs clean", async () => {
@@ -533,6 +589,108 @@ describe("the audit pass", () => {
   });
 });
 
+describe("the sweep pass", () => {
+  test("asks for raw rows and files nothing when every orphan cleared", async () => {
+    stubWtAll({ sweep: { stdout: SWEPT } });
+
+    expect(await main()).toBe(0);
+    expect(calls()).toContain("orphans\t1");
+    expect(todos()).toEqual([]);
+    expect(latch("wt-orphan-sweep-failed")).toBe("ok");
+  });
+
+  // The rows are the only record that the pass deleted anything, and the
+  // launchd log is where it is kept.
+  test("echoes what it removed", () => {
+    stubWtAll({ sweep: { stdout: SWEPT } });
+
+    expect(spawnPrune().stdout).toContain("/wt/agent-1");
+  });
+
+  test("files the orphans it could not remove, with a command per path", async () => {
+    stubWtAll({ sweep: { stdout: SWEPT + STUCK } });
+
+    expect(await main()).toBe(0);
+    const [todo] = todos();
+    expect(todos()).toHaveLength(1);
+    expect(todo.title).toBe(
+      `Orphaned worktree directories could not be removed on ${MACHINE}`,
+    );
+    expect(todo.notes).toContain("rm -rf '/wt/agent-2'");
+    expect(todo.notes).toContain("## Orphans left behind");
+    expect(todo.notes).toContain("EPERM");
+    // A path the sweep cleared is not something anyone has to act on.
+    expect(todo.notes).not.toContain("/wt/agent-1");
+  });
+
+  // Latched per path, so a husk nobody has cleared by hand stays quiet while
+  // the rest of the set churns around it.
+  test("stays quiet on a second night with the same orphan standing", async () => {
+    stubWtAll({ sweep: { stdout: STUCK } });
+    expect(await main()).toBe(0);
+    expect(todos()).toHaveLength(1);
+
+    rmSync(todosFile);
+    stubWtAll({ sweep: { stdout: STUCK } });
+    expect(await main()).toBe(0);
+    expect(todos()).toEqual([]);
+  });
+
+  test("files again when a different orphan gets stuck", async () => {
+    stubWtAll({ sweep: { stdout: STUCK } });
+    await main();
+
+    rmSync(todosFile);
+    stubWtAll({ sweep: { stdout: STUCK + SECOND_STUCK } });
+    expect(await main()).toBe(0);
+    expect(todos()).toHaveLength(1);
+    expect(todos()[0].notes).toContain("**New:** /wt/agent-3");
+  });
+
+  // A repo the sweep could not reach was never swept, which is the blind spot
+  // this pass exists to close rather than a repo that came back clean.
+  test("reports a sweep that could not run and still reports what it found", async () => {
+    stubWtAll({
+      sweep: { stdout: STUCK, stderr: "some/repo:\n  fatal: not a git repository\n", status: 1 },
+    });
+
+    expect(await main()).toBe(0);
+    const [failed, stuck] = todos();
+    expect(todos()).toHaveLength(2);
+    expect(failed.title).toBe(`Orphan sweep could not run on ${MACHINE}`);
+    expect(failed.notes).toContain("```sh\nwt all orphans\n```");
+    expect(failed.notes).toContain("fatal: not a git repository");
+    expect(failed.notes).toContain("went unswept");
+    expect(stuck.title).toBe(
+      `Orphaned worktree directories could not be removed on ${MACHINE}`,
+    );
+  });
+
+  // An orphan is a directory git has already forgotten, so nothing about the
+  // sweep depends on the prune. A prune that died partway through a removal is
+  // one of the things that strands a worktree directory in the first place.
+  test("sweeps on a night the prune failed", async () => {
+    stubWtAll({ prune: { status: 1 }, sweep: { stdout: STUCK } });
+
+    expect(await main()).toBe(1);
+    expect(calls()).toEqual(["prune --before\tunset", "orphans\t1"]);
+    expect(todos().map((todo) => todo.title)).toEqual([
+      `Nightly worktree prune failed on ${MACHINE}`,
+      `Orphaned worktree directories could not be removed on ${MACHINE}`,
+    ]);
+  });
+
+  // A "kept" row is a standing observation about a directory the sweep declined
+  // to remove, not something it failed at.
+  test("leaves a kept row out of the to-do", async () => {
+    const kept = "bendrucker/claude\tkept\tstranded by another repo\t/wt/x\n";
+    stubWtAll({ sweep: { stdout: kept } });
+
+    expect(await main()).toBe(0);
+    expect(todos()).toEqual([]);
+  });
+});
+
 // A refused `open` means nothing was recorded anywhere a person will see it.
 // Carrying the filer's own status out says that, where the 1 a reported failure
 // already exits with, or the 0 a drift report does, reads as a handled run.
@@ -590,7 +748,7 @@ describe("drift", () => {
 
     await main();
     expect(todos()[0].notes).toContain("wt step prune --dry-run --min-age '3d'");
-    expect(calls()).toEqual(["prune --before\tunset", "prune-audit\t1"]);
+    expect(calls()).toEqual(["prune --before\tunset", "orphans\t1", "prune-audit\t1"]);
   });
 
   test("defaults the min-age guard to a day", async () => {
@@ -718,7 +876,7 @@ describe("the executable", () => {
     // An absolute cat, because $PATH holds nothing but the stub directory.
     writeFileSync(
       join(dotfiles, "bin", "wt-all"),
-      `#!/bin/sh\n[ "$1" = "prune-audit" ] && exit 0\n/bin/cat ${shQuote(log)}\n`,
+      `#!/bin/sh\ncase "$1" in prune-audit|orphans) exit 0 ;; esac\n/bin/cat ${shQuote(log)}\n`,
     );
     chmodSync(join(dotfiles, "bin", "wt-all"), 0o755);
 
