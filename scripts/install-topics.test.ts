@@ -11,8 +11,6 @@ let root: string;
 beforeEach(() => {
   box = sandbox("install-topics");
   root = box.mkdir("root");
-  box.write("submodules", "");
-  box.stub("git", 'case "$1 $2" in "submodule foreach") cat "$FIXTURES/submodules" ;; esac');
 });
 
 afterEach(() => {
@@ -26,11 +24,16 @@ function installer(path: string) {
   chmodSync(target, 0o755);
 }
 
+/** The url key is what a section carries besides path, so the read has to pass it over. */
+function submodules(...paths: string[]) {
+  const sections = paths.map(
+    (path) => `[submodule "${path}"]\n\tpath = ${path}\n\turl = https://example.test/${path}.git\n`,
+  );
+  writeFileSync(join(root, ".gitmodules"), sections.join(""));
+}
+
 function install() {
-  return run([script, root], {
-    path: [box.bin],
-    env: { FIXTURES: box.dir, LOG: box.path("ran") },
-  });
+  return run([script, root], { env: { LOG: box.path("ran") } });
 }
 
 function ran(): string[] {
@@ -74,7 +77,7 @@ describe("install-topics", () => {
   });
 
   test("leaves a submodule's own installer alone", () => {
-    box.write("submodules", "vendor\n");
+    submodules("vendor");
     installer("git/install.sh");
     installer("vendor/install.sh");
 
@@ -83,7 +86,7 @@ describe("install-topics", () => {
   });
 
   test("runs the topic a nested submodule sits under", () => {
-    box.write("submodules", "bat/catppuccin\n");
+    submodules("bat/catppuccin");
     installer("bat/install.sh");
 
     install();

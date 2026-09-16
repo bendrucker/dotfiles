@@ -23,12 +23,15 @@ cd "$DOTFILES_ROOT"
 # project's repo and its installer is not ours to run. A nested one is already
 # out of the glob's reach and never matches a topic name.
 skip=" mise "
-# foreach runs the command in a shell of its own, where $sm_path is the name it
-# exports. Expanding it here would leave the command empty.
-# shellcheck disable=SC2016
-for sm_path in $(git submodule foreach --quiet 'echo "$sm_path"' 2>/dev/null); do
-  skip="$skip$sm_path "
-done
+if [ -f .gitmodules ]; then
+  # .gitmodules is what the repo declares, and reading it answers for a
+  # submodule nobody has initialized. `git submodule foreach` reports only the
+  # initialized ones and recurses into each, so a checkout broken in there
+  # reports no submodules at all and their installers run.
+  for sm_path in $(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | cut -d' ' -f2-); do
+    skip="$skip$sm_path "
+  done
+fi
 
 for installer in */install.sh; do
   # A glob that matches nothing stays literal in sh
