@@ -52,6 +52,18 @@ install_launch_agent com.user.activitywatch.plist "ActivityWatch capture"
 # The Screen Time import agent is installed by activitywatch/install.sh, which
 # is where its binary comes from.
 
+# Gated because launchctl bootstrap fails outright on a missing Program, which
+# would take scripts/install down with it. The binary comes from
+# go/default-go-packages via mise, and the config is machine-local and
+# untracked, so neither exists on a fresh machine or in CI. Nothing is removed
+# in the else branch: tailgate holds OAuth tokens that a teardown drops, and a
+# path check that misfires must not be what costs them.
+if [[ -x "$HOME/src/go/bin/tailgate" && -f "$HOME/.config/tailgate/tailgate.hujson" ]]; then
+  install_launch_agent me.bendrucker.tailgate.plist "tailgate MCP gateway"
+else
+  gum log --level warn "tailgate binary or config missing, skipping its launchd agent"
+fi
+
 # Only setup upgrade if we're in separate-directory mode (not a symlink)
 if [[ ! -L "$HOME/.dotfiles" ]]; then
   setup_dotfiles_upgrade
