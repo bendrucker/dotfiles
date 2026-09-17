@@ -36,7 +36,7 @@ interface Pane {
 }
 
 interface Activity {
-  lastStatus: string;
+  wasWorking: boolean;
   lastWorkingAt: number;
 }
 
@@ -53,20 +53,13 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-function herdr(args: string[]): Bun.SyncSubprocess | undefined {
+async function herdr(args: string[]): Promise<{ success: boolean; stdout: string }> {
   try {
-    return Bun.spawnSync({ cmd: ["herdr", ...args], env: process.env });
+    const child = Bun.spawn({ cmd: ["herdr", ...args], env: process.env, stdout: "pipe" });
+    const stdout = await new Response(child.stdout).text();
+    return { success: (await child.exited) === 0, stdout };
   } catch {
-    return undefined;
-  }
-}
-
-async function herdrAsync(args: string[]): Promise<boolean> {
-  try {
-    const child = Bun.spawn({ cmd: ["herdr", ...args], env: process.env, stdout: "ignore" });
-    return (await child.exited) === 0;
-  } catch {
-    return false;
+    return { success: false, stdout: "" };
   }
 }
 
@@ -78,15 +71,15 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function panes(): Pane[] {
-  const result = herdr(["api", "snapshot"]);
-  if (!result?.success) {
+async function panes(): Promise<Pane[]> {
+  const result = await herdr(["api", "snapshot"]);
+  if (!result.success) {
     fail("could not read the herdr snapshot");
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(result.stdout.toString());
+    parsed = JSON.parse(result.stdout);
   } catch {
     return fail("could not parse the herdr snapshot");
   }
@@ -135,7 +128,7 @@ function readActivity(): Record<string, Activity> {
   for (const [id, entry] of Object.entries(parsed)) {
     if (!isRecord(entry) || typeof entry.lastWorkingAt !== "number") continue;
     if (!Number.isFinite(entry.lastWorkingAt)) continue;
-    activity[id] = { lastStatus: text(entry.lastStatus), lastWorkingAt: entry.lastWorkingAt };
+    activity[id] = { wasWorking: entry.wasWorking === true, lastWorkingAt: entry.lastWorkingAt };
   }
   return activity;
 }
@@ -168,7 +161,7 @@ function mark(pane: Pane, last: Activity): Mark {
   // Seeing a question is not answering it, so focus does not clear this one.
   if (text(pane.tokens.agent_blocked)) return "agent_blocked";
 
-  if (last.lastStatus === "working" || pane.status === "done" || text(pane.tokens.agent_done)) {
+  if (last.wasWorking || pane.status === "done" || text(pane.tokens.agent_done)) {
     return pane.focused ? "" : "agent_done";
   }
 
@@ -187,7 +180,8 @@ async function report(pane: Pane, wanted: Mark): Promise<boolean> {
   }
   if (tokens.length === 0) return true;
 
-  if (await herdrAsync(["pane", "report-metadata", pane.id, "--source", SOURCE, ...tokens])) return true;
+  const result = await herdr(["pane", "report-metadata", pane.id, "--source", SOURCE, ...tokens]);
+  if (result.success) return true;
 
   failed = true;
   console.error(`herdr-agent-state: could not report ${wanted || "a cleared mark"} for ${pane.id}`);
@@ -198,14 +192,14 @@ const previous = readActivity();
 const current: Record<string, Activity> = {};
 
 await Promise.all(
-  panes().map(async (pane) => {
-    const last = previous[pane.id] ?? { lastStatus: "", lastWorkingAt: now };
+  (await panes()).map(async (pane) => {
+    const last = previous[pane.id] ?? { wasWorking: false, lastWorkingAt: now };
 
-    // A mark that did not take leaves lastStatus where it was, so the next run
+    // A mark that did not take leaves wasWorking where it was, so the next run
     // still has the transition that earned it.
     const reported = await report(pane, mark(pane, last));
     current[pane.id] = {
-      lastStatus: reported ? pane.status : last.lastStatus,
+      wasWorking: reported ? pane.status === "working" : last.wasWorking,
       lastWorkingAt: pane.status === "working" ? now : last.lastWorkingAt,
     };
   }),

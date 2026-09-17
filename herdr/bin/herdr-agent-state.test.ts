@@ -35,11 +35,11 @@ function stubHerdr(box: Sandbox, reportStatus = 0): void {
 
 const statePath = "state/dotfiles/herdr-agent-state.json";
 
-function seed(box: Sandbox, activity: Record<string, { lastStatus: string; lastWorkingAt: number }>): void {
+function seed(box: Sandbox, activity: Record<string, { wasWorking: boolean; lastWorkingAt: number }>): void {
   box.write(statePath, JSON.stringify(activity));
 }
 
-function recorded(box: Sandbox): Record<string, { lastStatus: string; lastWorkingAt: number }> {
+function recorded(box: Sandbox): Record<string, { wasWorking: boolean; lastWorkingAt: number }> {
   return JSON.parse(box.read(statePath) || "{}");
 }
 
@@ -106,8 +106,11 @@ describe("herdr-agent-state", () => {
     expect(r.stderr).toContain("could not read the herdr snapshot");
   });
 
-  test("leaves a pane with no agent alone", () => {
-    snapshot(box, [{ pane_id: "p1", agent_status: "idle" }]);
+  test.each<{ name: string; pane: PaneShape }>([
+    { name: "no agent", pane: { pane_id: "p1", agent_status: "idle" } },
+    { name: "no pane id", pane: { pane_id: "", agent: "claude", agent_status: "blocked" } },
+  ])("leaves a pane with $name out of the run", ({ pane }) => {
+    snapshot(box, [pane]);
 
     expect(state(box).status).toBe(0);
     expect(reported(box)).toEqual([]);
@@ -118,7 +121,7 @@ describe("herdr-agent-state", () => {
     snapshot(box, [
       { pane_id: "p1", agent: "claude", agent_status: "working", tokens: { agent_done: "✓" } },
     ]);
-    seed(box, { p1: { lastStatus: "idle", lastWorkingAt: Date.now() - 300 * MINUTE } });
+    seed(box, { p1: { wasWorking: false, lastWorkingAt: Date.now() - 300 * MINUTE } });
 
     expect(state(box).status).toBe(0);
     expect(linesFor(box, "p1")).toContain("--clear-token agent_done");
@@ -127,7 +130,7 @@ describe("herdr-agent-state", () => {
 
   test("latches done when a turn ends on a pane nobody is looking at", () => {
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "idle" }]);
-    seed(box, { p1: { lastStatus: "working", lastWorkingAt: Date.now() } });
+    seed(box, { p1: { wasWorking: true, lastWorkingAt: Date.now() } });
 
     expect(state(box).status).toBe(0);
     expect(linesFor(box, "p1")).toContain("--token agent_done=✓");
@@ -135,7 +138,7 @@ describe("herdr-agent-state", () => {
 
   test("latches nothing when the turn ends on the focused pane", () => {
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "idle", focused: true }]);
-    seed(box, { p1: { lastStatus: "working", lastWorkingAt: Date.now() } });
+    seed(box, { p1: { wasWorking: true, lastWorkingAt: Date.now() } });
 
     expect(state(box).status).toBe(0);
     expect(reported(box)).toEqual([]);
@@ -145,7 +148,7 @@ describe("herdr-agent-state", () => {
   // reaches a pane without any working poll before it.
   test("latches done off the status herdr derives, with no working poll behind it", () => {
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "done" }]);
-    seed(box, { p1: { lastStatus: "idle", lastWorkingAt: Date.now() } });
+    seed(box, { p1: { wasWorking: false, lastWorkingAt: Date.now() } });
 
     expect(state(box).status).toBe(0);
     expect(linesFor(box, "p1")).toContain("--token agent_done=✓");
@@ -155,7 +158,7 @@ describe("herdr-agent-state", () => {
     snapshot(box, [
       { pane_id: "p1", agent: "claude", agent_status: "idle", tokens: { agent_done: "✓" } },
     ]);
-    seed(box, { p1: { lastStatus: "idle", lastWorkingAt: Date.now() } });
+    seed(box, { p1: { wasWorking: false, lastWorkingAt: Date.now() } });
 
     expect(state(box).status).toBe(0);
     expect(reported(box)).toEqual([]);
@@ -165,7 +168,7 @@ describe("herdr-agent-state", () => {
     snapshot(box, [
       { pane_id: "p1", agent: "claude", agent_status: "idle", focused: true, tokens: { agent_done: "✓" } },
     ]);
-    seed(box, { p1: { lastStatus: "idle", lastWorkingAt: Date.now() } });
+    seed(box, { p1: { wasWorking: false, lastWorkingAt: Date.now() } });
 
     expect(state(box).status).toBe(0);
     expect(linesFor(box, "p1")).toContain("--clear-token agent_done");
@@ -178,25 +181,21 @@ describe("herdr-agent-state", () => {
     expect(linesFor(box, "p1")).toContain("--token agent_blocked=?");
   });
 
-  // Focusing the pane redraws the prompt herdr recognized the question by, so
-  // the status stops saying blocked while the question is still waiting.
-  test("holds a blocked latch when the status stops saying blocked", () => {
-    snapshot(box, [
-      { pane_id: "p1", agent: "claude", agent_status: "idle", focused: true, tokens: { agent_blocked: "?" } },
-    ]);
-    seed(box, { p1: { lastStatus: "blocked", lastWorkingAt: Date.now() } });
-
-    expect(state(box).status).toBe(0);
-    expect(reported(box)).toEqual([]);
-  });
-
-  // A question answered inside one poll gap leaves the mark up. That direction is
-  // chosen: a question still waiting is never drawn as finished.
-  test("holds a blocked latch through a turn that ended", () => {
-    snapshot(box, [
-      { pane_id: "p1", agent: "claude", agent_status: "done", tokens: { agent_blocked: "?" } },
-    ]);
-    seed(box, { p1: { lastStatus: "blocked", lastWorkingAt: Date.now() } });
+  // Focusing the pane redraws the prompt herdr recognized the question by, so a
+  // waiting question stops reporting blocked. A question answered inside one poll
+  // gap therefore leaves the mark up, which is the chosen direction to err.
+  test.each<{ name: string; pane: PaneShape }>([
+    {
+      name: "the status stops saying blocked",
+      pane: { pane_id: "p1", agent: "claude", agent_status: "idle", focused: true, tokens: { agent_blocked: "?" } },
+    },
+    {
+      name: "a turn ended",
+      pane: { pane_id: "p1", agent: "claude", agent_status: "done", tokens: { agent_blocked: "?" } },
+    },
+  ])("holds a blocked latch when $name", ({ pane }) => {
+    snapshot(box, [pane]);
+    seed(box, { p1: { wasWorking: false, lastWorkingAt: Date.now() } });
 
     expect(state(box).status).toBe(0);
     expect(reported(box)).toEqual([]);
@@ -206,7 +205,7 @@ describe("herdr-agent-state", () => {
     snapshot(box, [
       { pane_id: "p1", agent: "claude", agent_status: "working", tokens: { agent_blocked: "?" } },
     ]);
-    seed(box, { p1: { lastStatus: "blocked", lastWorkingAt: Date.now() - 5 * MINUTE } });
+    seed(box, { p1: { wasWorking: false, lastWorkingAt: Date.now() - 5 * MINUTE } });
 
     expect(state(box).status).toBe(0);
     expect(linesFor(box, "p1")).toContain("--clear-token agent_blocked");
@@ -214,7 +213,7 @@ describe("herdr-agent-state", () => {
 
   test("marks a pane parked past the threshold", () => {
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "idle" }]);
-    seed(box, { p1: { lastStatus: "idle", lastWorkingAt: Date.now() - 121 * MINUTE } });
+    seed(box, { p1: { wasWorking: false, lastWorkingAt: Date.now() - 121 * MINUTE } });
 
     expect(state(box).status).toBe(0);
     expect(linesFor(box, "p1")).toContain("--token agent_stale=◦");
@@ -222,7 +221,7 @@ describe("herdr-agent-state", () => {
 
   test("leaves a pane short of the threshold unmarked", () => {
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "idle" }]);
-    seed(box, { p1: { lastStatus: "idle", lastWorkingAt: Date.now() - 119 * MINUTE } });
+    seed(box, { p1: { wasWorking: false, lastWorkingAt: Date.now() - 119 * MINUTE } });
 
     expect(state(box).status).toBe(0);
     expect(reported(box)).toEqual([]);
@@ -245,19 +244,11 @@ describe("herdr-agent-state", () => {
     expect(reported(box)).toEqual([]);
   });
 
-  test("ignores a pane the snapshot gave no id", () => {
-    snapshot(box, [{ pane_id: "", agent: "claude", agent_status: "blocked" }]);
-
-    expect(state(box).status).toBe(0);
-    expect(reported(box)).toEqual([]);
-    expect(recorded(box)).toEqual({});
-  });
-
   test("forgets a pane the snapshot no longer carries", () => {
     snapshot(box, [{ pane_id: "p2", agent: "claude", agent_status: "working" }]);
     seed(box, {
-      p1: { lastStatus: "idle", lastWorkingAt: Date.now() - 300 * MINUTE },
-      p2: { lastStatus: "working", lastWorkingAt: Date.now() },
+      p1: { wasWorking: false, lastWorkingAt: Date.now() - 300 * MINUTE },
+      p2: { wasWorking: true, lastWorkingAt: Date.now() },
     });
 
     expect(state(box).status).toBe(0);
@@ -272,7 +263,7 @@ describe("herdr-agent-state", () => {
       { pane_id: "p1", agent: "claude", agent_status: "blocked" },
       { pane_id: "p2", agent: "claude", agent_status: "idle" },
     ]);
-    seed(box, { p2: { lastStatus: "working", lastWorkingAt: Date.now() } });
+    seed(box, { p2: { wasWorking: true, lastWorkingAt: Date.now() } });
 
     const r = state(box);
     expect(r.status).not.toBe(0);
@@ -284,10 +275,10 @@ describe("herdr-agent-state", () => {
   test("leaves a failed mark's transition in the record for the next run", () => {
     stubHerdr(box, 1);
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "idle" }]);
-    seed(box, { p1: { lastStatus: "working", lastWorkingAt: Date.now() } });
+    seed(box, { p1: { wasWorking: true, lastWorkingAt: Date.now() } });
 
     expect(state(box).status).not.toBe(0);
-    expect(recorded(box).p1.lastStatus).toBe("working");
+    expect(recorded(box).p1.wasWorking).toBe(true);
   });
 
   test("spends one call on a pane however many of its marks moved", () => {
@@ -339,7 +330,7 @@ describe("herdr-agent-state", () => {
 
   test("ignores an activity entry whose timestamp is not a finite number", () => {
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "idle" }]);
-    box.write(statePath, JSON.stringify({ p1: { lastStatus: "idle", lastWorkingAt: null } }));
+    box.write(statePath, '{ "p1": { "wasWorking": false, "lastWorkingAt": -1e999 } }');
 
     expect(state(box).status).toBe(0);
     expect(reported(box)).toEqual([]);
