@@ -61,6 +61,15 @@ function herdr(args: string[]): Bun.SyncSubprocess | undefined {
   }
 }
 
+async function herdrAsync(args: string[]): Promise<boolean> {
+  try {
+    const child = Bun.spawn({ cmd: ["herdr", ...args], env: process.env, stdout: "ignore" });
+    return (await child.exited) === 0;
+  } catch {
+    return false;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -166,9 +175,10 @@ function mark(pane: Pane, last: Activity): Mark {
   return now - last.lastWorkingAt > STALE_AFTER_MS ? "agent_stale" : "";
 }
 
-// A settled pane costs nothing and a moved one costs a single call, because a
-// herdr call is about 150ms against the tab bar's 4s timeout.
-function report(pane: Pane, wanted: Mark): boolean {
+// A settled pane costs nothing and a moved one costs a single call. Those calls
+// run together, because a herdr call is about 150ms and enough panes moving at
+// once would walk a serial run into the tab bar's 4s timeout.
+async function report(pane: Pane, wanted: Mark): Promise<boolean> {
   const tokens: string[] = [];
   for (const name of MARK_NAMES) {
     const value = name === wanted ? MARKS[name] : "";
@@ -177,8 +187,7 @@ function report(pane: Pane, wanted: Mark): boolean {
   }
   if (tokens.length === 0) return true;
 
-  const result = herdr(["pane", "report-metadata", pane.id, "--source", SOURCE, ...tokens]);
-  if (result?.success) return true;
+  if (await herdrAsync(["pane", "report-metadata", pane.id, "--source", SOURCE, ...tokens])) return true;
 
   failed = true;
   console.error(`herdr-agent-state: could not report ${wanted || "a cleared mark"} for ${pane.id}`);
@@ -188,17 +197,19 @@ function report(pane: Pane, wanted: Mark): boolean {
 const previous = readActivity();
 const current: Record<string, Activity> = {};
 
-for (const pane of panes()) {
-  const last = previous[pane.id] ?? { lastStatus: "", lastWorkingAt: now };
+await Promise.all(
+  panes().map(async (pane) => {
+    const last = previous[pane.id] ?? { lastStatus: "", lastWorkingAt: now };
 
-  // A mark that did not take leaves lastStatus where it was, so the next run
-  // still has the transition that earned it.
-  const reported = report(pane, mark(pane, last));
-  current[pane.id] = {
-    lastStatus: reported ? pane.status : last.lastStatus,
-    lastWorkingAt: pane.status === "working" ? now : last.lastWorkingAt,
-  };
-}
+    // A mark that did not take leaves lastStatus where it was, so the next run
+    // still has the transition that earned it.
+    const reported = await report(pane, mark(pane, last));
+    current[pane.id] = {
+      lastStatus: reported ? pane.status : last.lastStatus,
+      lastWorkingAt: pane.status === "working" ? now : last.lastWorkingAt,
+    };
+  }),
+);
 
 writeActivity(current);
 

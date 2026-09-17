@@ -301,6 +301,32 @@ describe("herdr-agent-state", () => {
     expect(linesFor(box, "p1")).toContain("--token agent_blocked=?");
   });
 
+  // A herdr call is about 150ms, so a serial run over a session where enough
+  // panes moved at once would hit the tab bar's 4s timeout and be killed part
+  // way through, leaving the rest unmarked and the state file unwritten.
+  test("reports every moved pane at once rather than one after another", () => {
+    box.stub(
+      "herdr",
+      [
+        'case "$1 $2" in',
+        `  "api snapshot") exec cat ${quote(box.path("snapshot.json"))} ;;`,
+        `  *" report-metadata") printf 'start %s\\n' "$3" >> ${quote(box.path("order"))}` +
+          `; sleep 0.3; printf 'end %s\\n' "$3" >> ${quote(box.path("order"))}; exit 0 ;;`,
+        "  *) exit 1 ;;",
+        "esac",
+      ].join("\n"),
+    );
+    snapshot(
+      box,
+      ["p1", "p2", "p3"].map((pane_id) => ({ pane_id, agent: "claude", agent_status: "blocked" })),
+    );
+
+    expect(state(box).status).toBe(0);
+
+    const order = box.read("order").split("\n").filter(Boolean);
+    expect(order.slice(0, 3).every((line) => line.startsWith("start"))).toBe(true);
+  });
+
   test("reports a state file it cannot parse, having marked what it could", () => {
     box.write(statePath, "{ not json");
     snapshot(box, [{ pane_id: "p1", agent: "claude", agent_status: "blocked" }]);
