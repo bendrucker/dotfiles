@@ -292,9 +292,8 @@ describe("herdr-agent-state", () => {
     expect(linesFor(box, "p1")).toContain("--token agent_blocked=?");
   });
 
-  // A herdr call is about 150ms, so a serial run over a session where enough
-  // panes moved at once would hit the tab bar's 4s timeout and be killed part
-  // way through, leaving the rest unmarked and the state file unwritten.
+  // A run killed at the timeout writes no state file, so the turn that ended
+  // while it was part way through goes unrecorded.
   test("reports every moved pane at once rather than one after another", () => {
     box.stub(
       "herdr",

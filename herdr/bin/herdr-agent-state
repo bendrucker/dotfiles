@@ -1,8 +1,5 @@
 #!/usr/bin/env bun
 //
-// Report the `$agent_blocked`, `$agent_done` and `$agent_stale` pane tokens that
-// config.toml draws on the agent rows, once per tab bar interval.
-//
 // The snapshot carries no activity timestamp, which is all the state file holds.
 // Every other input is read back out of the pane's own tokens.
 //
@@ -100,9 +97,8 @@ async function panes(): Promise<Pane[]> {
     }));
 }
 
-// An absent file is the first run. One that is there and will not parse reseeds
-// every clock on every run after it, so that one says so. Either way every pane
-// seeds as having just worked, which marks nothing stale rather than everything.
+// An absent file is the first run. One that will not parse reseeds every clock
+// on every run after it, so that one says so.
 function readActivity(): Record<string, Activity> {
   let raw: string;
   try {
@@ -140,8 +136,8 @@ function unreadable(): void {
   console.error(`herdr-agent-state: could not read ${STATE_PATH}`);
 }
 
-// Renamed into place. An ordinary write truncates, and the tab bar kills a run
-// that passes its timeout.
+// The tab bar kills a run that passes its timeout, and an ordinary write would
+// leave the file truncated.
 function writeActivity(activity: Record<string, Activity>): void {
   const pending = `${STATE_PATH}.${process.pid}`;
   try {
@@ -168,9 +164,8 @@ function mark(pane: Pane, last: Activity): Mark {
   return now - last.lastWorkingAt > STALE_AFTER_MS ? "agent_stale" : "";
 }
 
-// A settled pane costs nothing and a moved one costs a single call. Those calls
-// run together, because a herdr call is about 150ms and enough panes moving at
-// once would walk a serial run into the tab bar's 4s timeout.
+// A herdr call is about 150ms, so enough panes moving at once would walk a
+// serial run into the tab bar's 4s timeout.
 async function report(pane: Pane, wanted: Mark): Promise<boolean> {
   const tokens: string[] = [];
   for (const name of MARK_NAMES) {
@@ -195,8 +190,8 @@ await Promise.all(
   (await panes()).map(async (pane) => {
     const last = previous[pane.id] ?? { wasWorking: false, lastWorkingAt: now };
 
-    // A mark that did not take leaves wasWorking where it was, so the next run
-    // still has the transition that earned it.
+    // A mark that did not take keeps the transition that earned it for the
+    // next run to retry.
     const reported = await report(pane, mark(pane, last));
     current[pane.id] = {
       wasWorking: reported ? pane.status === "working" : last.wasWorking,
