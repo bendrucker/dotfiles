@@ -15,9 +15,9 @@ afterEach(() => {
   else process.env.HOME = home;
 });
 
-// Trimmed from the run the two Studio to-dos were filed against,
-// dotfiles-upgrade-68b40361f090.log: a herdr plugin sync narrating a clean
-// tally partway through an install that went on to die in a topic installer.
+// A herdr plugin sync narrating a clean tally partway through an install that
+// went on to die in a topic installer, trimmed from the run this was filed
+// against.
 const INSTALL_RUN = [
   "-- prune --",
   "pruned 0 plugin(s)",
@@ -35,9 +35,6 @@ describe("distinctiveLine", () => {
     expect(distinctiveLine(output)).toBe("fatal: could not read Username");
   });
 
-  // Reading from the front handed the cause of a whole install to the first
-  // step that said a word like "failed", which was a plugin sync that had
-  // succeeded. The install died six steps later, and that is where it broke.
   test("takes the last line that reports a failure", () => {
     expect(distinctiveLine(INSTALL_RUN)).toBe(
       "./activitywatch/install.sh: line 68: /Users/ben/.dotfiles/macos/lib/launch-agent.sh: No such file or directory",
@@ -53,6 +50,17 @@ describe("distinctiveLine", () => {
 
   test("still reads a line reporting a zero and a real failure", () => {
     expect(distinctiveLine("0 errors, 1 failure")).toBe("0 errors, 1 failure");
+  });
+
+  // The tally and the diagnosis share one word list, so a count of nothing gone
+  // wrong reads the same whichever word it is spelled with.
+  test.each([
+    "summary: 12 checked, 0 missing",
+    "scan complete, 0 not found",
+    "10 passed, 0 test failures",
+    "build clean: 0 build errors",
+  ])("does not read %j as a failure", (tally) => {
+    expect(distinctiveLine(`error: bad object\n${tally}`)).toBe("error: bad object");
   });
 
   // The job's own narration says which step broke, which the job name already
