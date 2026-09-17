@@ -44,8 +44,7 @@ describe("distinctiveLine", () => {
     );
   });
 
-  // "0 failed" is the vocabulary without the event. Left counting, the summary
-  // still takes a log that ends on one.
+  // "0 failed" is the vocabulary without the event.
   test("does not read a tally of nothing gone wrong as a failure", () => {
     const output = ["compiling", "summary: 1 updated, 0 pinned, 0 failed"].join("\n");
     expect(distinctiveLine(output)).toBe("summary: 1 updated, 0 pinned, 0 failed");
