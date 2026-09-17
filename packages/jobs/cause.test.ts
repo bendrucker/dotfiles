@@ -15,10 +15,45 @@ afterEach(() => {
   else process.env.HOME = home;
 });
 
+// Trimmed from the run the two Studio to-dos were filed against,
+// dotfiles-upgrade-68b40361f090.log: a herdr plugin sync narrating a clean
+// tally partway through an install that went on to die in a topic installer.
+const INSTALL_RUN = [
+  "-- prune --",
+  "pruned 0 plugin(s)",
+  "",
+  "summary: 10 present, 0 installed, 0 failed, 10 desired total",
+  "lock unchanged -> /Users/ben/.dotfiles/herdr/plugins.lock",
+  "\u2192 chmouel/gh-news @ v0.18.0",
+  "[news]: already up to date",
+  "./activitywatch/install.sh: line 68: /Users/ben/.dotfiles/macos/lib/launch-agent.sh: No such file or directory",
+].join("\n");
+
 describe("distinctiveLine", () => {
-  test("takes the first line that reports a failure", () => {
+  test("takes the line that reports a failure", () => {
     const output = ["Fetching origin", "fatal: could not read Username", "exit 128"].join("\n");
     expect(distinctiveLine(output)).toBe("fatal: could not read Username");
+  });
+
+  // Reading from the front handed the cause of a whole install to the first
+  // step that said a word like "failed", which was a plugin sync that had
+  // succeeded. The install died six steps later, and that is where it broke.
+  test("takes the last line that reports a failure", () => {
+    expect(distinctiveLine(INSTALL_RUN)).toBe(
+      "./activitywatch/install.sh: line 68: /Users/ben/.dotfiles/macos/lib/launch-agent.sh: No such file or directory",
+    );
+  });
+
+  // "0 failed" is the vocabulary without the event. Left counting, the summary
+  // still takes a log that ends on one.
+  test("does not read a tally of nothing gone wrong as a failure", () => {
+    const output = ["compiling", "summary: 1 updated, 0 pinned, 0 failed"].join("\n");
+    expect(distinctiveLine(output)).toBe("summary: 1 updated, 0 pinned, 0 failed");
+    expect(distinctiveLine(`error: bad object\n${output}`)).toBe("error: bad object");
+  });
+
+  test("still reads a line reporting a zero and a real failure", () => {
+    expect(distinctiveLine("0 errors, 1 failure")).toBe("0 errors, 1 failure");
   });
 
   // The job's own narration says which step broke, which the job name already

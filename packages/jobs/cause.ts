@@ -1,5 +1,5 @@
 // What a failure is, reduced to something two runs can be compared on: the
-// failing command plus the first output line saying what went wrong, with the
+// failing command plus the output line saying what went wrong, with the
 // volatile spans replaced by their shapes.
 //
 // Neither half works alone. The command alone collapses every way a step can
@@ -22,6 +22,14 @@ const GUM_LEVEL = /^(DEBU|INFO|WARN|ERRO|FATA)\b/;
 // ("fatal: ...") as buried in it ("... : Permission denied").
 const DIAGNOSIS =
   /\b(error|errors|fatal|failed|failure|cannot|can't|unable|denied|refused|missing|no such|not found|timed out|aborted)\b/i;
+
+// A tally of nothing gone wrong, which a step narrates on its way past: "0
+// failed", "no errors". It carries the vocabulary without the event, and
+// "summary: 10 present, 0 installed, 0 failed, 10 desired total" is what filed
+// two to-dos against a herdr plugin sync that had succeeded. Cut from the line
+// rather than vetoing it, so a line reporting both a zero and a real failure
+// still reads as one.
+const ZERO_TALLY = /\b(?:0|no)\s+(?:errors?|failures?|failed)\b/gi;
 
 // Spans that differ between two runs of one unchanged failure. Ordered so the
 // wider shapes are consumed before the narrower ones can eat into them: a
@@ -51,10 +59,15 @@ export function normalizeVolatile(line: string): string {
   return VOLATILE.reduce((text, [pattern, shape]) => text.replace(pattern, shape), unhome(line));
 }
 
-// The line of a log that says what went wrong. The first line carrying a word a
+// The line of a log that says what went wrong. The last line carrying a word a
 // tool reports failure with, skipping what this repo's own scripts logged, and
 // falling back to the last line of output where nothing announced itself: a
 // child that failed without a recognizable diagnosis still ended where it broke.
+//
+// Read from the end for the same reason the note keeps the tail. A run that
+// broke stopped where it broke, and everything a long install narrated on the
+// way there is ahead of that point. Reading from the front had the cause of a
+// six-step install come from whichever step first said a word like "failed".
 export function distinctiveLine(output: string): string {
   const lines = stripCsi(output)
     .split("\n")
@@ -62,8 +75,12 @@ export function distinctiveLine(output: string): string {
     .filter((line) => line !== "");
   if (lines.length === 0) return "";
 
-  const diagnosis = lines.find((line) => !GUM_LEVEL.test(line) && DIAGNOSIS.test(line));
+  const diagnosis = lines.findLast(diagnoses);
   return diagnosis ?? lines[lines.length - 1];
+}
+
+function diagnoses(line: string): boolean {
+  return !GUM_LEVEL.test(line) && DIAGNOSIS.test(line.replace(ZERO_TALLY, ""));
 }
 
 // The identity of a failure: which command broke, and the one line saying how,
