@@ -1,5 +1,5 @@
 // What a failure is, reduced to something two runs can be compared on: the
-// failing command plus the first output line saying what went wrong, with the
+// failing command plus the output line saying what went wrong, with the
 // volatile spans replaced by their shapes.
 //
 // Neither half works alone. The command alone collapses every way a step can
@@ -18,10 +18,25 @@ const FINGERPRINT_LENGTH = 12;
 // carries, so a cause is built from the child's own lines instead.
 const GUM_LEVEL = /^(DEBU|INFO|WARN|ERRO|FATA)\b/;
 
-// Matched against the whole line because the marker is as often at the front
-// ("fatal: ...") as buried in it ("... : Permission denied").
-const DIAGNOSIS =
-  /\b(error|errors|fatal|failed|failure|cannot|can't|unable|denied|refused|missing|no such|not found|timed out|aborted)\b/i;
+// The words a tool reports failure with. Matched against the whole line because
+// the marker is as often at the front ("fatal: ...") as buried in it
+// ("... : Permission denied").
+const FAILURE_WORDS =
+  "error|errors|fatal|failed|failure|cannot|can't|unable|denied|refused|missing|no such|not found|timed out|aborted";
+
+const DIAGNOSIS = new RegExp(`\\b(${FAILURE_WORDS})\\b`, "i");
+
+// A tally of nothing gone wrong, which a step narrates on its way past: "0
+// failed", "no errors", "0 test failures". It carries the vocabulary without
+// the event, so it is cut from a line before the words above are looked for.
+// Cut rather than vetoing the line, so one reporting both a zero and a real
+// failure still reads as a failure.
+//
+// Built from the same words, so the two cannot drift into a count one treats as
+// a tally and the other reads as a diagnosis. The optional word between the
+// count and the noun is what "0 test failures" needs, and it cannot swallow a
+// real diagnosis, since the word after it still has to be one of these.
+const ZERO_TALLY = new RegExp(`\\b(?:0|no)\\s+(?:\\w+\\s+)?(?:${FAILURE_WORDS})\\b`, "gi");
 
 // Spans that differ between two runs of one unchanged failure. Ordered so the
 // wider shapes are consumed before the narrower ones can eat into them: a
@@ -51,10 +66,17 @@ export function normalizeVolatile(line: string): string {
   return VOLATILE.reduce((text, [pattern, shape]) => text.replace(pattern, shape), unhome(line));
 }
 
-// The line of a log that says what went wrong. The first line carrying a word a
+// The line of a log that says what went wrong. The last line carrying a word a
 // tool reports failure with, skipping what this repo's own scripts logged, and
 // falling back to the last line of output where nothing announced itself: a
 // child that failed without a recognizable diagnosis still ended where it broke.
+//
+// Read from the end for the same reason the note keeps the tail: a run stops
+// where it broke, and a long install narrates plenty on the way there. The cost
+// is a step whose own output ends in cascade lines, where the last of them says
+// less than the first ("command not found" after the line naming the file that
+// was missing). The note carries the surrounding tail either way, so the cause
+// line loses specificity there rather than the reader losing the root.
 export function distinctiveLine(output: string): string {
   const lines = stripCsi(output)
     .split("\n")
@@ -62,8 +84,12 @@ export function distinctiveLine(output: string): string {
     .filter((line) => line !== "");
   if (lines.length === 0) return "";
 
-  const diagnosis = lines.find((line) => !GUM_LEVEL.test(line) && DIAGNOSIS.test(line));
+  const diagnosis = lines.findLast(diagnoses);
   return diagnosis ?? lines[lines.length - 1];
+}
+
+function diagnoses(line: string): boolean {
+  return !GUM_LEVEL.test(line) && DIAGNOSIS.test(line.replace(ZERO_TALLY, ""));
 }
 
 // The identity of a failure: which command broke, and the one line saying how,

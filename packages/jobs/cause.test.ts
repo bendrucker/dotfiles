@@ -15,10 +15,52 @@ afterEach(() => {
   else process.env.HOME = home;
 });
 
+// A herdr plugin sync narrating a clean tally partway through an install that
+// went on to die in a topic installer, trimmed from the run this was filed
+// against.
+const INSTALL_RUN = [
+  "-- prune --",
+  "pruned 0 plugin(s)",
+  "",
+  "summary: 10 present, 0 installed, 0 failed, 10 desired total",
+  "lock unchanged -> /Users/ben/.dotfiles/herdr/plugins.lock",
+  "\u2192 chmouel/gh-news @ v0.18.0",
+  "[news]: already up to date",
+  "./activitywatch/install.sh: line 68: /Users/ben/.dotfiles/macos/lib/launch-agent.sh: No such file or directory",
+].join("\n");
+
 describe("distinctiveLine", () => {
-  test("takes the first line that reports a failure", () => {
+  test("takes the line that reports a failure", () => {
     const output = ["Fetching origin", "fatal: could not read Username", "exit 128"].join("\n");
     expect(distinctiveLine(output)).toBe("fatal: could not read Username");
+  });
+
+  test("takes the last line that reports a failure", () => {
+    expect(distinctiveLine(INSTALL_RUN)).toBe(
+      "./activitywatch/install.sh: line 68: /Users/ben/.dotfiles/macos/lib/launch-agent.sh: No such file or directory",
+    );
+  });
+
+  // "0 failed" is the vocabulary without the event.
+  test("does not read a tally of nothing gone wrong as a failure", () => {
+    const output = ["compiling", "summary: 1 updated, 0 pinned, 0 failed"].join("\n");
+    expect(distinctiveLine(output)).toBe("summary: 1 updated, 0 pinned, 0 failed");
+    expect(distinctiveLine(`error: bad object\n${output}`)).toBe("error: bad object");
+  });
+
+  test("still reads a line reporting a zero and a real failure", () => {
+    expect(distinctiveLine("0 errors, 1 failure")).toBe("0 errors, 1 failure");
+  });
+
+  // The tally and the diagnosis share one word list, so a count of nothing gone
+  // wrong reads the same whichever word it is spelled with.
+  test.each([
+    "summary: 12 checked, 0 missing",
+    "scan complete, 0 not found",
+    "10 passed, 0 test failures",
+    "build clean: 0 build errors",
+  ])("does not read %j as a failure", (tally) => {
+    expect(distinctiveLine(`error: bad object\n${tally}`)).toBe("error: bad object");
   });
 
   // The job's own narration says which step broke, which the job name already
