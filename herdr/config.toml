@@ -214,9 +214,7 @@ description = "claude background agents"
 width = "85%"
 height = "85%"
 
-# The interactive picker over the dispatch ledger: pick a project or a thread,
-# then focus that agent's pane or send it a message. The chief pane runs the
-# board's --watch view in a split instead.
+# The chief pane's split already covers --watch, so this binding uses the interactive default.
 [[keys.command]]
 key = "prefix+alt+b"
 type = "popup"

@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 import { launcherContract } from "#harness/launchers";
 
-// The board ships from the claude repo, which this repo installs but does not
-// version, so what a clone missing it does is the case worth pinning.
+// The claude repo is installed here but not version-pinned, so a clone can be missing the board script.
 
 const launcher = join(repoRoot, "herdr", "bin", "herdr-board");
 const config = join(repoRoot, "herdr", "config.toml");
@@ -37,8 +36,7 @@ function stubBun(): void {
   box.stub("bun", 'printf "%s\\n" "$@"');
 }
 
-// Absent until the board merges and claude-upgrade syncs it, so the popup opens
-// on this line rather than on whatever bun says about a module it cannot find.
+// The script is missing until the board merges and syncs; this pins the launcher's own one-line error for that case.
 test("names the board it could not find", () => {
   stubBun();
   const repo = box.mkdir("claude-repo");
