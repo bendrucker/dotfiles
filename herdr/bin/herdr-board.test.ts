@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { repoRoot, run, sandbox, type Sandbox } from "#harness";
+import { repoRoot, run, sandbox, shell, type Sandbox } from "#harness";
 import { launcherContract } from "#harness/launchers";
 
 // The claude repo is installed here but not version-pinned, so a clone can be
@@ -23,8 +23,30 @@ afterEach(() => {
 
 launcherContract("herdr", "herdr-board");
 
-test("binds the launcher by the name PATH exports", () => {
-  expect(readFileSync(config, "utf8")).toContain('command = "herdr-board"');
+// The prefix+alt+b binding is the only [[keys.command]] block naming this
+// launcher.
+function boardBinding(): string {
+  const blocks = readFileSync(config, "utf8").split("\n\n");
+  const block = blocks.find((b) => b.includes('key = "prefix+alt+b"'));
+  if (!block) throw new Error("no prefix+alt+b binding in config.toml");
+  const match = block.match(/^command = "(.*)"$/m);
+  if (!match) throw new Error("no command line in the prefix+alt+b binding");
+  return match[1];
+}
+
+// The server holds the environment it started with for as long as it runs, so
+// a bare name resolves against a PATH that can predate herdr/path.zsh.
+// Expanded here the way herdr expands it, with herdr/bin off PATH.
+test("binds the launcher by a path rather than a name PATH has to resolve", () => {
+  const r = shell(`echo ${boardBinding()}`, { onlyPath: ["/usr/bin", "/bin"], env: { ZSH: repoRoot } });
+  expect(realpathSync(r.stdout.trim())).toBe(realpathSync(launcher));
+});
+
+// A prefix that can expand to nothing would leave an absolute path rooted at
+// /, silently resolving to the wrong location.
+test("falls back to the installed root when the server carries no $ZSH", () => {
+  const r = shell(`echo ${boardBinding()}`, { env: { ZSH: undefined } });
+  expect(r.stdout.trim()).toBe(`${process.env.HOME}/.dotfiles/herdr/bin/herdr-board`);
 });
 
 test("refuses without bun on PATH", () => {
