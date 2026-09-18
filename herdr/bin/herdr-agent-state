@@ -1,0 +1,205 @@
+#!/usr/bin/env bun
+//
+// The snapshot carries no activity timestamp, which is all the state file holds.
+// Every other input is read back out of the pane's own tokens.
+//
+// No --ttl-ms. An expired token reads as a disagreement and comes back on the
+// next interval, blinking the mark off once every TTL.
+
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
+const SOURCE = "agent-state";
+
+const STALE_AFTER_MS = 120 * 60 * 1000;
+
+// Plain Unicode, so no font install and no font-codepoint-map entry.
+const MARKS = {
+  agent_blocked: "?",
+  agent_done: "✓",
+  agent_stale: "◦",
+} as const;
+
+type Mark = keyof typeof MARKS | "";
+
+const MARK_NAMES = Object.keys(MARKS) as (keyof typeof MARKS)[];
+
+interface Pane {
+  id: string;
+  status: string;
+  focused: boolean;
+  tokens: Record<string, unknown>;
+}
+
+interface Activity {
+  wasWorking: boolean;
+  lastWorkingAt: number;
+}
+
+const now = Date.now();
+
+const STATE_PATH = join(
+  process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
+  "dotfiles",
+  "herdr-agent-state.json",
+);
+
+function fail(message: string): never {
+  console.error(`herdr-agent-state: ${message}`);
+  process.exit(1);
+}
+
+async function herdr(args: string[]): Promise<{ success: boolean; stdout: string }> {
+  try {
+    const child = Bun.spawn({ cmd: ["herdr", ...args], env: process.env, stdout: "pipe" });
+    const stdout = await new Response(child.stdout).text();
+    return { success: (await child.exited) === 0, stdout };
+  } catch {
+    return { success: false, stdout: "" };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+async function panes(): Promise<Pane[]> {
+  const result = await herdr(["api", "snapshot"]);
+  if (!result.success) {
+    fail("could not read the herdr snapshot");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    return fail("could not parse the herdr snapshot");
+  }
+
+  const snapshot = isRecord(parsed) && isRecord(parsed.result) ? parsed.result.snapshot : undefined;
+  if (!isRecord(snapshot) || !Array.isArray(snapshot.panes)) {
+    return fail("the herdr snapshot carried no panes");
+  }
+
+  return snapshot.panes
+    .filter(isRecord)
+    .filter((pane) => text(pane.pane_id) !== "" && text(pane.agent) !== "")
+    .map((pane) => ({
+      id: text(pane.pane_id),
+      status: text(pane.agent_status),
+      focused: pane.focused === true,
+      tokens: isRecord(pane.tokens) ? pane.tokens : {},
+    }));
+}
+
+// An absent file is the first run. One that will not parse reseeds every clock
+// on every run after it, so that one says so.
+function readActivity(): Record<string, Activity> {
+  let raw: string;
+  try {
+    raw = readFileSync(STATE_PATH, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") unreadable();
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    unreadable();
+    return {};
+  }
+  if (!isRecord(parsed)) {
+    unreadable();
+    return {};
+  }
+
+  const activity: Record<string, Activity> = {};
+  for (const [id, entry] of Object.entries(parsed)) {
+    if (!isRecord(entry) || typeof entry.lastWorkingAt !== "number") continue;
+    if (!Number.isFinite(entry.lastWorkingAt)) continue;
+    activity[id] = { wasWorking: entry.wasWorking === true, lastWorkingAt: entry.lastWorkingAt };
+  }
+  return activity;
+}
+
+let failed = false;
+
+function unreadable(): void {
+  failed = true;
+  console.error(`herdr-agent-state: could not read ${STATE_PATH}`);
+}
+
+// The tab bar kills a run that passes its timeout, and an ordinary write would
+// leave the file truncated.
+function writeActivity(activity: Record<string, Activity>): void {
+  const pending = `${STATE_PATH}.${process.pid}`;
+  try {
+    mkdirSync(dirname(STATE_PATH), { recursive: true });
+    writeFileSync(pending, `${JSON.stringify(activity, null, 2)}\n`);
+    renameSync(pending, STATE_PATH);
+  } catch {
+    failed = true;
+    console.error(`herdr-agent-state: could not write ${STATE_PATH}`);
+  }
+}
+
+function mark(pane: Pane, last: Activity): Mark {
+  if (pane.status === "working") return "";
+  if (pane.status === "blocked") return "agent_blocked";
+
+  // Seeing a question is not answering it, so focus does not clear this one.
+  if (text(pane.tokens.agent_blocked)) return "agent_blocked";
+
+  if (last.wasWorking || pane.status === "done" || text(pane.tokens.agent_done)) {
+    return pane.focused ? "" : "agent_done";
+  }
+
+  return now - last.lastWorkingAt > STALE_AFTER_MS ? "agent_stale" : "";
+}
+
+// A herdr call is about 150ms, so enough panes moving at once would walk a
+// serial run into the tab bar's 4s timeout.
+async function report(pane: Pane, wanted: Mark): Promise<boolean> {
+  const tokens: string[] = [];
+  for (const name of MARK_NAMES) {
+    const value = name === wanted ? MARKS[name] : "";
+    if (text(pane.tokens[name]) === value) continue;
+    tokens.push(...(value ? ["--token", `${name}=${value}`] : ["--clear-token", name]));
+  }
+  if (tokens.length === 0) return true;
+
+  const result = await herdr(["pane", "report-metadata", pane.id, "--source", SOURCE, ...tokens]);
+  if (result.success) return true;
+
+  failed = true;
+  console.error(`herdr-agent-state: could not report ${wanted || "a cleared mark"} for ${pane.id}`);
+  return false;
+}
+
+const previous = readActivity();
+const current: Record<string, Activity> = {};
+
+await Promise.all(
+  (await panes()).map(async (pane) => {
+    const last = previous[pane.id] ?? { wasWorking: false, lastWorkingAt: now };
+
+    // A mark that did not take keeps the transition that earned it for the
+    // next run to retry.
+    const reported = await report(pane, mark(pane, last));
+    current[pane.id] = {
+      wasWorking: reported ? pane.status === "working" : last.wasWorking,
+      lastWorkingAt: pane.status === "working" ? now : last.lastWorkingAt,
+    };
+  }),
+);
+
+writeActivity(current);
+
+if (failed) process.exit(1);

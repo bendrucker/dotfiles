@@ -36,6 +36,8 @@ herdr-preview stop
 
 `pane read --lines` returns the *bottom* n rows, and the spaces panel is at the top. A count short of the client's height comes back with no sidebar in it, which reads as a config that did not apply. The count is a ceiling, so over-reading costs nothing and `herdr-preview read` asks for more rows than a terminal has. Pass `--lines` only to read less on purpose.
 
+The client drops the sidebar below roughly 60 columns and draws a compact top bar instead, so a `read` taken while the window is narrow comes back with no rows to review. The sidebar column is a fixed 25 wide, the width a scene's truncation has to be judged against.
+
 `pane layout` cannot tell you the real height. Its rect describes the outer pane, not the screen the nested client negotiated, and the two disagree: a client logging `client connected cols=170 rows=62` sat in a rect of 44 by 36. The negotiated size appears only in the preview's own `herdr-server.log`.
 
 `start` and `stop` both need the Bash sandbox off. The server sets its own priority, which the sandbox denies, and it exits before creating a socket. `stop` deletes the saved session, which writes under `~/.config/herdr`, also denied. `read` and `socket` run sandboxed, because the project settings allow the session sockets, so a refused connection to a preview socket has some other cause.
@@ -60,11 +62,12 @@ It also keeps the socket path short. macOS caps a unix socket path near 104 byte
 
 ### Silent Failures
 
-Four failures here produce a plausible-looking preview rather than an error. `herdr-preview` checks all four. A hand-rolled loop has to do the same.
+Five failures here produce a plausible-looking preview rather than an error. `herdr-preview` checks all five. A hand-rolled loop has to do the same.
 
 - A config the server cannot parse does not stop it. It warns into its own log and runs on stock defaults, so the change reads as having done nothing.
 - `herdr config check` reports `config: ok` for a file that does not exist.
 - A bare `tab_bar_right` command resolves against the server's `$PATH`, which is the installed `~/.dotfiles` copy rather than the worktree. A config whose tokens come from a script under test renders bare rows, which reads as a config bug. `herdr-preview` repoints any command naming a repo script at the worktree and says which.
+- A client renders the sidebar itself, off the config `HERDR_CONFIG_PATH` named in *its* environment, not the one the server started on. A hand-launched client inherits the installed path and draws the installed rows against the preview's state, so a new cell reads as a token herdr refuses to render. `herdr-preview` writes the path into the `client.sh` it execs.
 - A client that has attached can still be painting the workspace list it started with. Wait for a row it could only draw from live state rather than for the process. `herdr-preview` creates a `rdy<pid>` workspace after the client attaches and waits for that label. The pid keeps a crashed run's saved workspace from matching, and the label stays short because the sidebar truncates to its column width: waiting on `preview-ready-80945` never fires, since the screen holds `preview-ready…`.
 
 ### Client Launch
@@ -144,6 +147,8 @@ Anything deriving a chord digit has to count a row's place in the snapshot array
 ## Sidebar Tokens
 
 `bin/herdr-workspace-status` reports the `$status_*` and `$branch` workspace tokens, which the spaces rows render. The Claude status line in bendrucker/claude also reports `$title` and `$ctx_*` on panes, and `config.toml` renders neither. The Claude agent row takes herdr's built-in `terminal_title_stripped` instead, which holds the same session name with the leading state glyph removed. The one Claude-side pane token that row does render is `$review`, which the `review:human` skill's `attention.ts` in the same repo reports while a review is pending. herdr strips escape codes from token values, so a color is a token name styled in `config.toml`, and a new color is a new name in both places.
+
+`bin/herdr-agent-state` reports `$agent_blocked`, `$agent_done` and `$agent_stale` on panes, which the agent rows render. They are sticky where `state_icon` is live, and at most one is lit. The two latches are read back out of the pane's own tokens. The state file under `$XDG_STATE_HOME/dotfiles` holds the last-worked time alone, the one fact the snapshot carries nowhere.
 
 `herdr config check` validates token names, rejecting a custom token that does not start with `$` along with unknown keys and bad enum variants. It reports `config: ok` for a file that does not exist.
 
