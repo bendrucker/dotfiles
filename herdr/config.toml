@@ -214,7 +214,8 @@ description = "claude background agents"
 width = "85%"
 height = "85%"
 
-# The chief pane's split already covers --watch, so this binding uses the interactive default.
+# The chief pane's split already covers --watch, so this binding uses the
+# interactive default.
 [[keys.command]]
 key = "prefix+alt+b"
 type = "popup"
