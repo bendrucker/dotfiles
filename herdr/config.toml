@@ -214,6 +214,17 @@ description = "claude background agents"
 width = "85%"
 height = "85%"
 
+# The interactive picker over the dispatch ledger: pick a project or a thread,
+# then focus that agent's pane or send it a message. The chief pane runs the
+# board's --watch view in a split instead.
+[[keys.command]]
+key = "prefix+alt+b"
+type = "popup"
+command = "herdr-board"
+description = "dispatch board"
+width = "85%"
+height = "85%"
+
 # Spelled out rather than named bare: the server holds the environment it
 # started with, so a bare name resolves against a PATH that can predate
 # herdr/path.zsh. $ZSH keeps this on a dev checkout while dev mode is on.
