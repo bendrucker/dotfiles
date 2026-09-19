@@ -214,6 +214,17 @@ description = "claude background agents"
 width = "85%"
 height = "85%"
 
+# The chief pane's split already covers --watch, so this binding uses the
+# interactive default. Spelled out rather than named bare for the reason the
+# herdr-flock binding below gives.
+[[keys.command]]
+key = "prefix+alt+b"
+type = "popup"
+command = "${ZSH:-$HOME/.dotfiles}/herdr/bin/herdr-board"
+description = "dispatch board"
+width = "85%"
+height = "85%"
+
 # Spelled out rather than named bare: the server holds the environment it
 # started with, so a bare name resolves against a PATH that can predate
 # herdr/path.zsh. $ZSH keeps this on a dev checkout while dev mode is on.

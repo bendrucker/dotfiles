@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Open the dispatch board over the herdr ledger, in its interactive form: pick a
+# project or a thread, then focus that agent's pane or send it a message. Run by
+# the popup binding in config.toml. The chief pane runs --watch in a split
+# instead, which this passes through like any other flag.
+#
+# The board ships from the claude repo, so a clone that predates it has none.
+
+command -v bun >/dev/null 2>&1 || {
+  echo "herdr-board: bun is not on PATH" >&2
+  exit 1
+}
+
+board="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}/plugins/herdr/skills/herdr/scripts/board.ts"
+[[ -f "$board" ]] || {
+  echo "herdr-board: no dispatch board at $board" >&2
+  exit 1
+}
+
+exec bun "$board" "$@"
