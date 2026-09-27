@@ -9,5 +9,6 @@ brew 'gnu-tar'
 brew 'gum'
 brew 'hyperfine'
 brew 'nmap'
+brew 'samply'
 
 cask 'tailscale-app'
