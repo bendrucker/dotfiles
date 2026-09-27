@@ -1,13 +1,6 @@
-//
-// Launch, reach, and tear down short-lived Linux VMs in the performance AWS
-// account, each registered as a herdr remote machine.
-//
-// The account opens no inbound ports. A VM joins the tailnet when the account
-// holds a Tailscale OAuth client, and SSH always also rides a Session Manager
-// session. Both are set up by one generated file per VM in ~/.ssh/perf-vm/,
-// which ssh/config includes. EC2 tags are the source of truth for what exists and when it
-// expires. The files under ~/.ssh/perf-vm/ only record what this machine has
-// wired up, so destroy can clean up after a VM its time limit already took.
+// EC2 tags are the source of truth for what exists and when it expires. The
+// files under ~/.ssh/perf-vm/ record what this machine wired up, so destroy
+// can clean up after a VM the reaper already took.
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
@@ -55,8 +48,7 @@ const TEMPLATE = "performance";
 const DEFAULT_TTL_MINUTES = 240;
 const MAX_TTL_MINUTES = 12 * 60;
 
-// The account's service control policy allows these and nothing else. Checking
-// here turns an opaque UnauthorizedOperation into a message naming the choices.
+// The account's service control policy allows these and nothing else.
 const FAMILIES = ["c8g", "m8g", "r8g"];
 const SIZES = ["medium", "large", "xlarge", "2xlarge", "4xlarge", "8xlarge", "12xlarge", "16xlarge", "metal-24xl"];
 export const INSTANCE_TYPES = FAMILIES.flatMap((family) => SIZES.map((size) => `${family}.${size}`));
@@ -92,17 +84,15 @@ export function isoSeconds(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-// The instance computes its own minutes from the expiry, so the shutdown lands
-// on the tagged time however long boot or an SSM round trip took. On systemd a
-// new schedule replaces the pending one, which is what makes extend work.
+// Minutes are computed on the instance, so the shutdown lands on the tagged
+// time however long boot took. A new schedule replaces the pending one.
 export function shutdownCommand(expiresAt: Date): string {
   const epoch = Math.floor(expiresAt.getTime() / 1000);
   return `shutdown -h +$(( (${epoch} - $(date +%s) + 59) / 60 ))`;
 }
 
-// The launch template's user data carries its own four-hour shutdown. Passing
-// user data replaces it, so this script has to carry the time limit itself,
-// and does so first in case anything after it fails.
+// Passing user data replaces the template's own shutdown, so this script
+// schedules one first, before anything that could fail.
 export interface Extras {
   herdr?: Release;
   tailnet?: { authKey: string; hostname: string };
@@ -120,8 +110,7 @@ export function userData(expiresAt: Date, keys: string, { herdr, tailnet }: Extr
     "chmod 600 /home/ec2-user/.ssh/authorized_keys",
     ...(herdr ? installLines(herdr) : []),
   ];
-  // The key is single use and expires within the hour, which is what makes it
-  // acceptable in user data any process on the VM can read back.
+  // The key is single use and expires within the hour.
   if (tailnet) {
     lines.push("curl -fsSL https://tailscale.com/install.sh | sh", upCommand(tailnet.authKey, tailnet.hostname));
   }
@@ -135,7 +124,6 @@ function instance(name: string, states: string[]): Instance {
   return found;
 }
 
-// A stopped VM is one pause or its time limit stopped, and resume can start it.
 function displayState(state: string): string {
   return state === "stopped" ? "paused" : state;
 }
@@ -193,7 +181,6 @@ function startInstance(options: LaunchOptions, expiresAt: Date, authKey: string 
   return toInstance(run.Instances[0]);
 }
 
-// Session Manager first, since every later step runs through it.
 function waitOnline(instanceId: string): void {
   log("waiting for Session Manager");
   until("Session Manager registration", () => {
@@ -202,8 +189,7 @@ function waitOnline(instanceId: string): void {
   });
 }
 
-// cloud-init exits nonzero for warnings that leave the keys in place, so the
-// keys are what gets checked.
+// cloud-init exits nonzero on harmless warnings, so the files are checked.
 function waitReady(instanceId: string, herdr: boolean): void {
   waitOnline(instanceId);
   log("waiting for user data to finish");
@@ -225,8 +211,7 @@ async function launch(args: string[]): Promise<number> {
   const host = hostAlias(options.name);
   const files = localFiles(options.name);
   let address: string | undefined;
-  // A VM that never became reachable is no use to anyone, and its time limit
-  // would only stop it, so it goes now rather than after the 7-day reaper.
+  // The time limit would only stop an unreachable VM, leaving it for 7 days.
   try {
     mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
     writeFileSync(files.config, sshEntry(host, launched.id, undefined, files.knownHosts, resolved));
@@ -267,9 +252,7 @@ function connect(args: string[]): number {
   return child.exitCode ?? 128;
 }
 
-// The new expiry, refusing one past 12 hours after the last start rather than
-// quietly granting less than was asked. EC2 resets LaunchTime on every start,
-// which is the same clock the account's reaper stops a VM by.
+// EC2 resets LaunchTime on every start, the clock the reaper stops a VM by.
 export function extendedExpiry(vm: { launchedAt: Date; expiresAt?: Date }, minutes: number, now: Date): Date {
   const from = Math.max(vm.expiresAt?.getTime() ?? now.getTime(), now.getTime());
   const next = new Date(from + minutes * 60 * 1000);
@@ -306,10 +289,8 @@ function pause(args: string[]): number {
   return 0;
 }
 
-// Pause's stop can still be in progress, so resume waits it out. The tag goes
-// first, so the reaper never sees a started VM still carrying the expiry that
-// stopped it. User data ran on first boot only, so the shutdown is rescheduled
-// here.
+// The tag goes first, so the reaper never sees a started VM carrying the
+// expiry that stopped it. User data ran on first boot only.
 async function resume(args: string[]): Promise<number> {
   const [name, ...rest] = args;
   if (!name) throw new UsageError("resume needs a VM name");
@@ -347,9 +328,8 @@ interface Row {
   remaining: string;
 }
 
-// A paused VM's expiry is the one that already stopped it, so it shows none.
-// A name wired up here with no instance behind it is one the account's reaper
-// terminated. It stays listed until destroy clears the local side.
+// A paused VM's expiry already passed. A local name with no instance stays
+// listed as gone until destroy clears it.
 export function rows(vms: Instance[], local: string[], machines: Machine[], now: Date): Row[] {
   const label = (name: string) => machines.find((machine) => machine.target === hostAlias(name))?.label ?? "";
   const live = vms.map((vm) => ({
@@ -385,8 +365,6 @@ function list(args: string[]): number {
   return 0;
 }
 
-// Also the cleanup for a VM that already terminated on its own, so a missing
-// instance is not an error while local state remains to remove.
 function destroy(args: string[]): number {
   const [name] = args;
   if (!name) throw new UsageError("destroy needs a VM name");

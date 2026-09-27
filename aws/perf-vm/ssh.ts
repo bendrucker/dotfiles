@@ -1,5 +1,3 @@
-// The generated ~/.ssh/perf-vm/NAME.conf that reaches a VM, and the keys
-// installed on it.
 
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -21,9 +19,7 @@ export interface Tools {
 }
 
 // herdr's server runs under launchd, whose PATH holds neither aws nor the
-// Session Manager plugin aws looks up on PATH. The entry names both by the
-// absolute paths found at launch, and carries a non-default AWS config file
-// along, so the proxy works from any process that reads ~/.ssh/config.
+// Session Manager plugin, so both go in by absolute path.
 export function proxyCommand(tools: Tools): string {
   const env = [`PATH=${dirname(tools.plugin)}:/usr/bin:/bin`];
   if (tools.configFile) env.push(`AWS_CONFIG_FILE=${tools.configFile}`);
@@ -53,15 +49,12 @@ export function sshEntry(host: string, instanceId: string, tailnetIp: string | u
   const common = [
     "  User ec2-user",
     `  HostKeyAlias ${host}`,
-    // Every VM is new, so there is no key to have learned yet, and each keeps
-    // its own file for destroy to delete.
     "  StrictHostKeyChecking accept-new",
     `  UserKnownHostsFile ${quote(knownHosts)}`,
     // Session Manager drops a session idle for 20 minutes.
     "  ServerAliveInterval 30",
-    // herdr opens a connection per forwarded command, and a hardware-backed
-    // agent like Secretive fails the odd signature. Sharing one connection
-    // signs once, and saves the Session Manager handshake on each command too.
+    // herdr connects per forwarded command, and Secretive fails the odd
+    // signature. A shared connection signs once.
     "  ControlMaster auto",
     `  ControlPath ${quote(`${sshDir()}/%C`)}`,
     "  ControlPersist 10m",
@@ -99,8 +92,6 @@ export function localNames(): string[] {
     .sort();
 }
 
-// The keys the SSH agent offers, which is Secretive here: the private halves
-// never leave the Secure Enclave, and ssh picks whichever one the VM accepts.
 export function publicKeys(): string {
   const agent = /^identityagent (.+)$/m.exec(spawn(["ssh", "-G", "localhost"]).stdout)?.[1];
   const env = agent && agent !== "none" && agent !== "SSH_AUTH_SOCK" ? { SSH_AUTH_SOCK: agent.replace(/^~/, homedir()) } : undefined;
@@ -109,9 +100,7 @@ export function publicKeys(): string {
   return result.stdout;
 }
 
-// ssh/config includes ~/.ssh/perf-vm/*.conf. A machine that has not synced that
-// change resolves the alias to itself, and herdr would fail with a less useful
-// message than this one.
+// A machine whose ssh/config predates the Include resolves the alias to itself.
 export function checkInclude(name: string, instanceId: string): void {
   const resolved = /^hostname (.+)$/m.exec(spawn(["ssh", "-G", `${hostAlias(name)}-ssm`]).stdout)?.[1];
   if (resolved !== instanceId) {
