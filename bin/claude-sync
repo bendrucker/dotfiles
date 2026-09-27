@@ -105,13 +105,15 @@ export function syncRepo(out: Output, repoDir: string): boolean {
   return true;
 }
 
-// Never contributes to the run's status: a marketplace refresh that had trouble
-// is not a reason to leave the plugins unattempted.
-export function updateMarketplaces(out: Output, env: Record<string, string | undefined>): void {
+// A marketplace refresh that had trouble is not a reason to leave the plugins
+// unattempted, so the caller carries on either way and decides what it means.
+export function updateMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
   log(out, "info", "Updating marketplaces...");
   if (claude(out, ["plugin", "marketplace", "update"], env) !== 0) {
     log(out, "warn", "marketplace update had issues, continuing");
+    return false;
   }
+  return true;
 }
 
 // The ids a prune must leave installed, or why the set could not be settled.
@@ -548,9 +550,11 @@ export function sync(out: Output, repoDir: string, options: SyncOptions = {}): n
   // moves the repo itself, and its PR push has to stay on the SSH pushurl.
   const env = { ...process.env, ...httpsEnv() };
 
+  // Without the audit to catch a plugin left on the old revision, a failed
+  // refresh fails the run.
   if (options.interactive) {
-    updateMarketplaces(out, env);
-    return updatePlugins(out, env) ? 0 : 1;
+    const refreshed = updateMarketplaces(out, env);
+    return updatePlugins(out, env) && refreshed ? 0 : 1;
   }
 
   let status = 0;

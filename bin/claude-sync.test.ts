@@ -175,6 +175,7 @@ const claudeStub = [
   "  install) printf 'install %s\\n' \"$3\" >>\"$CLAUDE_PLUGIN_LOG\" ;;",
   // The name follows the verb, so a remove is `plugin marketplace remove <name>`.
   "  marketplace)",
+  '    [ "$3" = "update" ] && [ -n "$CLAUDE_REFRESH_FAILS" ] && exit 1',
   '    [ "$3" = "remove" ] || exit 0',
   "    printf 'marketplace remove %s\\n' \"$4\" >>\"$CLAUDE_PLUGIN_LOG\"",
   '    case " $CLAUDE_REMOVE_FAILS " in *" $4 "*) exit 1 ;; esac',
@@ -390,6 +391,7 @@ afterEach(() => {
   delete process.env.CLAUDE_PLUGIN_LOG;
   delete process.env.CLAUDE_UPDATE_FAILS;
   delete process.env.CLAUDE_UPDATE_FAILS_ONCE;
+  delete process.env.CLAUDE_REFRESH_FAILS;
   delete process.env.CLAUDE_UNINSTALL_FAILS;
   delete process.env.CLAUDE_DRAINS_STDIN;
   delete process.env.AGENT_HOOK_REPO;
@@ -757,11 +759,9 @@ describe("updatePlugins", () => {
 });
 
 describe("updateMarketplaces", () => {
-  // A marketplace refresh that had trouble is not a reason to leave the plugins
-  // unattempted, so it never reaches the run's status.
   test("warns and carries on when the refresh fails", () => {
     writeScript(join(stubs, "claude"), "exit 1");
-    updateMarketplaces(out, process.env);
+    expect(updateMarketplaces(out, process.env)).toBe(false);
     expect(out.captured()).toContain("marketplace update had issues, continuing");
   });
 });
@@ -1233,6 +1233,17 @@ describe("sync", () => {
   test("fails an interactive run when a plugin update fails", () => {
     process.env.CLAUDE_UPDATE_FAILS = "beta@third";
     expect(sync(out, repo, { audit: auditStub(0), interactive: true })).toBe(1);
+  });
+
+  // The audit is what catches a plugin a failed refresh left on the old
+  // revision, so only the run that skips it fails on the refresh.
+  test.each<{ name: string; interactive: boolean; expected: number }>([
+    { name: "full run passes on its audit", interactive: false, expected: 0 },
+    { name: "interactive run fails", interactive: true, expected: 1 },
+  ])("failed refresh: $name", ({ interactive, expected }) => {
+    process.env.CLAUDE_REFRESH_FAILS = "1";
+    expect(sync(out, repo, { audit: auditStub(0), interactive })).toBe(expected);
+    expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
   test("leaves the plugins unattempted when the sync refuses", () => {
