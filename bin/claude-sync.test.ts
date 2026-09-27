@@ -1235,8 +1235,6 @@ describe("sync", () => {
     expect(sync(out, repo, { audit: auditStub(0), interactive: true })).toBe(1);
   });
 
-  // The audit is what catches a plugin a failed refresh left on the old
-  // revision, so only the run that skips it fails on the refresh.
   test.each<{ name: string; interactive: boolean; expected: number }>([
     { name: "full run passes on its audit", interactive: false, expected: 0 },
     { name: "interactive run fails", interactive: true, expected: 1 },

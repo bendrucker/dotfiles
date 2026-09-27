@@ -105,8 +105,8 @@ export function syncRepo(out: Output, repoDir: string): boolean {
   return true;
 }
 
-// A marketplace refresh that had trouble is not a reason to leave the plugins
-// unattempted, so the caller carries on either way and decides what it means.
+// The caller still updates the plugins after a failed refresh, and decides
+// whether the failure fails the run.
 export function updateMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
   log(out, "info", "Updating marketplaces...");
   if (claude(out, ["plugin", "marketplace", "update"], env) !== 0) {
@@ -533,10 +533,8 @@ export function reportDrift(output: string, repoDir: string): number {
   });
 }
 
-// A hand run after a push wants the new payloads, and waits on everything else.
-// It skips the hook installs, the prunes, and the audit, which the nightly
-// still runs in full. Every marketplace still refreshes, since a stale one would
-// update its plugins to the old revision.
+// Interactive leaves the hook installs, prunes, and audit to the nightly.
+// Marketplaces still refresh, or the plugins would update to the old revision.
 export interface SyncOptions extends AuditOptions {
   interactive?: boolean;
 }
@@ -550,8 +548,7 @@ export function sync(out: Output, repoDir: string, options: SyncOptions = {}): n
   // moves the repo itself, and its PR push has to stay on the SSH pushurl.
   const env = { ...process.env, ...httpsEnv() };
 
-  // Without the audit to catch a plugin left on the old revision, a failed
-  // refresh fails the run.
+  // No audit follows to catch a stale plugin, so a failed refresh fails the run.
   if (options.interactive) {
     const refreshed = updateMarketplaces(out, env);
     return updatePlugins(out, env) && refreshed ? 0 : 1;
