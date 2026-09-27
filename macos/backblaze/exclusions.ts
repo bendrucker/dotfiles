@@ -32,6 +32,8 @@ export function block(rules: string): string {
 
 /**
  * Put the managed block into the file's contents, replacing one already there.
+ * A new block goes just ahead of the closing tag, which keeps the file valid
+ * XML without parsing it.
  */
 export function merge(contents: string, rules: string): string {
   const begin = contents.indexOf(BEGIN);
