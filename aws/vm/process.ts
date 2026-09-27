@@ -12,8 +12,10 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function spawn(cmd: string[], env?: Record<string, string>): { status: number; stdout: string; stderr: string } {
-  const result = Bun.spawnSync({ cmd, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
+// An undefined value in env removes that variable from the child's.
+export function spawn(cmd: string[], env?: Record<string, string | undefined>): { status: number; stdout: string; stderr: string } {
+  const merged = Object.entries({ ...process.env, ...env }).filter((entry): entry is [string, string] => entry[1] !== undefined);
+  const result = Bun.spawnSync({ cmd, env: Object.fromEntries(merged), stdout: "pipe", stderr: "pipe" });
   return { status: result.exitCode ?? 128, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
 }
 

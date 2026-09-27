@@ -5,12 +5,15 @@
 default = "performance"
 
 # The account's policy stops a VM 12h after it starts and terminates it 7 days
-# after launch. Its tailnet tag and OAuth secret come from the infrastructure
-# repo.
+# after launch. Its tailnet role and parameters come from the infrastructure
+# repo, and its VMs join with the default tag:vm.
 [kinds.performance]
 profile = "performance-admin"
 region = "us-east-1"
 template = "performance"
 max_ttl = "12h"
-tailnet_tag = "tag:perf-vm"
-tailnet_secret = "/perf-vm/tailscale-oauth-client-secret"
+
+[kinds.performance.tailnet]
+role = "/managed/vm-launcher"
+client_id_parameter = "/vm/tailscale-client-id"
+audience_parameter = "/vm/tailscale-audience"

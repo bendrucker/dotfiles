@@ -33,7 +33,12 @@ describe("kinds", () => {
       template: "performance",
       defaultTtl: 240,
       maxTtl: 720,
-      tailnet: { tag: "tag:perf-vm", secret: "/perf-vm/tailscale-oauth-client-secret" },
+      tailnet: {
+        tag: "tag:vm",
+        role: "/managed/vm-launcher",
+        clientIdParameter: "/vm/tailscale-client-id",
+        audienceParameter: "/vm/tailscale-audience",
+      },
       tools: {},
     });
   });
@@ -65,9 +70,14 @@ template = "performance"
   test.each<{ name: string; toml: string; error: RegExp }>([
     { name: "no default", toml: `[kinds.a]\nprofile = "p"\nregion = "r"\ntemplate = "t"\n`, error: /no default kind/ },
     {
-      name: "a tailnet tag without its secret",
-      toml: `default = "a"\n[kinds.a]\nprofile = "p"\nregion = "r"\ntemplate = "t"\ntailnet_tag = "tag:x"\n`,
-      error: /go together/,
+      name: "a tailnet without its role",
+      toml: `default = "a"\n[kinds.a]\nprofile = "p"\nregion = "r"\ntemplate = "t"\n[kinds.a.tailnet]\nclient_id_parameter = "/c"\naudience_parameter = "/a"\n`,
+      error: /role/,
+    },
+    {
+      name: "a role that is not an IAM path",
+      toml: `default = "a"\n[kinds.a]\nprofile = "p"\nregion = "r"\ntemplate = "t"\n[kinds.a.tailnet]\nrole = "vm-launcher"\nclient_id_parameter = "/c"\naudience_parameter = "/a"\n`,
+      error: /IAM path and name/,
     },
     {
       name: "a default past the maximum",
@@ -149,8 +159,8 @@ describe("user data", () => {
   });
 
   test("joins the tailnet under the VM's alias and tag", () => {
-    const script = userData(expires, "k", { tailnet: { authKey: "tskey-auth-fake", hostname: "vm-abcd", tag: "tag:perf-vm" } });
-    expect(script).toContain("tailscale up --auth-key=tskey-auth-fake --hostname=vm-abcd --advertise-tags=tag:perf-vm");
+    const script = userData(expires, "k", { tailnet: { authKey: "tskey-auth-fake", hostname: "vm-abcd", tag: "tag:vm" } });
+    expect(script).toContain("tailscale up --auth-key=tskey-auth-fake --hostname=vm-abcd --advertise-tags=tag:vm");
   });
 
   test("installs the herdr build for the VM's architecture only if its digest matches", () => {
@@ -333,7 +343,7 @@ describe("rows", () => {
 function stubs(box: Sandbox): void {
   const log = box.path("calls.log");
   const state = box.path("instance.json");
-  const secret = box.path("tailscale-secret");
+  const parameters = box.path("tailnet-parameters");
   box.stub(
     "aws",
     `echo "aws $*" >> ${log}
@@ -354,8 +364,14 @@ case "$1 $2" in
     if [ -f ${box.path("unready")} ]; then echo '{"Status":"Failed","StandardErrorContent":"no keys"}'
     elif grep -q tools-status ${box.path("sent")}; then printf '{"Status":"Success","StandardOutputContent":"%s"}' "$(cat ${box.path("tools-status")} 2>/dev/null || echo 0)"
     else echo '{"Status":"Success","StandardOutputContent":"100.64.0.9"}'; fi ;;
-  "ssm get-parameter")
-    if [ -f ${secret} ]; then printf '{"Parameter":{"Value":"%s"}}' "$(cat ${secret})"; else echo "An error occurred (ParameterNotFound)" >&2; exit 254; fi ;;
+  "ssm get-parameters")
+    if [ -f ${parameters} ]; then echo '{"Parameters":[{"Name":"/vm/tailscale-client-id","Value":"client-fake"},{"Name":"/vm/tailscale-audience","Value":"audience-fake"}],"InvalidParameters":[]}'
+    else echo '{"Parameters":[],"InvalidParameters":["/vm/tailscale-client-id","/vm/tailscale-audience"]}'; fi ;;
+  "sts get-caller-identity") echo '{"Account":"000000000000"}' ;;
+  "sts assume-role") echo '{"Credentials":{"AccessKeyId":"ASIAROLE","SecretAccessKey":"s","SessionToken":"t"}}' ;;
+  "sts get-web-identity-token")
+    echo "  as AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID AWS_PROFILE=\${AWS_PROFILE:-unset}" >> ${log}
+    if [ -f ${box.path("foreign-jwt")} ]; then echo '{"WebIdentityToken":"jwt-foreign"}'; else echo '{"WebIdentityToken":"jwt-fake"}'; fi ;;
 esac`,
   );
   box.stub("session-manager-plugin", "exit 0");
@@ -379,7 +395,7 @@ const DIGEST = "f".repeat(64);
 // Stands in for the Tailscale and GitHub APIs a launch calls, recording each
 // Tailscale request body.
 let api: ReturnType<typeof Bun.serve>;
-const tailscaleRequests: { path: string; body: string }[] = [];
+const tailscaleRequests: { path: string; body: string; authorization: string | null }[] = [];
 
 beforeAll(() => {
   api = Bun.serve({
@@ -399,8 +415,15 @@ beforeAll(() => {
           assets: [{ name: "mise-v2026.9.15-linux-arm64", browser_download_url: "https://example.test/mise-linux-arm64", digest: `sha256:${DIGEST}` }],
         });
       }
-      tailscaleRequests.push({ path, body: await request.text() });
-      if (path === "/api/v2/oauth/token") return Response.json({ access_token: "token" });
+      const body = await request.text();
+      const authorization = request.headers.get("authorization");
+      tailscaleRequests.push({ path, body, authorization });
+      if (path === "/api/v2/oauth/token-exchange") {
+        const form = new URLSearchParams(body);
+        if (form.get("client_id") !== "client-fake" || form.get("jwt") !== "jwt-fake") return new Response("bad token", { status: 401 });
+        return Response.json({ access_token: "exchanged" });
+      }
+      if (path !== "/api/v2/tailnet/-/keys" || authorization !== "Bearer exchanged") return new Response("unauthorized", { status: 401 });
       return Response.json({ key: "tskey-auth-minted" });
     },
   });
@@ -418,8 +441,11 @@ const KINDS = `[kinds.performance]
 profile = "test-profile"
 region = "us-east-1"
 template = "performance"
-tailnet_tag = "tag:perf-vm"
-tailnet_secret = "/perf-vm/tailscale-oauth-client-secret"
+
+[kinds.performance.tailnet]
+role = "/managed/vm-launcher"
+client_id_parameter = "/vm/tailscale-client-id"
+audience_parameter = "/vm/tailscale-audience"
 `;
 
 describe("commands", () => {
@@ -439,6 +465,7 @@ describe("commands", () => {
     PATH: `${box.bin}:${process.env.PATH}`,
     HOME: box.path("home"),
     XDG_CONFIG_HOME: box.path("config"),
+    AWS_PROFILE: "inherited",
     VM_TAILSCALE_API: api.url.origin,
     VM_GITHUB_API: api.url.origin,
   });
@@ -467,7 +494,7 @@ describe("commands", () => {
     expect(log).toContain("herdr machine add --label vm-t1 vm-t1");
     expect(log).toContain("herdr --machine vm-t1 workspace list");
     expect(box.read("home/.ssh/vm/t1.conf")).toContain("HostName i-0abc");
-    expect(launched.stderr).toContain("Session Manager only");
+    expect(launched.stderr).toContain("no /vm/tailscale-client-id or /vm/tailscale-audience parameter, so this VM is reachable through Session Manager only");
     expect(launched.stdout).toContain("tailnet: none");
     expect(log).not.toContain("tailscale up");
     expect(log).toContain(`aarch64) herdr_url=https://example.test/herdr-linux-aarch64 herdr_sum=${DIGEST} ;;`);
@@ -501,23 +528,41 @@ describe("commands", () => {
     expect(box.read("home/.ssh/vm/t1.conf")).toContain("ProxyCommand /usr/bin/env PATH=/opt/mise/installs/smp/bin:/usr/bin:/bin ");
   });
 
-  test("launch joins the tailnet when the account holds a client secret", async () => {
-    box.write("tailscale-secret", "tskey-client-fake");
+  test("launch joins the tailnet through the role's exchanged identity token", async () => {
+    box.write("tailnet-parameters", "");
     tailscaleRequests.length = 0;
     const launched = await perf("launch", "--name", "t1");
     expect(launched.status).toBe(0);
     expect(launched.stdout).toContain("tailnet: 100.64.0.9\n");
-    expect(calls()).toContain("tailscale up --auth-key=tskey-auth-minted --hostname=vm-t1 --advertise-tags=tag:perf-vm");
-    expect(tailscaleRequests[0].body).toContain("client_secret=tskey-client-fake");
+    const log = calls();
+    expect(log).toContain("aws ssm get-parameters --names /vm/tailscale-client-id /vm/tailscale-audience --profile test-profile");
+    expect(log).toContain(
+      "aws sts assume-role --role-arn arn:aws:iam::000000000000:role/managed/vm-launcher --role-session-name vm-t1 --profile test-profile",
+    );
+    expect(log).toContain(
+      "aws sts get-web-identity-token --audience audience-fake --signing-algorithm RS256 --region us-east-1 --output json\n  as AWS_ACCESS_KEY_ID=ASIAROLE AWS_PROFILE=unset",
+    );
+    expect(log).toContain("tailscale up --auth-key=tskey-auth-minted --hostname=vm-t1 --advertise-tags=tag:vm");
+    expect(tailscaleRequests.map((request) => request.path)).toEqual(["/api/v2/oauth/token-exchange", "/api/v2/tailnet/-/keys"]);
     expect(JSON.parse(tailscaleRequests[1].body).capabilities.devices.create).toEqual({
       reusable: false,
       ephemeral: true,
       preauthorized: true,
-      tags: ["tag:perf-vm"],
+      tags: ["tag:vm"],
     });
     const [direct, ssm] = box.read("home/.ssh/vm/t1.conf").split("\n\n");
     expect(direct).toContain("HostName 100.64.0.9");
     expect(ssm).toContain("HostName i-0abc");
+  });
+
+  test("launch falls back to Session Manager when Tailscale refuses the token", async () => {
+    box.write("tailnet-parameters", "");
+    box.write("foreign-jwt", "");
+    const launched = await perf("launch", "--name", "t1");
+    expect(launched.status).toBe(0);
+    expect(launched.stderr).toContain("Tailscale token exchange failed: 401 bad token; falling back to Session Manager only");
+    expect(launched.stdout).toContain("tailnet: none");
+    expect(calls()).not.toContain("tailscale up");
   });
 
   test("launch destroys a VM that never became ready", async () => {

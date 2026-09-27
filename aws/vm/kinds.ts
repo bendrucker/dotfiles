@@ -15,25 +15,36 @@ export interface Kind extends Account {
   template: string;
   defaultTtl: number;
   maxTtl: number;
-  tailnet?: { tag: string; secret: string };
+  tailnet?: Tailnet;
   // mise tools added to the shipped set, by backend and version.
   tools: Record<string, string>;
 }
 
-const KindFields = z
-  .object({
-    profile: z.string(),
-    region: z.string(),
-    template: z.string(),
-    default_ttl: z.string().default("4h"),
-    max_ttl: z.string().default("12h"),
-    tailnet_tag: z.string().optional(),
-    tailnet_secret: z.string().optional(),
-    tools: z.record(z.string(), z.string()).default({}),
-  })
-  .refine((kind) => (kind.tailnet_tag === undefined) === (kind.tailnet_secret === undefined), {
-    message: "tailnet_tag and tailnet_secret go together",
-  });
+// The launcher assumes the role, which lives in the kind's account, to get a
+// token for the Tailscale federated identity the two parameters name.
+export interface Tailnet {
+  tag: string;
+  role: string;
+  clientIdParameter: string;
+  audienceParameter: string;
+}
+
+const TailnetFields = z.object({
+  tag: z.string().default("tag:vm"),
+  role: z.string().regex(/^(\/[\w+=,.@-]+)+$/, "role is an IAM path and name, like /managed/vm-launcher"),
+  client_id_parameter: z.string(),
+  audience_parameter: z.string(),
+});
+
+const KindFields = z.object({
+  profile: z.string(),
+  region: z.string(),
+  template: z.string(),
+  default_ttl: z.string().default("4h"),
+  max_ttl: z.string().default("12h"),
+  tailnet: TailnetFields.optional(),
+  tools: z.record(z.string(), z.string()).default({}),
+});
 
 const KindsFile = z.object({ default: z.string().optional(), kinds: z.record(z.string(), KindFields).default({}) });
 
@@ -53,7 +64,10 @@ function toKind(name: string, fields: z.infer<typeof KindFields>): Kind {
     tools: fields.tools,
   };
   if (kind.defaultTtl > kind.maxTtl) throw new Error(`kind ${name}: default_ttl exceeds max_ttl`);
-  if (fields.tailnet_tag && fields.tailnet_secret) kind.tailnet = { tag: fields.tailnet_tag, secret: fields.tailnet_secret };
+  if (fields.tailnet) {
+    const { tag, role, client_id_parameter, audience_parameter } = fields.tailnet;
+    kind.tailnet = { tag, role, clientIdParameter: client_id_parameter, audienceParameter: audience_parameter };
+  }
   return kind;
 }
 

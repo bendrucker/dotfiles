@@ -45,6 +45,26 @@ export function aws<T>(account: Account, args: string[], schema: z.ZodType<T>): 
   return parseOutput(args, result.stdout, schema);
 }
 
+export interface Credentials {
+  AccessKeyId: string;
+  SecretAccessKey: string;
+  SessionToken: string;
+}
+
+// A --profile flag outranks credentials in the environment, so this names no
+// profile and drops any the caller exported.
+export function awsAs<T>(credentials: Credentials, region: string, args: string[], schema: z.ZodType<T>): T {
+  const result = spawn(["aws", ...args, "--region", region, "--output", "json"], {
+    AWS_ACCESS_KEY_ID: credentials.AccessKeyId,
+    AWS_SECRET_ACCESS_KEY: credentials.SecretAccessKey,
+    AWS_SESSION_TOKEN: credentials.SessionToken,
+    AWS_PROFILE: undefined,
+    AWS_DEFAULT_PROFILE: undefined,
+  });
+  if (result.status !== 0) throw new Error(`aws ${args.slice(0, 2).join(" ")} failed: ${result.stderr.trim()}`);
+  return parseOutput(args, result.stdout, schema);
+}
+
 function parseOutput<T>(args: string[], stdout: string, schema: z.ZodType<T>): T {
   try {
     return schema.parse(stdout.trim() ? JSON.parse(stdout) : undefined);

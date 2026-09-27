@@ -1,21 +1,43 @@
+// The launcher mints each VM's auth key itself, so no Tailscale credential
+// reaches a VM. It authenticates as the kind's role: STS signs a token for the
+// federated identity's audience, and Tailscale exchanges that token for an
+// access token scoped to auth keys.
+
 import { z } from "zod";
-import { awsSpawn, runCommand } from "./aws.ts";
-import type { Kind } from "./kinds.ts";
+import { aws, awsAs, runCommand } from "./aws.ts";
+import type { Kind, Tailnet } from "./kinds.ts";
 import { hostAlias, PREFIX, quote } from "./ssh.ts";
 import { errorMessage, log } from "./process.ts";
 
-// Tailscale reads the client from the secret and ignores client_id.
-async function accessToken(api: string, secret: string): Promise<string> {
-  const response = await fetch(`${api}/api/v2/oauth/token`, {
-    method: "POST",
-    body: new URLSearchParams({ client_id: "vm", client_secret: secret }),
-  });
-  if (!response.ok) throw new Error(`Tailscale OAuth token request failed: ${response.status} ${await response.text()}`);
-  return z.object({ access_token: z.string() }).parse(await response.json()).access_token;
+const Parameters = z.object({
+  Parameters: z.array(z.object({ Name: z.string(), Value: z.string() })),
+  InvalidParameters: z.array(z.string()).default([]),
+});
+const CallerIdentity = z.object({ Account: z.string() });
+const AssumedRole = z.object({
+  Credentials: z.object({ AccessKeyId: z.string(), SecretAccessKey: z.string(), SessionToken: z.string() }),
+});
+const IdentityToken = z.object({ WebIdentityToken: z.string() });
+const AccessToken = z.object({ access_token: z.string() });
+
+function identityToken(kind: Kind, tailnet: Tailnet, audience: string, name: string): string {
+  const { Account } = aws(kind, ["sts", "get-caller-identity"], CallerIdentity);
+  const roleArn = `arn:aws:iam::${Account}:role${tailnet.role}`;
+  const { Credentials } = aws(kind, ["sts", "assume-role", "--role-arn", roleArn, "--role-session-name", hostAlias(name)], AssumedRole);
+  const args = ["sts", "get-web-identity-token", "--audience", audience, "--signing-algorithm", "RS256"];
+  return awsAs(Credentials, kind.region, args, IdentityToken).WebIdentityToken;
 }
 
-export async function mintAuthKey(secret: string, tag: string, description: string, api = "https://api.tailscale.com"): Promise<string> {
-  const token = await accessToken(api, secret);
+async function exchangeToken(api: string, clientId: string, jwt: string): Promise<string> {
+  const response = await fetch(`${api}/api/v2/oauth/token-exchange`, {
+    method: "POST",
+    body: new URLSearchParams({ client_id: clientId, jwt }),
+  });
+  if (!response.ok) throw new Error(`Tailscale token exchange failed: ${response.status} ${await response.text()}`);
+  return AccessToken.parse(await response.json()).access_token;
+}
+
+export async function mintAuthKey(token: string, tag: string, description: string, api: string): Promise<string> {
   const response = await fetch(`${api}/api/v2/tailnet/-/keys`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -29,21 +51,24 @@ export async function mintAuthKey(secret: string, tag: string, description: stri
   return z.object({ key: z.string() }).parse(await response.json()).key;
 }
 
-const Parameter = z.object({ Parameter: z.object({ Value: z.string() }) });
-
-// A kind with no tailnet, a missing parameter, or a failed mint launches an
-// SSM-only VM.
+// A kind with no tailnet, a missing parameter, or any failure on the way to a
+// key launches an SSM-only VM.
 export async function tailnetKey(kind: Kind, name: string): Promise<string | undefined> {
   if (!kind.tailnet) return undefined;
-  const { secret, tag } = kind.tailnet;
-  const read = awsSpawn(kind, ["ssm", "get-parameter", "--name", secret, "--with-decryption"]);
-  if (read.status !== 0) {
-    const missing = read.stderr.includes("ParameterNotFound");
-    log(missing ? `no ${secret} parameter, so this VM is reachable through Session Manager only` : read.stderr.trim());
-    return undefined;
-  }
+  const { tailnet } = kind;
+  const api = process.env.VM_TAILSCALE_API || "https://api.tailscale.com";
   try {
-    return await mintAuthKey(Parameter.parse(JSON.parse(read.stdout)).Parameter.Value, tag, hostAlias(name), process.env.VM_TAILSCALE_API);
+    const names = [tailnet.clientIdParameter, tailnet.audienceParameter];
+    const read = aws(kind, ["ssm", "get-parameters", "--names", ...names], Parameters);
+    const values = new Map(read.Parameters.map((parameter) => [parameter.Name, parameter.Value]));
+    const [clientId, audience] = names.map((parameter) => values.get(parameter));
+    if (!clientId || !audience) {
+      const missing = names.filter((parameter) => !values.has(parameter));
+      log(`no ${missing.join(" or ")} parameter, so this VM is reachable through Session Manager only`);
+      return undefined;
+    }
+    const token = await exchangeToken(api, clientId, identityToken(kind, tailnet, audience, name));
+    return await mintAuthKey(token, tailnet.tag, hostAlias(name), api);
   } catch (error) {
     log(`${errorMessage(error)}; falling back to Session Manager only`);
     return undefined;
