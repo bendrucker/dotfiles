@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 //
-// Claude configuration sync, run nightly from launchd.
+// Claude configuration sync, run nightly from launchd with --full. A hand run
+// without it only refreshes the marketplaces and updates the plugins.
 //
 // It reverts a cosmetic rewrite of a tracked settings file, syncs the repo,
 // reinstalls the vendor hooks, then brings the installed plugins to what the
@@ -105,13 +106,15 @@ export function syncRepo(out: Output, repoDir: string): boolean {
   return true;
 }
 
-// Never contributes to the run's status: a marketplace refresh that had trouble
-// is not a reason to leave the plugins unattempted.
-export function updateMarketplaces(out: Output, env: Record<string, string | undefined>): void {
+// The caller still updates the plugins after a failed refresh, and decides
+// whether the failure fails the run.
+export function updateMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
   log(out, "info", "Updating marketplaces...");
   if (claude(out, ["plugin", "marketplace", "update"], env) !== 0) {
     log(out, "warn", "marketplace update had issues, continuing");
+    return false;
   }
+  return true;
 }
 
 // The ids a prune must leave installed, or why the set could not be settled.
@@ -531,7 +534,13 @@ export function reportDrift(output: string, repoDir: string): number {
   });
 }
 
-export function sync(out: Output, repoDir: string, options: AuditOptions = {}): number {
+// Interactive leaves the hook installs, prunes, and audit to the nightly.
+// Marketplaces still refresh, or the plugins would update to the old revision.
+export interface SyncOptions extends AuditOptions {
+  interactive?: boolean;
+}
+
+export function sync(out: Output, repoDir: string, options: SyncOptions = {}): number {
   if (!syncRepo(out, repoDir)) return 1;
 
   // Claude Code clones marketplaces and plugins from `git@github.com:` and
@@ -539,6 +548,12 @@ export function sync(out: Output, repoDir: string, options: AuditOptions = {}): 
   // The rewrite outranks a pushurl, so it goes to these steps alone: bin/git-sync
   // moves the repo itself, and its PR push has to stay on the SSH pushurl.
   const env = { ...process.env, ...httpsEnv() };
+
+  // No audit follows to catch a stale plugin, so a failed refresh fails the run.
+  if (options.interactive) {
+    const refreshed = updateMarketplaces(out, env);
+    return updatePlugins(out, env) && refreshed ? 0 : 1;
+  }
 
   let status = 0;
   // After the sync, so the pull that removes a stale script from the clone runs
@@ -562,7 +577,7 @@ export function sync(out: Output, repoDir: string, options: AuditOptions = {}): 
   return status;
 }
 
-export function main(out: Capture = capturedOutput(), options: AuditOptions = {}): number {
+export function main(out: Capture = capturedOutput(), options: SyncOptions = {}): number {
   const repoDir = claudeRepoHome();
 
   if (sync(out, repoDir, options) !== 0) {
@@ -642,5 +657,5 @@ function isFile(path: string): boolean {
 }
 
 if (import.meta.main) {
-  process.exit(main());
+  process.exit(main(capturedOutput(), { interactive: !process.argv.includes("--full") }));
 }

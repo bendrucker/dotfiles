@@ -10,7 +10,7 @@
         <string>/bin/zsh</string>
         <string>-l</string>
         <string>-c</string>
-        <string>$HOME/.dotfiles/bin/claude-sync</string>
+        <string>$HOME/.dotfiles/bin/claude-sync --full</string>
     </array>
 
     <key>StartCalendarInterval</key>
