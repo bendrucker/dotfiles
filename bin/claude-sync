@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 //
-// Claude configuration sync, run nightly from launchd.
+// Claude configuration sync, run nightly from launchd with --full. A hand run
+// without it only refreshes the marketplaces and updates the plugins.
 //
 // It reverts a cosmetic rewrite of a tracked settings file, syncs the repo,
 // reinstalls the vendor hooks, then brings the installed plugins to what the
@@ -656,5 +657,5 @@ function isFile(path: string): boolean {
 }
 
 if (import.meta.main) {
-  process.exit(main(capturedOutput(), { interactive: process.argv.includes("--interactive") }));
+  process.exit(main(capturedOutput(), { interactive: !process.argv.includes("--full") }));
 }
