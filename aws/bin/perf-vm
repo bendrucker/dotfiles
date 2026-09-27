@@ -1,8 +1,0 @@
-#!/usr/bin/env bun
-//
-// The implementation lives in aws/perf-vm, a package of its own so zod
-// resolves from its node_modules. See perf-vm.ts there for what this does.
-
-import { main } from "../perf-vm/perf-vm.ts";
-
-process.exit(await main(Bun.argv.slice(2)));

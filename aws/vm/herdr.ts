@@ -6,14 +6,16 @@ import { z } from "zod";
 import { hostAlias, quote } from "./ssh.ts";
 import { errorMessage, log, POLL_MS, READY_TIMEOUT_MS, sleep, spawn } from "./process.ts";
 
-// Every instance type the account allows is Graviton.
-const ASSET = "herdr-linux-aarch64";
+const ARCHES = ["aarch64", "x86_64"];
 const ADD_ATTEMPTS = 3;
 
-export interface Release {
+export interface Asset {
+  arch: string;
   url: string;
   sha256: string;
 }
+
+export type Release = Asset[];
 
 const GitHubRelease = z.object({
   assets: z.array(z.object({ name: z.string(), browser_download_url: z.string(), digest: z.string().nullable() })),
@@ -22,21 +24,31 @@ const GitHubRelease = z.object({
 export async function release(version: string, api = "https://api.github.com"): Promise<Release> {
   const response = await fetch(`${api}/repos/herdrdev/herdr/releases/tags/v${version}`);
   if (!response.ok) throw new Error(`herdr release v${version} lookup failed: ${response.status}`);
-  const asset = GitHubRelease.parse(await response.json()).assets.find((candidate) => candidate.name === ASSET);
-  const sha256 = asset?.digest?.replace(/^sha256:/, "");
-  if (!asset || !sha256) throw new Error(`herdr release v${version} has no ${ASSET} with a digest`);
-  // Both land in a script that runs as root on boot.
-  if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error(`herdr release v${version} has a malformed digest: ${sha256}`);
-  return { url: asset.browser_download_url, sha256 };
+  const { assets } = GitHubRelease.parse(await response.json());
+  const found: Release = [];
+  for (const arch of ARCHES) {
+    const asset = assets.find((candidate) => candidate.name === `herdr-linux-${arch}`);
+    const sha256 = asset?.digest?.replace(/^sha256:/, "");
+    if (!asset || !sha256) continue;
+    // Both land in a script that runs as root on boot.
+    if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error(`herdr release v${version} has a malformed digest: ${sha256}`);
+    found.push({ arch, url: asset.browser_download_url, sha256 });
+  }
+  if (found.length === 0) throw new Error(`herdr release v${version} has no Linux build with a digest`);
+  return found;
 }
 
 export const BINARY = "/home/ec2-user/.local/bin/herdr";
 
+// The template decides the architecture, so the VM picks its own build.
 export function installLines(herdr: Release): string[] {
   return [
+    'case "$(uname -m)" in',
+    ...herdr.map((asset) => `  ${asset.arch}) herdr_url=${quote(asset.url)} herdr_sum=${asset.sha256} ;;`),
+    "esac",
     "install -d -o ec2-user -g ec2-user /home/ec2-user/.local /home/ec2-user/.local/bin",
-    `curl -fsSL --retry 3 -o /tmp/herdr ${quote(herdr.url)}`,
-    `echo '${herdr.sha256}  /tmp/herdr' | sha256sum -c -`,
+    'curl -fsSL --retry 3 -o /tmp/herdr "$herdr_url"',
+    'echo "$herdr_sum  /tmp/herdr" | sha256sum -c -',
     `install -m 755 -o ec2-user -g ec2-user /tmp/herdr ${BINARY}`,
   ];
 }
@@ -70,7 +82,7 @@ export async function herdrRelease(): Promise<Release | undefined> {
     return undefined;
   }
   try {
-    return await release(version, process.env.PERF_VM_GITHUB_API);
+    return await release(version, process.env.VM_GITHUB_API);
   } catch (error) {
     log(`${errorMessage(error)}; the VM gets no herdr`);
     return undefined;

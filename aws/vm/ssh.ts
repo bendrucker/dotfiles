@@ -1,11 +1,12 @@
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { profile, REGION } from "./aws.ts";
+import { z } from "zod";
+import type { Account } from "./kinds.ts";
 import { log, spawn, which } from "./process.ts";
 
-export const PREFIX = "perf-vm";
+export const PREFIX = "vm";
 
 export function quote(value: string): string {
   return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
@@ -15,6 +16,7 @@ export interface Tools {
   aws: string;
   plugin: string;
   profile: string;
+  region: string;
   configFile?: string;
 }
 
@@ -32,7 +34,7 @@ export function proxyCommand(tools: Tools): string {
     "--profile",
     tools.profile,
     "--region",
-    REGION,
+    tools.region,
     "--target",
     "%h",
     "--document-name",
@@ -80,8 +82,21 @@ export function hostAlias(name: string): string {
   return `${PREFIX}-${name}`;
 }
 
-export function localFiles(name: string): { config: string; knownHosts: string } {
-  return { config: join(sshDir(), `${name}.conf`), knownHosts: join(sshDir(), `${name}.known_hosts`) };
+export function localFiles(name: string): { config: string; knownHosts: string; record: string } {
+  return {
+    config: join(sshDir(), `${name}.conf`),
+    knownHosts: join(sshDir(), `${name}.known_hosts`),
+    record: join(sshDir(), `${name}.json`),
+  };
+}
+
+const Record = z.object({ kind: z.string() });
+
+// Which kind a VM launched as, so later commands reach the right account.
+export function readRecord(name: string): z.infer<typeof Record> | undefined {
+  const path = localFiles(name).record;
+  if (!existsSync(path)) return undefined;
+  return Record.parse(JSON.parse(readFileSync(path, "utf8")));
 }
 
 export function localNames(): string[] {
@@ -108,11 +123,12 @@ export function checkInclude(name: string, instanceId: string): void {
   }
 }
 
-export function tools(): Tools {
+export function tools(account: Account): Tools {
   return {
     aws: which("aws", "Install it with: brew install awscli"),
-    plugin: which("session-manager-plugin", "Install it with: brew install --cask session-manager-plugin"),
-    profile: profile(),
+    plugin: which("session-manager-plugin", "Install it with: mise install"),
+    profile: account.profile,
+    region: account.region,
     configFile: process.env.AWS_CONFIG_FILE,
   };
 }

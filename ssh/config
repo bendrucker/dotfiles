@@ -1,5 +1,5 @@
-# One entry per VM, written and removed by perf-vm.
-Include ~/.ssh/perf-vm/*.conf
+# One entry per VM, written and removed by vm.
+Include ~/.ssh/vm/*.conf
 
 Host *
   IgnoreUnknown AddKeysToAgent,UseKeychain

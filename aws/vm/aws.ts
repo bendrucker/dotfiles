@@ -1,18 +1,15 @@
-// The performance account through the aws CLI: instances by tag, and commands
-// run on them through Session Manager.
+// An account through the aws CLI: instances by tag, and commands run on them
+// through Session Manager.
 
 import { z } from "zod";
+import type { Account } from "./kinds.ts";
 import { errorMessage, spawn, until } from "./process.ts";
 
-export const REGION = "us-east-1";
-export const NAME_TAG = "perf-vm";
+export const NAME_TAG = "vm-name";
+export const KIND_TAG = "vm-kind";
 export const EXPIRES_TAG = "expires-at";
 
 export const LIVE_STATES = ["pending", "running", "stopping", "stopped"];
-
-export function profile(): string {
-  return process.env.PERF_VM_PROFILE || "performance-admin";
-}
 
 export const RawInstance = z.object({
   InstanceId: z.string(),
@@ -32,17 +29,17 @@ export const Invocation = z.object({
   StandardErrorContent: z.string().default(""),
 });
 
-export function awsSpawn(args: string[]): { status: number; stdout: string; stderr: string } {
-  return spawn(["aws", ...args, "--profile", profile(), "--region", REGION, "--output", "json"]);
+export function awsSpawn(account: Account, args: string[]): { status: number; stdout: string; stderr: string } {
+  return spawn(["aws", ...args, "--profile", account.profile, "--region", account.region, "--output", "json"]);
 }
 
 // A command with nothing to report, like create-tags, is read with z.unknown().
-export function aws<T>(args: string[], schema: z.ZodType<T>): T {
-  const result = awsSpawn(args);
+export function aws<T>(account: Account, args: string[], schema: z.ZodType<T>): T {
+  const result = awsSpawn(account, args);
   if (result.status !== 0) {
     const stderr = result.stderr.trim();
     const expired = /sso|token/i.test(stderr) && /expired|refresh|login/i.test(stderr);
-    const hint = expired ? "\nSign in with: aws sso login --profile " + profile() : "";
+    const hint = expired ? "\nSign in with: aws sso login --profile " + account.profile : "";
     throw new Error(`aws ${args.slice(0, 2).join(" ")} failed: ${stderr}${hint}`);
   }
   return parseOutput(args, result.stdout, schema);
@@ -59,6 +56,7 @@ function parseOutput<T>(args: string[], stdout: string, schema: z.ZodType<T>): T
 export interface Instance {
   id: string;
   name: string;
+  kind: string;
   type: string;
   state: string;
   launchedAt: Date;
@@ -71,6 +69,7 @@ export function toInstance(raw: z.infer<typeof RawInstance>): Instance {
   return {
     id: raw.InstanceId,
     name: tags.get(NAME_TAG) ?? "",
+    kind: tags.get(KIND_TAG) ?? "",
     type: raw.InstanceType,
     state: raw.State.Name,
     launchedAt: new Date(raw.LaunchTime),
@@ -78,15 +77,15 @@ export function toInstance(raw: z.infer<typeof RawInstance>): Instance {
   };
 }
 
-export function instances(name?: string): Instance[] {
+export function instances(account: Account, name?: string): Instance[] {
   const filters = [`Name=instance-state-name,Values=${LIVE_STATES.join(",")}`];
   filters.push(name ? `Name=tag:${NAME_TAG},Values=${name}` : `Name=tag-key,Values=${NAME_TAG}`);
-  const answer = aws(["ec2", "describe-instances", "--filters", ...filters], Reservations);
+  const answer = aws(account, ["ec2", "describe-instances", "--filters", ...filters], Reservations);
   return answer.Reservations.flatMap((reservation) => reservation.Instances.map(toInstance));
 }
 
-export function runCommand(instanceId: string, command: string): string {
-  const sent = aws([
+export function runCommand(account: Account, instanceId: string, command: string): string {
+  const sent = aws(account, [
     "ssm",
     "send-command",
     "--instance-ids",
@@ -99,7 +98,7 @@ export function runCommand(instanceId: string, command: string): string {
   const commandId = sent.Command.CommandId;
   return until(`\`${command}\` on ${instanceId}`, () => {
     const args = ["ssm", "get-command-invocation", "--command-id", commandId, "--instance-id", instanceId];
-    const invocation = awsSpawn(args);
+    const invocation = awsSpawn(account, args);
     if (invocation.status !== 0) {
       // The invocation is not queryable for a moment after send-command returns.
       if (invocation.stderr.includes("InvocationDoesNotExist")) return undefined;

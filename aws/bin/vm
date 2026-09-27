@@ -1,0 +1,8 @@
+#!/usr/bin/env bun
+//
+// The implementation lives in aws/vm, a package of its own so zod
+// resolves from its node_modules. See vm.ts there for what this does.
+
+import { main } from "../vm/vm.ts";
+
+process.exit(await main(Bun.argv.slice(2)));

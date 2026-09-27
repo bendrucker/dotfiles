@@ -1,14 +1,23 @@
 #!/usr/bin/env zsh
 
-# VM names come from the SSH entries perf-vm writes, so completing one never
-# waits on AWS.
-_perf_vm_names() {
+# VM names come from the SSH entries vm writes, so completing one never waits
+# on AWS.
+_vm_names() {
   local -a names
-  names=(~/.ssh/perf-vm/*.conf(N:t:r))
-  _describe -t names 'perf-vm name' names
+  names=(~/.ssh/vm/*.conf(N:t:r))
+  _describe -t names 'vm name' names
 }
 
-_perf_vm() {
+_vm_kinds() {
+  local -a kinds
+  local file
+  for file in ${commands[vm]:A:h:h}/vm/kinds.toml ${XDG_CONFIG_HOME:-$HOME/.config}/vm/kinds.toml; do
+    [[ -r $file ]] && kinds+=(${${(M)${(f)"$(<$file)"}:#\[kinds.*\]}//(\[kinds.|\])/})
+  done
+  _describe -t kinds 'vm kind' kinds
+}
+
+_vm() {
   local -a subcommands
   subcommands=(
     'launch:Start a VM and register it with herdr'
@@ -16,7 +25,7 @@ _perf_vm() {
     'extend:Push out a VM'\''s time limit'
     'pause:Stop a VM, keeping its disk'
     'resume:Start a paused VM with a fresh time limit'
-    'list:Show VMs with type and remaining time'
+    'list:Show VMs with kind, type, and remaining time'
     'destroy:Terminate a VM and remove its SSH entry and herdr machine'
   )
 
@@ -24,27 +33,28 @@ _perf_vm() {
 
   case $state in
     command)
-      _describe -t commands 'perf-vm command' subcommands
+      _describe -t commands 'vm command' subcommands
       ;;
     args)
       case ${line[1]} in
         launch)
           _arguments \
+            '--kind[Account and launch template]:kind:_vm_kinds' \
             '--name[VM name]:name:' \
-            '--type[Instance type]:type:(c8g.medium c8g.large c8g.xlarge c8g.2xlarge c8g.4xlarge c8g.8xlarge c8g.16xlarge c8g.metal-24xl m8g.xlarge m8g.4xlarge r8g.xlarge r8g.4xlarge)' \
-            '--ttl[Time limit, at most 12h]:duration:(30m 1h 2h 4h 8h 12h)'
+            '--type[Instance type]:type:' \
+            '--ttl[Time limit]:duration:(30m 1h 2h 4h 8h 12h)'
           ;;
         connect)
-          _arguments '1:name:_perf_vm_names' '*::command:_normal'
+          _arguments '1:name:_vm_names' '*::command:_normal'
           ;;
         extend)
-          _arguments '1:name:_perf_vm_names' '2:duration:(30m 1h 2h 4h)'
+          _arguments '1:name:_vm_names' '2:duration:(30m 1h 2h 4h)'
           ;;
         pause|destroy)
-          _arguments '1:name:_perf_vm_names'
+          _arguments '1:name:_vm_names'
           ;;
         resume)
-          _arguments '1:name:_perf_vm_names' '--ttl[Time limit, at most 12h]:duration:(30m 1h 2h 4h 8h 12h)'
+          _arguments '1:name:_vm_names' '--ttl[Time limit]:duration:(30m 1h 2h 4h 8h 12h)'
           ;;
         list)
           _arguments '--json[Print JSON]'
@@ -54,4 +64,4 @@ _perf_vm() {
   esac
 }
 
-compdef _perf_vm perf-vm
+compdef _vm vm

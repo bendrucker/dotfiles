@@ -1,0 +1,15 @@
+# Each kind launches VMs from one launch template in one AWS account. Kinds in
+# ~/.config/vm/kinds.toml add to these or replace one by name, and a default
+# there overrides this one.
+default = "performance"
+
+# The account's policy stops a VM 12h after it starts and terminates it 7 days
+# after launch. Its tailnet tag and OAuth secret come from the infrastructure
+# repo.
+[kinds.performance]
+profile = "performance-admin"
+region = "us-east-1"
+template = "performance"
+max_ttl = "12h"
+tailnet_tag = "tag:perf-vm"
+tailnet_secret = "/perf-vm/tailscale-oauth-client-secret"

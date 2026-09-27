@@ -1,5 +1,5 @@
 {
-  "name": "perf-vm",
+  "name": "vm",
   "dependencies": {
     "zod": "4.6.5"
   },

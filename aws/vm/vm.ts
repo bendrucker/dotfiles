@@ -1,10 +1,11 @@
 // EC2 tags are the source of truth for what exists and when it expires. The
-// files under ~/.ssh/perf-vm/ record what this machine wired up, so destroy
-// can clean up after a VM the reaper already took.
+// files under ~/.ssh/vm/ record what this machine wired up and which kind each
+// VM launched as, so destroy can clean up after a VM its account already took.
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import { aws, EXPIRES_TAG, type Instance, instances, Launched, NAME_TAG, runCommand, toInstance, InstanceInformation } from "./aws.ts";
+import { aws, EXPIRES_TAG, type Instance, instances, InstanceInformation, KIND_TAG, Launched, NAME_TAG, runCommand, toInstance } from "./aws.ts";
+import { formatMinutes, isoSeconds, parseDuration } from "./duration.ts";
 import {
   BINARY as HERDR_BINARY,
   herdrRelease,
@@ -15,59 +16,36 @@ import {
   type Release,
   unregisterHerdr,
 } from "./herdr.ts";
+import { accounts, kind as kindNamed, type Kind, type Kinds, loadKinds } from "./kinds.ts";
 import { errorMessage, log, until, UsageError } from "./process.ts";
-import { checkInclude, hostAlias, type Tools, localFiles, localNames, publicKeys, sshDir, sshEntry, tools } from "./ssh.ts";
+import { checkInclude, hostAlias, localFiles, localNames, publicKeys, readRecord, sshDir, sshEntry, type Tools, tools } from "./ssh.ts";
 import { rejoinTailnet, tailnetAddress, tailnetKey, upCommand } from "./tailscale.ts";
 
-const USAGE = `Usage: perf-vm <command> [options]
+const USAGE = `Usage: vm <command> [options]
 
-  launch [--name NAME] [--type TYPE] [--ttl DURATION]
-      Start a VM and wait until it is reachable. TYPE defaults to the launch
-      template's. DURATION defaults to 4h and may not exceed 12h.
+  launch [--kind KIND] [--name NAME] [--type TYPE] [--ttl DURATION]
+      Start a VM and wait until it is reachable. KIND picks the account and
+      launch template. TYPE defaults to the template's, and DURATION to the
+      kind's default time limit.
   connect NAME [COMMAND...]
       Open a shell on the VM, or run COMMAND there.
   extend NAME DURATION
-      Push the time limit out by DURATION, never past 12h after the last start.
+      Push the time limit out by DURATION, never past the kind's maximum after
+      the last start.
   pause NAME
       Stop the VM, keeping its disk, SSH entry, and herdr machine.
   resume NAME [--ttl DURATION]
-      Start a paused VM with a fresh time limit, 4h unless DURATION says.
+      Start a paused VM with a fresh time limit.
   list [--json]
-      Show each VM with its type and remaining time.
+      Show each VM with its kind, type, and remaining time.
   destroy NAME
       Terminate the VM and remove its SSH entry and herdr machine.
 
 DURATION is minutes and hours: 30m, 2h, 1h30m. The time limit stops the VM,
-which resume can start again. The account terminates any VM 7 days after launch.
-Each VM answers to ssh perf-vm-NAME, over the tailnet when it joined one, and
-to perf-vm-NAME-ssm through Session Manager. perf-vm-NAME is also its herdr
-machine label: herdr --machine perf-vm-NAME ...
-PERF_VM_PROFILE names the AWS profile (default performance-admin).`;
-
-const TEMPLATE = "performance";
-const DEFAULT_TTL_MINUTES = 240;
-const MAX_TTL_MINUTES = 12 * 60;
-
-// The account's service control policy allows these and nothing else.
-const FAMILIES = ["c8g", "m8g", "r8g"];
-const SIZES = ["medium", "large", "xlarge", "2xlarge", "4xlarge", "8xlarge", "12xlarge", "16xlarge", "metal-24xl"];
-export const INSTANCE_TYPES = FAMILIES.flatMap((family) => SIZES.map((size) => `${family}.${size}`));
-
-export function parseDuration(text: string): number {
-  const match = /^(?:(\d+)h)?(?:(\d+)m)?$/.exec(text);
-  if (!text || !match) throw new UsageError(`not a duration: ${text} (use 30m, 2h, 1h30m)`);
-  const minutes = Number(match[1] ?? 0) * 60 + Number(match[2] ?? 0);
-  if (minutes <= 0) throw new UsageError(`duration must be positive: ${text}`);
-  return minutes;
-}
-
-export function formatMinutes(minutes: number): string {
-  const whole = Math.max(0, Math.floor(minutes));
-  const hours = Math.floor(whole / 60);
-  const rest = whole % 60;
-  if (hours === 0) return `${rest}m`;
-  return rest === 0 ? `${hours}h` : `${hours}h${rest}m`;
-}
+which resume can start again. Kinds come from kinds.toml beside this tool and
+from ~/.config/vm/kinds.toml. Each VM answers to ssh vm-NAME, over the tailnet
+when it joined one, and to vm-NAME-ssm through Session Manager. vm-NAME is also
+its herdr machine label: herdr --machine vm-NAME ...`;
 
 export function validateName(name: string): string {
   if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(name)) {
@@ -78,10 +56,6 @@ export function validateName(name: string): string {
 
 function randomName(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(4)), (byte) => (byte % 36).toString(36)).join("");
-}
-
-export function isoSeconds(date: Date): string {
-  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 // Minutes are computed on the instance, so the shutdown lands on the tagged
@@ -95,7 +69,7 @@ export function shutdownCommand(expiresAt: Date): string {
 // schedules one first, before anything that could fail.
 export interface Extras {
   herdr?: Release;
-  tailnet?: { authKey: string; hostname: string };
+  tailnet?: { authKey: string; hostname: string; tag: string };
 }
 
 export function userData(expiresAt: Date, keys: string, { herdr, tailnet }: Extras = {}): string {
@@ -112,16 +86,48 @@ export function userData(expiresAt: Date, keys: string, { herdr, tailnet }: Extr
   ];
   // The key is single use and expires within the hour.
   if (tailnet) {
-    lines.push("curl -fsSL https://tailscale.com/install.sh | sh", upCommand(tailnet.authKey, tailnet.hostname));
+    lines.push("curl -fsSL https://tailscale.com/install.sh | sh", upCommand(tailnet.authKey, tailnet.hostname, tailnet.tag));
   }
   return [...lines, ""].join("\n");
 }
 
-function instance(name: string, states: string[]): Instance {
-  const [found] = instances(validateName(name));
-  if (!found) throw new Error(`no VM named ${name}`);
-  if (!states.includes(found.state)) throw new UsageError(`${name} is ${displayState(found.state)}, not ${states.map(displayState).join(" or ")}`);
-  return found;
+interface Located {
+  kind: Kind;
+  vm?: Instance;
+}
+
+// The local record names the kind. A VM launched elsewhere is found by
+// searching every account for its name tag.
+function locate(name: string, kinds: Kinds): Located | undefined {
+  validateName(name);
+  const record = readRecord(name);
+  if (record) {
+    const recorded = kindNamed(kinds, record.kind);
+    return { kind: recorded, vm: instances(recorded, name)[0] };
+  }
+  for (const account of accounts(kinds)) {
+    const [vm] = reachable(account, (target) => instances(target, name));
+    if (vm) return { kind: kinds.byName.get(vm.kind) ?? account, vm: { ...vm, kind: vm.kind || account.name } };
+  }
+  return undefined;
+}
+
+// One account failing, say a lapsed SSO session, leaves the others usable.
+function reachable(account: Kind, query: (account: Kind) => Instance[]): Instance[] {
+  try {
+    return query(account);
+  } catch (error) {
+    log(`skipping ${account.profile} in ${account.region}: ${errorMessage(error)}`);
+    return [];
+  }
+}
+
+function instance(name: string, states: string[]): { kind: Kind; vm: Instance } {
+  const found = locate(name, loadKinds());
+  if (!found?.vm) throw new Error(`no VM named ${name}`);
+  const { kind, vm } = found;
+  if (!states.includes(vm.state)) throw new UsageError(`${name} is ${displayState(vm.state)}, not ${states.map(displayState).join(" or ")}`);
+  return { kind, vm };
 }
 
 function displayState(state: string): string {
@@ -130,6 +136,7 @@ function displayState(state: string): string {
 
 interface LaunchOptions {
   name: string;
+  kind: Kind;
   type?: string;
   ttlMinutes: number;
 }
@@ -144,34 +151,36 @@ function parseFlags(command: string, args: string[], flags: string[]): Map<strin
   return values;
 }
 
-function parseTtl(text: string | undefined): number {
-  const minutes = text === undefined ? DEFAULT_TTL_MINUTES : parseDuration(text);
-  if (minutes > MAX_TTL_MINUTES) throw new UsageError(`time limit ${formatMinutes(minutes)} exceeds the 12h maximum`);
+function parseTtl(text: string | undefined, kind: Kind): number {
+  const minutes = text === undefined ? kind.defaultTtl : parseDuration(text);
+  if (minutes > kind.maxTtl) {
+    throw new UsageError(`time limit ${formatMinutes(minutes)} exceeds the ${formatMinutes(kind.maxTtl)} maximum for ${kind.name}`);
+  }
   return minutes;
 }
 
-export function parseLaunch(args: string[]): LaunchOptions {
-  const flags = parseFlags("launch", args, ["--name", "--type", "--ttl"]);
+// The account's own policy decides which instance types it allows.
+export function parseLaunch(args: string[], kinds: Kinds): LaunchOptions {
+  const flags = parseFlags("launch", args, ["--kind", "--name", "--type", "--ttl"]);
+  const kind = kindNamed(kinds, flags.get("--kind") ?? kinds.default);
   const name = flags.has("--name") ? validateName(flags.get("--name") ?? "") : randomName();
-  const type = flags.get("--type");
-  if (type !== undefined && !INSTANCE_TYPES.includes(type)) {
-    throw new UsageError(`instance type ${type} is not allowed in the performance account (c8g, m8g, r8g up to 16xlarge, or metal-24xl)`);
-  }
-  return { name, type, ttlMinutes: parseTtl(flags.get("--ttl")) };
+  return { name, kind, type: flags.get("--type"), ttlMinutes: parseTtl(flags.get("--ttl"), kind) };
 }
 
 function startInstance(options: LaunchOptions, expiresAt: Date, authKey: string | undefined, herdr: Release | undefined): Instance {
+  const { kind, name } = options;
   const tags = [
-    { Key: "Name", Value: hostAlias(options.name) },
-    { Key: NAME_TAG, Value: options.name },
+    { Key: "Name", Value: hostAlias(name) },
+    { Key: NAME_TAG, Value: name },
+    { Key: KIND_TAG, Value: kind.name },
     { Key: EXPIRES_TAG, Value: isoSeconds(expiresAt) },
   ];
-  const tailnet = authKey ? { authKey, hostname: hostAlias(options.name) } : undefined;
-  const run = aws([
+  const tailnet = authKey && kind.tailnet ? { authKey, hostname: hostAlias(name), tag: kind.tailnet.tag } : undefined;
+  const run = aws(kind, [
     "ec2",
     "run-instances",
     "--launch-template",
-    `LaunchTemplateName=${TEMPLATE}`,
+    `LaunchTemplateName=${kind.template}`,
     ...(options.type ? ["--instance-type", options.type] : []),
     "--user-data",
     userData(expiresAt, publicKeys(), { herdr, tailnet }),
@@ -181,43 +190,47 @@ function startInstance(options: LaunchOptions, expiresAt: Date, authKey: string 
   return toInstance(run.Instances[0]);
 }
 
-function waitOnline(instanceId: string): void {
+function waitOnline(kind: Kind, instanceId: string): void {
   log("waiting for Session Manager");
   until("Session Manager registration", () => {
-    const info = aws(["ssm", "describe-instance-information", "--filters", `Key=InstanceIds,Values=${instanceId}`], InstanceInformation);
+    const info = aws(kind, ["ssm", "describe-instance-information", "--filters", `Key=InstanceIds,Values=${instanceId}`], InstanceInformation);
     return info.InstanceInformationList[0]?.PingStatus === "Online" ? true : undefined;
   });
 }
 
 // cloud-init exits nonzero on harmless warnings, so the files are checked.
-function waitReady(instanceId: string, herdr: boolean): void {
-  waitOnline(instanceId);
+function waitReady(kind: Kind, instanceId: string, herdr: boolean): void {
+  waitOnline(kind, instanceId);
   log("waiting for user data to finish");
   const installed = ["test -s /home/ec2-user/.ssh/authorized_keys", ...(herdr ? [`test -x ${HERDR_BINARY}`] : [])];
-  runCommand(instanceId, `cloud-init status --wait >/dev/null; ${installed.join(" && ")}`);
+  runCommand(kind, instanceId, `cloud-init status --wait >/dev/null; ${installed.join(" && ")}`);
 }
 
 async function launch(args: string[]): Promise<number> {
-  const options = parseLaunch(args);
-  const resolved = tools();
-  if (instances(options.name).length > 0) throw new UsageError(`a VM named ${options.name} already exists`);
+  const kinds = loadKinds();
+  const options = parseLaunch(args, kinds);
+  const { kind, name } = options;
+  const resolved = tools(kind);
+  // Names are unique across kinds, since the SSH alias and herdr label are.
+  if (existsSync(localFiles(name).config) || locate(name, kinds)) throw new UsageError(`a VM named ${name} already exists`);
 
   const expiresAt = new Date(Date.now() + options.ttlMinutes * 60 * 1000);
-  const [authKey, herdr] = await Promise.all([tailnetKey(options.name), herdrRelease()]);
+  const [authKey, herdr] = await Promise.all([tailnetKey(kind, name), herdrRelease()]);
   const launched = startInstance(options, expiresAt, authKey, herdr);
-  log(`launched ${launched.id} (${launched.type}), expires ${isoSeconds(expiresAt)}`);
+  log(`launched ${launched.id} (${kind.name}, ${launched.type}), expires ${isoSeconds(expiresAt)}`);
 
   let address: string | undefined;
-  // The time limit would only stop an unreachable VM, leaving it for 7 days.
+  // The time limit would only stop an unreachable VM, leaving it for the
+  // account to clean up.
   try {
-    writeEntry(options.name, launched.id, undefined, resolved);
-    waitReady(launched.id, herdr !== undefined);
-    address = authKey ? tailnetAddress(launched.id) : undefined;
-    if (address) writeEntry(options.name, launched.id, address, resolved);
+    writeEntry(name, kind, launched.id, address, resolved);
+    waitReady(kind, launched.id, herdr !== undefined);
+    address = authKey ? tailnetAddress(kind, launched.id) : undefined;
+    if (address) writeEntry(name, kind, launched.id, address, resolved);
   } catch (error) {
-    log(`launch failed, so destroying ${options.name}`);
+    log(`launch failed, so destroying ${name}`);
     try {
-      destroy([options.name]);
+      destroy([name]);
     } catch (cleanup) {
       log(`destroy failed too, so ${launched.id} is still running: ${errorMessage(cleanup)}`);
     }
@@ -225,25 +238,27 @@ async function launch(args: string[]): Promise<number> {
   }
 
   log("registering with herdr");
-  const machine = registerHerdr(options.name);
-  return report({ ...launched, name: options.name }, expiresAt, address, machine);
+  const machine = registerHerdr(name);
+  return report({ ...launched, name, kind: kind.name }, expiresAt, address, machine);
 }
 
-function writeEntry(name: string, instanceId: string, address: string | undefined, resolved: Tools): void {
+function writeEntry(name: string, kind: Kind, instanceId: string, address: string | undefined, resolved: Tools): void {
   const files = localFiles(name);
   mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
+  writeFileSync(files.record, `${JSON.stringify({ kind: kind.name })}\n`);
   writeFileSync(files.config, sshEntry(hostAlias(name), instanceId, address, files.knownHosts, resolved));
   checkInclude(name, instanceId);
 }
 
-function tagExpiry(instanceId: string, expiresAt: Date): void {
-  aws(["ec2", "create-tags", "--resources", instanceId, "--tags", `Key=${EXPIRES_TAG},Value=${isoSeconds(expiresAt)}`], z.unknown());
+function tagExpiry(kind: Kind, instanceId: string, expiresAt: Date): void {
+  aws(kind, ["ec2", "create-tags", "--resources", instanceId, "--tags", `Key=${EXPIRES_TAG},Value=${isoSeconds(expiresAt)}`], z.unknown());
 }
 
 // Callers read herdr-machine to drive the VM, so a VM herdr cannot reach exits
 // nonzero.
-function report(vm: Pick<Instance, "id" | "name" | "type">, expiresAt: Date, address: string | undefined, machine: string | undefined): number {
+function report(vm: Pick<Instance, "id" | "name" | "kind" | "type">, expiresAt: Date, address: string | undefined, machine: string | undefined): number {
   console.log(`name: ${vm.name}`);
+  console.log(`kind: ${vm.kind}`);
   console.log(`instance: ${vm.id}`);
   console.log(`type: ${vm.type}`);
   console.log(`expires-at: ${isoSeconds(expiresAt)}`);
@@ -263,14 +278,14 @@ function connect(args: string[]): number {
 }
 
 // EC2 resets LaunchTime on every start, the clock the reaper stops a VM by.
-export function extendedExpiry(vm: { launchedAt: Date; expiresAt?: Date }, minutes: number, now: Date): Date {
+export function extendedExpiry(vm: { launchedAt: Date; expiresAt?: Date }, minutes: number, maxTtl: number, now: Date): Date {
   const from = Math.max(vm.expiresAt?.getTime() ?? now.getTime(), now.getTime());
   const next = new Date(from + minutes * 60 * 1000);
-  const limit = new Date(vm.launchedAt.getTime() + MAX_TTL_MINUTES * 60 * 1000);
+  const limit = new Date(vm.launchedAt.getTime() + maxTtl * 60 * 1000);
   if (next > limit) {
     const room = (limit.getTime() - from) / 60000;
     throw new UsageError(
-      `extending by ${formatMinutes(minutes)} passes the 12h limit at ${isoSeconds(limit)}; at most ${formatMinutes(room)} remains`,
+      `extending by ${formatMinutes(minutes)} passes the ${formatMinutes(maxTtl)} limit at ${isoSeconds(limit)}; at most ${formatMinutes(room)} remains`,
     );
   }
   return next;
@@ -280,12 +295,12 @@ function extend(args: string[]): number {
   const [name, duration] = args;
   if (!name || !duration) throw new UsageError("extend needs a VM name and a duration");
   const minutes = parseDuration(duration);
-  const vm = instance(name, ["pending", "running"]);
-  const expiresAt = extendedExpiry(vm, minutes, new Date());
+  const { kind, vm } = instance(name, ["pending", "running"]);
+  const expiresAt = extendedExpiry(vm, minutes, kind.maxTtl, new Date());
   // Reschedule before retagging, so a failure leaves the tag no later than the
   // shutdown it describes.
-  runCommand(vm.id, shutdownCommand(expiresAt));
-  tagExpiry(vm.id, expiresAt);
+  runCommand(kind, vm.id, shutdownCommand(expiresAt));
+  tagExpiry(kind, vm.id, expiresAt);
   console.log(`${name} now expires at ${isoSeconds(expiresAt)}`);
   return 0;
 }
@@ -293,8 +308,8 @@ function extend(args: string[]): number {
 function pause(args: string[]): number {
   const [name, ...rest] = args;
   if (!name || rest.length > 0) throw new UsageError("pause needs a VM name");
-  const vm = instance(name, ["pending", "running"]);
-  aws(["ec2", "stop-instances", "--instance-ids", vm.id], z.unknown());
+  const { kind, vm } = instance(name, ["pending", "running"]);
+  aws(kind, ["ec2", "stop-instances", "--instance-ids", vm.id], z.unknown());
   console.log(`${name} paused; resume ${name} starts it again`);
   return 0;
 }
@@ -304,22 +319,23 @@ function pause(args: string[]): number {
 async function resume(args: string[]): Promise<number> {
   const [name, ...rest] = args;
   if (!name) throw new UsageError("resume needs a VM name");
-  const ttlMinutes = parseTtl(parseFlags("resume", rest, ["--ttl"]).get("--ttl"));
-  const vm = instance(name, ["stopping", "stopped"]);
+  const ttl = parseFlags("resume", rest, ["--ttl"]).get("--ttl");
+  const { kind, vm } = instance(name, ["stopping", "stopped"]);
+  const ttlMinutes = parseTtl(ttl, kind);
   if (vm.state === "stopping") {
     log(`waiting for ${vm.id} to finish stopping`);
-    until("the VM to stop", () => (instances(name)[0]?.state === "stopped" ? true : undefined));
+    until("the VM to stop", () => (instances(kind, name)[0]?.state === "stopped" ? true : undefined));
   }
-  const resolved = tools();
+  const resolved = tools(kind);
   const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
-  tagExpiry(vm.id, expiresAt);
-  aws(["ec2", "start-instances", "--instance-ids", vm.id], z.unknown());
+  tagExpiry(kind, vm.id, expiresAt);
+  aws(kind, ["ec2", "start-instances", "--instance-ids", vm.id], z.unknown());
   log(`starting ${vm.id}, expires ${isoSeconds(expiresAt)}`);
 
-  waitOnline(vm.id);
-  runCommand(vm.id, shutdownCommand(expiresAt));
-  const address = await rejoinTailnet(vm.id, name);
-  writeEntry(name, vm.id, address, resolved);
+  waitOnline(kind, vm.id);
+  runCommand(kind, vm.id, shutdownCommand(expiresAt));
+  const address = await rejoinTailnet(kind, vm.id, name);
+  writeEntry(name, kind, vm.id, address, resolved);
 
   log("registering with herdr");
   const machine = registerHerdr(name);
@@ -328,6 +344,7 @@ async function resume(args: string[]): Promise<number> {
 
 interface Row {
   name: string;
+  kind: string;
   herdr: string;
   instance: string;
   type: string;
@@ -338,10 +355,11 @@ interface Row {
 
 // A paused VM's expiry already passed. A local name with no instance stays
 // listed as gone until destroy clears it.
-export function rows(vms: Instance[], local: string[], machines: Machine[], now: Date): Row[] {
+export function rows(vms: Instance[], local: { name: string; kind: string }[], machines: Machine[], now: Date): Row[] {
   const label = (name: string) => machines.find((machine) => machine.target === hostAlias(name))?.label ?? "";
   const live = vms.map((vm) => ({
     name: vm.name,
+    kind: vm.kind,
     herdr: label(vm.name),
     instance: vm.id,
     type: vm.type,
@@ -350,21 +368,26 @@ export function rows(vms: Instance[], local: string[], machines: Machine[], now:
     remaining: vm.expiresAt && vm.state !== "stopped" ? formatMinutes((vm.expiresAt.getTime() - now.getTime()) / 60000) : "",
   }));
   const gone = local
-    .filter((name) => !vms.some((vm) => vm.name === name))
-    .map((name) => ({ name, herdr: label(name), instance: "", type: "", state: "gone", expiresAt: "", remaining: "" }));
+    .filter(({ name }) => !vms.some((vm) => vm.name === name))
+    .map(({ name, kind }) => ({ name, kind, herdr: label(name), instance: "", type: "", state: "gone", expiresAt: "", remaining: "" }));
   return [...live, ...gone].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function liveInstances(kinds: Kinds): Instance[] {
+  return accounts(kinds).flatMap((account) => reachable(account, instances).map((vm) => ({ ...vm, kind: vm.kind || account.name })));
 }
 
 function list(args: string[]): number {
   const unknown = args.find((arg) => arg !== "--json");
   if (unknown) throw new UsageError(`unknown list option: ${unknown}`);
-  const table = rows(instances(), localNames(), knownMachines(), new Date());
+  const local = localNames().map((name) => ({ name, kind: readRecord(name)?.kind ?? "" }));
+  const table = rows(liveInstances(loadKinds()), local, knownMachines(), new Date());
   if (args.includes("--json")) {
     console.log(JSON.stringify(table, null, 2));
     return 0;
   }
   if (table.length === 0) return 0;
-  const header: Row = { name: "NAME", herdr: "HERDR", instance: "INSTANCE", type: "TYPE", state: "STATE", expiresAt: "EXPIRES", remaining: "REMAINING" };
+  const header: Row = { name: "NAME", kind: "KIND", herdr: "HERDR", instance: "INSTANCE", type: "TYPE", state: "STATE", expiresAt: "EXPIRES", remaining: "REMAINING" };
   const columns = Object.keys(header) as (keyof Row)[];
   const widths = columns.map((column) => Math.max(...[header, ...table].map((row) => row[column].length)));
   for (const row of [header, ...table]) {
@@ -376,16 +399,17 @@ function list(args: string[]): number {
 function destroy(args: string[]): number {
   const [name] = args;
   if (!name) throw new UsageError("destroy needs a VM name");
-  validateName(name);
-  const [vm] = instances(name);
+  const found = locate(name, loadKinds());
   const files = localFiles(name);
-  if (!vm && !existsSync(files.config)) throw new Error(`no VM named ${name}`);
-  if (vm) {
-    aws(["ec2", "terminate-instances", "--instance-ids", vm.id], z.unknown());
+  if (!found?.vm && !existsSync(files.config)) throw new Error(`no VM named ${name}`);
+  const vm = found?.vm;
+  if (found && vm) {
+    aws(found.kind, ["ec2", "terminate-instances", "--instance-ids", vm.id], z.unknown());
     log(`terminating ${vm.id}`);
   }
   rmSync(files.config, { force: true });
   rmSync(files.knownHosts, { force: true });
+  rmSync(files.record, { force: true });
   unregisterHerdr(name);
   console.log(`${name} destroyed`);
   return 0;

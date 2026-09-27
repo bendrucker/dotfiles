@@ -2,19 +2,79 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaul
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
-import {
-  extendedExpiry,
-  formatMinutes,
-  isoSeconds,
-  parseDuration,
-  parseLaunch,
-  rows,
-  shutdownCommand,
-  userData,
-} from "../perf-vm/perf-vm.ts";
-import { sshEntry } from "../perf-vm/ssh.ts";
+import { formatMinutes, isoSeconds, parseDuration } from "../vm/duration.ts";
+import { installLines } from "../vm/herdr.ts";
+import { type Kind, type Kinds, loadKinds } from "../vm/kinds.ts";
+import { sshEntry } from "../vm/ssh.ts";
+import { extendedExpiry, parseLaunch, rows, shutdownCommand, userData } from "../vm/vm.ts";
 
-const perfVm = join(repoRoot, "aws", "bin", "perf-vm");
+const vmBin = join(repoRoot, "aws", "bin", "vm");
+
+function makeKind(overrides: Partial<Kind> = {}): Kind {
+  return { name: "performance", profile: "p", region: "us-east-1", template: "t", defaultTtl: 240, maxTtl: 720, ...overrides };
+}
+
+describe("kinds", () => {
+  let box: Sandbox;
+  beforeEach(() => {
+    box = sandbox("vm-kinds");
+  });
+  afterEach(() => box.remove());
+
+  test("the shipped file defines performance as the default", () => {
+    const kinds = loadKinds([join(repoRoot, "aws", "vm", "kinds.toml")]);
+    expect(kinds.default).toBe("performance");
+    expect(kinds.byName.get("performance")).toEqual({
+      name: "performance",
+      profile: "performance-admin",
+      region: "us-east-1",
+      template: "performance",
+      defaultTtl: 240,
+      maxTtl: 720,
+      tailnet: { tag: "tag:perf-vm", secret: "/perf-vm/tailscale-oauth-client-secret" },
+    });
+  });
+
+  test("a local file adds kinds, replaces one whole, and moves the default", () => {
+    const shipped = join(repoRoot, "aws", "vm", "kinds.toml");
+    box.write(
+      "local.toml",
+      `default = "ci"
+[kinds.ci]
+profile = "ci-admin"
+region = "us-west-2"
+template = "ci"
+default_ttl = "1h"
+max_ttl = "2h"
+[kinds.performance]
+profile = "other"
+region = "us-east-1"
+template = "performance"
+`,
+    );
+    const kinds = loadKinds([shipped, box.path("local.toml")]);
+    expect(kinds.default).toBe("ci");
+    expect(kinds.byName.get("ci")).toEqual({ name: "ci", profile: "ci-admin", region: "us-west-2", template: "ci", defaultTtl: 60, maxTtl: 120 });
+    expect(kinds.byName.get("performance")).toEqual(makeKind({ profile: "other", template: "performance" }));
+  });
+
+  test.each<{ name: string; toml: string; error: RegExp }>([
+    { name: "no default", toml: `[kinds.a]\nprofile = "p"\nregion = "r"\ntemplate = "t"\n`, error: /no default kind/ },
+    {
+      name: "a tailnet tag without its secret",
+      toml: `default = "a"\n[kinds.a]\nprofile = "p"\nregion = "r"\ntemplate = "t"\ntailnet_tag = "tag:x"\n`,
+      error: /go together/,
+    },
+    {
+      name: "a default past the maximum",
+      toml: `default = "a"\n[kinds.a]\nprofile = "p"\nregion = "r"\ntemplate = "t"\ndefault_ttl = "3h"\nmax_ttl = "2h"\n`,
+      error: /exceeds max_ttl/,
+    },
+  ])("refuses $name", ({ toml, error }) => {
+    box.write("kinds.toml", toml);
+    expect(() => loadKinds([box.path("kinds.toml")])).toThrow(error);
+  });
+});
 
 describe("durations", () => {
   test("reads minutes, hours, and both", () => {
@@ -35,27 +95,36 @@ describe("durations", () => {
 });
 
 describe("launch options", () => {
-  test("defaults to four hours and the template's type", () => {
-    const options = parseLaunch([]);
+  const kinds: Kinds = {
+    default: "performance",
+    byName: new Map([
+      ["performance", makeKind()],
+      ["ci", makeKind({ name: "ci", defaultTtl: 30, maxTtl: 60 })],
+    ]),
+  };
+
+  test("defaults to the default kind's time limit and the template's type", () => {
+    const options = parseLaunch([], kinds);
+    expect(options.kind.name).toBe("performance");
     expect(options.ttlMinutes).toBe(240);
     expect(options.type).toBeUndefined();
     expect(options.name).toMatch(/^[a-z0-9]{4}$/);
   });
 
-  test("accepts 12h and refuses more", () => {
-    expect(parseLaunch(["--ttl", "12h"]).ttlMinutes).toBe(720);
-    expect(() => parseLaunch(["--ttl", "12h1m"])).toThrow(/12h maximum/);
+  test("takes the time limits of the kind it names", () => {
+    expect(parseLaunch(["--kind", "ci"], kinds).ttlMinutes).toBe(30);
+    expect(parseLaunch(["--ttl", "12h"], kinds).ttlMinutes).toBe(720);
+    expect(() => parseLaunch(["--ttl", "12h1m"], kinds)).toThrow(/12h maximum for performance/);
+    expect(() => parseLaunch(["--kind=ci", "--ttl", "2h"], kinds)).toThrow(/1h maximum for ci/);
   });
 
-  test("refuses a type the account's policy denies", () => {
-    expect(parseLaunch(["--type=c8g.medium"]).type).toBe("c8g.medium");
-    expect(parseLaunch(["--type", "r8g.metal-24xl"]).type).toBe("r8g.metal-24xl");
-    expect(() => parseLaunch(["--type", "c8g.24xlarge"])).toThrow(/not allowed/);
-    expect(() => parseLaunch(["--type", "c7g.large"])).toThrow(/not allowed/);
+  test("passes the type through for the account to judge", () => {
+    expect(parseLaunch(["--type=c7i.large"], kinds).type).toBe("c7i.large");
   });
 
-  test("refuses a name ssh or herdr would mangle", () => {
-    expect(() => parseLaunch(["--name", "Has Space"])).toThrow(/name must be/);
+  test("refuses an unknown kind and a name ssh or herdr would mangle", () => {
+    expect(() => parseLaunch(["--kind", "nope"], kinds)).toThrow(/no kind named nope; defined: performance, ci/);
+    expect(() => parseLaunch(["--name", "Has Space"], kinds)).toThrow(/name must be/);
   });
 });
 
@@ -76,14 +145,40 @@ describe("user data", () => {
   });
 
   test("joins the tailnet under the VM's alias and tag", () => {
-    const script = userData(expires, "k", { tailnet: { authKey: "tskey-auth-fake", hostname: "perf-vm-abcd" } });
-    expect(script).toContain("tailscale up --auth-key=tskey-auth-fake --hostname=perf-vm-abcd --advertise-tags=tag:perf-vm");
+    const script = userData(expires, "k", { tailnet: { authKey: "tskey-auth-fake", hostname: "vm-abcd", tag: "tag:perf-vm" } });
+    expect(script).toContain("tailscale up --auth-key=tskey-auth-fake --hostname=vm-abcd --advertise-tags=tag:perf-vm");
   });
 
-  test("installs the local herdr release only if its digest matches", () => {
-    const script = userData(expires, "k", { herdr: { url: "https://example.test/herdr", sha256: "abc123" } });
-    expect(script).toContain("curl -fsSL --retry 3 -o /tmp/herdr https://example.test/herdr\necho 'abc123  /tmp/herdr' | sha256sum -c -\n");
-    expect(script).toContain("install -m 755 -o ec2-user -g ec2-user /tmp/herdr /home/ec2-user/.local/bin/herdr");
+  test("installs the herdr build for the VM's architecture only if its digest matches", () => {
+    const lines = installLines([
+      { arch: "aarch64", url: "https://example.test/arm", sha256: "a".repeat(64) },
+      { arch: "x86_64", url: "https://example.test/x86", sha256: "b".repeat(64) },
+    ]);
+    expect(lines.join("\n")).toMatchInlineSnapshot(`
+      "case "$(uname -m)" in
+        aarch64) herdr_url=https://example.test/arm herdr_sum=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+        x86_64) herdr_url=https://example.test/x86 herdr_sum=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
+      esac
+      install -d -o ec2-user -g ec2-user /home/ec2-user/.local /home/ec2-user/.local/bin
+      curl -fsSL --retry 3 -o /tmp/herdr "$herdr_url"
+      echo "$herdr_sum  /tmp/herdr" | sha256sum -c -
+      install -m 755 -o ec2-user -g ec2-user /tmp/herdr /home/ec2-user/.local/bin/herdr"
+    `);
+  });
+
+  test.each<[string, string]>([
+    ["aarch64", "arm"],
+    ["x86_64", "x86"],
+  ])("the herdr install on %s downloads %s", (arch, url) => {
+    const box = sandbox("vm-uname");
+    box.stub("uname", `echo ${arch}`);
+    const lines = installLines([
+      { arch: "aarch64", url: "arm", sha256: "a" },
+      { arch: "x86_64", url: "x86", sha256: "b" },
+    ]);
+    const picked = run(["sh", "-c", `${lines.slice(0, 4).join("\n")}\necho "$herdr_url"`], { path: [box.bin] });
+    box.remove();
+    expect(picked.stdout.trim()).toBe(url);
   });
 
   test("the scheduled minutes round up and land on the expiry", () => {
@@ -94,20 +189,21 @@ describe("user data", () => {
 });
 
 describe("ssh entry", () => {
-  const tools = { aws: "/a", plugin: "/p/s", profile: "x" };
+  const tools = { aws: "/a", plugin: "/p/s", profile: "x", region: "us-east-1" };
 
   test("proxies through Session Manager by absolute path", () => {
-    const entry = sshEntry("perf-vm-abcd", "i-0123", undefined, "/home/u/.ssh/perf-vm/abcd.known_hosts", {
+    const entry = sshEntry("vm-abcd", "i-0123", undefined, "/home/u/.ssh/vm/abcd.known_hosts", {
       aws: "/opt/homebrew/bin/aws",
       plugin: "/opt/homebrew/bin/session-manager-plugin",
       profile: "performance-admin",
+      region: "us-west-2",
     });
-    expect(entry).toContain("Host perf-vm-abcd\n  HostName i-0123\n  ProxyCommand ");
-    expect(entry).toContain("Host perf-vm-abcd-ssm\n  HostName i-0123\n  ProxyCommand ");
+    expect(entry).toContain("Host vm-abcd\n  HostName i-0123\n  ProxyCommand ");
+    expect(entry).toContain("Host vm-abcd-ssm\n  HostName i-0123\n  ProxyCommand ");
     expect(entry).toContain(
-      "ProxyCommand /usr/bin/env PATH=/opt/homebrew/bin:/usr/bin:/bin /opt/homebrew/bin/aws ssm start-session --profile performance-admin --region us-east-1 --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p",
+      "ProxyCommand /usr/bin/env PATH=/opt/homebrew/bin:/usr/bin:/bin /opt/homebrew/bin/aws ssm start-session --profile performance-admin --region us-west-2 --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p",
     );
-    expect(entry).toContain("UserKnownHostsFile /home/u/.ssh/perf-vm/abcd.known_hosts");
+    expect(entry).toContain("UserKnownHostsFile /home/u/.ssh/vm/abcd.known_hosts");
   });
 
   test("carries a non-default AWS config file along", () => {
@@ -131,34 +227,36 @@ describe("extending", () => {
   const now = new Date("2026-09-27T10:00:00Z");
 
   test("adds to the current expiry", () => {
-    const next = extendedExpiry({ launchedAt, expiresAt: new Date("2026-09-27T12:00:00Z") }, 120, now);
+    const next = extendedExpiry({ launchedAt, expiresAt: new Date("2026-09-27T12:00:00Z") }, 120, 720, now);
     expect(isoSeconds(next)).toBe("2026-09-27T14:00:00Z");
   });
 
   test("reaches exactly 12h after launch and refuses past it", () => {
     const vm = { launchedAt, expiresAt: new Date("2026-09-27T18:00:00Z") };
-    expect(isoSeconds(extendedExpiry(vm, 120, now))).toBe("2026-09-27T20:00:00Z");
-    expect(() => extendedExpiry(vm, 121, now)).toThrow(/at most 2h remains/);
+    expect(isoSeconds(extendedExpiry(vm, 120, 720, now))).toBe("2026-09-27T20:00:00Z");
+    expect(() => extendedExpiry(vm, 121, 720, now)).toThrow(/passes the 12h limit .* at most 2h remains/);
   });
 });
 
 describe("rows", () => {
   const now = new Date("2026-09-27T10:00:00Z");
-  const machines = [{ id: "m1", label: "perf-vm-live", target: "perf-vm-live" }];
+  const machines = [{ id: "m1", label: "vm-live", target: "vm-live" }];
 
   test("shows remaining time and the herdr label", () => {
     const vm = {
       id: "i-1",
       name: "live",
+      kind: "performance",
       type: "c8g.medium",
       state: "running",
       launchedAt: now,
       expiresAt: new Date("2026-09-27T11:30:00Z"),
     };
-    expect(rows([vm], ["live"], machines, now)).toEqual([
+    expect(rows([vm], [{ name: "live", kind: "performance" }], machines, now)).toEqual([
       {
         name: "live",
-        herdr: "perf-vm-live",
+        kind: "performance",
+        herdr: "vm-live",
         instance: "i-1",
         type: "c8g.medium",
         state: "running",
@@ -169,13 +267,13 @@ describe("rows", () => {
   });
 
   test("shows a stopped VM as paused, without the expiry that stopped it", () => {
-    const vm = { id: "i-1", name: "p", type: "c8g.medium", state: "stopped", launchedAt: now, expiresAt: now };
-    expect(rows([vm], ["p"], [], now)[0]).toMatchObject({ state: "paused", expiresAt: "", remaining: "" });
+    const vm = { id: "i-1", name: "p", kind: "performance", type: "c8g.medium", state: "stopped", launchedAt: now, expiresAt: now };
+    expect(rows([vm], [{ name: "p", kind: "performance" }], [], now)[0]).toMatchObject({ state: "paused", expiresAt: "", remaining: "" });
   });
 
   test("keeps a name whose instance is gone until destroy cleans it up", () => {
-    expect(rows([], ["old"], [], now)).toEqual([
-      { name: "old", herdr: "", instance: "", type: "", state: "gone", expiresAt: "", remaining: "" },
+    expect(rows([], [{ name: "old", kind: "ci" }], [], now)).toEqual([
+      { name: "old", kind: "ci", herdr: "", instance: "", type: "", state: "gone", expiresAt: "", remaining: "" },
     ]);
   });
 });
@@ -191,9 +289,10 @@ function stubs(box: Sandbox): void {
     `echo "aws $*" >> ${log}
 case "$1 $2" in
   "ec2 describe-instances")
+    case "$*" in *other-profile*) echo "Error when retrieving token from sso: Token has expired and refresh failed" >&2; exit 255 ;; esac
     if [ -f ${state} ]; then printf '{"Reservations":[{"Instances":[%s]}]}' "$(cat ${state})"; else echo '{"Reservations":[]}'; fi ;;
   "ec2 run-instances")
-    echo '{"InstanceId":"i-0abc","InstanceType":"c8g.medium","State":{"Name":"pending"},"LaunchTime":"2026-09-27T08:00:00Z","Tags":[{"Key":"perf-vm","Value":"t1"},{"Key":"expires-at","Value":"2026-09-27T08:30:00Z"}]}' > ${state}
+    echo '{"InstanceId":"i-0abc","InstanceType":"c8g.medium","State":{"Name":"pending"},"LaunchTime":"2026-09-27T08:00:00Z","Tags":[{"Key":"vm-name","Value":"t1"},{"Key":"vm-kind","Value":"performance"},{"Key":"expires-at","Value":"2026-09-27T08:30:00Z"}]}' > ${state}
     printf '{"Instances":[%s]}' "$(cat ${state})" ;;
   "ec2 terminate-instances") rm -f ${state}; echo '{}' ;;
   "ec2 stop-instances") sed -i.bak 's/"pending"/"stopped"/' ${state}; echo '{}' ;;
@@ -217,7 +316,7 @@ case "$1 $2" in
   "--version ") echo "herdr 0.9.1" ;;
   "machine list")
     if [ -f ${box.path("herdr-down")} ]; then echo "server not running" >&2; exit 1; fi
-    echo '[{"id":"m9","label":"perf-vm-t1","target":"perf-vm-t1"}]' ;;
+    echo '[{"id":"m9","label":"vm-t1","target":"vm-t1"}]' ;;
 esac`,
   );
 }
@@ -236,7 +335,10 @@ beforeAll(() => {
       const path = new URL(request.url).pathname;
       if (path === "/repos/herdrdev/herdr/releases/tags/v0.9.1") {
         return Response.json({
-          assets: [{ name: "herdr-linux-aarch64", browser_download_url: "https://example.test/herdr-linux-aarch64", digest: `sha256:${DIGEST}` }],
+          assets: [
+            { name: "herdr-linux-aarch64", browser_download_url: "https://example.test/herdr-linux-aarch64", digest: `sha256:${DIGEST}` },
+            { name: "herdr-linux-x86_64", browser_download_url: "https://example.test/herdr-linux-x86_64", digest: null },
+          ],
         });
       }
       tailscaleRequests.push({ path, body: await request.text() });
@@ -252,12 +354,23 @@ afterAll(() => api.stop());
 // past the 5s default.
 setDefaultTimeout(30_000);
 
+// Replaces the shipped performance kind, so every command reaches the stub
+// account alone.
+const KINDS = `[kinds.performance]
+profile = "test-profile"
+region = "us-east-1"
+template = "performance"
+tailnet_tag = "tag:perf-vm"
+tailnet_secret = "/perf-vm/tailscale-oauth-client-secret"
+`;
+
 describe("commands", () => {
   let box: Sandbox;
 
   beforeEach(() => {
-    box = sandbox("perf-vm");
+    box = sandbox("vm");
     box.mkdir("home");
+    box.write("config/vm/kinds.toml", KINDS);
     stubs(box);
   });
 
@@ -267,39 +380,41 @@ describe("commands", () => {
     ...process.env,
     PATH: `${box.bin}:${process.env.PATH}`,
     HOME: box.path("home"),
-    PERF_VM_PROFILE: "test-profile",
-    PERF_VM_TAILSCALE_API: api.url.origin,
-    PERF_VM_GITHUB_API: api.url.origin,
+    XDG_CONFIG_HOME: box.path("config"),
+    VM_TAILSCALE_API: api.url.origin,
+    VM_GITHUB_API: api.url.origin,
   });
   // A synchronous spawn would block the fake APIs, which answer in this process.
   const perf = async (...args: string[]): Promise<Run> => {
-    const child = Bun.spawn([perfVm, ...args], { env: env(), stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn([vmBin, ...args], { env: env(), stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, status] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     return { status, stdout, stderr };
   };
   const calls = () => box.read("calls.log");
-  const entry = () => box.path("home", ".ssh", "perf-vm", "t1.conf");
+  const entry = () => box.path("home", ".ssh", "vm", "t1.conf");
 
   test("launch tags, wires ssh, waits, and registers with herdr", async () => {
     const launched = await perf("launch", "--name", "t1", "--type", "c8g.medium", "--ttl", "30m");
     expect(launched.stderr).not.toContain("does not include");
     expect(launched.status).toBe(0);
-    expect(launched.stdout).toContain("instance: i-0abc\n");
-    expect(launched.stdout).toContain("herdr-machine: perf-vm-t1\n");
+    expect(launched.stdout).toContain("kind: performance\ninstance: i-0abc\n");
+    expect(launched.stdout).toContain("herdr-machine: vm-t1\n");
 
     const log = calls();
     expect(log).toContain("--launch-template LaunchTemplateName=performance --instance-type c8g.medium");
-    expect(log).toContain('"Key":"expires-at","Value":"20');
+    expect(log).toContain('{"Key":"vm-kind","Value":"performance"},{"Key":"expires-at","Value":"20');
     expect(log).toContain("shutdown -h +$((");
     expect(log).toContain("ecdsa-sha2-nistp256 AAAAfake test@example");
     expect(log).toContain("--profile test-profile --region us-east-1");
-    expect(log).toContain("herdr machine add --label perf-vm-t1 perf-vm-t1");
-    expect(log).toContain("herdr --machine perf-vm-t1 workspace list");
-    expect(box.read("home/.ssh/perf-vm/t1.conf")).toContain("HostName i-0abc");
+    expect(log).toContain("herdr machine add --label vm-t1 vm-t1");
+    expect(log).toContain("herdr --machine vm-t1 workspace list");
+    expect(box.read("home/.ssh/vm/t1.conf")).toContain("HostName i-0abc");
     expect(launched.stderr).toContain("Session Manager only");
     expect(launched.stdout).toContain("tailnet: none");
     expect(log).not.toContain("tailscale up");
-    expect(log).toContain(`echo '${DIGEST}  /tmp/herdr' | sha256sum -c -`);
+    expect(log).toContain(`aarch64) herdr_url=https://example.test/herdr-linux-aarch64 herdr_sum=${DIGEST} ;;`);
+    expect(log).not.toContain("herdr-linux-x86_64");
+    expect(box.read("home/.ssh/vm/t1.json")).toBe('{"kind":"performance"}\n');
   });
 
   test("launch joins the tailnet when the account holds a client secret", async () => {
@@ -308,7 +423,7 @@ describe("commands", () => {
     const launched = await perf("launch", "--name", "t1");
     expect(launched.status).toBe(0);
     expect(launched.stdout).toContain("tailnet: 100.64.0.9\n");
-    expect(calls()).toContain("tailscale up --auth-key=tskey-auth-minted --hostname=perf-vm-t1 --advertise-tags=tag:perf-vm");
+    expect(calls()).toContain("tailscale up --auth-key=tskey-auth-minted --hostname=vm-t1 --advertise-tags=tag:perf-vm");
     expect(tailscaleRequests[0].body).toContain("client_secret=tskey-client-fake");
     expect(JSON.parse(tailscaleRequests[1].body).capabilities.devices.create).toEqual({
       reusable: false,
@@ -316,7 +431,7 @@ describe("commands", () => {
       preauthorized: true,
       tags: ["tag:perf-vm"],
     });
-    const [direct, ssm] = box.read("home/.ssh/perf-vm/t1.conf").split("\n\n");
+    const [direct, ssm] = box.read("home/.ssh/vm/t1.conf").split("\n\n");
     expect(direct).toContain("HostName 100.64.0.9");
     expect(ssm).toContain("HostName i-0abc");
   });
@@ -342,7 +457,7 @@ describe("commands", () => {
     const listed = await perf("list", "--json");
     expect(listed.status).toBe(0);
     const [row] = JSON.parse(listed.stdout);
-    expect(row).toMatchObject({ name: "t1", herdr: "perf-vm-t1", type: "c8g.medium", state: "pending" });
+    expect(row).toMatchObject({ name: "t1", kind: "performance", herdr: "vm-t1", type: "c8g.medium", state: "pending" });
   });
 
   test("pause stops the VM and keeps its ssh entry", async () => {
@@ -369,12 +484,12 @@ describe("commands", () => {
     box.write("calls.log", "");
     const resumed = await perf("resume", "t1", "--ttl", "1h");
     expect(resumed.status).toBe(0);
-    expect(resumed.stdout).toContain("herdr-machine: perf-vm-t1\n");
+    expect(resumed.stdout).toContain("herdr-machine: vm-t1\n");
     const log = calls();
     expect(log.indexOf("ec2 create-tags --resources i-0abc --tags Key=expires-at")).toBeLessThan(log.indexOf("ec2 start-instances"));
     expect(log).toContain("shutdown -h +$((");
-    expect(log).toContain("herdr --machine perf-vm-t1 workspace list");
-    expect(log.indexOf("herdr machine remove m9")).toBeLessThan(log.indexOf("herdr machine add --label perf-vm-t1"));
+    expect(log).toContain("herdr --machine vm-t1 workspace list");
+    expect(log.indexOf("herdr machine remove m9")).toBeLessThan(log.indexOf("herdr machine add --label vm-t1"));
     expect(log).not.toMatch(/protection|DisableApiStop|DisableApiTermination/);
   });
 
@@ -391,7 +506,7 @@ describe("commands", () => {
     await perf("launch", "--name", "t1");
     expect((await perf("resume", "t1")).stderr).toContain("t1 is pending, not stopping or paused");
     await perf("pause", "t1");
-    expect((await perf("resume", "t1", "--ttl", "13h")).stderr).toContain("exceeds the 12h maximum");
+    expect((await perf("resume", "t1", "--ttl", "13h")).stderr).toContain("exceeds the 12h maximum for performance");
   });
 
   test("extend refuses past 12h after launch", async () => {
@@ -402,6 +517,19 @@ describe("commands", () => {
     expect(calls()).not.toContain("create-tags");
   });
 
+  test("list covers every account and skips one it cannot reach", async () => {
+    box.write(
+      "config/vm/kinds.toml",
+      `${KINDS}[kinds.other]\nprofile = "other-profile"\nregion = "eu-west-1"\ntemplate = "other"\n`,
+    );
+    await perf("launch", "--name", "t1");
+    const listed = await perf("list", "--json");
+    expect(listed.status).toBe(0);
+    expect(JSON.parse(listed.stdout)).toHaveLength(1);
+    expect(listed.stderr).toContain("skipping other-profile in eu-west-1: aws ec2 describe-instances failed");
+    expect(listed.stderr).toContain("aws sso login --profile other-profile");
+  });
+
   test("destroy terminates and removes the ssh entry and herdr machine", async () => {
     await perf("launch", "--name", "t1");
     const destroyed = await perf("destroy", "t1");
@@ -409,6 +537,7 @@ describe("commands", () => {
     expect(calls()).toContain("aws ec2 terminate-instances --instance-ids i-0abc");
     expect(calls()).toContain("herdr machine remove m9");
     expect(existsSync(entry())).toBe(false);
+    expect(existsSync(box.path("home", ".ssh", "vm", "t1.json"))).toBe(false);
   });
 
   test("destroy finishes when herdr cannot list its machines", async () => {

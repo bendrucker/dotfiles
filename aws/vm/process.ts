@@ -5,7 +5,7 @@ export const POLL_MS = 5000;
 export class UsageError extends Error {}
 
 export function log(message: string): void {
-  process.stderr.write(`perf-vm: ${message}\n`);
+  process.stderr.write(`vm: ${message}\n`);
 }
 
 export function errorMessage(error: unknown): string {
