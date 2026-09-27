@@ -71,7 +71,7 @@ describe("install_launch_agent", () => {
   beforeEach(() => {
     box = sandbox("launch-agent");
     stubGum(box);
-    // Nothing is loaded, and every call is logged for the test to read back.
+    // Nothing is loaded.
     box.stub("launchctl", `echo "$*" >>"${box.path("launchctl.log")}"\n[ "$1" = print ] && exit 1\nexit 0`);
   });
 

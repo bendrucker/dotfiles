@@ -61,9 +61,8 @@ launch_agent_plan() {
   fi
 }
 
-# The plist is named under macos/, or by a path from the repo root for a topic
-# that keeps its own. Passing hold=1 writes the plist without touching launchd,
-# for a job whose process must outlive every install.
+# Passing hold=1 writes the plist without touching launchd, for a job whose
+# process must outlive every install.
 install_launch_agent() {
   local plist_path="$1"
   local description="$2"
