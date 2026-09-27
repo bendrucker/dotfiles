@@ -11,7 +11,10 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "#jobs/output";
-import { type Context, contains, exists, isEmpty, linkTarget, removeTree } from "#migrations/migration";
+import { type Context, contains, exists, isEmpty, linkTarget, missing, removeTree } from "#migrations/migration";
+
+// The cask is macOS-only. On Linux an npm install may be the only `claude`.
+export const platform = "darwin";
 
 export function up(context: Context): void {
   const mise = join(context.data, "mise");
@@ -27,8 +30,9 @@ function nodeInstalls(mise: string): string[] {
     return readdirSync(root, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => join(root, entry.name));
-  } catch {
-    return [];
+  } catch (error) {
+    if (missing(error)) return [];
+    throw error;
   }
 }
 
@@ -37,7 +41,6 @@ function nodeInstalls(mise: string): string[] {
 function removePackage(context: Context, install: string): void {
   const scope = join(install, "lib", "node_modules", "@anthropic-ai");
   const pkg = join(scope, "claude-code");
-  if (!exists(pkg)) return;
 
   // Only the link npm made. A `claude` pointing anywhere else is someone's own.
   const bin = join(install, "bin", "claude");

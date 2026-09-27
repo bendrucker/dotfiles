@@ -159,3 +159,9 @@ export function isEmpty(path: string): boolean {
 export function exists(path: string): boolean {
   return lstatSync(path, { throwIfNoEntry: false }) !== undefined;
 }
+
+// A path that is not there, as opposed to one that is there and could not be
+// read. Only the first is safe to treat as empty.
+export function missing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}

@@ -42,20 +42,22 @@ function context(): Context {
   };
 }
 
+const MISE = join("home", ".local", "share", "mise");
+
 function mise(...parts: string[]): string {
-  return box.path("home", ".local", "share", "mise", ...parts);
+  return box.path(MISE, ...parts);
 }
 
 function npmInstall(version: string): string {
-  const install = mise("installs", "node", version);
-  box.write(join("home", ".local", "share", "mise", "installs", "node", version, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"), "");
-  box.mkdir("home", ".local", "share", "mise", "installs", "node", version, "bin");
-  symlinkSync("../lib/node_modules/@anthropic-ai/claude-code/cli.js", join(install, "bin", "claude"));
-  return install;
+  const install = join(MISE, "installs", "node", version);
+  box.write(join(install, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"), "");
+  box.mkdir(install, "bin");
+  symlinkSync("../lib/node_modules/@anthropic-ai/claude-code/cli.js", box.path(install, "bin", "claude"));
+  return box.path(install);
 }
 
 function staleShim(): void {
-  box.mkdir("home", ".local", "share", "mise", "shims");
+  box.mkdir(MISE, "shims");
   symlinkSync("/opt/homebrew/bin/mise", mise("shims", "claude"));
 }
 
@@ -85,14 +87,30 @@ describe("remove-npm-claude-code", () => {
 
   test("keeps the node version and the rest of its globals", () => {
     const install = npmInstall("20.11.1");
-    box.write(join("home", ".local", "share", "mise", "installs", "node", "20.11.1", "bin", "node"), "");
-    box.write(join("home", ".local", "share", "mise", "installs", "node", "20.11.1", "lib", "node_modules", "@anthropic-ai", "sdk", "index.js"), "");
+    box.write(join(MISE, "installs", "node", "20.11.1", "bin", "node"), "");
+    box.write(join(MISE, "installs", "node", "20.11.1", "lib", "node_modules", "@anthropic-ai", "sdk", "index.js"), "");
 
     withPath("", () => up(context()));
 
     expect(exists(join(install, "bin", "node"))).toBe(true);
     expect(exists(join(install, "lib", "node_modules", "@anthropic-ai", "sdk"))).toBe(true);
     expect(exists(join(install, "lib", "node_modules", "@anthropic-ai", "claude-code"))).toBe(false);
+  });
+
+  test("finishes what an interrupted run left behind", () => {
+    const install = npmInstall("20.11.1");
+    rmSync(join(install, "lib", "node_modules", "@anthropic-ai", "claude-code"), { recursive: true });
+
+    withPath("", () => up(context()));
+
+    expect(exists(join(install, "bin", "claude"))).toBe(false);
+    expect(exists(join(install, "lib", "node_modules", "@anthropic-ai"))).toBe(false);
+  });
+
+  test("throws when the installs directory exists but cannot be read", () => {
+    box.write(join(MISE, "installs", "node"), "");
+
+    expect(() => withPath("", () => up(context()))).toThrow();
   });
 
   test("reaches every installed version and skips the alias links", () => {
