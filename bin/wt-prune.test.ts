@@ -86,6 +86,11 @@ beforeEach(() => {
   process.env.GH_LOG = join(sandbox, "gh.log");
   process.env.GUM_LOG = join(sandbox, "gum.log");
   process.env.PR_STATE_FILE = join(sandbox, "pr_state");
+  // The branch pass runs real git against this repo. Isolated from whatever
+  // the machine's own global config holds (a signing key, a differently named
+  // default branch) so the suite behaves the same everywhere.
+  process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+  process.env.GIT_CONFIG_NOSYSTEM = "1";
   delete process.env.WT_ALL;
   delete process.env.WT_PRUNE_MIN_AGE;
 
@@ -116,6 +121,8 @@ afterEach(() => {
     "PR_STATE_FILE",
     "WT_ALL",
     "WT_PRUNE_MIN_AGE",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
   ]) {
     delete process.env[name];
   }
@@ -130,6 +137,20 @@ function writeStub(path: string, script: string): void {
 function git(args: string[]): void {
   const run = Bun.spawnSync({ cmd: ["git", ...args], env: process.env, stdin: "ignore" });
   if (run.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr.toString()}`);
+}
+
+// A commit old enough to clear the branch pass's default 1d floor.
+function oldCommit(): void {
+  git(["-C", repo, "config", "user.name", "t"]);
+  git(["-C", repo, "config", "user.email", "t@t.com"]);
+  writeFileSync(join(repo, "f"), "x");
+  git(["-C", repo, "add", "f"]);
+  const run = Bun.spawnSync({
+    cmd: ["git", "-C", repo, "commit", "-q", "-m", "init"],
+    env: { ...process.env, GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" },
+    stdin: "ignore",
+  });
+  if (run.exitCode !== 0) throw new Error(`git commit: ${run.stderr.toString()}`);
 }
 
 // The PATH edit above is the whole isolation these cases have. A stub that did
@@ -486,6 +507,23 @@ describe("prune (black box)", () => {
     listing([worktree({ branch: "main", is_main: true, is_current: true, path: "/repo" })]);
     prune([]);
     expect(log("GH_LOG")).toBe("");
+  });
+
+  // The branch pass runs even with no linked worktree to survive the forge
+  // pass, over the real sandbox repo rather than the fake `wt list` fixture.
+  test("counts a worktree-less stray branch with no linked worktree at all", () => {
+    listing([worktree({ branch: "main", is_main: true, is_current: true, path: "/repo" })]);
+    oldCommit();
+    const branch = Bun.spawnSync({
+      cmd: ["git", "-C", repo, "branch", "stray", "main"],
+      env: { ...process.env, GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" },
+      stdin: "ignore",
+    });
+    expect(branch.exitCode).toBe(0);
+
+    const result = prune([]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("1 branch\n");
   });
 
   // A machine-parsed format: bin/wt-all matches this line and adds the two

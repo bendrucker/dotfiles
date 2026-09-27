@@ -23,6 +23,14 @@
 // present the ambiguous remainder as a `gum` multi-select checklist annotated
 // by recoverability, and remove only the selections.
 //
+// Branch pass: after the passes above, every local branch with no worktree of
+// its own and not the default branch, aged past $WT_PRUNE_MIN_AGE by its own
+// reflog. One backed up (already on a remote or folded into the default
+// branch) is deleted outright. One that is not is moved to
+// refs/archive/<name> first, recoverable with `git branch <name>
+// refs/archive/<name>`. An archived ref itself expires after 90 days. Runs
+// whether or not any linked worktree survived the forge pass, and under -i.
+//
 // Prints one summary line ("N worktrees, M branches") or nothing when there's
 // nothing to remove. Honors --dry-run: counts what would be removed without
 // removing. For per-branch detail, run `wt step prune --dry-run` directly.
@@ -35,6 +43,7 @@
 import { writeSync } from "node:fs";
 import { basename } from "node:path";
 import { parseArgs } from "node:util";
+import { pruneBranches } from "#worktree/branches";
 import { alignColumns } from "#worktree/table";
 import {
   defaultBranch,
@@ -285,6 +294,11 @@ function prune(options: Options): Outcome {
     : [];
 
   if (options.interactive) checklist(candidates, options, report);
+
+  // Worktree-less local branches, whether or not a linked worktree survived
+  // the forge pass above: a branch can go worktree-less in a repo that only
+  // ever had the one checkout.
+  pruneBranches(defaultBranch(), options.dryRun, explaining, report);
 
   return finish(report, fanOut, explaining);
 }
