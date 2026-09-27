@@ -224,13 +224,21 @@ async function launch(args: string[]): Promise<number> {
 
   const host = hostAlias(options.name);
   const files = localFiles(options.name);
-  mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
-  writeFileSync(files.config, sshEntry(host, launched.id, undefined, files.knownHosts, resolved));
-  checkInclude(options.name, launched.id);
-
-  waitReady(launched.id, herdr !== undefined);
-  const address = authKey ? tailnetAddress(launched.id) : undefined;
-  if (address) writeFileSync(files.config, sshEntry(host, launched.id, address, files.knownHosts, resolved));
+  let address: string | undefined;
+  // A VM that never became reachable is no use to anyone, and its time limit
+  // would only stop it, so it goes now rather than after the 7-day reaper.
+  try {
+    mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(files.config, sshEntry(host, launched.id, undefined, files.knownHosts, resolved));
+    checkInclude(options.name, launched.id);
+    waitReady(launched.id, herdr !== undefined);
+    address = authKey ? tailnetAddress(launched.id) : undefined;
+    if (address) writeFileSync(files.config, sshEntry(host, launched.id, address, files.knownHosts, resolved));
+  } catch (error) {
+    log(`launch failed, so destroying ${options.name}`);
+    destroy([options.name]);
+    throw error;
+  }
 
   log("registering with herdr");
   const machine = registerHerdr(options.name);
@@ -390,9 +398,9 @@ function destroy(args: string[]): number {
     aws(["ec2", "terminate-instances", "--instance-ids", vm.id], z.unknown());
     log(`terminating ${vm.id}`);
   }
-  unregisterHerdr(name);
   rmSync(files.config, { force: true });
   rmSync(files.knownHosts, { force: true });
+  unregisterHerdr(name);
   console.log(`${name} destroyed`);
   return 0;
 }

@@ -201,7 +201,8 @@ case "$1 $2" in
   "ec2 create-tags") ;;
   "ssm describe-instance-information") echo '{"InstanceInformationList":[{"PingStatus":"Online"}]}' ;;
   "ssm send-command") echo '{"Command":{"CommandId":"c-1"}}' ;;
-  "ssm get-command-invocation") echo '{"Status":"Success","StandardOutputContent":"100.64.0.9"}' ;;
+  "ssm get-command-invocation")
+    if [ -f ${box.path("unready")} ]; then echo '{"Status":"Failed","StandardErrorContent":"no keys"}'; else echo '{"Status":"Success","StandardOutputContent":"100.64.0.9"}'; fi ;;
   "ssm get-parameter")
     if [ -f ${secret} ]; then printf '{"Parameter":{"Value":"%s"}}' "$(cat ${secret})"; else echo "An error occurred (ParameterNotFound)" >&2; exit 254; fi ;;
 esac`,
@@ -219,6 +220,8 @@ esac`,
   );
 }
 
+const DIGEST = "f".repeat(64);
+
 // Stands in for the Tailscale and GitHub APIs a launch calls, recording each
 // Tailscale request body.
 let api: ReturnType<typeof Bun.serve>;
@@ -231,7 +234,7 @@ beforeAll(() => {
       const path = new URL(request.url).pathname;
       if (path === "/repos/herdrdev/herdr/releases/tags/v0.9.1") {
         return Response.json({
-          assets: [{ name: "herdr-linux-aarch64", browser_download_url: "https://example.test/herdr-linux-aarch64", digest: "sha256:feed" }],
+          assets: [{ name: "herdr-linux-aarch64", browser_download_url: "https://example.test/herdr-linux-aarch64", digest: `sha256:${DIGEST}` }],
         });
       }
       tailscaleRequests.push({ path, body: await request.text() });
@@ -294,7 +297,7 @@ describe("commands", () => {
     expect(launched.stderr).toContain("Session Manager only");
     expect(launched.stdout).toContain("tailnet: none");
     expect(log).not.toContain("tailscale up");
-    expect(log).toContain("echo 'feed  /tmp/herdr' | sha256sum -c -");
+    expect(log).toContain(`echo '${DIGEST}  /tmp/herdr' | sha256sum -c -`);
   });
 
   test("launch joins the tailnet when the account holds a client secret", async () => {
@@ -314,6 +317,15 @@ describe("commands", () => {
     const [direct, ssm] = box.read("home/.ssh/perf-vm/t1.conf").split("\n\n");
     expect(direct).toContain("HostName 100.64.0.9");
     expect(ssm).toContain("HostName i-0abc");
+  });
+
+  test("launch destroys a VM that never became ready", async () => {
+    box.write("unready", "");
+    const launched = await perf("launch", "--name", "t1");
+    expect(launched.status).toBe(1);
+    expect(launched.stderr).toContain("no keys");
+    expect(calls()).toContain("aws ec2 terminate-instances --instance-ids i-0abc");
+    expect(existsSync(entry())).toBe(false);
   });
 
   test("launch refuses a name already running", async () => {

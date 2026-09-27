@@ -3,7 +3,7 @@
 // one itself only after an interactive approval.
 
 import { z } from "zod";
-import { hostAlias } from "./ssh.ts";
+import { hostAlias, quote } from "./ssh.ts";
 import { log, POLL_MS, READY_TIMEOUT_MS, sleep, spawn } from "./process.ts";
 
 // Every instance type the account allows is Graviton.
@@ -25,6 +25,8 @@ export async function release(version: string, api = "https://api.github.com"): 
   const asset = GitHubRelease.parse(await response.json()).assets.find((candidate) => candidate.name === ASSET);
   const sha256 = asset?.digest?.replace(/^sha256:/, "");
   if (!asset || !sha256) throw new Error(`herdr release v${version} has no ${ASSET} with a digest`);
+  // Both land in a script that runs as root on boot.
+  if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error(`herdr release v${version} has a malformed digest: ${sha256}`);
   return { url: asset.browser_download_url, sha256 };
 }
 
@@ -33,7 +35,7 @@ export const BINARY = "/home/ec2-user/.local/bin/herdr";
 export function installLines(herdr: Release): string[] {
   return [
     "install -d -o ec2-user -g ec2-user /home/ec2-user/.local /home/ec2-user/.local/bin",
-    `curl -fsSL --retry 3 -o /tmp/herdr ${herdr.url}`,
+    `curl -fsSL --retry 3 -o /tmp/herdr ${quote(herdr.url)}`,
     `echo '${herdr.sha256}  /tmp/herdr' | sha256sum -c -`,
     `install -m 755 -o ec2-user -g ec2-user /tmp/herdr ${BINARY}`,
   ];
