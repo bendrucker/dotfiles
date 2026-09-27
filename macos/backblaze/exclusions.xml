@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- The rules inside the root element are what macos/backblaze/exclusions.ts installs. -->
+<bzexclusions>
+<!-- Directories matched by name anywhere under /Users. A fixed folder belongs in the preferences UI instead. -->
+<!-- Scratch space. Also matches any directory named tmp under ~/Library. -->
+<excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/tmp/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
+<!-- Installed packages, rebuilt from a lockfile. -->
+<excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/node_modules/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
+<excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/.venv/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
+<!-- Providers and modules from terraform init. Terraform keeps state in the working directory above it. -->
+<excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/.terraform/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
+<!-- Next.js build output. -->
+<excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/.next/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
+<!-- Bytecode Python rewrites on import. -->
+<excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/__pycache__/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
+</bzexclusions>

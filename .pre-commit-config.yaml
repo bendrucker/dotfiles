@@ -52,6 +52,15 @@ repos:
         entry: bun test ./.claude/skills/
         files: ^\.claude/skills/.*\.(sh|ts)$
         pass_filenames: false
+      # launchd rejects a malformed plist at bootstrap, and Backblaze reads
+      # macos/backblaze/exclusions.xml into a file it parses on restart, so each
+      # fails far from the commit that broke it. Keyed on extension because
+      # every plist here is XML text, and a binary one should fail this too.
+      - id: xmllint
+        name: xmllint
+        language: system
+        entry: xmllint --noout
+        files: \.(xml|plist)$
       - id: herdr-config
         name: herdr config check
         language: system
