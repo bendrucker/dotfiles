@@ -107,7 +107,7 @@ install_launch_agent() {
   printf '%s\n' "$rendered" >"$plist_dst"
 
   if [[ "$plan" == defer ]] && ((hold)); then
-    gum log --level warn "$description is running, so launchd was left alone. The plist written takes effect at next login, or after stopping it: launchctl bootout gui/$UID/$label; launchctl bootstrap gui/$UID $plist_dst"
+    gum log --level warn "$description is running, so launchd was left alone. The plist written takes effect at next login, or now by stopping it and running: launchctl bootout gui/$UID/$label; launchctl bootstrap gui/$UID $plist_dst"
     return
   elif [[ "$plan" == defer ]]; then
     gum log --level warn "$description launchd agent is the job running this install, so it keeps its old config. It picks the new one up at next login, or now via: launchctl bootout gui/$UID/$label && launchctl bootstrap gui/$UID $plist_dst"

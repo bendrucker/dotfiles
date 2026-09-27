@@ -20,8 +20,8 @@ identity, which decides whether panes may send Apple Events to apps like Things.
 `install.sh` never loads or reloads the agent while a server is running. A
 reload ends every pane, and a second server exits against the first one's
 socket and respawns until it stops. The installer writes the plist and warns
-instead, and the change takes effect at next login. To cut over by hand, from a terminal outside
-herdr:
+instead, and the change takes effect at next login. To cut over by hand, from a
+terminal outside herdr:
 
 ```sh
 launchctl bootout "gui/$UID/me.bendrucker.herdr"

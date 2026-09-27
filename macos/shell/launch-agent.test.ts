@@ -71,8 +71,12 @@ describe("install_launch_agent", () => {
   beforeEach(() => {
     box = sandbox("launch-agent");
     stubGum(box);
-    // Nothing is loaded.
-    box.stub("launchctl", `echo "$*" >>"${box.path("launchctl.log")}"\n[ "$1" = print ] && exit 1\nexit 0`);
+    // Nothing is loaded until a bootstrap succeeds.
+    const log = box.path("launchctl.log");
+    box.stub(
+      "launchctl",
+      `[ "$1" = print ] && { grep -q '^bootstrap' "${log}" 2>/dev/null; exit $?; }\necho "$*" >>"${log}"`,
+    );
   });
 
   afterEach(() => box.remove());
@@ -88,7 +92,8 @@ describe("install_launch_agent", () => {
   const herdrPlist = "Library/LaunchAgents/me.bendrucker.herdr.plist";
 
   test("installs a plist a topic keeps under its own directory", () => {
-    install("herdr/me.bendrucker.herdr.plist", "herdr server");
+    const r = install("herdr/me.bendrucker.herdr.plist", "herdr server");
+    expect(r.status).toBe(0);
     const plist = box.read(herdrPlist);
     expect(plist).toContain("<string>me.bendrucker.herdr</string>");
     expect(plist).not.toContain("__HOME__");
