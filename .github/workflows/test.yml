@@ -177,8 +177,7 @@ jobs:
       # because a stub cannot show what its spinner writes to stderr.
       - name: Install gum
         run: brew install gum
-      # perf-vm is a package of its own so the root stays dependency-free. Its
-      # install lands in aws/perf-vm/node_modules and resolves for nothing else.
+      # perf-vm is a package of its own so the root stays dependency-free.
       - name: Install perf-vm dependencies
         run: bun install --frozen-lockfile
         working-directory: aws/perf-vm

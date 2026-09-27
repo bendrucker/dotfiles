@@ -1,4 +1,3 @@
-// What every perf-vm module shares: logging, subprocesses, and polling.
 
 export const READY_TIMEOUT_MS = 10 * 60 * 1000;
 export const POLL_MS = 5000;

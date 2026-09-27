@@ -88,7 +88,6 @@ function randomName(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(4)), (byte) => (byte % 36).toString(36)).join("");
 }
 
-// ISO 8601 UTC to the second, the shape the expiry backstop parses.
 export function isoSeconds(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }

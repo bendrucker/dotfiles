@@ -48,7 +48,6 @@ export function herdrMachines(): Machine[] {
   return Machines.parse(JSON.parse(result.stdout));
 }
 
-// list still answers while the herdr server is down, with the column blank.
 export function knownMachines(): Machine[] {
   if (!Bun.which("herdr")) return [];
   try {

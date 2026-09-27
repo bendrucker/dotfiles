@@ -19,7 +19,7 @@ export const RawInstance = z.object({
   InstanceType: z.string(),
   State: z.object({ Name: z.string() }),
   LaunchTime: z.string(),
-  // AWS leaves the list out of an untagged instance rather than sending it empty.
+  // AWS omits the Tags field for an untagged instance.
   Tags: z.array(z.object({ Key: z.string(), Value: z.string() })).default([]),
 });
 export const Reservations = z.object({ Reservations: z.array(z.object({ Instances: z.array(RawInstance) })) });
