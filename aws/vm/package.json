@@ -1,0 +1,7 @@
+{
+  "name": "vm",
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "private": true
+}

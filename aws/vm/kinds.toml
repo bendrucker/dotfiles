@@ -1,0 +1,19 @@
+# Each kind launches VMs from one launch template in one AWS account. Kinds in
+# ~/.config/vm/kinds.toml add to these or replace one by name, and a default
+# there overrides this one. A kind's tools table, a mise [tools] table, adds to
+# the command line tools in guest/mise.toml that every VM installs.
+default = "performance"
+
+# The account's policy stops a VM 12h after it starts and terminates it 7 days
+# after launch. Its tailnet role and parameters come from the infrastructure
+# repo, and its VMs join with the default tag:vm.
+[kinds.performance]
+profile = "performance-admin"
+region = "us-east-1"
+template = "performance"
+max_ttl = "12h"
+
+[kinds.performance.tailnet]
+role = "/managed/vm-launcher"
+client_id_parameter = "/vm/tailscale-client-id"
+audience_parameter = "/vm/tailscale-audience"

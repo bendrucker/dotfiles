@@ -1,3 +1,6 @@
+# One entry per VM, written and removed by vm.
+Include ~/.ssh/vm/*.conf
+
 Host *
   IgnoreUnknown AddKeysToAgent,UseKeychain
   AddKeysToAgent yes
