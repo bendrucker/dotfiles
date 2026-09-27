@@ -47,10 +47,8 @@ export function proxyCommand(tools: Tools): string {
   return proxy.map(quote).join(" ");
 }
 
-// Two aliases per VM. The bare one goes straight to the tailnet address when
-// the VM has one, and through Session Manager otherwise. The -ssm one always
-// goes through Session Manager, the path that needs no secret and survives a
-// VM whose tailscale up failed. Both check one host key under one alias.
+// The -ssm alias always goes through Session Manager, which needs no secret
+// and survives a VM whose tailscale up failed.
 export function sshEntry(host: string, instanceId: string, tailnetIp: string | undefined, knownHosts: string, tools: Tools): string {
   const common = [
     "  User ec2-user",

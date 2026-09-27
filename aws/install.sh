@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 #
-# Install perf-vm's dependencies. It is its own package so the repo root keeps
-# no runtime dependencies, and the lockfile pins what lands here.
+# perf-vm is its own package so the repo root keeps no runtime dependencies,
+# and the lockfile pins what lands here.
 
 set -e
 

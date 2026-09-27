@@ -237,8 +237,8 @@ async function launch(args: string[]): Promise<number> {
   return report({ ...launched, name: options.name }, expiresAt, address, machine);
 }
 
-// The summary launch and resume end on. Callers read herdr-machine to drive the
-// VM, so a VM herdr cannot reach exits nonzero.
+// Callers read herdr-machine to drive the VM, so a VM herdr cannot reach exits
+// nonzero.
 function report(vm: Pick<Instance, "id" | "name" | "type">, expiresAt: Date, address: string | undefined, machine: string | undefined): number {
   console.log(`name: ${vm.name}`);
   console.log(`instance: ${vm.id}`);
