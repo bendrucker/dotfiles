@@ -18,7 +18,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { log } from "#jobs/output";
-import { contains, type Context, linkTarget, type Migration, type Platform } from "#migrations/migration";
+import { contains, type Context, linkTarget, type Migration, missing, type Platform } from "#migrations/migration";
 
 export const MIGRATIONS_DIR = "migrations";
 
@@ -291,8 +291,4 @@ export function devRoot(home: string): string | undefined {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function missing(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
