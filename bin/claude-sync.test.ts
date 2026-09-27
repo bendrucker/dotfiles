@@ -1219,6 +1219,22 @@ describe("sync", () => {
     expect(out.captured()).toContain("Auditing plugin payloads");
   });
 
+  test("updates the plugins alone when interactive", () => {
+    process.env.HERDR_FAILS = "1";
+    expect(sync(out, repo, { audit: auditStub(2), interactive: true })).toBe(0);
+    const log = out.captured();
+    expect(readLog("plugin.log")).toContain("update alpha@first");
+    expect(log).toContain("Updating marketplaces");
+    for (const skipped of ["Installing herdr", "Pruning undeclared", "Auditing plugin payloads"]) {
+      expect(log).not.toContain(skipped);
+    }
+  });
+
+  test("fails an interactive run when a plugin update fails", () => {
+    process.env.CLAUDE_UPDATE_FAILS = "beta@third";
+    expect(sync(out, repo, { audit: auditStub(0), interactive: true })).toBe(1);
+  });
+
   test("leaves the plugins unattempted when the sync refuses", () => {
     writeRepoSettings(settingsJson(GUARDED_HOOK, "changed"));
     expect(sync(out, repo, { audit: auditStub(0) })).toBe(1);

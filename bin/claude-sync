@@ -531,7 +531,15 @@ export function reportDrift(output: string, repoDir: string): number {
   });
 }
 
-export function sync(out: Output, repoDir: string, options: AuditOptions = {}): number {
+// A hand run after a push wants the new payloads, and waits on everything else.
+// It skips the hook installs, the prunes, and the audit, which the nightly
+// still runs in full. Every marketplace still refreshes, since a stale one would
+// update its plugins to the old revision.
+export interface SyncOptions extends AuditOptions {
+  interactive?: boolean;
+}
+
+export function sync(out: Output, repoDir: string, options: SyncOptions = {}): number {
   if (!syncRepo(out, repoDir)) return 1;
 
   // Claude Code clones marketplaces and plugins from `git@github.com:` and
@@ -539,6 +547,11 @@ export function sync(out: Output, repoDir: string, options: AuditOptions = {}): 
   // The rewrite outranks a pushurl, so it goes to these steps alone: bin/git-sync
   // moves the repo itself, and its PR push has to stay on the SSH pushurl.
   const env = { ...process.env, ...httpsEnv() };
+
+  if (options.interactive) {
+    updateMarketplaces(out, env);
+    return updatePlugins(out, env) ? 0 : 1;
+  }
 
   let status = 0;
   // After the sync, so the pull that removes a stale script from the clone runs
@@ -562,7 +575,7 @@ export function sync(out: Output, repoDir: string, options: AuditOptions = {}): 
   return status;
 }
 
-export function main(out: Capture = capturedOutput(), options: AuditOptions = {}): number {
+export function main(out: Capture = capturedOutput(), options: SyncOptions = {}): number {
   const repoDir = claudeRepoHome();
 
   if (sync(out, repoDir, options) !== 0) {
@@ -642,5 +655,5 @@ function isFile(path: string): boolean {
 }
 
 if (import.meta.main) {
-  process.exit(main());
+  process.exit(main(capturedOutput(), { interactive: process.argv.includes("--interactive") }));
 }
