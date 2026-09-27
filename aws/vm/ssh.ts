@@ -123,10 +123,21 @@ export function checkInclude(name: string, instanceId: string): void {
   }
 }
 
+// A mise shim picks its version from the directory it runs in, which a
+// ProxyCommand does not control, so the entry names the binary aws/mise.toml
+// pins.
+function sessionManagerPlugin(): string {
+  const found = which("session-manager-plugin", "Install it with: mise install");
+  if (!found.includes("/mise/shims/")) return found;
+  const resolved = spawn(["mise", "-C", join(import.meta.dir, ".."), "which", "session-manager-plugin"]);
+  if (resolved.status !== 0) throw new Error(`mise cannot resolve session-manager-plugin: ${resolved.stderr.trim()}\nInstall it with: mise install`);
+  return resolved.stdout.trim();
+}
+
 export function tools(account: Account): Tools {
   return {
     aws: which("aws", "Install it with: brew install awscli"),
-    plugin: which("session-manager-plugin", "Install it with: mise install"),
+    plugin: sessionManagerPlugin(),
     profile: account.profile,
     region: account.region,
     configFile: process.env.AWS_CONFIG_FILE,

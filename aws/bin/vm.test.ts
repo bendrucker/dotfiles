@@ -417,6 +417,20 @@ describe("commands", () => {
     expect(box.read("home/.ssh/vm/t1.json")).toBe('{"kind":"performance"}\n');
   });
 
+  test("launch writes the real plugin behind a mise shim into the ssh entry", async () => {
+    run(["rm", box.path("bin", "session-manager-plugin")]);
+    box.stub("mise/shims/session-manager-plugin", "exit 1");
+    box.stub("mise", `echo "mise $*" >> ${box.path("calls.log")}; echo /opt/mise/installs/smp/bin/session-manager-plugin`);
+    const child = Bun.spawn([vmBin, "launch", "--name", "t1"], {
+      env: { ...env(), PATH: `${box.bin}:${box.path("mise", "shims")}:${process.env.PATH}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await child.exited).toBe(0);
+    expect(calls()).toContain(`mise -C ${join(repoRoot, "aws")} which session-manager-plugin`);
+    expect(box.read("home/.ssh/vm/t1.conf")).toContain("ProxyCommand /usr/bin/env PATH=/opt/mise/installs/smp/bin:/usr/bin:/bin ");
+  });
+
   test("launch joins the tailnet when the account holds a client secret", async () => {
     box.write("tailscale-secret", "tskey-client-fake");
     tailscaleRequests.length = 0;
