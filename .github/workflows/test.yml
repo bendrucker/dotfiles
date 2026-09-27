@@ -225,6 +225,9 @@ jobs:
         run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
       - name: Install lint dependencies
         run: brew install ast-grep duckdb gitleaks
+      # Homebrew's libxml2 is keg-only, so apt is what puts xmllint on PATH.
+      - name: Install xmllint
+        run: sudo apt-get update && sudo apt-get install -y libxml2-utils
       # scripts/lint-expired runs on bun, which nothing else in this job brings.
       - uses: oven-sh/setup-bun@v2
       # herdr is not installed here and its formula has no Linux bottle, so the
