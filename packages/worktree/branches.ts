@@ -7,7 +7,7 @@
 // An archived branch is recoverable with `git branch <name> refs/archive/<name>`
 // until EXPIRY.
 
-import { minAge, nowSeconds, parseDuration } from "#worktree/state";
+import { nowSeconds, parseDuration } from "#worktree/state";
 
 // How long an archived ref survives before recovery stops being plausible.
 export const EXPIRY = 90 * 86400;
@@ -55,12 +55,11 @@ function isBackedUp(tip: string, defaultName: string): boolean {
 }
 
 // The floor a branch's own reflog has to clear: its newest entry older than
-// minAge(). The entry's own date, not the tip's commit date, because `wt
+// floor seconds. The entry's own date, not the tip's commit date, because `wt
 // switch --create` makes a branch on an old default-branch tip before its
 // worktree exists. A branch with no reflog reads as old enough, since there
 // is no signal saying it was touched recently.
-function isStale(name: string): boolean {
-  const floor = parseDuration(minAge()) ?? 0;
+function isStale(name: string, floor: number): boolean {
   const times = reflogTimes(`refs/heads/${name}`);
   if (times.length === 0) return true;
   return nowSeconds() - Math.max(...times) >= floor;
@@ -78,6 +77,9 @@ function archiveTarget(name: string, tip: string): string {
 // archive step did not actually save.
 function archive(name: string, tip: string): boolean {
   const target = archiveTarget(name, tip);
+  // A same-value update-ref writes no reflog entry, so an archive already
+  // holding this tip is recreated to restart its expiry clock.
+  if (capture(["git", "rev-parse", "--verify", "-q", target]) === tip) git(["update-ref", "-d", target]);
   if (!git(["update-ref", "--create-reflog", target, tip])) return false;
   return git(["branch", "-D", name]);
 }
@@ -87,16 +89,18 @@ export interface BranchReport {
   reasons: string[][];
 }
 
-// Runs whether or not
-// any linked worktree survived the forge pass, since a branch can go
-// worktree-less in a repo that only ever had the one checkout.
+// Runs whether or not any linked worktree survived the forge pass, since a
+// branch can go worktree-less in a repo that only ever had the one checkout.
+// An unparseable minAge skips branches rather than reading as no floor at all.
 export function pruneBranches(
   defaultName: string,
+  minAge: string,
   dryRun: boolean,
   explaining: boolean,
   report: BranchReport,
 ): void {
-  const captured = capture([
+  const floor = parseDuration(minAge);
+  const captured = floor === undefined ? undefined : capture([
     "git",
     "for-each-ref",
     "refs/heads",
@@ -104,7 +108,7 @@ export function pruneBranches(
   ]);
 
   for (const branch of readBranches(captured ?? "", defaultName)) {
-    if (!isStale(branch.name)) continue;
+    if (!isStale(branch.name, floor ?? 0)) continue;
 
     const decision = decideBranch(isBackedUp(branch.tip, defaultName));
     if (explaining) report.reasons.push(["-", branch.name, "-", decision.action, decision.reason]);
@@ -132,7 +136,7 @@ function expireArchives(dryRun: boolean, explaining: boolean, report: BranchRepo
   for (const ref of captured.split("\n").filter((line) => line !== "")) {
     const times = reflogTimes(ref);
     if (times.length === 0) continue;
-    if (nowSeconds() - Math.min(...times) < EXPIRY) continue;
+    if (nowSeconds() - Math.max(...times) < EXPIRY) continue;
 
     if (explaining) {
       report.reasons.push(["-", ref.replace(/^refs\/archive\//, ""), "-", "delete", "archive expired"]);
