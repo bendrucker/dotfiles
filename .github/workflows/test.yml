@@ -177,6 +177,11 @@ jobs:
       # because a stub cannot show what its spinner writes to stderr.
       - name: Install gum
         run: brew install gum
+      # perf-vm is a package of its own so the root stays dependency-free. Its
+      # install lands in aws/perf-vm/node_modules and resolves for nothing else.
+      - name: Install perf-vm dependencies
+        run: bun install --frozen-lockfile
+        working-directory: aws/perf-vm
       # The integration tests read state only bootstrap creates, so they run
       # there instead. The skill tests need duckdb and have their own job;
       # discovery skips their dot directory, and the pattern says so on purpose.
