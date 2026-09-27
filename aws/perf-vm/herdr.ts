@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 import { hostAlias, quote } from "./ssh.ts";
-import { log, POLL_MS, READY_TIMEOUT_MS, sleep, spawn } from "./process.ts";
+import { errorMessage, log, POLL_MS, READY_TIMEOUT_MS, sleep, spawn } from "./process.ts";
 
 // Every instance type the account allows is Graviton.
 const ASSET = "herdr-linux-aarch64";
@@ -55,7 +55,7 @@ export function knownMachines(): Machine[] {
   try {
     return herdrMachines();
   } catch (error) {
-    log((error as Error).message);
+    log(errorMessage(error));
     return [];
   }
 }
@@ -72,7 +72,7 @@ export async function herdrRelease(): Promise<Release | undefined> {
   try {
     return await release(version, process.env.PERF_VM_GITHUB_API);
   } catch (error) {
-    log(`${(error as Error).message}; the VM gets no herdr`);
+    log(`${errorMessage(error)}; the VM gets no herdr`);
     return undefined;
   }
 }
@@ -116,9 +116,18 @@ function awaitHerdr(label: string): string | undefined {
   return undefined;
 }
 
+// A failure here leaves a stale profile to remove by hand, which beats failing
+// a launch or destroy whose real work already succeeded.
 export function unregisterHerdr(name: string): void {
   if (!Bun.which("herdr")) return;
-  for (const machine of herdrMachines().filter((entry) => entry.target === hostAlias(name))) {
+  let machines: Machine[];
+  try {
+    machines = herdrMachines();
+  } catch (error) {
+    log(errorMessage(error));
+    return;
+  }
+  for (const machine of machines.filter((entry) => entry.target === hostAlias(name))) {
     const result = spawn(["herdr", "machine", "remove", machine.id]);
     if (result.status !== 0) log(`herdr machine remove ${machine.id} failed: ${result.stderr.trim()}`);
   }

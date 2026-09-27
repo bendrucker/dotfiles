@@ -215,7 +215,9 @@ esac`,
     `echo "herdr $*" >> ${log}
 case "$1 $2" in
   "--version ") echo "herdr 0.9.1" ;;
-  "machine list") echo '[{"id":"m9","label":"perf-vm-t1","target":"perf-vm-t1"}]' ;;
+  "machine list")
+    if [ -f ${box.path("herdr-down")} ]; then echo "server not running" >&2; exit 1; fi
+    echo '[{"id":"m9","label":"perf-vm-t1","target":"perf-vm-t1"}]' ;;
 esac`,
   );
 }
@@ -406,6 +408,15 @@ describe("commands", () => {
     expect(destroyed.status).toBe(0);
     expect(calls()).toContain("aws ec2 terminate-instances --instance-ids i-0abc");
     expect(calls()).toContain("herdr machine remove m9");
+    expect(existsSync(entry())).toBe(false);
+  });
+
+  test("destroy finishes when herdr cannot list its machines", async () => {
+    await perf("launch", "--name", "t1");
+    box.write("herdr-down", "");
+    const destroyed = await perf("destroy", "t1");
+    expect(destroyed.status).toBe(0);
+    expect(destroyed.stderr).toContain("server not running");
     expect(existsSync(entry())).toBe(false);
   });
 

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { awsSpawn, runCommand } from "./aws.ts";
 import { hostAlias, PREFIX, quote } from "./ssh.ts";
-import { log } from "./process.ts";
+import { errorMessage, log } from "./process.ts";
 
 // Tailscale reads the client from the secret and ignores client_id.
 async function accessToken(api: string, secret: string): Promise<string> {
@@ -44,7 +44,7 @@ export async function tailnetKey(name: string): Promise<string | undefined> {
   try {
     return await mintAuthKey(Parameter.parse(JSON.parse(read.stdout)).Parameter.Value, TAILSCALE_TAG, hostAlias(name), process.env.PERF_VM_TAILSCALE_API);
   } catch (error) {
-    log(`${(error as Error).message}; falling back to Session Manager only`);
+    log(`${errorMessage(error)}; falling back to Session Manager only`);
     return undefined;
   }
 }
@@ -71,7 +71,7 @@ export function tailnetAddress(instanceId: string): string | undefined {
   try {
     return runCommand(instanceId, "tailscale ip -4").trim().split("\n")[0] || undefined;
   } catch (error) {
-    log(`the VM did not join the tailnet, so ${PREFIX} falls back to Session Manager: ${(error as Error).message}`);
+    log(`the VM did not join the tailnet, so ${PREFIX} falls back to Session Manager: ${errorMessage(error)}`);
     return undefined;
   }
 }

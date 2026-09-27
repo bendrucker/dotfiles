@@ -15,8 +15,8 @@ import {
   type Release,
   unregisterHerdr,
 } from "./herdr.ts";
-import { log, until, UsageError } from "./process.ts";
-import { checkInclude, hostAlias, localFiles, localNames, publicKeys, sshDir, sshEntry, tools } from "./ssh.ts";
+import { errorMessage, log, until, UsageError } from "./process.ts";
+import { checkInclude, hostAlias, type Tools, localFiles, localNames, publicKeys, sshDir, sshEntry, tools } from "./ssh.ts";
 import { rejoinTailnet, tailnetAddress, tailnetKey, upCommand } from "./tailscale.ts";
 
 const USAGE = `Usage: perf-vm <command> [options]
@@ -203,31 +203,41 @@ async function launch(args: string[]): Promise<number> {
   if (instances(options.name).length > 0) throw new UsageError(`a VM named ${options.name} already exists`);
 
   const expiresAt = new Date(Date.now() + options.ttlMinutes * 60 * 1000);
-  const authKey = await tailnetKey(options.name);
-  const herdr = await herdrRelease();
+  const [authKey, herdr] = await Promise.all([tailnetKey(options.name), herdrRelease()]);
   const launched = startInstance(options, expiresAt, authKey, herdr);
   log(`launched ${launched.id} (${launched.type}), expires ${isoSeconds(expiresAt)}`);
 
-  const host = hostAlias(options.name);
-  const files = localFiles(options.name);
   let address: string | undefined;
   // The time limit would only stop an unreachable VM, leaving it for 7 days.
   try {
-    mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
-    writeFileSync(files.config, sshEntry(host, launched.id, undefined, files.knownHosts, resolved));
-    checkInclude(options.name, launched.id);
+    writeEntry(options.name, launched.id, undefined, resolved);
     waitReady(launched.id, herdr !== undefined);
     address = authKey ? tailnetAddress(launched.id) : undefined;
-    if (address) writeFileSync(files.config, sshEntry(host, launched.id, address, files.knownHosts, resolved));
+    if (address) writeEntry(options.name, launched.id, address, resolved);
   } catch (error) {
     log(`launch failed, so destroying ${options.name}`);
-    destroy([options.name]);
+    try {
+      destroy([options.name]);
+    } catch (cleanup) {
+      log(`destroy failed too, so ${launched.id} is still running: ${errorMessage(cleanup)}`);
+    }
     throw error;
   }
 
   log("registering with herdr");
   const machine = registerHerdr(options.name);
   return report({ ...launched, name: options.name }, expiresAt, address, machine);
+}
+
+function writeEntry(name: string, instanceId: string, address: string | undefined, resolved: Tools): void {
+  const files = localFiles(name);
+  mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
+  writeFileSync(files.config, sshEntry(hostAlias(name), instanceId, address, files.knownHosts, resolved));
+  checkInclude(name, instanceId);
+}
+
+function tagExpiry(instanceId: string, expiresAt: Date): void {
+  aws(["ec2", "create-tags", "--resources", instanceId, "--tags", `Key=${EXPIRES_TAG},Value=${isoSeconds(expiresAt)}`], z.unknown());
 }
 
 // Callers read herdr-machine to drive the VM, so a VM herdr cannot reach exits
@@ -275,7 +285,7 @@ function extend(args: string[]): number {
   // Reschedule before retagging, so a failure leaves the tag no later than the
   // shutdown it describes.
   runCommand(vm.id, shutdownCommand(expiresAt));
-  aws(["ec2", "create-tags", "--resources", vm.id, "--tags", `Key=${EXPIRES_TAG},Value=${isoSeconds(expiresAt)}`], z.unknown());
+  tagExpiry(vm.id, expiresAt);
   console.log(`${name} now expires at ${isoSeconds(expiresAt)}`);
   return 0;
 }
@@ -302,16 +312,14 @@ async function resume(args: string[]): Promise<number> {
   }
   const resolved = tools();
   const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
-  aws(["ec2", "create-tags", "--resources", vm.id, "--tags", `Key=${EXPIRES_TAG},Value=${isoSeconds(expiresAt)}`], z.unknown());
+  tagExpiry(vm.id, expiresAt);
   aws(["ec2", "start-instances", "--instance-ids", vm.id], z.unknown());
   log(`starting ${vm.id}, expires ${isoSeconds(expiresAt)}`);
 
   waitOnline(vm.id);
   runCommand(vm.id, shutdownCommand(expiresAt));
   const address = await rejoinTailnet(vm.id, name);
-  const files = localFiles(name);
-  mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
-  writeFileSync(files.config, sshEntry(hostAlias(name), vm.id, address, files.knownHosts, resolved));
+  writeEntry(name, vm.id, address, resolved);
 
   log("registering with herdr");
   const machine = registerHerdr(name);
@@ -396,7 +404,7 @@ export async function main(argv: string[]): Promise<number> {
     if (!handler) throw new UsageError(`unknown command: ${command}`);
     return await handler(args);
   } catch (error) {
-    log((error as Error).message);
+    log(errorMessage(error));
     if (error instanceof UsageError) process.stderr.write(`\n${USAGE}\n`);
     return error instanceof UsageError ? 2 : 1;
   }

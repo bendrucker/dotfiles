@@ -2,7 +2,7 @@
 // run on them through Session Manager.
 
 import { z } from "zod";
-import { spawn, until } from "./process.ts";
+import { errorMessage, spawn, until } from "./process.ts";
 
 export const REGION = "us-east-1";
 export const NAME_TAG = "perf-vm";
@@ -45,7 +45,15 @@ export function aws<T>(args: string[], schema: z.ZodType<T>): T {
     const hint = expired ? "\nSign in with: aws sso login --profile " + profile() : "";
     throw new Error(`aws ${args.slice(0, 2).join(" ")} failed: ${stderr}${hint}`);
   }
-  return schema.parse(result.stdout.trim() ? JSON.parse(result.stdout) : undefined);
+  return parseOutput(args, result.stdout, schema);
+}
+
+function parseOutput<T>(args: string[], stdout: string, schema: z.ZodType<T>): T {
+  try {
+    return schema.parse(stdout.trim() ? JSON.parse(stdout) : undefined);
+  } catch (error) {
+    throw new Error(`aws ${args.slice(0, 2).join(" ")} returned unexpected output: ${errorMessage(error)}`);
+  }
 }
 
 export interface Instance {
@@ -90,10 +98,14 @@ export function runCommand(instanceId: string, command: string): string {
   ], SentCommand);
   const commandId = sent.Command.CommandId;
   return until(`\`${command}\` on ${instanceId}`, () => {
-    const invocation = awsSpawn(["ssm", "get-command-invocation", "--command-id", commandId, "--instance-id", instanceId]);
-    // The invocation is not queryable for a moment after send-command returns.
-    if (invocation.status !== 0) return undefined;
-    const answer = Invocation.parse(JSON.parse(invocation.stdout));
+    const args = ["ssm", "get-command-invocation", "--command-id", commandId, "--instance-id", instanceId];
+    const invocation = awsSpawn(args);
+    if (invocation.status !== 0) {
+      // The invocation is not queryable for a moment after send-command returns.
+      if (invocation.stderr.includes("InvocationDoesNotExist")) return undefined;
+      throw new Error(`aws ssm get-command-invocation failed: ${invocation.stderr.trim()}`);
+    }
+    const answer = parseOutput(args, invocation.stdout, Invocation);
     if (["Pending", "InProgress", "Delayed"].includes(answer.Status)) return undefined;
     if (answer.Status !== "Success") {
       throw new Error(`\`${command}\` on ${instanceId} ended ${answer.Status}: ${answer.StandardErrorContent}`);

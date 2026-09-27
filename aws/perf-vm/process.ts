@@ -8,6 +8,10 @@ export function log(message: string): void {
   process.stderr.write(`perf-vm: ${message}\n`);
 }
 
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function spawn(cmd: string[], env?: Record<string, string>): { status: number; stdout: string; stderr: string } {
   const result = Bun.spawnSync({ cmd, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
   return { status: result.exitCode ?? 128, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
