@@ -134,22 +134,19 @@ function writeStub(path: string, script: string): void {
   chmodSync(path, 0o755);
 }
 
-function git(args: string[]): void {
-  const run = Bun.spawnSync({ cmd: ["git", ...args], env: process.env, stdin: "ignore" });
+function git(args: string[], env: Record<string, string> = {}): void {
+  const run = Bun.spawnSync({ cmd: ["git", ...args], env: { ...process.env, ...env }, stdin: "ignore" });
   if (run.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr.toString()}`);
 }
+
+const OLD = "2020-01-01T00:00:00Z";
 
 function oldCommit(): void {
   git(["-C", repo, "config", "user.name", "t"]);
   git(["-C", repo, "config", "user.email", "t@t.com"]);
   writeFileSync(join(repo, "f"), "x");
   git(["-C", repo, "add", "f"]);
-  const run = Bun.spawnSync({
-    cmd: ["git", "-C", repo, "commit", "-q", "-m", "init"],
-    env: { ...process.env, GIT_AUTHOR_DATE: "2020-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" },
-    stdin: "ignore",
-  });
-  if (run.exitCode !== 0) throw new Error(`git commit: ${run.stderr.toString()}`);
+  git(["-C", repo, "commit", "-q", "-m", "init"], { GIT_AUTHOR_DATE: OLD, GIT_COMMITTER_DATE: OLD });
 }
 
 // The PATH edit above is the whole isolation these cases have. A stub that did
@@ -513,12 +510,7 @@ describe("prune (black box)", () => {
   test("counts a worktree-less stray branch with no linked worktree at all", () => {
     listing([worktree({ branch: "main", is_main: true, is_current: true, path: "/repo" })]);
     oldCommit();
-    const branch = Bun.spawnSync({
-      cmd: ["git", "-C", repo, "branch", "stray", "main"],
-      env: { ...process.env, GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" },
-      stdin: "ignore",
-    });
-    expect(branch.exitCode).toBe(0);
+    git(["-C", repo, "branch", "stray", "main"], { GIT_COMMITTER_DATE: OLD });
 
     const result = prune([]);
     expect(result.status).toBe(0);

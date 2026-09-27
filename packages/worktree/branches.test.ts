@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sandbox, type Sandbox } from "#harness";
-import { decideBranch, EXPIRY, pruneBranches, readBranches, type BranchReport } from "#worktree/branches";
+import { decideBranch, EXPIRY, pruneBranches, readBranches, type BranchReport, type Decision } from "#worktree/branches";
 
 // A real repo, not a stub: this pass reasons about actual refs, reflogs and
 // remote-tracking state, which a stubbed `git` cannot stand in for. Isolated
@@ -97,12 +97,11 @@ function report(): BranchReport {
 }
 
 describe("decideBranch", () => {
-  test("a fully backed-up tip is deleted", () => {
-    expect(decideBranch(true)).toEqual({ action: "delete", reason: "backed up" });
-  });
-
-  test("a tip with commits nowhere else is archived", () => {
-    expect(decideBranch(false)).toEqual({ action: "archive", reason: "local-only" });
+  test.each<[string, boolean, Decision]>([
+    ["a fully backed-up tip is deleted", true, { action: "delete", reason: "backed up" }],
+    ["a tip with commits nowhere else is archived", false, { action: "archive", reason: "local-only" }],
+  ])("%s", (_name, backedUp, expected) => {
+    expect(decideBranch(backedUp)).toEqual(expected);
   });
 });
 
@@ -198,6 +197,16 @@ describe("pruneBranches (sandboxed)", () => {
     expect(exists("refs/heads/fresh")).toBe(true);
   });
 
+  test("an unnamed default branch leaves every branch alone", () => {
+    aged(["branch", "same-as-main", "main"]);
+
+    const rep = report();
+    pruneBranches("", "1d", false, false, rep);
+
+    expect(rep.branches).toBe(0);
+    expect(exists("refs/heads/same-as-main")).toBe(true);
+  });
+
   test("an unparseable floor leaves every branch alone", () => {
     aged(["branch", "same-as-main", "main"]);
 
@@ -234,26 +243,17 @@ describe("archive expiry", () => {
     });
   }
 
-  test("an archive ref past 90 days expires", () => {
-    const past = Math.floor(Date.now() / 1000) - EXPIRY - 86400;
-    archiveWithReflogAt("old", past);
+  test.each<[string, number, boolean]>([
+    ["an archive ref past 90 days expires", EXPIRY + 86400, true],
+    ["an archive ref within 90 days is left alone", 86400, false],
+  ])("%s", (_name, age, expires) => {
+    archiveWithReflogAt("archived", Math.floor(Date.now() / 1000) - age);
 
     const rep = report();
     pruneBranches("main", "1d", false, false, rep);
 
-    expect(rep.branches).toBe(1);
-    expect(exists("refs/archive/old")).toBe(false);
-  });
-
-  test("an archive ref within 90 days is left alone", () => {
-    const recent = Math.floor(Date.now() / 1000) - 86400;
-    archiveWithReflogAt("recent", recent);
-
-    const rep = report();
-    pruneBranches("main", "1d", false, false, rep);
-
-    expect(rep.branches).toBe(0);
-    expect(exists("refs/archive/recent")).toBe(true);
+    expect(rep.branches).toBe(expires ? 1 : 0);
+    expect(exists("refs/archive/archived")).toBe(!expires);
   });
 
   test("re-archiving a tip an expired archive already holds restarts its clock", () => {

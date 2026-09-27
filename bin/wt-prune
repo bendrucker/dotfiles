@@ -295,9 +295,6 @@ function prune(options: Options): Outcome {
 
   if (options.interactive) checklist(candidates, options, report);
 
-  // Worktree-less local branches, whether or not a linked worktree survived
-  // the forge pass above: a branch can go worktree-less in a repo that only
-  // ever had the one checkout.
   pruneBranches(defaultBranch(), options.minAge, options.dryRun, explaining, report);
 
   return finish(report, fanOut, explaining);

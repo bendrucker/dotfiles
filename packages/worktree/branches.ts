@@ -7,7 +7,7 @@
 // An archived branch is recoverable with `git branch <name> refs/archive/<name>`
 // until EXPIRY.
 
-import { nowSeconds, parseDuration } from "#worktree/state";
+import { capture, nowSeconds, parseDuration } from "#worktree/state";
 
 // How long an archived ref survives before recovery stops being plausible.
 export const EXPIRY = 90 * 86400;
@@ -50,8 +50,7 @@ export function decideBranch(backedUp: boolean): Decision {
 
 // Zero means nothing here is only here.
 function isBackedUp(tip: string, defaultName: string): boolean {
-  const exclude = defaultName === "" ? [] : [defaultName];
-  return capture(["git", "rev-list", "--count", tip, "--not", "--remotes", ...exclude]) === "0";
+  return capture(["git", "rev-list", "--count", tip, "--not", "--remotes", defaultName]) === "0";
 }
 
 // The floor a branch's own reflog has to clear: its newest entry older than
@@ -69,7 +68,7 @@ function archiveTarget(name: string, tip: string): string {
   const target = `refs/archive/${name}`;
   const existing = capture(["git", "rev-parse", "--verify", "-q", target]);
   if (existing === undefined || existing === "" || existing === tip) return target;
-  const short = capture(["git", "rev-parse", "--short", tip]) ?? tip;
+  const short = capture(["git", "rev-parse", "--short", tip]) || tip;
   return `${target}-${short}`;
 }
 
@@ -79,7 +78,8 @@ function archive(name: string, tip: string): boolean {
   const target = archiveTarget(name, tip);
   // A same-value update-ref writes no reflog entry, so an archive already
   // holding this tip is recreated to restart its expiry clock.
-  if (capture(["git", "rev-parse", "--verify", "-q", target]) === tip) git(["update-ref", "-d", target]);
+  const held = capture(["git", "rev-parse", "--verify", "-q", target]) === tip;
+  if (held && !git(["update-ref", "-d", target])) return false;
   if (!git(["update-ref", "--create-reflog", target, tip])) return false;
   return git(["branch", "-D", name]);
 }
@@ -89,9 +89,8 @@ export interface BranchReport {
   reasons: string[][];
 }
 
-// Runs whether or not any linked worktree survived the forge pass, since a
-// branch can go worktree-less in a repo that only ever had the one checkout.
-// An unparseable minAge skips branches rather than reading as no floor at all.
+// An unparseable minAge skips branches rather than reading as no floor at all,
+// and an unnamed default branch skips them rather than leaving it unguarded.
 export function pruneBranches(
   defaultName: string,
   minAge: string,
@@ -100,7 +99,7 @@ export function pruneBranches(
   report: BranchReport,
 ): void {
   const floor = parseDuration(minAge);
-  const captured = floor === undefined ? undefined : capture([
+  const captured = floor === undefined || defaultName === "" ? undefined : capture([
     "git",
     "for-each-ref",
     "refs/heads",
@@ -157,18 +156,6 @@ function reflogTimes(ref: string): number[] {
     if (match !== undefined && match !== null) times.push(Number(match[1]));
   }
   return times;
-}
-
-// Every spawn hands the environment over explicitly, because Bun otherwise
-// resolves a bare command name against the PATH it captured at startup and a
-// caller that adjusted PATH would reach a different binary than it meant to.
-function capture(cmd: string[]): string | undefined {
-  try {
-    const run = Bun.spawnSync({ cmd, env: process.env, stdin: "ignore", stderr: "ignore" });
-    return run.stdout.toString().replace(/\n+$/, "");
-  } catch {
-    return undefined;
-  }
 }
 
 function git(args: string[]): boolean {
