@@ -4,10 +4,8 @@
 // dirty tree to protect and nothing worth a network round-trip, so this
 // decides purely from what git already knows about the ref.
 //
-// A branch backed up somewhere (its own remote, or already folded into the
-// default branch) is deleted outright. One that is not gets moved to
-// refs/archive/<name> first, recoverable with `git branch <name>
-// refs/archive/<name>`, and an archived ref itself expires after EXPIRY.
+// An archived branch is recoverable with `git branch <name> refs/archive/<name>`
+// until EXPIRY.
 
 import { minAge, nowSeconds, parseDuration } from "#worktree/state";
 
@@ -50,9 +48,7 @@ export function decideBranch(backedUp: boolean): Decision {
     : { action: "archive", reason: "local-only" };
 }
 
-// Every commit unique to tip, excluding whatever a remote already holds and
-// whatever the default branch already carries. Zero means nothing here is
-// only here.
+// Zero means nothing here is only here.
 function isBackedUp(tip: string, defaultName: string): boolean {
   const exclude = defaultName === "" ? [] : [defaultName];
   return capture(["git", "rev-list", "--count", tip, "--not", "--remotes", ...exclude]) === "0";
@@ -70,9 +66,6 @@ function isStale(name: string): boolean {
   return nowSeconds() - Math.max(...times) >= floor;
 }
 
-// refs/archive/<name>, unless that name is already taken by a different tip,
-// in which case a short SHA disambiguates rather than overwriting whatever
-// archived history is already sitting there.
 function archiveTarget(name: string, tip: string): string {
   const target = `refs/archive/${name}`;
   const existing = capture(["git", "rev-parse", "--verify", "-q", target]);
@@ -81,8 +74,6 @@ function archiveTarget(name: string, tip: string): string {
   return `${target}-${short}`;
 }
 
-// Moves the branch to an archive ref before deleting it, so the reflog this
-// pass creates is what `git branch <name> refs/archive/<name>` recovers from.
 // A failed update-ref leaves the branch alone rather than deleting work the
 // archive step did not actually save.
 function archive(name: string, tip: string): boolean {
@@ -96,8 +87,7 @@ export interface BranchReport {
   reasons: string[][];
 }
 
-// The branch pass itself: every worktree-less, non-default local branch, aged
-// past the floor, deleted or archived per decideBranch. Runs whether or not
+// Runs whether or not
 // any linked worktree survived the forge pass, since a branch can go
 // worktree-less in a repo that only ever had the one checkout.
 export function pruneBranches(

@@ -73,8 +73,7 @@ function exists(ref: string): boolean {
   return run.exitCode === 0;
 }
 
-// A commit on whatever branch is checked out, dated so the fixtures control
-// staleness without waiting on a real clock.
+// Dated so the fixtures control staleness without waiting on a real clock.
 function commit(message: string, date: string): void {
   fileCount += 1;
   const name = `file-${fileCount}`;

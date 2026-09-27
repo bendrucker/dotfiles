@@ -139,7 +139,6 @@ function git(args: string[]): void {
   if (run.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr.toString()}`);
 }
 
-// A commit old enough to clear the branch pass's default 1d floor.
 function oldCommit(): void {
   git(["-C", repo, "config", "user.name", "t"]);
   git(["-C", repo, "config", "user.email", "t@t.com"]);
