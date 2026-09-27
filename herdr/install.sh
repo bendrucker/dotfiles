@@ -1,6 +1,7 @@
 #!/usr/bin/env zsh
 #
-# Converge herdr's plugins onto plugins.list.
+# Load the herdr server's launchd agent, and converge herdr's plugins onto
+# plugins.list.
 #
 # herdr has no declarative manifest of its own, so herdr-lazy supplies one and
 # installs the rest from it. That leaves herdr-lazy the one plugin this script
@@ -13,6 +14,16 @@ cd "${0:A:h}"
 if ! command -v herdr >/dev/null 2>&1; then
   echo "herdr not found; skipping plugin install" >&2
   exit 0
+fi
+
+# A running server owns every pane, and launchd would either boot it out to
+# reload a changed plist or start a second one that exits against its socket.
+# While one is up, the plist is written and the cutover is left to a person.
+if [[ "$(uname -s)" == Darwin ]]; then
+  running=0
+  [[ "$(herdr status server --json 2>/dev/null | jq -r .running 2>/dev/null)" == true ]] && running=1
+  bash -c 'source "$ZSH/macos/shell/launch-agent.sh" && install_launch_agent "$@"' \
+    _ herdr/me.bendrucker.herdr.plist "herdr server" "$running" || launchd_failed=1
 fi
 
 # Read the list from this repo rather than herdr's plugin config dir, so the
@@ -51,7 +62,7 @@ fi
 lazy="$root/target/release/herdr-lazy"
 if [[ -z "$root" || ! -x "$lazy" ]]; then
   echo "✗ ${lazy_repo} is not installed; leaving herdr plugins as they are" >&2
-  exit 0
+  exit "${launchd_failed:-0}"
 fi
 
 # sync counts an unpinned entry as satisfied by whatever commit is installed, so
@@ -72,3 +83,5 @@ fi
 # With this on, a plugin added to the list later installs on the next herdr
 # start instead of waiting for someone to re-run this script.
 "$lazy" auto-sync on || echo "✗ could not turn on auto-sync" >&2
+
+exit "${launchd_failed:-0}"

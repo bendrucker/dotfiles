@@ -37,18 +37,21 @@ launch_agent_is_self() {
 }
 
 # What installing a label should do, given whether the rendered plist already
-# matches the installed one, whether launchd has the job, and whether this
-# process is running under that job.
+# matches the installed one, whether launchd has the job, whether this process
+# is running under that job, and whether the caller holds a live process that
+# neither a bootout nor a second copy may disturb.
 #
 #   skip       leave the file and launchd alone
-#   defer      write the plist and leave the running job on its old config
+#   defer      write the plist and leave launchd as it is
 #   bootstrap  write and load, with nothing to tear down first
 #   reinstall  tear the job down and load it again
 launch_agent_plan() {
-  local unchanged="$1" loaded="$2" is_self="$3"
+  local unchanged="$1" loaded="$2" is_self="$3" hold="${4:-0}"
 
   if ((unchanged && loaded)); then
     echo skip
+  elif ((hold)); then
+    echo defer
   elif ((is_self && loaded)); then
     echo defer
   elif ((!loaded)); then
@@ -58,10 +61,16 @@ launch_agent_plan() {
   fi
 }
 
+# The plist is named under macos/, or by a path from the repo root for a topic
+# that keeps its own. Passing hold=1 writes the plist without touching launchd,
+# for a job whose process must outlive every install.
 install_launch_agent() {
-  local plist_name="$1"
+  local plist_path="$1"
   local description="$2"
-  local plist_src="$ZSH/macos/$plist_name"
+  local hold="${3:-0}"
+  [[ "$plist_path" == */* ]] || plist_path="macos/$plist_path"
+  local plist_name="${plist_path##*/}"
+  local plist_src="$ZSH/$plist_path"
   local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
   local label="${plist_name%.plist}"
 
@@ -83,7 +92,7 @@ install_launch_agent() {
   launch_agent_is_self "$label" && is_self=1
 
   local plan
-  plan=$(launch_agent_plan "$unchanged" "$loaded" "$is_self")
+  plan=$(launch_agent_plan "$unchanged" "$loaded" "$is_self" "$hold")
 
   if [[ "$plan" == skip ]]; then
     gum log --level info "$description launchd agent already current"
@@ -98,7 +107,10 @@ install_launch_agent() {
 
   printf '%s\n' "$rendered" >"$plist_dst"
 
-  if [[ "$plan" == defer ]]; then
+  if [[ "$plan" == defer ]] && ((hold)); then
+    gum log --level warn "$description is running, so launchd was left alone. The plist written takes effect at next login, or after stopping it: launchctl bootout gui/$UID/$label; launchctl bootstrap gui/$UID $plist_dst"
+    return
+  elif [[ "$plan" == defer ]]; then
     gum log --level warn "$description launchd agent is the job running this install, so it keeps its old config. It picks the new one up at next login, or now via: launchctl bootout gui/$UID/$label && launchctl bootstrap gui/$UID $plist_dst"
     return
   fi
