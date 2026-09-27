@@ -6,18 +6,11 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { aws, EXPIRES_TAG, type Instance, instances, InstanceInformation, KIND_TAG, Launched, NAME_TAG, runCommand, toInstance } from "./aws.ts";
 import { formatMinutes, isoSeconds, parseDuration } from "./duration.ts";
-import {
-  BINARY as HERDR_BINARY,
-  herdrRelease,
-  installLines,
-  knownMachines,
-  type Machine,
-  registerHerdr,
-  type Release,
-  unregisterHerdr,
-} from "./herdr.ts";
+import { guestTools, miseRelease, toolLines, TOOLS_LOG, TOOLS_STATUS } from "./guest.ts";
+import { HERDR, herdrRelease, knownMachines, type Machine, registerHerdr, unregisterHerdr } from "./herdr.ts";
 import { accounts, kind as kindNamed, type Kind, type Kinds, loadKinds } from "./kinds.ts";
 import { errorMessage, log, until, UsageError } from "./process.ts";
+import { installLines, type Release } from "./release.ts";
 import { checkInclude, hostAlias, localFiles, localNames, publicKeys, readRecord, sshDir, sshEntry, type Tools, tools } from "./ssh.ts";
 import { rejoinTailnet, tailnetAddress, tailnetKey, upCommand } from "./tailscale.ts";
 
@@ -70,9 +63,10 @@ export function shutdownCommand(expiresAt: Date): string {
 export interface Extras {
   herdr?: Release;
   tailnet?: { authKey: string; hostname: string; tag: string };
+  guest?: { mise: Release; tools: Record<string, string> };
 }
 
-export function userData(expiresAt: Date, keys: string, { herdr, tailnet }: Extras = {}): string {
+export function userData(expiresAt: Date, keys: string, { herdr, tailnet, guest }: Extras = {}): string {
   const lines = [
     "#!/bin/sh",
     shutdownCommand(expiresAt),
@@ -82,12 +76,14 @@ export function userData(expiresAt: Date, keys: string, { herdr, tailnet }: Extr
     "KEYS",
     "chown ec2-user:ec2-user /home/ec2-user/.ssh/authorized_keys",
     "chmod 600 /home/ec2-user/.ssh/authorized_keys",
-    ...(herdr ? installLines(herdr) : []),
+    ...(herdr ? installLines(HERDR, herdr) : []),
   ];
   // The key is single use and expires within the hour.
   if (tailnet) {
     lines.push("curl -fsSL https://tailscale.com/install.sh | sh", upCommand(tailnet.authKey, tailnet.hostname, tailnet.tag));
   }
+  // Last, since it takes longest and the VM is usable without it.
+  if (guest) lines.push(...toolLines(guest.mise, guest.tools));
   return [...lines, ""].join("\n");
 }
 
@@ -167,7 +163,7 @@ export function parseLaunch(args: string[], kinds: Kinds): LaunchOptions {
   return { name, kind, type: flags.get("--type"), ttlMinutes: parseTtl(flags.get("--ttl"), kind) };
 }
 
-function startInstance(options: LaunchOptions, expiresAt: Date, authKey: string | undefined, herdr: Release | undefined): Instance {
+function startInstance(options: LaunchOptions, expiresAt: Date, extras: Extras): Instance {
   const { kind, name } = options;
   const tags = [
     { Key: "Name", Value: hostAlias(name) },
@@ -175,7 +171,6 @@ function startInstance(options: LaunchOptions, expiresAt: Date, authKey: string 
     { Key: KIND_TAG, Value: kind.name },
     { Key: EXPIRES_TAG, Value: isoSeconds(expiresAt) },
   ];
-  const tailnet = authKey && kind.tailnet ? { authKey, hostname: hostAlias(name), tag: kind.tailnet.tag } : undefined;
   const run = aws(kind, [
     "ec2",
     "run-instances",
@@ -183,7 +178,7 @@ function startInstance(options: LaunchOptions, expiresAt: Date, authKey: string 
     `LaunchTemplateName=${kind.template}`,
     ...(options.type ? ["--instance-type", options.type] : []),
     "--user-data",
-    userData(expiresAt, publicKeys(), { herdr, tailnet }),
+    userData(expiresAt, publicKeys(), extras),
     "--tag-specifications",
     JSON.stringify([{ ResourceType: "instance", Tags: tags }]),
   ], Launched);
@@ -199,11 +194,16 @@ function waitOnline(kind: Kind, instanceId: string): void {
 }
 
 // cloud-init exits nonzero on harmless warnings, so the files are checked.
-function waitReady(kind: Kind, instanceId: string, herdr: boolean): void {
+function waitReady(kind: Kind, instanceId: string, { herdr, guest }: Extras): void {
   waitOnline(kind, instanceId);
   log("waiting for user data to finish");
-  const installed = ["test -s /home/ec2-user/.ssh/authorized_keys", ...(herdr ? [`test -x ${HERDR_BINARY}`] : [])];
-  runCommand(kind, instanceId, `cloud-init status --wait >/dev/null; ${installed.join(" && ")}`);
+  const installed = [
+    "test -s /home/ec2-user/.ssh/authorized_keys",
+    ...(herdr ? [`test -x ${HERDR.target}`] : []),
+    ...(guest ? [`cat ${TOOLS_STATUS}`] : []),
+  ];
+  const status = runCommand(kind, instanceId, `cloud-init status --wait >/dev/null; ${installed.join(" && ")}`).trim();
+  if (guest && status !== "0") log(`mise could not install every tool (exit ${status}); see ${TOOLS_LOG} on the VM`);
 }
 
 async function launch(args: string[]): Promise<number> {
@@ -215,8 +215,13 @@ async function launch(args: string[]): Promise<number> {
   if (existsSync(localFiles(name).config) || locate(name, kinds)) throw new UsageError(`a VM named ${name} already exists`);
 
   const expiresAt = new Date(Date.now() + options.ttlMinutes * 60 * 1000);
-  const [authKey, herdr] = await Promise.all([tailnetKey(kind, name), herdrRelease()]);
-  const launched = startInstance(options, expiresAt, authKey, herdr);
+  const [authKey, herdr, mise] = await Promise.all([tailnetKey(kind, name), herdrRelease(), miseRelease()]);
+  const extras: Extras = {
+    herdr,
+    tailnet: authKey && kind.tailnet ? { authKey, hostname: hostAlias(name), tag: kind.tailnet.tag } : undefined,
+    guest: mise ? { mise, tools: guestTools(kind) } : undefined,
+  };
+  const launched = startInstance(options, expiresAt, extras);
   log(`launched ${launched.id} (${kind.name}, ${launched.type}), expires ${isoSeconds(expiresAt)}`);
 
   let address: string | undefined;
@@ -224,7 +229,7 @@ async function launch(args: string[]): Promise<number> {
   // account to clean up.
   try {
     writeEntry(name, kind, launched.id, address, resolved);
-    waitReady(kind, launched.id, herdr !== undefined);
+    waitReady(kind, launched.id, extras);
     address = authKey ? tailnetAddress(kind, launched.id) : undefined;
     if (address) writeEntry(name, kind, launched.id, address, resolved);
   } catch (error) {

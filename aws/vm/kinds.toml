@@ -1,6 +1,7 @@
 # Each kind launches VMs from one launch template in one AWS account. Kinds in
 # ~/.config/vm/kinds.toml add to these or replace one by name, and a default
-# there overrides this one.
+# there overrides this one. A kind's tools table, a mise [tools] table, adds to
+# the command line tools in guest/mise.toml that every VM installs.
 default = "performance"
 
 # The account's policy stops a VM 12h after it starts and terminates it 7 days

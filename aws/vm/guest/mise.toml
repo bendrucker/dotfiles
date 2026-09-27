@@ -1,0 +1,24 @@
+# The command line tools every VM installs through mise, as its global config.
+# A kind adds to these with its own tools table. Explicit aqua backends download
+# prebuilt binaries, which Amazon Linux's glibc cannot get from Homebrew.
+[tools]
+"aqua:BurntSushi/ripgrep" = "15.2.0"
+"aqua:aristocratos/btop" = "1.4.7"
+"aqua:ast-grep/ast-grep" = "0.45.3"
+"aqua:astral-sh/uv" = "0.12.13"
+"aqua:ajeetdsouza/zoxide" = "0.10.0"
+"aqua:cli/cli" = "2.101.0"
+"aqua:dandavison/delta" = "0.19.2"
+"aqua:ducaale/xh" = "0.26.2"
+"aqua:jesseduffield/lazygit" = "0.65.1"
+"aqua:jqlang/jq" = "1.8.2"
+"aqua:junegunn/fzf" = "0.74.4"
+"aqua:koalaman/shellcheck" = "0.11.0"
+"aqua:mikefarah/yq" = "4.53.6"
+"aqua:mstange/samply" = "0.13.1"
+"aqua:neovim/neovim" = "0.12.5"
+"aqua:oven-sh/bun" = "1.4.2"
+"aqua:sharkdp/bat" = "0.26.1"
+"aqua:sharkdp/fd" = "10.5.0"
+"aqua:sharkdp/hyperfine" = "1.20.0"
+"github:eza-community/eza" = "0.23.5"

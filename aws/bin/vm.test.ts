@@ -3,15 +3,17 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
 import { formatMinutes, isoSeconds, parseDuration } from "../vm/duration.ts";
-import { installLines } from "../vm/herdr.ts";
+import { guestTools, toolLines } from "../vm/guest.ts";
+import { HERDR } from "../vm/herdr.ts";
 import { type Kind, type Kinds, loadKinds } from "../vm/kinds.ts";
+import { installLines } from "../vm/release.ts";
 import { sshEntry } from "../vm/ssh.ts";
 import { extendedExpiry, parseLaunch, rows, shutdownCommand, userData } from "../vm/vm.ts";
 
 const vmBin = join(repoRoot, "aws", "bin", "vm");
 
 function makeKind(overrides: Partial<Kind> = {}): Kind {
-  return { name: "performance", profile: "p", region: "us-east-1", template: "t", defaultTtl: 240, maxTtl: 720, ...overrides };
+  return { name: "performance", profile: "p", region: "us-east-1", template: "t", defaultTtl: 240, maxTtl: 720, tools: {}, ...overrides };
 }
 
 describe("kinds", () => {
@@ -32,6 +34,7 @@ describe("kinds", () => {
       defaultTtl: 240,
       maxTtl: 720,
       tailnet: { tag: "tag:perf-vm", secret: "/perf-vm/tailscale-oauth-client-secret" },
+      tools: {},
     });
   });
 
@@ -46,6 +49,7 @@ region = "us-west-2"
 template = "ci"
 default_ttl = "1h"
 max_ttl = "2h"
+tools = { "aqua:x/y" = "1.0.0" }
 [kinds.performance]
 profile = "other"
 region = "us-east-1"
@@ -54,7 +58,7 @@ template = "performance"
     );
     const kinds = loadKinds([shipped, box.path("local.toml")]);
     expect(kinds.default).toBe("ci");
-    expect(kinds.byName.get("ci")).toEqual({ name: "ci", profile: "ci-admin", region: "us-west-2", template: "ci", defaultTtl: 60, maxTtl: 120 });
+    expect(kinds.byName.get("ci")).toEqual({ name: "ci", profile: "ci-admin", region: "us-west-2", template: "ci", defaultTtl: 60, maxTtl: 120, tools: { "aqua:x/y": "1.0.0" } });
     expect(kinds.byName.get("performance")).toEqual(makeKind({ profile: "other", template: "performance" }));
   });
 
@@ -150,7 +154,7 @@ describe("user data", () => {
   });
 
   test("installs the herdr build for the VM's architecture only if its digest matches", () => {
-    const lines = installLines([
+    const lines = installLines(HERDR, [
       { arch: "aarch64", url: "https://example.test/arm", sha256: "a".repeat(64) },
       { arch: "x86_64", url: "https://example.test/x86", sha256: "b".repeat(64) },
     ]);
@@ -161,8 +165,8 @@ describe("user data", () => {
       esac
       install -d -o ec2-user -g ec2-user /home/ec2-user/.local /home/ec2-user/.local/bin
       curl -fsSL --retry 3 -o /tmp/herdr "$herdr_url"
-      echo "$herdr_sum  /tmp/herdr" | sha256sum -c -
-      install -m 755 -o ec2-user -g ec2-user /tmp/herdr /home/ec2-user/.local/bin/herdr"
+      echo "$herdr_sum  /tmp/herdr" | sha256sum -c - &&
+        install -m 755 -o ec2-user -g ec2-user /tmp/herdr /home/ec2-user/.local/bin/herdr"
     `);
   });
 
@@ -172,13 +176,59 @@ describe("user data", () => {
   ])("the herdr install on %s downloads %s", (arch, url) => {
     const box = sandbox("vm-uname");
     box.stub("uname", `echo ${arch}`);
-    const lines = installLines([
+    const lines = installLines(HERDR, [
       { arch: "aarch64", url: "arm", sha256: "a" },
       { arch: "x86_64", url: "x86", sha256: "b" },
     ]);
     const picked = run(["sh", "-c", `${lines.slice(0, 4).join("\n")}\necho "$herdr_url"`], { path: [box.bin] });
     box.remove();
     expect(picked.stdout.trim()).toBe(url);
+  });
+
+  test("a digest mismatch installs nothing", () => {
+    const box = sandbox("vm-digest");
+    box.stub("uname", "echo aarch64");
+    box.stub("curl", "exit 0");
+    box.stub("sha256sum", "exit 1");
+    box.stub("install", `echo "install $*"`);
+    const lines = installLines(HERDR, [{ arch: "aarch64", url: "arm", sha256: "a" }]);
+    const ran = run(["sh", "-c", lines.join("\n")], { path: [box.bin] });
+    box.remove();
+    expect(ran.stdout).toContain("install -d");
+    expect(ran.stdout).not.toContain("install -m");
+  });
+
+  test("installs mise, writes the tools as its global config, and records how the install went", () => {
+    const lines = toolLines([{ arch: "aarch64", url: "https://example.test/mise", sha256: "c".repeat(64) }], {
+      "aqua:BurntSushi/ripgrep": "15.2.0",
+      "github:a/b": "1.0.0",
+    });
+    expect(lines.join("\n")).toMatchInlineSnapshot(`
+      "case "$(uname -m)" in
+        aarch64) mise_url=https://example.test/mise mise_sum=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc ;;
+      esac
+      install -d -o ec2-user -g ec2-user /home/ec2-user/.local /home/ec2-user/.local/bin
+      curl -fsSL --retry 3 -o /tmp/mise "$mise_url"
+      echo "$mise_sum  /tmp/mise" | sha256sum -c - &&
+        install -m 755 -o ec2-user -g ec2-user /tmp/mise /home/ec2-user/.local/bin/mise
+      install -d -o ec2-user -g ec2-user /home/ec2-user/.config /home/ec2-user/.config/mise
+      cat > /home/ec2-user/.config/mise/config.toml <<'TOOLS'
+      [tools]
+      "aqua:BurntSushi/ripgrep" = "15.2.0"
+      "github:a/b" = "1.0.0"
+      TOOLS
+      echo 'export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"' >> /home/ec2-user/.bashrc
+      chown ec2-user:ec2-user /home/ec2-user/.config/mise/config.toml /home/ec2-user/.bashrc
+      install -d /var/lib/vm
+      runuser -l ec2-user -c 'MISE_YES=1 /home/ec2-user/.local/bin/mise install' > /var/log/vm-tools.log 2>&1; echo $? > /var/lib/vm/tools-status"
+    `);
+  });
+
+  test("a kind's tools add to the shipped set and override its pins", () => {
+    const tools = guestTools(makeKind({ tools: { "aqua:BurntSushi/ripgrep": "1.0.0", "aqua:x/y": "2.0.0" } }));
+    expect(tools["aqua:BurntSushi/ripgrep"]).toBe("1.0.0");
+    expect(tools["aqua:x/y"]).toBe("2.0.0");
+    expect(tools["aqua:sharkdp/fd"]).toBeDefined();
   });
 
   test("the scheduled minutes round up and land on the expiry", () => {
@@ -299,14 +349,17 @@ case "$1 $2" in
   "ec2 start-instances") sed -i.bak 's/"stopped"/"running"/' ${state}; echo '{}' ;;
   "ec2 create-tags") ;;
   "ssm describe-instance-information") echo '{"InstanceInformationList":[{"PingStatus":"Online"}]}' ;;
-  "ssm send-command") echo '{"Command":{"CommandId":"c-1"}}' ;;
+  "ssm send-command") echo "$*" > ${box.path("sent")}; echo '{"Command":{"CommandId":"c-1"}}' ;;
   "ssm get-command-invocation")
-    if [ -f ${box.path("unready")} ]; then echo '{"Status":"Failed","StandardErrorContent":"no keys"}'; else echo '{"Status":"Success","StandardOutputContent":"100.64.0.9"}'; fi ;;
+    if [ -f ${box.path("unready")} ]; then echo '{"Status":"Failed","StandardErrorContent":"no keys"}'
+    elif grep -q tools-status ${box.path("sent")}; then printf '{"Status":"Success","StandardOutputContent":"%s"}' "$(cat ${box.path("tools-status")} 2>/dev/null || echo 0)"
+    else echo '{"Status":"Success","StandardOutputContent":"100.64.0.9"}'; fi ;;
   "ssm get-parameter")
     if [ -f ${secret} ]; then printf '{"Parameter":{"Value":"%s"}}' "$(cat ${secret})"; else echo "An error occurred (ParameterNotFound)" >&2; exit 254; fi ;;
 esac`,
   );
   box.stub("session-manager-plugin", "exit 0");
+  box.stub("mise", `echo "2026.9.15 linux-arm64"`);
   box.stub("ssh-add", `echo "ssh-add $*" >> ${log}; echo "ecdsa-sha2-nistp256 AAAAfake test@example"`);
   box.stub("ssh", `echo "ssh $*" >> ${log}; [ "$1" = -G ] && echo "hostname i-0abc"; exit 0`);
   box.stub(
@@ -339,6 +392,11 @@ beforeAll(() => {
             { name: "herdr-linux-aarch64", browser_download_url: "https://example.test/herdr-linux-aarch64", digest: `sha256:${DIGEST}` },
             { name: "herdr-linux-x86_64", browser_download_url: "https://example.test/herdr-linux-x86_64", digest: null },
           ],
+        });
+      }
+      if (path === "/repos/jdx/mise/releases/tags/v2026.9.15") {
+        return Response.json({
+          assets: [{ name: "mise-v2026.9.15-linux-arm64", browser_download_url: "https://example.test/mise-linux-arm64", digest: `sha256:${DIGEST}` }],
         });
       }
       tailscaleRequests.push({ path, body: await request.text() });
@@ -415,6 +473,18 @@ describe("commands", () => {
     expect(log).toContain(`aarch64) herdr_url=https://example.test/herdr-linux-aarch64 herdr_sum=${DIGEST} ;;`);
     expect(log).not.toContain("herdr-linux-x86_64");
     expect(box.read("home/.ssh/vm/t1.json")).toBe('{"kind":"performance"}\n');
+    expect(log).toContain(`aarch64) mise_url=https://example.test/mise-linux-arm64 mise_sum=${DIGEST} ;;`);
+    expect(log).toContain('"aqua:BurntSushi/ripgrep" = "15.2.0"');
+    expect(log).toContain("cat /var/lib/vm/tools-status");
+    expect(launched.stderr).not.toContain("could not install");
+  });
+
+  test("launch reports tools mise could not install and keeps the VM", async () => {
+    box.write("tools-status", "1");
+    const launched = await perf("launch", "--name", "t1");
+    expect(launched.status).toBe(0);
+    expect(launched.stderr).toContain("mise could not install every tool (exit 1); see /var/log/vm-tools.log on the VM");
+    expect(calls()).not.toContain("terminate-instances");
   });
 
   test("launch writes the real plugin behind a mise shim into the ssh entry", async () => {

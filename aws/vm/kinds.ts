@@ -16,6 +16,8 @@ export interface Kind extends Account {
   defaultTtl: number;
   maxTtl: number;
   tailnet?: { tag: string; secret: string };
+  // mise tools added to the shipped set, by backend and version.
+  tools: Record<string, string>;
 }
 
 const KindFields = z
@@ -27,6 +29,7 @@ const KindFields = z
     max_ttl: z.string().default("12h"),
     tailnet_tag: z.string().optional(),
     tailnet_secret: z.string().optional(),
+    tools: z.record(z.string(), z.string()).default({}),
   })
   .refine((kind) => (kind.tailnet_tag === undefined) === (kind.tailnet_secret === undefined), {
     message: "tailnet_tag and tailnet_secret go together",
@@ -47,6 +50,7 @@ function toKind(name: string, fields: z.infer<typeof KindFields>): Kind {
     template: fields.template,
     defaultTtl: parseDuration(fields.default_ttl),
     maxTtl: parseDuration(fields.max_ttl),
+    tools: fields.tools,
   };
   if (kind.defaultTtl > kind.maxTtl) throw new Error(`kind ${name}: default_ttl exceeds max_ttl`);
   if (fields.tailnet_tag && fields.tailnet_secret) kind.tailnet = { tag: fields.tailnet_tag, secret: fields.tailnet_secret };
