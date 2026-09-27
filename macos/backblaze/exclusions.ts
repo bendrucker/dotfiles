@@ -10,8 +10,14 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const DEFAULT_RULES_FILE = "/Library/Backblaze.bzpkg/bzdata/bzexcluderules_editable.xml";
-const BEGIN = "<!-- BEGIN dotfiles: macos/backblaze/exclusions.xml, replaced on every install -->";
-const END = "<!-- END dotfiles -->";
+const TRACKED_RULES_FILE = join(import.meta.dir, "exclusions.xml");
+// The block is found by these prefixes rather than by the whole marker, so
+// rewording a marker replaces an installed block instead of orphaning it.
+const BEGIN_MARK = "<!-- BEGIN dotfiles";
+const END_MARK = "<!-- END dotfiles";
+const BEGIN = `${BEGIN_MARK}: macos/backblaze/exclusions.xml, replaced on every install -->`;
+const END = `${END_MARK} -->`;
+const OPEN = /<bzexclusions\b[^>]*>/;
 const CLOSE = "</bzexclusions>";
 
 /**
@@ -20,10 +26,10 @@ const CLOSE = "</bzexclusions>";
  * into Backblaze's file.
  */
 export function rulesFrom(document: string): string {
-  const open = document.indexOf("<bzexclusions>");
+  const open = OPEN.exec(document);
   const close = document.lastIndexOf(CLOSE);
-  if (open === -1 || close < open) throw new Error("exclusions.xml has no <bzexclusions> root");
-  return document.slice(open + "<bzexclusions>".length, close).trim();
+  if (!open || close < open.index) throw new Error("no <bzexclusions> root");
+  return document.slice(open.index + open[0].length, close).trim();
 }
 
 export function block(rules: string): string {
@@ -36,8 +42,8 @@ export function block(rules: string): string {
  * XML without parsing it.
  */
 export function merge(contents: string, rules: string): string {
-  const begin = contents.indexOf(BEGIN);
-  const end = contents.indexOf(END);
+  const begin = contents.indexOf(BEGIN_MARK);
+  const end = contents.indexOf(END_MARK);
 
   if (begin === -1 && end === -1) {
     const close = contents.lastIndexOf(CLOSE);
@@ -50,9 +56,14 @@ export function merge(contents: string, rules: string): string {
   // rules, so this stops and leaves the file as it is.
   if (begin === -1 || end === -1 || end < begin) throw new Error("managed block markers are unbalanced");
 
-  let after = end + END.length;
+  let after = contents.indexOf("-->", end) + "-->".length;
   if (contents[after] === "\n") after++;
   return contents.slice(0, begin) + block(rules) + contents.slice(after);
+}
+
+function fail(path: string, error: unknown): number {
+  console.error(`backblaze: ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  return 1;
 }
 
 function main(): number {
@@ -65,22 +76,26 @@ function main(): number {
   // absence means Backblaze is not installed here.
   if (!existsSync(file)) return 0;
 
-  const contents = readFileSync(file, "utf8");
-  const rules = readFileSync(join(import.meta.dir, "exclusions.xml"), "utf8");
-
-  let merged: string;
+  let rules: string;
   try {
-    merged = merge(contents, rulesFrom(rules));
+    rules = rulesFrom(readFileSync(TRACKED_RULES_FILE, "utf8"));
   } catch (error) {
-    console.error(`backblaze: ${file}: ${(error as Error).message}, leaving it unchanged`);
-    return 1;
+    return fail(TRACKED_RULES_FILE, error);
   }
-  if (merged === contents) return 0;
 
-  // Written in place rather than renamed over. The file is root:wheel 0666 in a
-  // directory only root can write, so a rename would need privileges this
-  // unattended install must never ask for, and would drop that ownership.
-  writeFileSync(file, merged);
+  try {
+    const contents = readFileSync(file, "utf8");
+    const merged = merge(contents, rules);
+    if (merged === contents) return 0;
+
+    // Written in place rather than renamed over. The file is root:wheel 0666 in
+    // a directory only root can write, so a rename would need privileges this
+    // unattended install must never ask for, and would drop that ownership.
+    writeFileSync(file, merged);
+  } catch (error) {
+    return fail(file, error);
+  }
+
   console.error(`backblaze: updated exclusions in ${file}. They apply once Backblaze restarts.`);
   return 0;
 }

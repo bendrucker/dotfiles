@@ -2,7 +2,7 @@
 // file, named through BACKBLAZE_EXCLUDE_RULES, so no test touches /Library.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run, sandbox, type Run, type Sandbox } from "#harness";
 import { block, merge, rulesFrom } from "./exclusions.ts";
@@ -73,6 +73,21 @@ describe("macos/backblaze/exclusions.ts", () => {
     expect(contents()).toBe(merge(shipped, rules));
   });
 
+  test("replaces a block installed under differently worded markers", () => {
+    const reworded = "<!-- BEGIN dotfiles, an older wording -->\n<old />\n<!-- END dotfiles, older -->\n";
+    box.write("bzexcluderules_editable.xml", shipped.replace("</bzexclusions>", `${reworded}</bzexclusions>`));
+    const r = install();
+    expect(r.status).toBe(0);
+    expect(contents()).toBe(merge(shipped, rules));
+  });
+
+  test("reports an unreadable file in one line", () => {
+    chmodSync(file, 0o000);
+    const r = install();
+    expect(r.status).toBe(1);
+    expect(r.stderr.trim().split("\n")).toEqual([expect.stringMatching(/^backblaze: .*permission denied/i)]);
+  });
+
   test("leaves the file alone when only one marker is there", () => {
     const broken = shipped.replace("</bzexclusions>", `${block(rules).split("\n")[0]}\n</bzexclusions>`);
     box.write("bzexcluderules_editable.xml", broken);
@@ -88,6 +103,13 @@ describe("macos/backblaze/exclusions.ts", () => {
     expect(r.status).toBe(0);
     expect(r.stderr).toBe("");
     expect(box.read("absent/bzexcluderules_editable.xml")).toBe("");
+  });
+
+  test.each<{ name: string; root: string }>([
+    { name: "a bare root", root: "<bzexclusions>" },
+    { name: "a root with an attribute", root: '<bzexclusions version="1">' },
+  ])("reads the rules inside $name", ({ root }) => {
+    expect(rulesFrom(`<?xml version="1.0" ?>\n${root}\n<rule />\n</bzexclusions>\n`)).toBe("<rule />");
   });
 
   test("does nothing in CI", () => {
