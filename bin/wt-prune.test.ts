@@ -86,9 +86,7 @@ beforeEach(() => {
   process.env.GH_LOG = join(sandbox, "gh.log");
   process.env.GUM_LOG = join(sandbox, "gum.log");
   process.env.PR_STATE_FILE = join(sandbox, "pr_state");
-  // The branch pass runs real git against this repo. Isolated from whatever
-  // the machine's own global config holds (a signing key, a differently named
-  // default branch) so the suite behaves the same everywhere.
+  // The branch pass runs real git, so keep the machine's config out of it.
   process.env.GIT_CONFIG_GLOBAL = "/dev/null";
   process.env.GIT_CONFIG_NOSYSTEM = "1";
   delete process.env.WT_ALL;
@@ -505,8 +503,6 @@ describe("prune (black box)", () => {
     expect(log("GH_LOG")).toBe("");
   });
 
-  // The branch pass runs even with no linked worktree to survive the forge
-  // pass, over the real sandbox repo rather than the fake `wt list` fixture.
   test("counts a worktree-less stray branch with no linked worktree at all", () => {
     listing([worktree({ branch: "main", is_main: true, is_current: true, path: "/repo" })]);
     oldCommit();

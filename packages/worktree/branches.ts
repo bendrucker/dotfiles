@@ -1,15 +1,8 @@
-// The branch pass over refs/heads, run after the worktree passes so a branch
-// nothing keeps checked out gets the same treatment a worktree's own branch
-// gets from the forge pass, minus the forge: a branch with no worktree has no
-// dirty tree to protect and nothing worth a network round-trip, so this
-// decides purely from what git already knows about the ref.
-//
-// An archived branch is recoverable with `git branch <name> refs/archive/<name>`
-// until EXPIRY.
+// Prunes branches no worktree holds. An archived branch is recoverable with
+// `git branch <name> refs/archive/<name>` until EXPIRY.
 
 import { capture, nowSeconds, parseDuration } from "#worktree/state";
 
-// How long an archived ref survives before recovery stops being plausible.
 export const EXPIRY = 90 * 86400;
 
 export interface Branch {
@@ -17,10 +10,6 @@ export interface Branch {
   tip: string;
 }
 
-// Local branches with no worktree of their own and not the default branch,
-// which the worktree passes already own. `for-each-ref`'s own worktreepath
-// field is what tells a branch checked out somewhere (including the main
-// worktree) apart from one nothing holds, without a second call per branch.
 export function readBranches(captured: string, defaultName: string): Branch[] {
   return captured
     .split("\n")
@@ -38,26 +27,17 @@ export interface Decision {
   reason: string;
 }
 
-// Pure: whether a branch is safe to delete outright turns only on whether its
-// tip is backed up, never on a forge call. A squash-merged PR and a branch
-// nobody ever opened a PR for look the same here, and that is the point: no
-// worktree survives to ask the forge about.
 export function decideBranch(backedUp: boolean): Decision {
   return backedUp
     ? { action: "delete", reason: "backed up" }
     : { action: "archive", reason: "local-only" };
 }
 
-// Zero means nothing here is only here.
 function isBackedUp(tip: string, defaultName: string): boolean {
   return capture(["git", "rev-list", "--count", tip, "--not", "--remotes", defaultName]) === "0";
 }
 
-// The floor a branch's own reflog has to clear: its newest entry older than
-// floor seconds. The entry's own date, not the tip's commit date, because `wt
-// switch --create` makes a branch on an old default-branch tip before its
-// worktree exists. A branch with no reflog reads as old enough, since there
-// is no signal saying it was touched recently.
+// Reflog time, not commit time: `wt switch --create` branches from an old tip.
 function isStale(name: string, floor: number): boolean {
   const times = reflogTimes(`refs/heads/${name}`);
   if (times.length === 0) return true;
@@ -72,12 +52,9 @@ function archiveTarget(name: string, tip: string): string {
   return `${target}-${short}`;
 }
 
-// A failed update-ref leaves the branch alone rather than deleting work the
-// archive step did not actually save.
 function archive(name: string, tip: string): boolean {
   const target = archiveTarget(name, tip);
-  // A same-value update-ref writes no reflog entry, so an archive already
-  // holding this tip is recreated to restart its expiry clock.
+  // A same-value update-ref writes no reflog entry, so recreate to restart expiry.
   const held = capture(["git", "rev-parse", "--verify", "-q", target]) === tip;
   if (held && !git(["update-ref", "-d", target])) return false;
   if (!git(["update-ref", "--create-reflog", target, tip])) return false;
@@ -89,8 +66,7 @@ export interface BranchReport {
   reasons: string[][];
 }
 
-// An unparseable minAge skips branches rather than reading as no floor at all,
-// and an unnamed default branch skips them rather than leaving it unguarded.
+// Without a parseable floor or a named default branch, touch no branch.
 export function pruneBranches(
   defaultName: string,
   minAge: string,
@@ -123,11 +99,7 @@ export function pruneBranches(
   expireArchives(dryRun, explaining, report);
 }
 
-// refs/archive/* left over from this pass or an earlier run, cleared once
-// nothing could plausibly still want them. The timestamp this reads is the
-// reflog entry's own date (%gd under --date=unix), not the archived commit's
-// committer date: the latter is often already old the day something is
-// archived, which would expire an archive the same night it was created.
+// Keyed on the reflog's own date, since the archived commit is often already old.
 function expireArchives(dryRun: boolean, explaining: boolean, report: BranchReport): void {
   const captured = capture(["git", "for-each-ref", "refs/archive", "--format=%(refname)"]);
   if (captured === undefined || captured === "") return;

@@ -2,10 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sandbox, type Sandbox } from "#harness";
 import { decideBranch, EXPIRY, pruneBranches, readBranches, type BranchReport, type Decision } from "#worktree/branches";
 
-// A real repo, not a stub: this pass reasons about actual refs, reflogs and
-// remote-tracking state, which a stubbed `git` cannot stand in for. Isolated
-// from the machine's own git identity and any global config, so the suite
-// passes wherever it runs.
 let box: Sandbox;
 let repo: string;
 let remote: string;
@@ -20,8 +16,6 @@ const IDENTITY = {
   GIT_COMMITTER_EMAIL: "test@example.com",
 };
 
-// Old enough to clear the default 1d floor without every fixture branch
-// naming its own date.
 const OLD = "2020-01-01T00:00:00Z";
 
 let fileCount = 0;
@@ -73,7 +67,6 @@ function exists(ref: string): boolean {
   return run.exitCode === 0;
 }
 
-// Dated so the fixtures control staleness without waiting on a real clock.
 function commit(message: string, date: string): void {
   fileCount += 1;
   const name = `file-${fileCount}`;
@@ -82,8 +75,6 @@ function commit(message: string, date: string): void {
   git(["commit", "-q", "-m", message], repo, { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date });
 }
 
-// A ref update dated OLD, so the branch's own reflog clears the floor the
-// same way its commits do.
 function aged(args: string[]): string {
   return git(args, repo, { GIT_COMMITTER_DATE: OLD });
 }
@@ -185,8 +176,7 @@ describe("pruneBranches (sandboxed)", () => {
     expect(git(["rev-parse", `refs/archive/collide-${short}`])).toBe(branchTip);
   });
 
-  // What `wt switch --create` leaves between creating the branch and adding
-  // its worktree: a new ref on a tip whose commit date is long past.
+  // What `wt switch --create` leaves before its worktree exists.
   test("a branch created just now on an old tip is left alone", () => {
     git(["branch", "fresh", "main"]);
 
