@@ -11,6 +11,9 @@
 <excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/.terraform/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
 <!-- Next.js build output. -->
 <excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/.next/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
+<!-- Cargo build profiles. A bare /target/ is too common a name to exclude. -->
+<excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/target/debug/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
+<excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/target/release/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
 <!-- Bytecode Python rewrites on import. -->
 <excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/__pycache__/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
 </bzexclusions>
