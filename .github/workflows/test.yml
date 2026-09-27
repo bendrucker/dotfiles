@@ -225,7 +225,7 @@ jobs:
         run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
       - name: Install lint dependencies
         run: brew install ast-grep duckdb gitleaks
-      # The xmllint hook. Homebrew's libxml2 is keg-only, so apt is what puts
+      # Homebrew's libxml2 is keg-only, so apt is what puts
       # the binary on PATH.
       - name: Install xmllint
         run: sudo apt-get install -y libxml2-utils

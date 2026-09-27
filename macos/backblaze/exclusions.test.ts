@@ -10,8 +10,6 @@ import { block, merge, rulesFrom } from "./exclusions.ts";
 const script = join(import.meta.dir, "exclusions.ts");
 const rules = rulesFrom(readFileSync(join(import.meta.dir, "exclusions.xml"), "utf8"));
 
-// The shape Backblaze ships: its own rules, including a merge block it added
-// in an update, and the closing tag the managed block goes ahead of.
 const shipped = [
   '<?xml version="1.0" encoding="UTF-8" ?>',
   "<bzexclusions>",
