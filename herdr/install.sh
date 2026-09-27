@@ -18,10 +18,12 @@ fi
 
 # A running server owns every pane, and launchd would either boot it out to
 # reload a changed plist or start a second one that exits against its socket.
-# While one is up, the plist is written and the cutover is left to a person.
+# While one is up, the plist is written and the cutover is left to a person. A
+# probe that fails counts as a running server, so only an explicit "not
+# running" lets launchd act.
 if [[ "$(uname -s)" == Darwin ]]; then
-  running=0
-  [[ "$(herdr status server --json 2>/dev/null | jq -r .running 2>/dev/null)" == true ]] && running=1
+  running=1
+  [[ "$(herdr status server --json 2>/dev/null | jq -r .running 2>/dev/null)" == false ]] && running=0
   bash -c 'source "$ZSH/macos/shell/launch-agent.sh" && install_launch_agent "$@"' \
     _ herdr/me.bendrucker.herdr.plist "herdr server" "$running" || launchd_failed=1
 fi
