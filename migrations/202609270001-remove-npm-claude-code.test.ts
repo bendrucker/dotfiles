@@ -46,7 +46,6 @@ function mise(...parts: string[]): string {
   return box.path("home", ".local", "share", "mise", ...parts);
 }
 
-// A node install as `npm i -g @anthropic-ai/claude-code` leaves it.
 function npmInstall(version: string): string {
   const install = mise("installs", "node", version);
   box.write(join("home", ".local", "share", "mise", "installs", "node", version, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"), "");
