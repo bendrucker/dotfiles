@@ -23,6 +23,9 @@
 // present the ambiguous remainder as a `gum` multi-select checklist annotated
 // by recoverability, and remove only the selections.
 //
+// Branch pass: worktree-less branches are deleted when backed up and otherwise
+// archived, recoverable with `git branch <name> refs/archive/<name>`.
+//
 // Prints one summary line ("N worktrees, M branches") or nothing when there's
 // nothing to remove. Honors --dry-run: counts what would be removed without
 // removing. For per-branch detail, run `wt step prune --dry-run` directly.
@@ -35,6 +38,7 @@
 import { writeSync } from "node:fs";
 import { basename } from "node:path";
 import { parseArgs } from "node:util";
+import { pruneBranches } from "#worktree/branches";
 import { alignColumns } from "#worktree/table";
 import {
   defaultBranch,
@@ -285,6 +289,8 @@ function prune(options: Options): Outcome {
     : [];
 
   if (options.interactive) checklist(candidates, options, report);
+
+  pruneBranches(defaultBranch(), options.minAge, options.dryRun, explaining, report);
 
   return finish(report, fanOut, explaining);
 }

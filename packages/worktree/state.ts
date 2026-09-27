@@ -251,7 +251,7 @@ export function nowSeconds(): number {
 // not found` and carried on. Caught rather than raised: every caller was
 // written to degrade to doing nothing when its forge CLI or worktrunk is
 // absent, and a prune that aborts is worse than one that removes nothing.
-function capture(cmd: string[]): string | undefined {
+export function capture(cmd: string[]): string | undefined {
   try {
     const run = Bun.spawnSync({ cmd, env: process.env, stdin: "ignore", stderr: "ignore" });
     return run.stdout.toString().replace(/\n+$/, "");
