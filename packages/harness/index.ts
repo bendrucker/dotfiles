@@ -117,6 +117,16 @@ function launcher(shebang: string): string {
   return interpreter === "/bin/sh" ? `#!/bin/sh\n. ${body}\n` : `#!/bin/sh\nexec ${interpreter} ${body} "$@"\n`;
 }
 
+/** Write an executable stub at `target`, for a test keeping its own temp tree rather than a `sandbox()`. */
+export function writeStub(target: string, body: string, shebang = "#!/bin/sh"): string {
+  const bodyPath = join(dirname(target), ".stubs", basename(target));
+  mkdirSync(dirname(bodyPath), { recursive: true });
+  writeFileSync(bodyPath, `${body}\n`);
+  writeFileSync(target, launcher(shebang));
+  chmodSync(target, 0o755);
+  return target;
+}
+
 export function sandbox(prefix: string): Sandbox {
   const dir = mkdtempSync(join(tmpdir(), `${prefix}-`));
   const bin = join(dir, "bin");
@@ -131,13 +141,7 @@ export function sandbox(prefix: string): Sandbox {
     stub(name, body, options = {}) {
       // A path is for a stub that has to sit somewhere else, such as a second
       // PATH holding fewer commands.
-      const target = name.includes("/") ? path(name) : join(bin, name);
-      const bodyPath = join(dirname(target), ".stubs", basename(target));
-      mkdirSync(dirname(bodyPath), { recursive: true });
-      writeFileSync(bodyPath, `${body}\n`);
-      writeFileSync(target, launcher(options.shebang ?? "#!/bin/sh"));
-      chmodSync(target, 0o755);
-      return target;
+      return writeStub(name.includes("/") ? path(name) : join(bin, name), body, options.shebang);
     },
     mkdir(...parts) {
       const target = path(...parts);

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeStub } from "#harness";
 import {
   auditRows,
   capturedLog,
@@ -279,10 +279,9 @@ function passBody(pass: Pass): string {
 // example tells the raw passes apart from the prune.
 function stubWtAll(passes: { prune?: Pass; audit?: Pass; sweep?: Pass }): void {
   const path = join(dotfiles, "bin", "wt-all");
-  writeFileSync(
+  writeStub(
     path,
-    `#!/bin/sh
-printf '%s\\t%s\\n' "$*" "\${WT_ALL_RAW:-unset}" >> ${shQuote(callsFile)}
+    `printf '%s\\t%s\\n' "$*" "\${WT_ALL_RAW:-unset}" >> ${shQuote(callsFile)}
 if [ "$1" = "prune-audit" ]; then
 ${passBody(passes.audit ?? {})}
 fi
@@ -292,13 +291,10 @@ fi
 ${passBody(passes.prune ?? {})}
 `,
   );
-  chmodSync(path, 0o755);
 }
 
-function writeStub(name: string, script: string): void {
-  const path = join(stubs, name);
-  writeFileSync(path, script);
-  chmodSync(path, 0o755);
+function stub(name: string, body: string): void {
+  writeStub(join(stubs, name), body);
 }
 
 function readLines(path: string): string[] {
@@ -354,15 +350,15 @@ beforeEach(() => {
   // A drift run files a Things to-do, and on the Mac this suite also runs on
   // that is a real to-do in the real Today list. The drift path is one example
   // away at all times, so `open` and `osascript` are not optional.
-  writeStub("open", `#!/bin/sh\nprintf '%s\\n' "$2" >> ${shQuote(todosFile)}\n`);
-  writeStub("gum", `#!/bin/sh\nprintf '%s\\t%s\\n' "$3" "$4" >> ${shQuote(gumFile)}\n`);
-  writeStub("osascript", "#!/bin/sh\nexit 0\n");
+  stub("open", `printf '%s\\n' "$2" >> ${shQuote(todosFile)}\n`);
+  stub("gum", `printf '%s\\t%s\\n' "$3" "$4" >> ${shQuote(gumFile)}\n`);
+  stub("osascript", "exit 0\n");
 
   // A to-do names the machine it was filed from and is keyed on the hardware, so
   // both answers come from a stub rather than from whichever machine is running
   // the suite.
-  writeStub("scutil", `#!/bin/sh\nprintf '%s\\n' ${shQuote(MACHINE)}\n`);
-  writeStub("ioreg", `#!/bin/sh\nprintf '"IOPlatformUUID" = "%s"\\n' 0000-TEST\n`);
+  stub("scutil", `printf '%s\\n' ${shQuote(MACHINE)}\n`);
+  stub("ioreg", `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST\n`);
 
   // Nothing but the stubs is reachable, so a call that escapes one finds no
   // command at all rather than this machine's. It also keeps git off the path,
@@ -702,7 +698,7 @@ describe("a filing Things refused", () => {
     { name: "the audit found drift", stubs: { audit: { stdout: LEAK } } },
   ])("carries the refusal out when $name", async ({ stubs }) => {
     stubWtAll(stubs);
-    writeStub("open", "#!/bin/sh\nexit 7\n");
+    stub("open", "exit 7\n");
 
     expect(await main()).toBe(7);
   });
@@ -874,11 +870,10 @@ describe("the executable", () => {
     const log = join(sandbox, "prune-log");
     writeFileSync(log, `${lines.join("\n")}\n`);
     // An absolute cat, because $PATH holds nothing but the stub directory.
-    writeFileSync(
+    writeStub(
       join(dotfiles, "bin", "wt-all"),
-      `#!/bin/sh\ncase "$1" in prune-audit|orphans) exit 0 ;; esac\n/bin/cat ${shQuote(log)}\n`,
+      `case "$1" in prune-audit|orphans) exit 0 ;; esac\n/bin/cat ${shQuote(log)}\n`,
     );
-    chmodSync(join(dotfiles, "bin", "wt-all"), 0o755);
 
     const piped = Bun.spawnSync({
       cmd: ["/bin/sh", "-c", `'${process.execPath}' '${SCRIPT}' | /bin/cat`],
