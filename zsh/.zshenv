@@ -48,3 +48,7 @@ path=("$ZSH/bin" "$HOME/.local/bin" $path)
 typeset -g DOTFILES_ZSHENV_RAN=1
 
 [[ -f ~/.zshenv.local ]] && source ~/.zshenv.local
+
+# Not exported, for the same reason. .zshrc restores this order after a login
+# shell's /etc/zprofile has run path_helper over it.
+typeset -g DOTFILES_ZSHENV_PATH=$PATH

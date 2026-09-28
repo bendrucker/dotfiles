@@ -25,6 +25,16 @@ if [[ -z "$DOTFILES_ZSHENV_RAN" ]]; then
   source "${${(%):-%N}:A:h}/.zshenv"
 fi
 
+# A login shell runs /etc/zprofile between .zshenv and here, and its path_helper
+# moves the system directories ahead of everything .zshenv put in front of them.
+# Put .zshenv's order back, keeping what path_helper added after it. mise's first
+# precmd re-runs hook-env (~40ms) whenever PATH changed since activation, and the
+# only change left is that order, so hand it the current PATH.
+if [[ -n $DOTFILES_ZSHENV_PATH && $PATH != "$DOTFILES_ZSHENV_PATH" ]]; then
+  path=(${(s.:.)DOTFILES_ZSHENV_PATH} $path)
+  [[ -n $__MISE_ZSH_ACTIVATE_PATH ]] && __MISE_ZSH_ACTIVATE_PATH=$PATH
+fi
+
 for localrc in ~/.localrc ~/.zshrc.local; do
   [[ -f $localrc ]] && source $localrc
 done
