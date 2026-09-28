@@ -4,7 +4,7 @@
 # on AWS.
 _vm_names() {
   local -a names
-  names=(~/.ssh/vm/*.conf(N:t:r))
+  names=(${XDG_STATE_HOME:-$HOME/.local/state}/vm/*.conf(N:t:r))
   _describe -t names 'vm name' names
 }
 
@@ -26,6 +26,7 @@ _vm() {
     'pause:Stop a VM, keeping its disk'
     'resume:Start a paused VM with a fresh time limit'
     'list:Show VMs with kind, type, and remaining time'
+    'copy:Rsync a local path to a VM'
     'destroy:Terminate a VM and remove its SSH entry and herdr machine'
   )
 
@@ -49,6 +50,9 @@ _vm() {
           ;;
         extend)
           _arguments '1:name:_vm_names' '2:duration:(30m 1h 2h 4h)'
+          ;;
+        copy)
+          _arguments '1:name:_vm_names' '2:source:_files' '3:destination:'
           ;;
         pause|destroy)
           _arguments '1:name:_vm_names'
