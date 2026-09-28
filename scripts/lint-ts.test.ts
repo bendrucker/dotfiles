@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { must, repoRoot, run as spawn, type Run, sandbox, type Sandbox } from "#harness";
 import { bunScripts, clean, isBunScript, link, MIRROR, mirrorDir, mirrorPath, rewrite } from "./lint-ts";
@@ -37,7 +37,9 @@ function fixture({ executable, module = "export const ok = 1;\n" }: { executable
   box.write(".gitignore", "node_modules/\n");
   box.write(".oxlintrc.json", `${JSON.stringify({ rules: { "max-depth": ["error", 4] } })}\n`);
   box.write("packages/module.ts", module);
-  if (executable !== undefined) box.stub("worktree-tool", executable, { shebang: "#!/usr/bin/env bun" });
+  if (executable !== undefined) {
+    chmodSync(box.write("bin/worktree-tool", `#!/usr/bin/env bun\n${executable}\n`), 0o755);
+  }
   git(["add", "-A"]);
 }
 

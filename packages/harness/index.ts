@@ -4,7 +4,7 @@
 
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 export interface Run {
   status: number;
@@ -104,6 +104,19 @@ export interface Sandbox {
   remove(): void;
 }
 
+/**
+ * What every stub with this shebang is written as. macOS checks a script on its
+ * first exec and caches the verdict by content, which costs ~90ms, and a stub
+ * embedding its sandbox path is new content every time. The launcher's content
+ * never changes, so the check hits its cache, and it runs the stub's body from
+ * `.stubs/` beside it. A sh body is sourced, which keeps `$0` the stub's path.
+ */
+function launcher(shebang: string): string {
+  const interpreter = shebang.replace(/^#!/, "").trim();
+  const body = '"${0%/*}/.stubs/${0##*/}"';
+  return interpreter === "/bin/sh" ? `#!/bin/sh\n. ${body}\n` : `#!/bin/sh\nexec ${interpreter} ${body} "$@"\n`;
+}
+
 export function sandbox(prefix: string): Sandbox {
   const dir = mkdtempSync(join(tmpdir(), `${prefix}-`));
   const bin = join(dir, "bin");
@@ -119,8 +132,10 @@ export function sandbox(prefix: string): Sandbox {
       // A path is for a stub that has to sit somewhere else, such as a second
       // PATH holding fewer commands.
       const target = name.includes("/") ? path(name) : join(bin, name);
-      mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, `${options.shebang ?? "#!/bin/sh"}\n${body}\n`);
+      const bodyPath = join(dirname(target), ".stubs", basename(target));
+      mkdirSync(dirname(bodyPath), { recursive: true });
+      writeFileSync(bodyPath, `${body}\n`);
+      writeFileSync(target, launcher(options.shebang ?? "#!/bin/sh"));
       chmodSync(target, 0o755);
       return target;
     },
