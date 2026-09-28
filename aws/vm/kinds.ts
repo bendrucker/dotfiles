@@ -84,8 +84,10 @@ export function localKindsPath(): string {
   return join(config, "vm", "kinds.toml");
 }
 
+export const SHIPPED_KINDS_PATH = join(import.meta.dir, "kinds.toml");
+
 // A local kind replaces a shipped one of the same name whole.
-export function loadKinds(paths = [join(import.meta.dir, "kinds.toml"), localKindsPath()]): Kinds {
+export function loadKinds(paths = [SHIPPED_KINDS_PATH, localKindsPath()]): Kinds {
   const byName = new Map<string, Kind>();
   let fallback: string | undefined;
   for (const path of paths.filter((candidate) => existsSync(candidate))) {
