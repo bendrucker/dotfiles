@@ -1,3 +1,3 @@
 #!/usr/bin/env zsh
 
-eval "$(uv generate-shell-completion zsh)"
+_eval_cache uv generate-shell-completion zsh && source "$REPLY"

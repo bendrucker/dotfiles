@@ -1,8 +1,6 @@
 #!/usr/bin/env zsh
 
-if command -v herdr > /dev/null; then
-  eval "$(herdr completion zsh)"
-fi
+_eval_cache herdr completion zsh && source "$REPLY"
 
 # Complete a word from what this pane has already printed: a path, a branch, a
 # container id, anything on screen that would be retyped otherwise.
