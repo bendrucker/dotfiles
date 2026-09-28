@@ -38,11 +38,20 @@ export function aws<T>(account: Account, args: string[], schema: z.ZodType<T>): 
   const result = awsSpawn(account, args);
   if (result.status !== 0) {
     const stderr = result.stderr.trim();
-    const expired = /sso|token/i.test(stderr) && /expired|refresh|login/i.test(stderr);
-    const hint = expired ? "\nSign in with: aws sso login --profile " + account.profile : "";
-    throw new Error(`aws ${args.slice(0, 2).join(" ")} failed: ${stderr}${hint}`);
+    throw new Error(`aws ${args.slice(0, 2).join(" ")} failed: ${stderr}${signInHint(account.profile, stderr)}`);
   }
   return parseOutput(args, result.stdout, schema);
+}
+
+// The profile is machine-local, since it names the account, so nothing in this
+// repo installs it.
+function signInHint(profile: string, stderr: string): string {
+  const signIn = `aws sso login --profile ${profile}`;
+  if (/config profile \(.*\) could not be found/.test(stderr)) {
+    return `\nAdd a [profile ${profile}] stanza to ~/.aws/config with sso_session, sso_account_id, sso_role_name, and region, then sign in with: ${signIn}`;
+  }
+  const expired = /sso|token/i.test(stderr) && /expired|refresh|login/i.test(stderr);
+  return expired ? `\nSign in with: ${signIn}` : "";
 }
 
 export interface Credentials {

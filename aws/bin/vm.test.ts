@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
 import { formatMinutes, isoSeconds, parseDuration } from "../vm/duration.ts";
@@ -28,7 +28,7 @@ describe("kinds", () => {
     expect(kinds.default).toBe("performance");
     expect(kinds.byName.get("performance")).toEqual({
       name: "performance",
-      profile: "performance-admin",
+      profile: "performance",
       region: "us-east-1",
       template: "performance",
       defaultTtl: 240,
@@ -349,7 +349,10 @@ function stubs(box: Sandbox): void {
     `echo "aws $*" >> ${log}
 case "$1 $2" in
   "ec2 describe-instances")
-    case "$*" in *other-profile*) echo "Error when retrieving token from sso: Token has expired and refresh failed" >&2; exit 255 ;; esac
+    case "$*" in
+      *other-profile*) echo "Error when retrieving token from sso: Token has expired and refresh failed" >&2; exit 255 ;;
+      *missing-profile*) echo "aws: [ERROR]: The config profile (missing-profile) could not be found" >&2; exit 255 ;;
+    esac
     if [ -f ${state} ]; then printf '{"Reservations":[{"Instances":[%s]}]}' "$(cat ${state})"; else echo '{"Reservations":[]}'; fi ;;
   "ec2 run-instances")
     echo '{"InstanceId":"i-0abc","InstanceType":"c8g.medium","State":{"Name":"pending"},"LaunchTime":"2026-09-27T08:00:00Z","Tags":[{"Key":"vm-name","Value":"t1"},{"Key":"vm-kind","Value":"performance"},{"Key":"expires-at","Value":"2026-09-27T08:30:00Z"}]}' > ${state}
@@ -378,6 +381,7 @@ esac`,
   box.stub("mise", `echo "2026.9.15 linux-arm64"`);
   box.stub("ssh-add", `echo "ssh-add $*" >> ${log}; echo "ecdsa-sha2-nistp256 AAAAfake test@example"`);
   box.stub("ssh", `echo "ssh $*" >> ${log}; [ "$1" = -G ] && echo "hostname i-0abc"; exit 0`);
+  box.stub("rsync", `echo "rsync $*" >> ${log}`);
   box.stub(
     "herdr",
     `echo "herdr $*" >> ${log}
@@ -574,6 +578,16 @@ describe("commands", () => {
     expect(existsSync(entry())).toBe(false);
   });
 
+  test("launch stops before run-instances when it cannot write its local files", async () => {
+    box.mkdir("home/.ssh/vm");
+    chmodSync(box.path("home", ".ssh", "vm"), 0o500);
+    const launched = await perf("launch", "--name", "t1");
+    chmodSync(box.path("home", ".ssh", "vm"), 0o700);
+    expect(launched.status).toBe(1);
+    expect(launched.stderr).toContain("EACCES");
+    expect(calls()).not.toContain("run-instances");
+  });
+
   test("launch refuses a name already running", async () => {
     await perf("launch", "--name", "t1");
     const again = await perf("launch", "--name", "t1");
@@ -646,17 +660,54 @@ describe("commands", () => {
     expect(calls()).not.toContain("create-tags");
   });
 
-  test("list covers every account and skips one it cannot reach", async () => {
-    box.write(
-      "config/vm/kinds.toml",
-      `${KINDS}[kinds.other]\nprofile = "other-profile"\nregion = "eu-west-1"\ntemplate = "other"\n`,
-    );
+  test.each([
+    { name: "an expired sign-in", profile: "other-profile", hint: "Sign in with: aws sso login --profile other-profile" },
+    {
+      name: "a missing profile",
+      profile: "missing-profile",
+      hint: "Add a [profile missing-profile] stanza to ~/.aws/config with sso_session, sso_account_id, sso_role_name, and region, then sign in with: aws sso login --profile missing-profile",
+    },
+  ])("list shows every other account, names the fix for $name, and exits nonzero", async ({ profile, hint }) => {
+    box.write("config/vm/kinds.toml", `${KINDS}[kinds.other]\nprofile = "${profile}"\nregion = "eu-west-1"\ntemplate = "other"\n`);
     await perf("launch", "--name", "t1");
     const listed = await perf("list", "--json");
-    expect(listed.status).toBe(0);
+    expect(listed.status).toBe(1);
     expect(JSON.parse(listed.stdout)).toHaveLength(1);
-    expect(listed.stderr).toContain("skipping other-profile in eu-west-1: aws ec2 describe-instances failed");
-    expect(listed.stderr).toContain("aws sso login --profile other-profile");
+    expect(listed.stderr).toContain(`skipping ${profile} in eu-west-1: aws ec2 describe-instances failed`);
+    expect(listed.stderr).toContain(hint);
+  });
+
+  test.each([
+    { name: "launch", args: ["launch", "--help"] },
+    { name: "a flag after others", args: ["launch", "--name", "t1", "-h"] },
+    { name: "destroy", args: ["destroy", "--help"] },
+    { name: "connect", args: ["connect", "--help"] },
+  ])("--help on $name prints usage with the kinds files and does nothing else", async ({ args }) => {
+    const helped = await perf(...args);
+    expect(helped.status).toBe(0);
+    expect(helped.stdout).toContain("Usage: vm <command>");
+    expect(helped.stdout).toContain(`Kinds come from ${join(repoRoot, "aws", "vm", "kinds.toml")}\nand ${box.path("config", "vm", "kinds.toml")}.`);
+    expect(existsSync(box.path("calls.log"))).toBe(false);
+  });
+
+  test("connect passes a help flag after the name to the remote command", async () => {
+    await perf("launch", "--name", "t1");
+    expect((await perf("connect", "t1", "ls", "--help")).status).toBe(0);
+    expect(calls()).toContain("ssh vm-t1 ls --help");
+  });
+
+  test("copy rsyncs into the home directory or a destination, leaving out node_modules", async () => {
+    await perf("launch", "--name", "t1");
+    expect((await perf("copy", "t1", "./")).status).toBe(0);
+    expect((await perf("copy", "t1", "src/", "work")).status).toBe(0);
+    expect(calls()).toContain("rsync -az --exclude node_modules ./ vm-t1:\n");
+    expect(calls()).toContain("rsync -az --exclude node_modules src/ vm-t1:work\n");
+  });
+
+  test("copy refuses a VM this machine has no entry for", async () => {
+    const copied = await perf("copy", "t1", "./");
+    expect(copied.status).toBe(1);
+    expect(copied.stderr).toContain("no SSH entry for t1");
   });
 
   test("destroy terminates and removes the ssh entry and herdr machine", async () => {

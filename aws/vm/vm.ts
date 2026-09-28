@@ -8,13 +8,14 @@ import { aws, EXPIRES_TAG, type Instance, instances, InstanceInformation, KIND_T
 import { formatMinutes, isoSeconds, parseDuration } from "./duration.ts";
 import { guestTools, miseRelease, toolLines, TOOLS_LOG, TOOLS_STATUS } from "./guest.ts";
 import { HERDR, herdrRelease, knownMachines, type Machine, registerHerdr, unregisterHerdr } from "./herdr.ts";
-import { accounts, kind as kindNamed, type Kind, type Kinds, loadKinds } from "./kinds.ts";
+import { accounts, kind as kindNamed, type Kind, type Kinds, loadKinds, localKindsPath, SHIPPED_KINDS_PATH } from "./kinds.ts";
 import { errorMessage, log, until, UsageError } from "./process.ts";
 import { installLines, type Release } from "./release.ts";
 import { checkInclude, hostAlias, localFiles, localNames, publicKeys, readRecord, sshDir, sshEntry, type Tools, tools } from "./ssh.ts";
 import { rejoinTailnet, tailnetAddress, tailnetKey, upCommand } from "./tailscale.ts";
 
-const USAGE = `Usage: vm <command> [options]
+function usage(): string {
+  return `Usage: vm <command> [options]
 
   launch [--kind KIND] [--name NAME] [--type TYPE] [--ttl DURATION]
       Start a VM and wait until it is reachable. KIND picks the account and
@@ -22,6 +23,10 @@ const USAGE = `Usage: vm <command> [options]
       kind's default time limit.
   connect NAME [COMMAND...]
       Open a shell on the VM, or run COMMAND there.
+  copy NAME SRC [DEST]
+      Copy SRC into DEST on the VM with rsync, leaving out node_modules. DEST
+      defaults to the home directory, and a trailing slash on SRC copies its
+      contents rather than the directory itself.
   extend NAME DURATION
       Push the time limit out by DURATION, never past the kind's maximum after
       the last start.
@@ -35,10 +40,11 @@ const USAGE = `Usage: vm <command> [options]
       Terminate the VM and remove its SSH entry and herdr machine.
 
 DURATION is minutes and hours: 30m, 2h, 1h30m. The time limit stops the VM,
-which resume can start again. Kinds come from kinds.toml beside this tool and
-from ~/.config/vm/kinds.toml. Each VM answers to ssh vm-NAME, over the tailnet
+which resume can start again. Kinds come from ${SHIPPED_KINDS_PATH}
+and ${localKindsPath()}. Each VM answers to ssh vm-NAME, over the tailnet
 when it joined one, and to vm-NAME-ssm through Session Manager. vm-NAME is also
 its herdr machine label: herdr --machine vm-NAME ...`;
+}
 
 export function validateName(name: string): string {
   if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(name)) {
@@ -76,6 +82,8 @@ export function userData(expiresAt: Date, keys: string, { herdr, tailnet, guest 
     "KEYS",
     "chown ec2-user:ec2-user /home/ec2-user/.ssh/authorized_keys",
     "chmod 600 /home/ec2-user/.ssh/authorized_keys",
+    // vm copy runs rsync at both ends.
+    "command -v rsync >/dev/null || dnf install -y -q rsync",
     ...(herdr ? installLines(HERDR, herdr) : []),
   ];
   // The key is single use and expires within the hour.
@@ -102,19 +110,19 @@ function locate(name: string, kinds: Kinds): Located | undefined {
     return { kind: recorded, vm: instances(recorded, name)[0] };
   }
   for (const account of accounts(kinds)) {
-    const [vm] = reachable(account, (target) => instances(target, name));
+    const [vm] = reachable(account, (target) => instances(target, name)) ?? [];
     if (vm) return { kind: kinds.byName.get(vm.kind) ?? account, vm: { ...vm, kind: vm.kind || account.name } };
   }
   return undefined;
 }
 
 // One account failing, say a lapsed SSO session, leaves the others usable.
-function reachable(account: Kind, query: (account: Kind) => Instance[]): Instance[] {
+function reachable(account: Kind, query: (account: Kind) => Instance[]): Instance[] | undefined {
   try {
     return query(account);
   } catch (error) {
     log(`skipping ${account.profile} in ${account.region}: ${errorMessage(error)}`);
-    return [];
+    return undefined;
   }
 }
 
@@ -221,7 +229,16 @@ async function launch(args: string[]): Promise<number> {
     tailnet: authKey && kind.tailnet ? { authKey, hostname: hostAlias(name), tag: kind.tailnet.tag } : undefined,
     guest: mise ? { mise, tools: guestTools(kind) } : undefined,
   };
-  const launched = startInstance(options, expiresAt, extras);
+  // Writing the record first fails on an unwritable directory, say under a
+  // sandbox, before anything is billed.
+  writeRecord(name, kind);
+  let launched: Instance;
+  try {
+    launched = startInstance(options, expiresAt, extras);
+  } catch (error) {
+    rmSync(localFiles(name).record, { force: true });
+    throw error;
+  }
   log(`launched ${launched.id} (${kind.name}, ${launched.type}), expires ${isoSeconds(expiresAt)}`);
 
   let address: string | undefined;
@@ -247,10 +264,14 @@ async function launch(args: string[]): Promise<number> {
   return report({ ...launched, name, kind: kind.name }, expiresAt, address, machine);
 }
 
+function writeRecord(name: string, kind: Kind): void {
+  mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
+  writeFileSync(localFiles(name).record, `${JSON.stringify({ kind: kind.name })}\n`);
+}
+
 function writeEntry(name: string, kind: Kind, instanceId: string, address: string | undefined, resolved: Tools): void {
   const files = localFiles(name);
-  mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
-  writeFileSync(files.record, `${JSON.stringify({ kind: kind.name })}\n`);
+  writeRecord(name, kind);
   writeFileSync(files.config, sshEntry(hostAlias(name), instanceId, address, files.knownHosts, resolved));
   checkInclude(name, instanceId);
 }
@@ -273,13 +294,27 @@ function report(vm: Pick<Instance, "id" | "name" | "kind" | "type">, expiresAt: 
   return machine ? 0 : 1;
 }
 
+function requireEntry(name: string): void {
+  validateName(name);
+  if (!existsSync(localFiles(name).config)) throw new Error(`no SSH entry for ${name}; was it launched from this machine?`);
+}
+
+function interactive(cmd: string[]): number {
+  return Bun.spawnSync({ cmd, stdio: ["inherit", "inherit", "inherit"] }).exitCode ?? 128;
+}
+
 function connect(args: string[]): number {
   const [name, ...command] = args;
   if (!name) throw new UsageError("connect needs a VM name");
-  validateName(name);
-  if (!existsSync(localFiles(name).config)) throw new Error(`no SSH entry for ${name}; was it launched from this machine?`);
-  const child = Bun.spawnSync({ cmd: ["ssh", hostAlias(name), ...command], stdio: ["inherit", "inherit", "inherit"] });
-  return child.exitCode ?? 128;
+  requireEntry(name);
+  return interactive(["ssh", hostAlias(name), ...command]);
+}
+
+function copy(args: string[]): number {
+  const [name, source, destination = "", ...rest] = args;
+  if (!name || !source || rest.length > 0) throw new UsageError("copy needs a VM name, a source, and at most one destination");
+  requireEntry(name);
+  return interactive(["rsync", "-az", "--exclude", "node_modules", source, `${hostAlias(name)}:${destination}`]);
 }
 
 // EC2 resets LaunchTime on every start, the clock the reaper stops a VM by.
@@ -378,27 +413,31 @@ export function rows(vms: Instance[], local: { name: string; kind: string }[], m
   return [...live, ...gone].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function liveInstances(kinds: Kinds): Instance[] {
-  return accounts(kinds).flatMap((account) => reachable(account, instances).map((vm) => ({ ...vm, kind: vm.kind || account.name })));
+function liveInstances(kinds: Kinds): { vms: Instance[]; complete: boolean } {
+  const found = accounts(kinds).map((account) => reachable(account, instances)?.map((vm) => ({ ...vm, kind: vm.kind || account.name })));
+  return { vms: found.flatMap((vms) => vms ?? []), complete: found.every(Boolean) };
 }
 
 function list(args: string[]): number {
   const unknown = args.find((arg) => arg !== "--json");
   if (unknown) throw new UsageError(`unknown list option: ${unknown}`);
   const local = localNames().map((name) => ({ name, kind: readRecord(name)?.kind ?? "" }));
-  const table = rows(liveInstances(loadKinds()), local, knownMachines(), new Date());
+  const { vms, complete } = liveInstances(loadKinds());
+  const table = rows(vms, local, knownMachines(), new Date());
+  // A skipped account leaves the listing short, which a caller has to know.
+  const status = complete ? 0 : 1;
   if (args.includes("--json")) {
     console.log(JSON.stringify(table, null, 2));
-    return 0;
+    return status;
   }
-  if (table.length === 0) return 0;
+  if (table.length === 0) return status;
   const header: Row = { name: "NAME", kind: "KIND", herdr: "HERDR", instance: "INSTANCE", type: "TYPE", state: "STATE", expiresAt: "EXPIRES", remaining: "REMAINING" };
   const columns = Object.keys(header) as (keyof Row)[];
   const widths = columns.map((column) => Math.max(...[header, ...table].map((row) => row[column].length)));
   for (const row of [header, ...table]) {
     console.log(columns.map((column, index) => row[column].padEnd(widths[index])).join("  ").trimEnd());
   }
-  return 0;
+  return status;
 }
 
 function destroy(args: string[]): number {
@@ -420,12 +459,20 @@ function destroy(args: string[]): number {
   return 0;
 }
 
-const COMMANDS: Record<string, (args: string[]) => number | Promise<number>> = { launch, connect, extend, pause, resume, list, destroy };
+const COMMANDS: Record<string, (args: string[]) => number | Promise<number>> = { launch, connect, copy, extend, pause, resume, list, destroy };
+
+const isHelp = (arg: string | undefined) => arg === "-h" || arg === "--help";
+
+// Everything after connect's name belongs to the remote command, so only a
+// flag in its place asks for help.
+function wantsHelp(command: string, args: string[]): boolean {
+  return command === "connect" ? isHelp(args[0]) : args.some(isHelp);
+}
 
 export async function main(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
-  if (!command || command === "-h" || command === "--help" || command === "help") {
-    console.log(USAGE);
+  if (!command || isHelp(command) || command === "help" || (command in COMMANDS && wantsHelp(command, args))) {
+    console.log(usage());
     return command ? 0 : 2;
   }
   const handler = COMMANDS[command];
@@ -434,7 +481,7 @@ export async function main(argv: string[]): Promise<number> {
     return await handler(args);
   } catch (error) {
     log(errorMessage(error));
-    if (error instanceof UsageError) process.stderr.write(`\n${USAGE}\n`);
+    if (error instanceof UsageError) process.stderr.write(`\n${usage()}\n`);
     return error instanceof UsageError ? 2 : 1;
   }
 }
