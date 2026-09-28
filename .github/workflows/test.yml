@@ -187,8 +187,9 @@ jobs:
       # lint-ts drives the pinned oxlint, so its tests run in the lint job,
       # which installs it. This job stays a bare checkout on purpose: a #
       # specifier resolving with no node_modules is what the 3am jobs need.
+      # Each file runs in a worker process of its own, one per core.
       - run: |
-          bun test \
+          bun test --parallel \
             --path-ignore-patterns='**/*.integration.test.ts' \
             --path-ignore-patterns='**/lint-ts.test.ts' \
             --path-ignore-patterns='.claude/skills/**'
