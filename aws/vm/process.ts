@@ -1,6 +1,7 @@
 
 export const READY_TIMEOUT_MS = 10 * 60 * 1000;
-export const POLL_MS = 5000;
+// Tests set VM_POLL_MS so a wait on a state change does not sit out real polls.
+export const POLL_MS = Number(process.env.VM_POLL_MS || 5000);
 
 export class UsageError extends Error {}
 

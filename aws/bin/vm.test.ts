@@ -479,6 +479,7 @@ describe("commands", () => {
     AWS_PROFILE: "inherited",
     VM_TAILSCALE_API: api.url.origin,
     VM_GITHUB_API: api.url.origin,
+    VM_POLL_MS: "50",
   });
   // A synchronous spawn would block the fake APIs, which answer in this process.
   const perf = async (...args: string[]): Promise<Run> => {

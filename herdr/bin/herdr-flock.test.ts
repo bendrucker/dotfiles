@@ -11,6 +11,9 @@ let box: Sandbox;
 
 beforeEach(() => {
   box = sandbox("herdr-flock");
+  // The launcher waits 2s before retrying a lost lock or a slow pane, and the
+  // wait itself has nothing to assert about it.
+  box.stub("sleep", "exit 0");
 });
 
 afterEach(() => {
