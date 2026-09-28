@@ -6,6 +6,7 @@ export DOTFILES_HOME="$HOME/.dotfiles"
 # ${(%):-%N} resolves through the ~/.zshenv symlink to the active root's copy,
 # so it is available before $ZSH is known. dev.zsh reuses the same functions.
 source "${${(%):-%N}:A:h}/active-root.zsh"
+source "${${(%):-%N}:A:h}/eval-cache.zsh"
 _dotfiles_resolve_root
 export ZSH="$REPLY"
 
@@ -27,7 +28,7 @@ export ZDOTDIR="${ZDOTDIR:-$XDG_CONFIG_HOME/zsh}"
 
 for brew in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
   if [[ -x "$brew" ]]; then
-    eval "$("$brew" shellenv)"
+    _eval_cache --depends "${brew:h:h}/Library/Homebrew/cmd/shellenv.sh" "$brew" shellenv && eval "$REPLY"
     break
   fi
 done
@@ -47,3 +48,7 @@ path=("$ZSH/bin" "$HOME/.local/bin" $path)
 typeset -g DOTFILES_ZSHENV_RAN=1
 
 [[ -f ~/.zshenv.local ]] && source ~/.zshenv.local
+
+# Not exported, for the same reason. .zshrc restores this order after a login
+# shell's /etc/zprofile has run path_helper over it.
+typeset -g DOTFILES_ZSHENV_PATH=$PATH

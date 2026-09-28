@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
 
-eval "$(fzf --zsh)"
-eval "$(op completion zsh)"
-eval "$(linear completions zsh)"
+_eval_cache fzf --zsh && eval "$REPLY"
+_eval_cache op completion zsh && eval "$REPLY"
+_eval_cache linear completions zsh && eval "$REPLY"
