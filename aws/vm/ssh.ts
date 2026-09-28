@@ -58,7 +58,7 @@ export function sshEntry(host: string, instanceId: string, tailnetIp: string | u
     // herdr connects per forwarded command, and Secretive fails the odd
     // signature. A shared connection signs once.
     "  ControlMaster auto",
-    `  ControlPath ${quote(`${sshDir()}/%C`)}`,
+    `  ControlPath ${quote(`${stateDir()}/%C`)}`,
     "  ControlPersist 10m",
   ];
   const viaSsm = [`  HostName ${instanceId}`, `  ProxyCommand ${proxyCommand(tools)}`];
@@ -74,8 +74,11 @@ export function sshEntry(host: string, instanceId: string, tailnetIp: string | u
   ].join("\n");
 }
 
-export function sshDir(): string {
-  return join(process.env.HOME || homedir(), ".ssh", PREFIX);
+// Outside ~/.ssh so a sandboxed agent can be allowed to write it, and to reach
+// the control sockets in it, without being handed the rest of ~/.ssh.
+export function stateDir(): string {
+  const state = process.env.XDG_STATE_HOME || join(process.env.HOME || homedir(), ".local", "state");
+  return join(state, PREFIX);
 }
 
 export function hostAlias(name: string): string {
@@ -84,9 +87,9 @@ export function hostAlias(name: string): string {
 
 export function localFiles(name: string): { config: string; knownHosts: string; record: string } {
   return {
-    config: join(sshDir(), `${name}.conf`),
-    knownHosts: join(sshDir(), `${name}.known_hosts`),
-    record: join(sshDir(), `${name}.json`),
+    config: join(stateDir(), `${name}.conf`),
+    knownHosts: join(stateDir(), `${name}.known_hosts`),
+    record: join(stateDir(), `${name}.json`),
   };
 }
 
@@ -100,8 +103,8 @@ export function readRecord(name: string): z.infer<typeof Record> | undefined {
 }
 
 export function localNames(): string[] {
-  if (!existsSync(sshDir())) return [];
-  return readdirSync(sshDir())
+  if (!existsSync(stateDir())) return [];
+  return readdirSync(stateDir())
     .filter((file) => file.endsWith(".conf"))
     .map((file) => file.slice(0, -".conf".length))
     .sort();
@@ -119,7 +122,7 @@ export function publicKeys(): string {
 export function checkInclude(name: string, instanceId: string): void {
   const resolved = /^hostname (.+)$/m.exec(spawn(["ssh", "-G", `${hostAlias(name)}-ssm`]).stdout)?.[1];
   if (resolved !== instanceId) {
-    log(`~/.ssh/config does not include ${sshDir()}/*.conf yet, so ${hostAlias(name)} will not resolve`);
+    log(`~/.ssh/config does not include ${stateDir()}/*.conf yet, so ${hostAlias(name)} will not resolve`);
   }
 }
 

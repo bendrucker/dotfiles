@@ -158,6 +158,12 @@ describe("user data", () => {
     expect(script).not.toContain("tailscale");
   });
 
+  test("installs git, perf, and rsync and gives ec2-user a git identity", () => {
+    const script = userData(expires, "k");
+    expect(script).toContain("dnf install -y -q git perf rsync");
+    expect(script).toContain("runuser -u ec2-user -- git config --global user.email ec2-user@localhost");
+  });
+
   test("joins the tailnet under the VM's alias and tag", () => {
     const script = userData(expires, "k", { tailnet: { authKey: "tskey-auth-fake", hostname: "vm-abcd", tag: "tag:vm" } });
     expect(script).toContain("tailscale up --auth-key=tskey-auth-fake --hostname=vm-abcd --advertise-tags=tag:vm");
@@ -252,7 +258,7 @@ describe("ssh entry", () => {
   const tools = { aws: "/a", plugin: "/p/s", profile: "x", region: "us-east-1" };
 
   test("proxies through Session Manager by absolute path", () => {
-    const entry = sshEntry("vm-abcd", "i-0123", undefined, "/home/u/.ssh/vm/abcd.known_hosts", {
+    const entry = sshEntry("vm-abcd", "i-0123", undefined, "/home/u/.local/state/vm/abcd.known_hosts", {
       aws: "/opt/homebrew/bin/aws",
       plugin: "/opt/homebrew/bin/session-manager-plugin",
       profile: "performance-admin",
@@ -263,7 +269,7 @@ describe("ssh entry", () => {
     expect(entry).toContain(
       "ProxyCommand /usr/bin/env PATH=/opt/homebrew/bin:/usr/bin:/bin /opt/homebrew/bin/aws ssm start-session --profile performance-admin --region us-west-2 --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p",
     );
-    expect(entry).toContain("UserKnownHostsFile /home/u/.ssh/vm/abcd.known_hosts");
+    expect(entry).toContain("UserKnownHostsFile /home/u/.local/state/vm/abcd.known_hosts");
   });
 
   test("carries a non-default AWS config file along", () => {
@@ -469,6 +475,7 @@ describe("commands", () => {
     PATH: `${box.bin}:${process.env.PATH}`,
     HOME: box.path("home"),
     XDG_CONFIG_HOME: box.path("config"),
+    XDG_STATE_HOME: box.path("state"),
     AWS_PROFILE: "inherited",
     VM_TAILSCALE_API: api.url.origin,
     VM_GITHUB_API: api.url.origin,
@@ -480,7 +487,7 @@ describe("commands", () => {
     return { status, stdout, stderr };
   };
   const calls = () => box.read("calls.log");
-  const entry = () => box.path("home", ".ssh", "vm", "t1.conf");
+  const entry = () => box.path("state", "vm", "t1.conf");
 
   test("launch tags, wires ssh, waits, and registers with herdr", async () => {
     const launched = await perf("launch", "--name", "t1", "--type", "c8g.medium", "--ttl", "30m");
@@ -497,13 +504,13 @@ describe("commands", () => {
     expect(log).toContain("--profile test-profile --region us-east-1");
     expect(log).toContain("herdr machine add --label vm-t1 vm-t1");
     expect(log).toContain("herdr --machine vm-t1 workspace list");
-    expect(box.read("home/.ssh/vm/t1.conf")).toContain("HostName i-0abc");
+    expect(box.read("state/vm/t1.conf")).toContain("HostName i-0abc");
     expect(launched.stderr).toContain("no /vm/tailscale-client-id or /vm/tailscale-audience parameter, so this VM is reachable through Session Manager only");
     expect(launched.stdout).toContain("tailnet: none");
     expect(log).not.toContain("tailscale up");
     expect(log).toContain(`aarch64) herdr_url=https://example.test/herdr-linux-aarch64 herdr_sum=${DIGEST} ;;`);
     expect(log).not.toContain("herdr-linux-x86_64");
-    expect(box.read("home/.ssh/vm/t1.json")).toBe('{"kind":"performance"}\n');
+    expect(box.read("state/vm/t1.json")).toBe('{"kind":"performance"}\n');
     expect(log).toContain(`aarch64) mise_url=https://example.test/mise-linux-arm64 mise_sum=${DIGEST} ;;`);
     expect(log).toContain('"aqua:BurntSushi/ripgrep" = "15.2.0"');
     expect(log).toContain("cat /var/lib/vm/tools-status");
@@ -529,7 +536,7 @@ describe("commands", () => {
     });
     expect(await child.exited).toBe(0);
     expect(calls()).toContain(`mise -C ${join(repoRoot, "aws")} which session-manager-plugin`);
-    expect(box.read("home/.ssh/vm/t1.conf")).toContain("ProxyCommand /usr/bin/env PATH=/opt/mise/installs/smp/bin:/usr/bin:/bin ");
+    expect(box.read("state/vm/t1.conf")).toContain("ProxyCommand /usr/bin/env PATH=/opt/mise/installs/smp/bin:/usr/bin:/bin ");
   });
 
   test("launch joins the tailnet through the role's exchanged identity token", async () => {
@@ -554,7 +561,7 @@ describe("commands", () => {
       preauthorized: true,
       tags: ["tag:vm"],
     });
-    const [direct, ssm] = box.read("home/.ssh/vm/t1.conf").split("\n\n");
+    const [direct, ssm] = box.read("state/vm/t1.conf").split("\n\n");
     expect(direct).toContain("HostName 100.64.0.9");
     expect(ssm).toContain("HostName i-0abc");
   });
@@ -579,10 +586,10 @@ describe("commands", () => {
   });
 
   test("launch stops before run-instances when it cannot write its local files", async () => {
-    box.mkdir("home/.ssh/vm");
-    chmodSync(box.path("home", ".ssh", "vm"), 0o500);
+    box.mkdir("state/vm");
+    chmodSync(box.path("state", "vm"), 0o500);
     const launched = await perf("launch", "--name", "t1");
-    chmodSync(box.path("home", ".ssh", "vm"), 0o700);
+    chmodSync(box.path("state", "vm"), 0o700);
     expect(launched.status).toBe(1);
     expect(launched.stderr).toContain("EACCES");
     expect(calls()).not.toContain("run-instances");
@@ -717,7 +724,7 @@ describe("commands", () => {
     expect(calls()).toContain("aws ec2 terminate-instances --instance-ids i-0abc");
     expect(calls()).toContain("herdr machine remove m9");
     expect(existsSync(entry())).toBe(false);
-    expect(existsSync(box.path("home", ".ssh", "vm", "t1.json"))).toBe(false);
+    expect(existsSync(box.path("state", "vm", "t1.json"))).toBe(false);
   });
 
   test("destroy finishes when herdr cannot list its machines", async () => {

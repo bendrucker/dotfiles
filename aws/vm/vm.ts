@@ -1,5 +1,5 @@
 // EC2 tags are the source of truth for what exists and when it expires. The
-// files under ~/.ssh/vm/ record what this machine wired up and which kind each
+// files under ~/.local/state/vm/ record what this machine wired up and which kind each
 // VM launched as, so destroy can clean up after a VM its account already took.
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -11,7 +11,7 @@ import { HERDR, herdrRelease, knownMachines, type Machine, registerHerdr, unregi
 import { accounts, kind as kindNamed, type Kind, type Kinds, loadKinds, localKindsPath, SHIPPED_KINDS_PATH } from "./kinds.ts";
 import { errorMessage, log, until, UsageError } from "./process.ts";
 import { installLines, type Release } from "./release.ts";
-import { checkInclude, hostAlias, localFiles, localNames, publicKeys, readRecord, sshDir, sshEntry, type Tools, tools } from "./ssh.ts";
+import { checkInclude, hostAlias, localFiles, localNames, publicKeys, readRecord, sshEntry, stateDir, type Tools, tools } from "./ssh.ts";
 import { rejoinTailnet, tailnetAddress, tailnetKey, upCommand } from "./tailscale.ts";
 
 function usage(): string {
@@ -82,8 +82,11 @@ export function userData(expiresAt: Date, keys: string, { herdr, tailnet, guest 
     "KEYS",
     "chown ec2-user:ec2-user /home/ec2-user/.ssh/authorized_keys",
     "chmod 600 /home/ec2-user/.ssh/authorized_keys",
-    // vm copy runs rsync at both ends.
-    "command -v rsync >/dev/null || dnf install -y -q rsync",
+    // vm copy runs rsync at both ends, and profiling work needs git and perf.
+    "dnf install -y -q git perf rsync",
+    // A placeholder, so a test suite that commits runs without setup.
+    "runuser -u ec2-user -- git config --global user.name ec2-user",
+    "runuser -u ec2-user -- git config --global user.email ec2-user@localhost",
     ...(herdr ? installLines(HERDR, herdr) : []),
   ];
   // The key is single use and expires within the hour.
@@ -265,7 +268,7 @@ async function launch(args: string[]): Promise<number> {
 }
 
 function writeRecord(name: string, kind: Kind): void {
-  mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
+  mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
   writeFileSync(localFiles(name).record, `${JSON.stringify({ kind: kind.name })}\n`);
 }
 
