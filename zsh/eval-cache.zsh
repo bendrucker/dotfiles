@@ -4,15 +4,18 @@
 #
 #   _eval_cache [--expect <prefix>] [--depends <file>]... <tool> [args...] && eval "$REPLY"
 #
-# Sets REPLY to the code rather than evaluating it, so it runs in the caller's
-# scope the way the plain eval did. The file lives under $XDG_CACHE_HOME and
-# is never tracked.
+# Sets REPLY to code for the caller to eval rather than running it here, so it
+# runs in the caller's scope the way the plain eval did. On a hit that code
+# sources the cache file, whose zcompile'd .zwc zsh reads in place of parsing
+# it again. The files live under $XDG_CACHE_HOME and are never tracked.
 #
-# A hit only reads the file with builtins. The first line records the tool's
-# resolved path and the arguments. An upgrade through Homebrew or mise moves the
-# resolved path, and a tool that replaces itself in place leaves a binary newer
-# than the cache. Either one regenerates, and so does a --depends file newer
-# than the cache, for a tool whose output comes from files beside the binary.
+# A hit only reads files with builtins. The first line records the tool's
+# resolved path and the arguments, and the second the zsh that compiled the
+# .zwc, since zsh ignores one from another version and parses instead. An
+# upgrade through Homebrew or mise moves the resolved path, and a tool that
+# replaces itself in place leaves a binary newer than the cache. Either one
+# regenerates, and so does a --depends file newer than the cache, for a tool
+# whose output comes from files beside the binary.
 #
 # Output that is empty, came from a failing run, or lacks the --expect prefix
 # is not cached, and the call returns 1. A cache that cannot be written still
@@ -43,13 +46,14 @@ _eval_cache() {
 
   local dir=${XDG_CACHE_HOME:-$HOME/.cache}/zsh/eval
   local file=$dir/${${(j:_:)${@:t}}//[^A-Za-z0-9_-]/_}.zsh
-  local key="# $bin ${(q)@[2,-1]}" line= fresh=1
+  local key="# $bin ${(q)@[2,-1]}" compiler="# zsh $ZSH_VERSION" line= by= fresh=1
 
   for dep in $bin $deps; do
     [[ $file -nt $dep ]] || fresh=
   done
-  if [[ -n $fresh && -r $file ]] && read -r line < $file && [[ $line == "$key" ]]; then
-    REPLY=$(<$file)
+  if [[ -n $fresh && -r $file ]] && { read -r line; read -r by } < $file &&
+    [[ $line == "$key" && $by == "$compiler" ]]; then
+    REPLY="builtin source ${(q)file}"
     return 0
   fi
 
@@ -57,7 +61,10 @@ _eval_cache() {
   [[ -n $REPLY && $REPLY == "$expect"* ]] || return 1
   {
     [[ -d $dir ]] || mkdir -p -- $dir
-    print -r -- "$key"$'\n'"$REPLY" >| $file.$$ && command mv -f -- $file.$$ $file
+    print -r -- "$key"$'\n'"$compiler"$'\n'"$REPLY" >| $file.$$ &&
+      command mv -f -- $file.$$ $file &&
+      zcompile -- $file.$$.zwc $file &&
+      command mv -f -- $file.$$.zwc $file.zwc
   } 2>/dev/null
   return 0
 }
