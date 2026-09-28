@@ -1,5 +1,3 @@
 #!/usr/bin/env zsh
 
-if command -v wt > /dev/null; then
-  eval "$(wt config shell init zsh)"
-fi
+_eval_cache wt config shell init zsh && eval "$REPLY"

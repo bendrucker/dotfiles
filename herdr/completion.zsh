@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 
-_eval_cache herdr completion zsh && source "$REPLY"
+_eval_cache herdr completion zsh && eval "$REPLY"
 
 # Complete a word from what this pane has already printed: a path, a branch, a
 # container id, anything on screen that would be retyped otherwise.
