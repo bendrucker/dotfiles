@@ -454,12 +454,27 @@ function destroy(args: string[]): number {
     aws(found.kind, ["ec2", "terminate-instances", "--instance-ids", vm.id], z.unknown());
     log(`terminating ${vm.id}`);
   }
-  rmSync(files.config, { force: true });
-  rmSync(files.knownHosts, { force: true });
-  rmSync(files.record, { force: true });
+  // Before the files, since a rerun that finds no entry has nothing to key on.
   unregisterHerdr(name);
+  // The config goes last: while it remains, a rerun still recognizes the VM.
+  const failures = [files.knownHosts, files.record, files.config].flatMap(removeFailure);
+  if (failures.length > 0) {
+    const left = failures.map((failure) => failure.path).join(", ");
+    log(`could not remove ${left} (${failures[0].code})\nFinish with: vm destroy ${name}, from outside any sandbox that blocks ${stateDir()}`);
+    return 1;
+  }
   console.log(`${name} destroyed`);
   return 0;
+}
+
+function removeFailure(path: string): { path: string; code: string }[] {
+  try {
+    rmSync(path, { force: true });
+    return [];
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? String(error.code) : errorMessage(error);
+    return [{ path, code }];
+  }
 }
 
 const COMMANDS: Record<string, (args: string[]) => number | Promise<number>> = { launch, connect, copy, extend, pause, resume, list, destroy };
