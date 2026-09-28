@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -277,6 +277,9 @@ function writeRepoSettings(settings: unknown, indent = 2): void {
 }
 
 beforeEach(() => {
+  // A refused plugin update pauses before its retry, and the pause is real time
+  // with nothing to assert about it.
+  spyOn(Bun, "sleepSync").mockImplementation(() => {});
   sandbox = mkdtempSync(join(tmpdir(), "claude-sync-"));
   stubs = join(sandbox, "stub");
   repo = join(sandbox, "repo");
@@ -380,6 +383,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  mock.restore();
   process.env.HOME = environment.HOME;
   process.env.PATH = environment.PATH;
   if (environment.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
