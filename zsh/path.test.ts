@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { repoRoot, run } from "#harness";
@@ -36,6 +36,9 @@ function pathOf(files: string[]): string[] {
   for (const file of files) {
     symlinkSync(join(repoRoot, "zsh", file), join(zdotdir, file));
   }
+  // `compinit -C` sources any dump it finds without checking it, and building
+  // one in a fresh $ZDOTDIR costs about a second. Nothing here reads completions.
+  writeFileSync(join(zdotdir, ".zcompdump"), "");
   run(["zsh", "-i", "-c", `print -l $path > ${out}`], {
     onlyPath: ["/usr/bin", "/bin", "/usr/sbin", "/sbin"],
     env: { ZDOTDIR: zdotdir, DOTFILES_USE_DEV: repoRoot },
