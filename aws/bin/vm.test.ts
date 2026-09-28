@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
 import { formatMinutes, isoSeconds, parseDuration } from "../vm/duration.ts";
@@ -576,6 +576,16 @@ describe("commands", () => {
     expect(launched.stderr).toContain("no keys");
     expect(calls()).toContain("aws ec2 terminate-instances --instance-ids i-0abc");
     expect(existsSync(entry())).toBe(false);
+  });
+
+  test("launch stops before run-instances when it cannot write its local files", async () => {
+    box.mkdir("home/.ssh/vm");
+    chmodSync(box.path("home", ".ssh", "vm"), 0o500);
+    const launched = await perf("launch", "--name", "t1");
+    chmodSync(box.path("home", ".ssh", "vm"), 0o700);
+    expect(launched.status).toBe(1);
+    expect(launched.stderr).toContain("EACCES");
+    expect(calls()).not.toContain("run-instances");
   });
 
   test("launch refuses a name already running", async () => {

@@ -229,7 +229,16 @@ async function launch(args: string[]): Promise<number> {
     tailnet: authKey && kind.tailnet ? { authKey, hostname: hostAlias(name), tag: kind.tailnet.tag } : undefined,
     guest: mise ? { mise, tools: guestTools(kind) } : undefined,
   };
-  const launched = startInstance(options, expiresAt, extras);
+  // Writing the record first fails on an unwritable directory, say under a
+  // sandbox, before anything is billed.
+  writeRecord(name, kind);
+  let launched: Instance;
+  try {
+    launched = startInstance(options, expiresAt, extras);
+  } catch (error) {
+    rmSync(localFiles(name).record, { force: true });
+    throw error;
+  }
   log(`launched ${launched.id} (${kind.name}, ${launched.type}), expires ${isoSeconds(expiresAt)}`);
 
   let address: string | undefined;
@@ -255,10 +264,14 @@ async function launch(args: string[]): Promise<number> {
   return report({ ...launched, name, kind: kind.name }, expiresAt, address, machine);
 }
 
+function writeRecord(name: string, kind: Kind): void {
+  mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
+  writeFileSync(localFiles(name).record, `${JSON.stringify({ kind: kind.name })}\n`);
+}
+
 function writeEntry(name: string, kind: Kind, instanceId: string, address: string | undefined, resolved: Tools): void {
   const files = localFiles(name);
-  mkdirSync(sshDir(), { recursive: true, mode: 0o700 });
-  writeFileSync(files.record, `${JSON.stringify({ kind: kind.name })}\n`);
+  writeRecord(name, kind);
   writeFileSync(files.config, sshEntry(hostAlias(name), instanceId, address, files.knownHosts, resolved));
   checkInclude(name, instanceId);
 }
