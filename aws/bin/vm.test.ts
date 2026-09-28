@@ -745,4 +745,21 @@ describe("commands", () => {
     expect(calls()).not.toContain("terminate-instances");
     expect(existsSync(entry())).toBe(false);
   });
+
+  test("destroy names the files it could not remove, and a rerun finishes", async () => {
+    await perf("launch", "--name", "t1");
+    chmodSync(box.path("state", "vm"), 0o500);
+    const blocked = await perf("destroy", "t1");
+    chmodSync(box.path("state", "vm"), 0o700);
+    expect(blocked.status).toBe(1);
+    expect(blocked.stderr).toContain(`could not remove ${box.path("state", "vm", "t1.json")}, ${box.path("state", "vm", "t1.conf")} (EACCES)`);
+    expect(blocked.stderr).toContain("Finish with: vm destroy t1");
+    expect(calls()).toContain("herdr machine remove m9");
+    expect(existsSync(entry())).toBe(true);
+
+    const finished = await perf("destroy", "t1");
+    expect(finished.status).toBe(0);
+    expect(calls().match(/terminate-instances/g)).toHaveLength(1);
+    expect(existsSync(entry())).toBe(false);
+  });
 });
