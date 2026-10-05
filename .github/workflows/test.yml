@@ -234,7 +234,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       # herdr is not installed here and its formula has no Linux bottle, so the
       # config check runs in bootstrap instead, where brew bundle put it.
-      - uses: j178/prek-action@v3.0.0
+      - uses: j178/prek-action@v3.0.1
         env:
           SKIP: herdr-config
       # prek runs the gitleaks hook above, but that hook scans the staged diff,
