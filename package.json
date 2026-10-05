@@ -5,7 +5,7 @@
     "test": "bun test --parallel --path-ignore-patterns='**/*.integration.test.ts' --path-ignore-patterns='**/lint-ts.test.ts' --path-ignore-patterns='.claude/skills/**'"
   },
   "devDependencies": {
-    "oxlint": "1.86.0"
+    "oxlint": "1.87.0"
   },
   "imports": {
     "#harness": "./packages/harness/index.ts",
