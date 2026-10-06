@@ -104,11 +104,13 @@ Payload directories carry an `.in_use` directory holding one file per session PI
 
 ## Debug Log
 
-Every Claude Code process writes its debug log to `~/.claude/debug/<session-id>.txt`, which the session index in the claude repo ingests and trims to a 2 GB cap. `DEBUG_SDK=1` turns it on. Claude Code reads it only from the environment it was launched with. Setting it in `settings.json` `env` lands after the logger has already decided, so it doesn't write a log.
+A Claude Code process launched with `DEBUG_SDK=1` in its environment writes a debug log to `~/.claude/debug/<session-id>.txt`. The session index in [`bendrucker/claude`](https://github.com/bendrucker/claude) ingests those logs and enforces their size cap. Claude Code reads `DEBUG_SDK` only from its launch environment. As of 2.1.291, setting it in `settings.json` `env` arrives after the logger has started and never produces a log. `ls -t ~/.claude/debug | head` shows whether new sessions are writing one.
 
-`zsh/.zshenv` exports it, which reaches every zsh: terminals, the herdr server and its panes, mosh logins, and the launchd jobs that run under `zsh -l`. Raycast and the `claude-cli://` handler start `claude` by absolute path from launchd's environment, with no shell in between. `com.user.claude-debug-env` runs at login and copies the exported value into launchd with `launchctl setenv`. An app already running when it ran keeps the environment it started with, until it restarts.
+`zsh/.zshenv` exports `DEBUG_SDK`, which reaches every login zsh and whatever it starts: terminals, the herdr server and its panes, mosh logins, and launchd jobs like `com.user.claude-sync` that run under `zsh -l`. Raycast and the `claude-cli://` handler skip the shell. They start `claude` by absolute path from launchd's environment.
 
-`DEBUG_SDK` rather than `DEBUG`, because `DEBUG` is read by every other tool those processes spawn. The category filter (`--debug=<filter>`) is argv only, so the log is unfiltered. A session writes about 0.3 times its transcript size plus roughly 90 KB at startup.
+`com.user.claude-debug-env`, installed by `claude/install.sh`, covers those. At login it starts zsh with `DEBUG_SDK` cleared and copies whatever `.zshenv` exports into launchd with `launchctl setenv`, or unsets it when nothing is exported. An app that was already running when the job ran keeps its old environment until it restarts. A change to the export reaches launchd at the next login, or after `launchctl kickstart gui/$UID/com.user.claude-debug-env`.
+
+The variable is `DEBUG_SDK` because plain `DEBUG` is also read by every tool those processes spawn, such as the `debug` npm package. The category filter (`--debug=<filter>`) works only as a command-line argument, so the log records every category. Measured in October 2026, a session's log runs about 0.3 times its transcript size plus roughly 90 KB at startup.
 
 ## Computer Use
 
