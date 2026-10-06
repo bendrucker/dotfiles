@@ -19,11 +19,11 @@ export PROJECTS="$HOME/src"
 # whatever the system ships.
 export EDITOR="nvim"
 
-# Claude Code's persistent debug log, ~/.claude/debug/<session-id>.txt. Here
-# for the same reason as EDITOR. Settings `env` is applied after the logger has
-# read the environment, so only the process environment turns it on.
-# DEBUG_SDK rather than DEBUG, which every other tool reads too.
-# com.user.claude-debug-env copies it into launchd for GUI launches.
+# Turns on Claude Code's debug log in ~/.claude/debug. It has to be in the
+# launch environment, because settings.json env is applied after the logger
+# reads it. DEBUG would work too but reaches every other tool.
+# com.user.claude-debug-env copies this into launchd for apps that exec claude
+# without a shell.
 export DEBUG_SDK=1
 
 export XDG_CONFIG_HOME="$HOME/.config"
