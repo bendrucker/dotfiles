@@ -11,7 +11,8 @@
 #
 # moshi is the exception: its daemon reads settings only at startup, and an
 # unapplied change is worse than the unlikely approval a 3am restart drops. Its
-# reload.sh restarts only when config.toml changed since the last restart.
+# reload.sh restarts only when config.toml or the installed moshi-hook changed
+# since the last restart.
 #
 # Each `<topic>/reload.sh` self-gates and exits 0 without work when its tool
 # isn't installed or isn't running. Most tools need nothing here at all: they

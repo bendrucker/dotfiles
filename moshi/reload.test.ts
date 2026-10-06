@@ -17,12 +17,13 @@ afterEach(() => {
   box.remove();
 });
 
-// A moshi-hook whose `service status` reports `state` and whose restart exits
-// `restartStatus`, logging each restart it is asked for.
-function daemon(state: string, restartStatus: number): void {
+// A moshi-hook at `version` whose `service status` reports `state` and whose
+// restart exits `restartStatus`, logging each restart it is asked for.
+function daemon(state: string, restartStatus: number, version = "0.4.18"): void {
   box.stub(
     "moshi-hook",
     [
+      `[ "$1" = version ] && { echo "moshi-hook ${version}"; exit 0; }`,
       'case "$2" in',
       `  status) printf '\\tstate = %s\\n' '${state}' ;;`,
       `  restart) echo restart >>"${box.path("restarts")}"; exit ${restartStatus} ;;`,
@@ -44,7 +45,7 @@ function restarts(): number {
 
 describe("moshi reload.sh", () => {
   test("restarts once for a change and skips an unchanged run", () => {
-    expect(runReload().stderr).toContain("config.toml changed, restarting");
+    expect(runReload().stderr).toContain("changed, restarting the daemon");
     const second = runReload();
 
     expect(second.status).toBe(0);
@@ -56,6 +57,14 @@ describe("moshi reload.sh", () => {
     runReload();
     box.write("config/moshi/config.toml", "[gateway]\nsuppress_push_while_unlocked = false\n");
     runReload();
+
+    expect(restarts()).toBe(2);
+  });
+
+  test("restarts after an upgrade with the config unchanged", () => {
+    runReload();
+    daemon("running", 0, "0.4.19");
+    expect(runReload().stderr).toContain("restarting the daemon on moshi-hook 0.4.19");
 
     expect(restarts()).toBe(2);
   });
@@ -90,7 +99,7 @@ describe("moshi reload.sh", () => {
 
     expect(r.status).toBe(0);
     expect(r.stderr).toBe("");
-    expect(box.read("state/dotfiles/moshi-config.sha256")).toBe("");
+    expect(box.read("state/dotfiles/moshi-hook.applied")).toBe("");
   });
 
   test("exits quietly when config.toml is not installed", () => {

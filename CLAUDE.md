@@ -345,7 +345,7 @@ The `EXPIRES:` marker and the runner compose rather than overlap. The runner mak
 
 Every reload is in place. The program re-reads its config and keeps its state, sessions, and child processes. Nothing here may restart a server, kill a session, or drop in-flight work. This runs unattended from the 3am job, where a restart takes live work down with it, so a tool whose only path to new config is a restart gets no `reload.sh` and picks the change up on its next start.
 
-`moshi/reload.sh` is the one exception. moshi-hook reads its settings only at startup, so it restarts the daemon, and only when `config.toml` changed since the last restart it applied. A restart drops any approval in flight through moshi-hook, and one in flight at 3am is unlikely. A config change that never applies is the worse failure. The hash it keeps under `$XDG_STATE_HOME/dotfiles/` is what stops an unchanged night from restarting anything.
+`moshi/reload.sh` is the one exception. moshi-hook reads its settings only at startup and keeps running an old binary after an upgrade, so it restarts the daemon, and only when `config.toml` or the installed version changed since the last restart it applied. A restart drops any approval in flight through moshi-hook, and one in flight at 3am is unlikely. A config change or upgrade that never applies is the worse failure. The fingerprint it keeps under `$XDG_STATE_HOME/dotfiles/` is what stops an unchanged night from restarting anything.
 
 A `reload.sh` self-gates. Exit 0 without work when the tool isn't installed or isn't running, since a fresh machine and CI hit both cases. Assume roughly a minute of runtime: the dispatcher caps each script there so a wedged peer can't hang the nightly job.
 
