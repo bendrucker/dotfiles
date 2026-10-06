@@ -1,0 +1,9 @@
+# moshi-hook reads this at daemon start. A changed boolean takes effect after
+# `moshi-hook service restart`. `moshi-hook set` edits it in place through the
+# symlink, so a setting changed that way shows up as a diff in this repo.
+
+[gateway]
+always_on_discovery = true
+usage_collection = true
+# Push to the phone only while the Mac's console is locked.
+suppress_push_while_unlocked = true
