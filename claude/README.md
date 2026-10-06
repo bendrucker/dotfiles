@@ -102,6 +102,14 @@ Payload directories carry an `.in_use` directory holding one file per session PI
 
 `claude-sync` runs the audit after updating and files its findings as a Things to-do on a latch separate from the sync's own. Drift outlives the run that should have fixed it, so one stale plugin sharing the sync latch would suppress the to-do for a later sync failure. The latch also holds a fingerprint of which plugins are flagged, so a plugin that goes stale months later reopens it instead of hiding behind one that has been stale all along.
 
+## Debug Log
+
+Every Claude Code process writes its debug log to `~/.claude/debug/<session-id>.txt`, which the session index in the claude repo ingests and trims to a 2 GB cap. `DEBUG_SDK=1` turns it on. Claude Code reads it only from the environment it was launched with. Setting it in `settings.json` `env` lands after the logger has already decided, so it doesn't write a log.
+
+`zsh/.zshenv` exports it, which reaches every zsh: terminals, the herdr server and its panes, mosh logins, and the launchd jobs that run under `zsh -l`. Raycast and the `claude-cli://` handler start `claude` by absolute path from launchd's environment, with no shell in between. `com.user.claude-debug-env` runs at login and copies the exported value into launchd with `launchctl setenv`. An app already running when it ran keeps the environment it started with, until it restarts.
+
+`DEBUG_SDK` rather than `DEBUG`, because `DEBUG` is read by every other tool those processes spawn. The category filter (`--debug=<filter>`) is argv only, so the log is unfiltered. A session writes about 0.3 times its transcript size plus roughly 90 KB at startup.
+
 ## Computer Use
 
 Claude Code's built-in `computer-use` MCP drives the macOS GUI with screenshots and mouse/keyboard input. [Peekaboo](https://github.com/steipete/peekaboo) is the accessibility-tree fallback for cases where screenshot perception is brittle or too costly: `peekaboo see` snapshots the AX tree with element IDs, then `peekaboo click`/`type` target those IDs. Call it from any agent via the CLI.
