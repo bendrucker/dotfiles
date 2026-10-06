@@ -316,8 +316,7 @@ beforeEach(() => {
   writeScript(join(stubs, "ioreg"), `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST`);
   // Both installers rewrite the repo's settings.json, which is the whole of what
   // the install step has to sort out. herdr writes before it can fail, so a
-  // failed run still leaves an entry for the discard to take back. A failing
-  // moshi-hook exits first, so its entries are only ever a finished install's.
+  // failed run still leaves an entry for the discard to take back.
   const hookLog = join(sandbox, "hooks.log");
   const settingsWrite = (name: string) =>
     `printf '{"${name}":1}\\n' >"$AGENT_HOOK_REPO/user/settings.json"`;
@@ -335,7 +334,6 @@ beforeEach(() => {
     join(stubs, "moshi-hook"),
     [
       `printf '%s %s\\n' "moshi-hook" "$*" >>"${hookLog}"`,
-      '[ -n "$MOSHI_FAILS" ] && exit 1',
       settingsWrite("moshi-hook"),
       "exit 0",
     ].join("\n"),
@@ -354,7 +352,6 @@ beforeEach(() => {
   process.env.AGENT_HOOK_REPO = repo;
   process.env.HERDR_FAILS = "";
   process.env.HERDR_LOCKS = "";
-  process.env.MOSHI_FAILS = "";
   writeFileSync(process.env.CLAUDE_PLUGIN_LOG, "");
 
   writePluginFixture();
@@ -401,7 +398,6 @@ afterEach(() => {
   delete process.env.AGENT_HOOK_REPO;
   delete process.env.HERDR_FAILS;
   delete process.env.HERDR_LOCKS;
-  delete process.env.MOSHI_FAILS;
   rmSync(sandbox, { recursive: true, force: true });
 });
 
@@ -1116,7 +1112,8 @@ describe("claudeRepoHome", () => {
 
 // herdr's installer appends a SessionStart entry it cannot recognize in the
 // committed $HOME form, and its status check reads only the script's version
-// marker. moshi's entries are what the committed file is meant to carry.
+// marker. moshi's entries are what the committed file is meant to carry, and
+// moshi/claude-hooks.test.ts covers its install on its own.
 describe("installAgentHooks", () => {
   function repoSettings(): unknown {
     return JSON.parse(readFileSync(join(repo, "user", "settings.json"), "utf8"));
@@ -1135,11 +1132,10 @@ describe("installAgentHooks", () => {
   // later run, and that gate is what this step needs to clear to run again.
   test("reports a failed install and still discards what it wrote", () => {
     process.env.HERDR_FAILS = "1";
-    process.env.MOSHI_FAILS = "1";
+    rmSync(join(stubs, "moshi-hook"));
 
     expect(installAgentHooks(out, repo, process.env)).toBe(false);
     expect(out.captured()).toContain("herdr integration install failed");
-    expect(out.captured()).toContain("moshi-hook install failed");
     expect(settingsStatus()).toBe("clean");
   });
 
