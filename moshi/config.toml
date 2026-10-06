@@ -1,6 +1,6 @@
-# moshi-hook reads this at daemon start. A changed boolean takes effect after
-# `moshi-hook service restart`. `moshi-hook set` edits it in place through the
-# symlink, so a setting changed that way shows up as a diff in this repo.
+# moshi-hook reads this at daemon start, and reload.sh restarts the daemon when
+# it changes. `moshi-hook set` edits it in place through the symlink, so a
+# setting changed that way shows up as a diff in this repo.
 
 [gateway]
 always_on_discovery = true

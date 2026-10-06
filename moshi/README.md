@@ -8,13 +8,13 @@ The same directory holds `config.json` and `host.json`. Those carry pairing and 
 
 `config.toml` uses the TOML keys under `[gateway]`. `moshi-hook set` lists each one by its dashed name (`suppress-push-while-unlocked` is `suppress_push_while_unlocked`). `set` edits the file through the symlink, so a setting changed from the CLI shows up as a diff here.
 
-The daemon reads booleans at startup. After a change lands, restart it:
+The daemon reads its settings only at startup. `reload.sh` restarts it with `moshi-hook service restart` when `config.toml` changed since the last restart it applied, comparing against a hash in `$XDG_STATE_HOME/dotfiles/moshi-config.sha256`. It runs from `bin/dotfiles-reload`, so `scripts/install`, the nightly upgrade, and a `dotfiles sync` that moved the tree all apply a change. Each run logs the restart, or the skip and why. A failed restart leaves the hash unwritten and retries on the next run. A stopped daemon gets no restart, since it reads the file when it next starts.
 
-```sh
-moshi-hook service restart
-```
+A restart drops any approval in flight through moshi-hook. One in flight during the nightly upgrade is unlikely, and a setting that never applies is the worse failure. This is the one `reload.sh` in the repo that restarts a server.
 
-`install.sh` and `reload.sh` don't run that restart. A restart drops the daemon's WebSocket and any approval in flight, and the nightly upgrade must not take live work down. A change takes effect at the next restart or login.
+## Claude Code Hooks
+
+`claude-hooks.ts` runs `moshi-hook install --target claude`, which writes moshi's entries into the claude repo's `user/settings.json`. `bin/claude-sync` calls it after each pull, because the pull rewrites that file, and after herdr's install so the discard of herdr's edit leaves moshi's entries in place. A diff it leaves there is a moshi upgrade to commit to the claude repo.
 
 ## Push Suppression
 
