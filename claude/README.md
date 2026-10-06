@@ -106,7 +106,7 @@ Payload directories carry an `.in_use` directory holding one file per session PI
 
 A Claude Code process launched with `DEBUG_SDK=1` in its environment writes a debug log to `~/.claude/debug/<session-id>.txt`. The session index in [`bendrucker/claude`](https://github.com/bendrucker/claude) ingests those logs and enforces their size cap. Claude Code reads `DEBUG_SDK` only from its launch environment. As of 2.1.291, setting it in `settings.json` `env` arrives after the logger has started and never produces a log. `ls -t ~/.claude/debug | head` shows whether new sessions are writing one.
 
-`zsh/.zshenv` exports `DEBUG_SDK`, which reaches every login zsh and whatever it starts: terminals, the herdr server and its panes, mosh logins, and launchd jobs like `com.user.claude-sync` that run under `zsh -l`. Raycast and the `claude-cli://` handler skip the shell. They start `claude` by absolute path from launchd's environment.
+On macOS, `zsh/.zshenv` exports `DEBUG_SDK`, which reaches every login zsh and whatever it starts: terminals, the herdr server and its panes, mosh logins, and launchd jobs like `com.user.claude-sync` that run under `zsh -l`. Raycast and the `claude-cli://` handler skip the shell. They start `claude` by absolute path from launchd's environment.
 
 `com.user.claude-debug-env`, installed by `claude/install.sh`, covers those. At login it starts zsh with `DEBUG_SDK` cleared and copies whatever `.zshenv` exports into launchd with `launchctl setenv`, or unsets it when nothing is exported. An app that was already running when the job ran keeps its old environment until it restarts. A change to the export reaches launchd at the next login, or after `launchctl kickstart gui/$UID/com.user.claude-debug-env`.
 
