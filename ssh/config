@@ -1,6 +1,6 @@
 # One entry per VM, written and removed by vm.
 Include ~/.local/state/vm/*.conf
-# EXPIRES: 2026-10-05 no VM launched before vm moved its state is still running
+# EXPIRES: 2026-11-02 no VM launched before vm moved its state is still running
 Include ~/.ssh/vm/*.conf
 
 Host *
