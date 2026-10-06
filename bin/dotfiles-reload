@@ -9,10 +9,8 @@
 # down with it. A tool whose only path to new config is a restart therefore has
 # no `reload.sh` and picks the change up whenever it next starts.
 #
-# moshi is the exception: its daemon reads settings only at startup, and an
-# unapplied change is worse than the unlikely approval a 3am restart drops. Its
-# reload.sh restarts only when config.toml or the installed moshi-hook changed
-# since the last restart.
+# moshi is the exception: an unapplied config change or upgrade is worse than
+# the unlikely approval a 3am restart drops.
 #
 # Each `<topic>/reload.sh` self-gates and exits 0 without work when its tool
 # isn't installed or isn't running. Most tools need nothing here at all: they

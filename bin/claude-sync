@@ -350,8 +350,7 @@ function claude(out: Output, args: string[], env: Record<string, string | undefi
 // recognize the committed $HOME form. herdr's status check reads only the
 // script's version marker, so that edit is discarded.
 //
-// The moshi topic owns its install, and its edit stays. It runs after herdr's
-// restore, so the discard never reaches its entries.
+// moshi's edit stays, so its install runs after herdr's restore.
 export function installAgentHooks(
   out: Output,
   repoDir: string,

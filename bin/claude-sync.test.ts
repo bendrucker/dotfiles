@@ -1112,8 +1112,7 @@ describe("claudeRepoHome", () => {
 
 // herdr's installer appends a SessionStart entry it cannot recognize in the
 // committed $HOME form, and its status check reads only the script's version
-// marker. moshi's entries are what the committed file is meant to carry, and
-// moshi/claude-hooks.test.ts covers its install on its own.
+// marker. moshi's entries are what the committed file is meant to carry.
 describe("installAgentHooks", () => {
   function repoSettings(): unknown {
     return JSON.parse(readFileSync(join(repo, "user", "settings.json"), "utf8"));

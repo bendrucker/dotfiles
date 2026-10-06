@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, stubGum, type Run, type Sandbox } from "#harness";
 
-const reload = join(repoRoot, "moshi", "reload.sh");
+const reload = join(repoRoot, "moshi", "reload.ts");
 
 let box: Sandbox;
 
@@ -17,8 +18,7 @@ afterEach(() => {
   box.remove();
 });
 
-// A moshi-hook at `version` whose `service status` reports `state` and whose
-// restart exits `restartStatus`, logging each restart it is asked for.
+// Each restart is appended to the sandbox's `restarts` file.
 function daemon(state: string, restartStatus: number, version = "0.4.18"): void {
   box.stub(
     "moshi-hook",
@@ -33,7 +33,7 @@ function daemon(state: string, restartStatus: number, version = "0.4.18"): void 
 }
 
 function runReload(): Run {
-  return run([reload], {
+  return run([process.execPath, reload], {
     path: [box.bin],
     env: { XDG_CONFIG_HOME: box.path("config"), XDG_STATE_HOME: box.path("state") },
   });
@@ -43,13 +43,13 @@ function restarts(): number {
   return box.read("restarts").split("\n").filter(Boolean).length;
 }
 
-describe("moshi reload.sh", () => {
+describe("moshi reload", () => {
   test("restarts once for a change and skips an unchanged run", () => {
     expect(runReload().stderr).toContain("changed, restarting the daemon");
     const second = runReload();
 
     expect(second.status).toBe(0);
-    expect(second.stderr).toContain("unchanged since the last restart");
+    expect(second.stderr).toContain("unchanged, skipping restart");
     expect(restarts()).toBe(1);
   });
 
@@ -69,8 +69,6 @@ describe("moshi reload.sh", () => {
     expect(restarts()).toBe(2);
   });
 
-  // The stamp is what says the change applied, so a failed restart leaves it
-  // unwritten and the next run tries again.
   test("retries a restart that failed", () => {
     daemon("running", 1);
     const failed = runReload();
@@ -92,8 +90,9 @@ describe("moshi reload.sh", () => {
   });
 
   test("exits quietly when moshi-hook is not installed", () => {
-    const r = run([reload], {
-      onlyPath: ["/usr/bin", "/bin"],
+    rmSync(box.path("bin", "moshi-hook"));
+    const r = run([process.execPath, reload], {
+      onlyPath: [box.bin, "/usr/bin", "/bin"],
       env: { XDG_CONFIG_HOME: box.path("config"), XDG_STATE_HOME: box.path("state") },
     });
 

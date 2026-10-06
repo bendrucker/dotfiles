@@ -6,7 +6,6 @@ import { installClaudeHooks } from "./claude-hooks";
 let box: Sandbox;
 let logged: string[];
 
-// Keeps what the children print, so a case reads the job's log off it.
 const out: Output = {
   write(_fd, text) {
     logged.push(text);
@@ -53,7 +52,6 @@ describe("installClaudeHooks", () => {
     expect(logged.join("")).toContain("moshi-hook install failed");
   });
 
-  // A machine without moshi-hook stays out of the log rather than warning every night.
   test("skips when moshi-hook is not on PATH", () => {
     expect(installClaudeHooks(out, env())).toBe(true);
     expect(logged.join("")).toBe("");

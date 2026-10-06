@@ -1,11 +1,5 @@
-// moshi-hook's Claude Code hooks live in the claude repo's settings.json, which
-// bin/claude-sync rewrites on every pull. claude-sync calls this after the pull
-// so the installer runs against the synced file.
-//
-// The installer adds the per-event entries its binary expects and leaves the
-// rest alone. Its edit stays: the committed file is meant to match it, so a diff
-// here is a moshi upgrade, which the sync gate reports the next night and a
-// commit of the diff settles.
+// Runs after each claude repo pull, which rewrites the settings.json these hooks
+// live in. The edit stays: a diff it leaves is a moshi upgrade to commit there.
 
 import { log, type Output } from "#jobs/output";
 
