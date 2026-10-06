@@ -7,6 +7,9 @@
 
     <key>ProgramArguments</key>
     <array>
+        <string>/usr/bin/env</string>
+        <string>-u</string>
+        <string>DEBUG_SDK</string>
         <string>/bin/zsh</string>
         <string>-lc</string>
         <string>if [[ -n "$DEBUG_SDK" ]]; then launchctl setenv DEBUG_SDK "$DEBUG_SDK"; else launchctl unsetenv DEBUG_SDK; fi</string>

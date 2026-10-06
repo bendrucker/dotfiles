@@ -52,7 +52,8 @@ install_claude_symlinks() {
 }
 
 install_debug_env() {
-  bash -c 'source "$ZSH/macos/shell/launch-agent.sh" && install_launch_agent "$@"' \
+  ZSH="${ZSH:-$(cd "$(dirname "$0")/.." && pwd)}" \
+    bash -c 'source "$ZSH/macos/shell/launch-agent.sh" && install_launch_agent "$@"' \
     _ claude/com.user.claude-debug-env.plist "Claude debug log env"
 }
 
