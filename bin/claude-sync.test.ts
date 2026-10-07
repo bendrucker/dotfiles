@@ -28,7 +28,6 @@ import {
   reportDrift,
   repoRevision,
   revertCosmeticJsonChanges,
-  revertVibeIslandHookRewrite,
   sync,
   syncRepo,
   updateMarketplaces,
@@ -896,58 +895,6 @@ describe("adoptReplacedSettings", () => {
 
 // Vibe Island's SSH remote deploy writes the remote agent's hook into every
 // event on the machine it deploys to.
-describe("revertVibeIslandHookRewrite", () => {
-  test("discards the rewrite and says so", () => {
-    writeRepoSettings(settingsJson(REMOTE_HOOK));
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toContain("Reverting Vibe Island's remote hook rewrite");
-    expect(readLog("notifications")).toContain("remote hook rewrite");
-    expect(settingsStatus()).toBe("clean");
-  });
-
-  test("discards a rewrite that also reordered the file", () => {
-    writeRepoSettings(settingsJson(REMOTE_HOOK), 4);
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(settingsStatus()).toBe("clean");
-  });
-
-  test("does not claim a revert it could not make", () => {
-    writeRepoSettings(settingsJson(REMOTE_HOOK));
-    writeFileSync(join(repo, ".git", "index.lock"), "");
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(out.captured()).toContain("Could not revert user/settings.json");
-    expect(readLog("notifications")).toBe("");
-  });
-
-  test("leaves a rewrite that reaches outside the hooks for the gate", () => {
-    writeRepoSettings(settingsJson(REMOTE_HOOK, "changed"));
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(settingsStatus()).toBe("dirty");
-    expect(readLog("notifications")).toBe("");
-  });
-
-  test("leaves a rewrite mixed with a hook edit of its own for the gate", () => {
-    const settings = settingsJson(REMOTE_HOOK) as { hooks: Record<string, unknown> };
-    settings.hooks.Stop = [{ hooks: [{ type: "command", command: "echo local" }] }];
-    writeRepoSettings(settings);
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(settingsStatus()).toBe("dirty");
-    expect(readLog("notifications")).toBe("");
-  });
-
-  test("leaves a hook change that names some other command", () => {
-    writeRepoSettings(settingsJson("echo hello"));
-    revertVibeIslandHookRewrite(out, repo);
-
-    expect(settingsStatus()).toBe("dirty");
-  });
-});
-
 describe("syncRepo", () => {
   test("refuses a repo directory that is not there", () => {
     expect(syncRepo(out, join(sandbox, "missing"))).toBe(false);

@@ -47,14 +47,14 @@ import {
   type Output,
   type SpawnOptions,
 } from "#jobs/output";
-import { byCodeUnit, canonicalJson, parseJson } from "#jobs/json";
+import { byCodeUnit, canonicalJson } from "#jobs/json";
 import {
   type Finding,
-  notify,
   reportFailure,
   reportFindings,
   reportSuccess,
 } from "#jobs/report";
+import { revertRemoteHookRewrite } from "../macos/vibe-island-hooks";
 import { installClaudeHooks } from "../moshi/claude-hooks";
 
 const TITLE = "Claude Sync";
@@ -62,10 +62,6 @@ const SYNC_JOB = "claude-sync";
 const DRIFT_JOB = "claude-plugin-drift";
 
 const SETTINGS = "user/settings.json";
-
-// What Vibe Island writes into every hook when another machine deploys its
-// remote agent here. Every hook event fails once that agent is gone.
-const VIBE_ISLAND_HOOK = "vibe-island/bin/vibe-island-hook";
 
 // ~/.dotfiles is a symlink to the checkout, so the audit is found through the
 // resolved path rather than the invoked one.
@@ -134,51 +130,6 @@ export function adoptReplacedSettings(out: Output, repoDir: string): void {
   }
 }
 
-export function hookCommands(settings: unknown): unknown[] {
-  if (!isRecord(settings)) return [];
-
-  const commands: unknown[] = [];
-  const walk = (node: unknown): void => {
-    if (Array.isArray(node)) {
-      for (const item of node) walk(item);
-      return;
-    }
-    if (!isRecord(node)) return;
-    if (node.command !== undefined) commands.push(node.command);
-    for (const value of Object.values(node)) walk(value);
-  };
-
-  walk(settings.hooks);
-  return commands;
-}
-
-// Vibe Island's SSH remote deploy rewrites this machine's hooks with no
-// preference to stop it. The rewrite is discarded only when every command HEAD
-// lacks is Vibe Island's and nothing outside .hooks moved. Anything else is
-// left for the gate.
-export function revertVibeIslandHookRewrite(out: Output, repoDir: string): void {
-  const path = join(repoDir, SETTINGS);
-  if (!isFile(path)) return;
-
-  const blob = gitQuiet(["show", `HEAD:${SETTINGS}`], repoDir);
-  if (blob.status !== 0) return;
-
-  const committed = new Set(hookCommands(parseJson(blob.stdout)));
-  const added = hookCommands(parseJson(readText(path))).filter((command) => !committed.has(command));
-  const remote = (command: unknown) => typeof command === "string" && command.includes(VIBE_ISLAND_HOOK);
-  if (added.length === 0 || !added.every(remote)) return;
-
-  const workingRest = canonicalJson(readText(path), "del(.hooks)");
-  if (workingRest === undefined || workingRest !== canonicalJson(blob.stdout, "del(.hooks)")) return;
-
-  log(out, "warn", `Reverting Vibe Island's remote hook rewrite in ${SETTINGS}`);
-  if (out.run(["git", "-C", repoDir, "checkout", "HEAD", "--", SETTINGS]) !== 0) {
-    log(out, "warn", `Could not revert ${SETTINGS}`);
-    return;
-  }
-  notify(TITLE, "Reverted Vibe Island's remote hook rewrite in settings.json");
-}
-
 // claude/install.sh's own linker, which warns for each link it repairs.
 export function relinkClaudeHome(
   out: Output,
@@ -205,7 +156,7 @@ export function syncRepo(out: Output, repoDir: string): boolean {
   // rewrite is clean by the time it looks. A dirty tracked file stalls the sync
   // behind it every night.
   adoptReplacedSettings(out, repoDir);
-  revertVibeIslandHookRewrite(out, repoDir);
+  revertRemoteHookRewrite(out, repoDir, SETTINGS, TITLE);
   revertCosmeticJsonChanges(out, repoDir);
 
   if (!reviewDirty(out, repoDir, TITLE)) return false;
@@ -767,10 +718,6 @@ function isRegularFile(path: string): boolean {
   } catch {
     return false;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isFile(path: string): boolean {
