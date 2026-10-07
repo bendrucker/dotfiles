@@ -875,6 +875,15 @@ describe("adoptReplacedSettings", () => {
     expect(out.captured()).toContain("already has local changes");
   });
 
+  test("discards a replacement that is not JSON", () => {
+    replaceLink(settingsJson(GUARDED_HOOK, "replaced"));
+    writeFileSync(settingsLink(), "{ truncated");
+    adoptReplacedSettings(out, repo);
+
+    expect(settingsStatus()).toBe("clean");
+    expect(out.captured()).toContain("not readable JSON");
+  });
+
   test("does not overwrite a working copy git cannot read the status of", () => {
     writeRepoSettings(settingsJson(GUARDED_HOOK, "local"));
     replaceLink(settingsJson(GUARDED_HOOK, "replaced"));
@@ -915,6 +924,16 @@ describe("revertVibeIslandHookRewrite", () => {
 
   test("leaves a rewrite that reaches outside the hooks for the gate", () => {
     writeRepoSettings(settingsJson(REMOTE_HOOK, "changed"));
+    revertVibeIslandHookRewrite(out, repo);
+
+    expect(settingsStatus()).toBe("dirty");
+    expect(readLog("notifications")).toBe("");
+  });
+
+  test("leaves a rewrite mixed with a hook edit of its own for the gate", () => {
+    const settings = settingsJson(REMOTE_HOOK) as { hooks: Record<string, unknown> };
+    settings.hooks.Stop = [{ hooks: [{ type: "command", command: "echo local" }] }];
+    writeRepoSettings(settings);
     revertVibeIslandHookRewrite(out, repo);
 
     expect(settingsStatus()).toBe("dirty");

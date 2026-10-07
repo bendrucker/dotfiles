@@ -113,7 +113,11 @@ export function adoptReplacedSettings(out: Output, repoDir: string): void {
   const working = join(repoDir, SETTINGS);
   const replaced = readText(link);
   const canonical = canonicalJson(replaced);
-  if (canonical !== undefined && canonical === canonicalJson(readText(working))) return;
+  if (canonical === undefined) {
+    log(out, "warn", "Discarding the replaced ~/.claude/settings.json: it is not readable JSON");
+    return;
+  }
+  if (canonical === canonicalJson(readText(working))) return;
 
   // A status that could not run is read as dirty, since adopting overwrites.
   const status = gitQuiet(["status", "--porcelain", "--", SETTINGS], repoDir);
@@ -123,7 +127,11 @@ export function adoptReplacedSettings(out: Output, repoDir: string): void {
   }
 
   log(out, "warn", `Moving the replaced ~/.claude/settings.json into ${SETTINGS}`);
-  writeFileSync(working, replaced);
+  try {
+    writeFileSync(working, replaced);
+  } catch (error) {
+    log(out, "warn", `Could not write ${SETTINGS}: ${String(error)}`);
+  }
 }
 
 export function hookCommands(settings: unknown): unknown[] {
@@ -145,8 +153,9 @@ export function hookCommands(settings: unknown): unknown[] {
 }
 
 // Vibe Island's SSH remote deploy rewrites this machine's hooks with no
-// preference to stop it. A rewrite confined to .hooks is discarded. A change
-// reaching outside .hooks is left for the gate.
+// preference to stop it. The rewrite is discarded only when every command HEAD
+// lacks is Vibe Island's and nothing outside .hooks moved. Anything else is
+// left for the gate.
 export function revertVibeIslandHookRewrite(out: Output, repoDir: string): void {
   const path = join(repoDir, SETTINGS);
   if (!isFile(path)) return;
@@ -155,11 +164,9 @@ export function revertVibeIslandHookRewrite(out: Output, repoDir: string): void 
   if (blob.status !== 0) return;
 
   const committed = new Set(hookCommands(parseJson(blob.stdout)));
-  const added = hookCommands(parseJson(readText(path))).some(
-    (command) =>
-      typeof command === "string" && command.includes(VIBE_ISLAND_HOOK) && !committed.has(command),
-  );
-  if (!added) return;
+  const added = hookCommands(parseJson(readText(path))).filter((command) => !committed.has(command));
+  const remote = (command: unknown) => typeof command === "string" && command.includes(VIBE_ISLAND_HOOK);
+  if (added.length === 0 || !added.every(remote)) return;
 
   const workingRest = canonicalJson(readText(path), "del(.hooks)");
   if (workingRest === undefined || workingRest !== canonicalJson(blob.stdout, "del(.hooks)")) return;
