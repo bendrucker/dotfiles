@@ -22,7 +22,7 @@ setup_claude_repo() {
   git -C "$CLAUDE_REPO_HOME" remote set-head origin --auto 2>/dev/null || true
 }
 
-# Also sourced by bin/claude-sync, which relinks after the installers that
+# Also sourced by claude/settings-link.ts, which relinks after the installers that
 # replace ~/.claude/settings.json rather than writing through the link.
 install_claude_symlinks() {
   local source_dir="$CLAUDE_REPO_HOME/user"

@@ -18,7 +18,7 @@
 // to-do for a later sync failure.
 
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -54,6 +54,12 @@ import {
   reportFindings,
   reportSuccess,
 } from "#jobs/report";
+import {
+  adoptReplacedSettings,
+  isRegularFile,
+  relinkClaudeHome,
+  settingsLink,
+} from "../claude/settings-link";
 import { revertRemoteHookRewrite } from "../macos/vibe-island-hooks";
 import { installClaudeHooks } from "../moshi/claude-hooks";
 
@@ -66,7 +72,6 @@ const SETTINGS = "user/settings.json";
 // ~/.dotfiles is a symlink to the checkout, so the audit is found through the
 // resolved path rather than the invoked one.
 const BIN = dirname(realpathSync(import.meta.path));
-const CLAUDE_INSTALL = join(BIN, "..", "claude", "install.sh");
 
 // $HOME is read before the account's own home directory, because that is what
 // the shell expanded and what a spec re-points between examples.
@@ -91,60 +96,6 @@ export function revertCosmeticJsonChanges(out: Output, repoDir: string): void {
       out.run(["git", "-C", repoDir, "checkout", "HEAD", "--", file]);
     }
   }
-}
-
-function settingsLink(): string {
-  return join(process.env.HOME || homedir(), ".claude", "settings.json");
-}
-
-// herdr and moshi write ~/.claude/settings.json by replacing it, which leaves
-// Claude reading a file the repo no longer reaches. What the
-// replacement changed goes into the working copy, where the gate and the reverts
-// can see it, before relinking discards the file. A working copy that already
-// differs from HEAD is not overwritten, and the relink discards the file.
-export function adoptReplacedSettings(out: Output, repoDir: string): void {
-  const link = settingsLink();
-  if (!isRegularFile(link)) return;
-
-  const working = join(repoDir, SETTINGS);
-  const replaced = readText(link);
-  const canonical = canonicalJson(replaced);
-  if (canonical === undefined) {
-    log(out, "warn", "Discarding the replaced ~/.claude/settings.json: it is not readable JSON");
-    return;
-  }
-  if (canonical === canonicalJson(readText(working))) return;
-
-  // A status that could not run is read as dirty, since adopting overwrites.
-  const status = gitQuiet(["status", "--porcelain", "--", SETTINGS], repoDir);
-  if (status.status !== 0 || status.stdout !== "") {
-    log(out, "warn", `Discarding the replaced ~/.claude/settings.json: ${SETTINGS} already has local changes`);
-    return;
-  }
-
-  log(out, "warn", `Moving the replaced ~/.claude/settings.json into ${SETTINGS}`);
-  try {
-    writeFileSync(working, replaced);
-  } catch (error) {
-    log(out, "warn", `Could not write ${SETTINGS}: ${String(error)}`);
-  }
-}
-
-// claude/install.sh's own linker, which warns for each link it repairs.
-export function relinkClaudeHome(
-  out: Output,
-  repoDir: string,
-  env: Record<string, string | undefined> = process.env,
-): boolean {
-  const status = out.run(
-    ["bash", "-c", '. "$1" && install_claude_symlinks', "bash", CLAUDE_INSTALL],
-    { env: { ...env, CLAUDE_REPO_HOME: repoDir }, stdin: "ignore" },
-  );
-  if (status !== 0) {
-    log(out, "warn", "Could not relink ~/.claude");
-    return false;
-  }
-  return true;
 }
 
 export function syncRepo(out: Output, repoDir: string): boolean {
@@ -708,15 +659,6 @@ function readText(path: string): string {
     return readFileSync(path, "utf8");
   } catch {
     return "";
-  }
-}
-
-// A file that is not a symlink, which is what a replace-and-rename leaves.
-function isRegularFile(path: string): boolean {
-  try {
-    return lstatSync(path).isFile();
-  } catch {
-    return false;
   }
 }
 

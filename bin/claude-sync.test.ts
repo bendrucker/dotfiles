@@ -18,13 +18,11 @@ import {
   driftReport,
   failureFields,
   failureFingerprint,
-  adoptReplacedSettings,
   installAgentHooks,
   keptPlugins,
   main,
   pruneMarketplaces,
   prunePlugins,
-  relinkClaudeHome,
   reportDrift,
   repoRevision,
   revertCosmeticJsonChanges,
@@ -820,76 +818,6 @@ describe("revertCosmeticJsonChanges", () => {
     revertCosmeticJsonChanges(out, repo);
 
     expect(settingsStatus()).toBe("dirty");
-  });
-});
-
-describe("relinkClaudeHome", () => {
-  test("relinks a file that replaced its link and names it", () => {
-    replaceLink({ replaced: 1 });
-
-    expect(relinkClaudeHome(out, repo)).toBe(true);
-    expect(out.captured()).toContain("Relinked ~/.claude/settings.json");
-    expect(linked()).toBe(true);
-  });
-
-  test("links what the repo holds and stays quiet about links already there", () => {
-    writeFileSync(join(repo, "user", "CLAUDE.md"), "# Claude\n");
-
-    expect(relinkClaudeHome(out, repo)).toBe(true);
-    expect(lstatSync(join(sandbox, ".claude", "CLAUDE.md")).isSymbolicLink()).toBe(true);
-    expect(out.captured()).not.toContain("Relinked");
-  });
-
-  test("fails when a directory sits where a link belongs", () => {
-    rmSync(settingsLink());
-    mkdirSync(settingsLink());
-
-    expect(relinkClaudeHome(out, repo)).toBe(false);
-    expect(out.captured()).toContain("Could not relink ~/.claude");
-  });
-});
-
-describe("adoptReplacedSettings", () => {
-  test("carries a replaced file's change into the working copy", () => {
-    replaceLink(settingsJson(GUARDED_HOOK, "changed"));
-    adoptReplacedSettings(out, repo);
-
-    expect(git("diff", "--", "user/settings.json")).toContain("changed");
-  });
-
-  test("leaves the working copy alone when the replacement changed nothing", () => {
-    replaceLink(settingsJson(GUARDED_HOOK));
-    adoptReplacedSettings(out, repo);
-
-    expect(settingsStatus()).toBe("clean");
-    expect(out.captured()).toBe("");
-  });
-
-  test("does not overwrite a working copy that already has local changes", () => {
-    writeRepoSettings(settingsJson(GUARDED_HOOK, "local"));
-    replaceLink(settingsJson(GUARDED_HOOK, "replaced"));
-    adoptReplacedSettings(out, repo);
-
-    expect(git("diff", "--", "user/settings.json")).toContain("local");
-    expect(out.captured()).toContain("already has local changes");
-  });
-
-  test("discards a replacement that is not JSON", () => {
-    replaceLink(settingsJson(GUARDED_HOOK, "replaced"));
-    writeFileSync(settingsLink(), "{ truncated");
-    adoptReplacedSettings(out, repo);
-
-    expect(settingsStatus()).toBe("clean");
-    expect(out.captured()).toContain("not readable JSON");
-  });
-
-  test("does not overwrite a working copy git cannot read the status of", () => {
-    writeRepoSettings(settingsJson(GUARDED_HOOK, "local"));
-    replaceLink(settingsJson(GUARDED_HOOK, "replaced"));
-    writeFileSync(join(repo, ".git", "index"), "corrupt");
-    adoptReplacedSettings(out, repo);
-
-    expect(readFileSync(join(repo, "user", "settings.json"), "utf8")).toContain("local");
   });
 });
 
