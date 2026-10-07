@@ -296,7 +296,6 @@ function linked(): boolean {
   return lstatSync(settingsLink()).isSymbolicLink();
 }
 
-// What an installer that writes by replace-and-rename leaves behind.
 function replaceLink(settings: unknown): void {
   rmSync(settingsLink());
   writeFileSync(settingsLink(), `${JSON.stringify(settings)}\n`);
@@ -344,11 +343,9 @@ beforeEach(() => {
   // both answers come from a stub rather than from whichever machine runs this.
   writeScript(join(stubs, "scutil"), `printf '%s\\n' 'Testbox'`);
   writeScript(join(stubs, "ioreg"), `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST`);
-  // Both installers rewrite settings.json, which is the whole of what the install
-  // step has to sort out. herdr writes through the link, or replaces it with
-  // HERDR_REPLACES, and writes before it can fail, so a failed run still leaves
-  // an entry for the discard to take back. moshi-hook replaces the link with the
-  // file plus its entry, as the real one does.
+  // herdr writes through the link, or replaces it with HERDR_REPLACES. It writes
+  // before it can fail, so a failed run still leaves an entry for the discard to
+  // take back. moshi-hook replaces the link, as the real one does.
   const hookLog = join(sandbox, "hooks.log");
   const replaceLink = (name: string) =>
     `jq '. + {"${name}":1}' "$HOME/.claude/settings.json" >"$HOME/.claude/settings.json.new" && mv "$HOME/.claude/settings.json.new" "$HOME/.claude/settings.json"`;
@@ -880,7 +877,7 @@ describe("adoptReplacedSettings", () => {
 });
 
 // Vibe Island's SSH remote deploy writes the remote agent's hook into every
-// event on the machine it deploys to, and nothing on that machine stops it.
+// event on the machine it deploys to.
 describe("revertVibeIslandHookRewrite", () => {
   test("discards the rewrite and says so", () => {
     writeRepoSettings(settingsJson(REMOTE_HOOK));
@@ -1240,8 +1237,8 @@ describe("installAgentHooks", () => {
     return JSON.parse(readFileSync(join(repo, "user", "settings.json"), "utf8"));
   }
 
-  // Without the Homebrew prefix, so removing a stub leaves that installer absent
-  // instead of reaching a real one on the runner.
+  // PATH excludes the Homebrew prefix, so a removed stub leaves that installer
+  // absent on the runner.
   function without(...installers: string[]): Record<string, string | undefined> {
     for (const name of installers) rmSync(join(stubs, name));
     symlinkSync(Bun.which("jq") ?? "/usr/bin/jq", join(stubs, "jq"));
@@ -1259,8 +1256,8 @@ describe("installAgentHooks", () => {
     expect(linked()).toBe(true);
   });
 
-  // Replacing the link leaves the repo untouched, so the discard has to come
-  // from relinking rather than from restoring the repo file.
+  // Replacing the link leaves the repo untouched, so the discard comes from
+  // relinking.
   test("discards herdr's edit when it replaces the link", () => {
     const env = without("moshi-hook");
 

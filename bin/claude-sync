@@ -63,9 +63,8 @@ const DRIFT_JOB = "claude-plugin-drift";
 
 const SETTINGS = "user/settings.json";
 
-// What Vibe Island writes into every hook when it deploys its remote agent to
-// this machine from another one. The binary is only installed on that path
-// while the agent is, so every hook event fails without it.
+// What Vibe Island writes into every hook when another machine deploys its
+// remote agent here. Every hook event fails once that agent is gone.
 const VIBE_ISLAND_HOOK = "vibe-island/bin/vibe-island-hook";
 
 // ~/.dotfiles is a symlink to the checkout, so the audit is found through the
@@ -102,8 +101,8 @@ function settingsLink(): string {
   return join(process.env.HOME || homedir(), ".claude", "settings.json");
 }
 
-// herdr, moshi and Vibe Island all write ~/.claude/settings.json by replacing
-// it, which leaves Claude reading a file the repo no longer reaches. What the
+// herdr and moshi write ~/.claude/settings.json by replacing it, which leaves
+// Claude reading a file the repo no longer reaches. What the
 // replacement changed goes into the working copy, where the gate and the reverts
 // can see it, before relinking discards the file. A working copy that already
 // differs from HEAD is not overwritten, and the relink discards the file.
@@ -125,7 +124,6 @@ export function adoptReplacedSettings(out: Output, repoDir: string): void {
   writeFileSync(working, replaced);
 }
 
-// Every `.command` anywhere under `.hooks`.
 export function hookCommands(settings: unknown): unknown[] {
   if (!isRecord(settings)) return [];
 
