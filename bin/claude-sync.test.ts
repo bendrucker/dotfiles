@@ -874,6 +874,15 @@ describe("adoptReplacedSettings", () => {
     expect(git("diff", "--", "user/settings.json")).toContain("local");
     expect(out.captured()).toContain("already has local changes");
   });
+
+  test("does not overwrite a working copy git cannot read the status of", () => {
+    writeRepoSettings(settingsJson(GUARDED_HOOK, "local"));
+    replaceLink(settingsJson(GUARDED_HOOK, "replaced"));
+    writeFileSync(join(repo, ".git", "index"), "corrupt");
+    adoptReplacedSettings(out, repo);
+
+    expect(readFileSync(join(repo, "user", "settings.json"), "utf8")).toContain("local");
+  });
 });
 
 // Vibe Island's SSH remote deploy writes the remote agent's hook into every
@@ -893,6 +902,15 @@ describe("revertVibeIslandHookRewrite", () => {
     revertVibeIslandHookRewrite(out, repo);
 
     expect(settingsStatus()).toBe("clean");
+  });
+
+  test("does not claim a revert it could not make", () => {
+    writeRepoSettings(settingsJson(REMOTE_HOOK));
+    writeFileSync(join(repo, ".git", "index.lock"), "");
+    revertVibeIslandHookRewrite(out, repo);
+
+    expect(out.captured()).toContain("Could not revert user/settings.json");
+    expect(readLog("notifications")).toBe("");
   });
 
   test("leaves a rewrite that reaches outside the hooks for the gate", () => {

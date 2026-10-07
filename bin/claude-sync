@@ -115,7 +115,9 @@ export function adoptReplacedSettings(out: Output, repoDir: string): void {
   const canonical = canonicalJson(replaced);
   if (canonical !== undefined && canonical === canonicalJson(readText(working))) return;
 
-  if (gitQuiet(["status", "--porcelain", "--", SETTINGS], repoDir).stdout !== "") {
+  // A status that could not run is read as dirty, since adopting overwrites.
+  const status = gitQuiet(["status", "--porcelain", "--", SETTINGS], repoDir);
+  if (status.status !== 0 || status.stdout !== "") {
     log(out, "warn", `Discarding the replaced ~/.claude/settings.json: ${SETTINGS} already has local changes`);
     return;
   }
@@ -163,7 +165,10 @@ export function revertVibeIslandHookRewrite(out: Output, repoDir: string): void 
   if (workingRest === undefined || workingRest !== canonicalJson(blob.stdout, "del(.hooks)")) return;
 
   log(out, "warn", `Reverting Vibe Island's remote hook rewrite in ${SETTINGS}`);
-  out.run(["git", "-C", repoDir, "checkout", "HEAD", "--", SETTINGS]);
+  if (out.run(["git", "-C", repoDir, "checkout", "HEAD", "--", SETTINGS]) !== 0) {
+    log(out, "warn", `Could not revert ${SETTINGS}`);
+    return;
+  }
   notify(TITLE, "Reverted Vibe Island's remote hook rewrite in settings.json");
 }
 
