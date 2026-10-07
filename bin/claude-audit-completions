@@ -438,7 +438,7 @@ export function audit(completionFile: string): Outcome {
   // flag as stale against it would be worse than saying nothing.
   if (flags.length === 0) return failed("claude --help declared no options");
 
-  const scrape = scrapeCandidates(claudeBin);
+  const scrape = scrapeCandidates(binaryOnPath() ?? claudeBin);
   const confirmed = confirmedCommands(claudeBin, visibleCommands(help), [
     ...scrape.names,
     ...SEED_HIDDEN,
@@ -520,6 +520,16 @@ function spawn(cmd: string[]) {
     // start reads as output nobody produced.
     return undefined;
   }
+}
+
+// `bin/claude` is a script ahead of the real CLI on $PATH, so the scrape reads
+// the first claude that is not one.
+function binaryOnPath(): string | null {
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    const candidate = dir === "" ? null : Bun.which("claude", { PATH: dir });
+    if (candidate !== null && !isScript(candidate)) return candidate;
+  }
+  return null;
 }
 
 function isScript(path: string): boolean {
