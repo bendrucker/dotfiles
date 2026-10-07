@@ -53,6 +53,7 @@ import {
   reportFindings,
   reportSuccess,
 } from "#jobs/report";
+import { installClaudeHooks } from "../moshi/claude-hooks";
 
 const TITLE = "Claude Sync";
 const SYNC_JOB = "claude-sync";
@@ -349,10 +350,7 @@ function claude(out: Output, args: string[], env: Record<string, string | undefi
 // recognize the committed $HOME form. herdr's status check reads only the
 // script's version marker, so that edit is discarded.
 //
-// moshi's installer adds the per-event entries its binary expects and leaves the
-// rest alone. Its edit stays: the committed file is meant to match it, so a diff
-// here is a moshi upgrade, which the sync gate reports the next night and a
-// commit of the diff settles.
+// moshi's edit stays, so its install runs after herdr's restore.
 export function installAgentHooks(
   out: Output,
   repoDir: string,
@@ -381,13 +379,7 @@ export function installAgentHooks(
     if (!restoreSettings(out, settings, before)) ok = false;
   }
 
-  if (Bun.which("moshi-hook", { PATH: env.PATH }) !== null) {
-    log(out, "info", "Installing moshi claude hooks...");
-    if (out.run(["moshi-hook", "install", "--target", "claude"], { env, stdin: "ignore" }) !== 0) {
-      log(out, "warn", "moshi-hook install failed");
-      ok = false;
-    }
-  }
+  if (!installClaudeHooks(out, env)) ok = false;
 
   return ok;
 }
