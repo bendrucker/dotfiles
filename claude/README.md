@@ -106,11 +106,11 @@ Payload directories carry an `.in_use` directory holding one file per session PI
 
 A Claude Code process launched with `DEBUG_SDK=1` in its environment writes a debug log to `~/.claude/debug/<session-id>.txt`. The session index in [`bendrucker/claude`](https://github.com/bendrucker/claude) ingests those logs and enforces their size cap. Claude Code reads `DEBUG_SDK` only from its launch environment. As of 2.1.291, setting it in `settings.json` `env` arrives after the logger has started and never produces a log. `ls -t ~/.claude/debug | head` shows whether new sessions are writing one.
 
-On macOS, `zsh/.zshenv` exports `DEBUG_SDK`, which reaches every login zsh and whatever it starts: terminals, the herdr server and its panes, mosh logins, and launchd jobs like `com.user.claude-sync` that run under `zsh -l`. Raycast and the `claude-cli://` handler skip the shell. They start `claude` by absolute path from launchd's environment.
+`bin/claude` sets it on macOS and execs the next `claude` on `$PATH`. Exporting it from `.zshenv` would hand a generic name to every process a shell starts, and the wrapper confines it to Claude Code and what that spawns. A caller's own value wins, so `DEBUG_SDK= claude` runs one session without a log.
 
-`com.user.claude-debug-env`, installed by `claude/install.sh`, covers those. At login it starts zsh with `DEBUG_SDK` cleared and copies whatever `.zshenv` exports into launchd with `launchctl setenv`, or unsets it when nothing is exported. An app that was already running when the job ran keeps its old environment until it restarts. A change to the export reaches launchd at the next login, or after `launchctl kickstart gui/$UID/com.user.claude-debug-env`.
+The wrapper covers every launch that resolves `claude` through `$PATH`: terminals, herdr panes and `herdr agent start`, mosh logins, and launchd jobs under `zsh -l`. Raycast and the `claude-cli://` handler start the Homebrew binary by absolute path, so their sessions don't log.
 
-The variable is `DEBUG_SDK` because plain `DEBUG` is also read by every tool those processes spawn, such as the `debug` npm package. The category filter (`--debug=<filter>`) works only as a command-line argument, so the log records every category. Measured in October 2026, a session's log runs about 0.3 times its transcript size plus roughly 90 KB at startup.
+`DEBUG` would turn the log on too, but every tool those sessions spawn reads it, such as the `debug` npm package. The category filter (`--debug=<filter>`) works only as a command-line argument, so the log records every category. Measured in October 2026, a session's log runs about 0.3 times its transcript size plus roughly 90 KB at startup.
 
 ## Computer Use
 

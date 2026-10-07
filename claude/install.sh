@@ -51,12 +51,5 @@ install_claude_symlinks() {
   find "$target_dir" -maxdepth 1 -type l | symlink_prune "$CLAUDE_REPO_HOME/user" "$desired"
 }
 
-install_debug_env() {
-  ZSH="${ZSH:-$(cd "$(dirname "$0")/.." && pwd)}" \
-    bash -c 'source "$ZSH/macos/shell/launch-agent.sh" && install_launch_agent "$@"' \
-    _ claude/com.user.claude-debug-env.plist "Claude debug log env"
-}
-
 setup_claude_repo
 install_claude_symlinks
-install_debug_env

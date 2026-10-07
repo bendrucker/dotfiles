@@ -19,13 +19,6 @@ export PROJECTS="$HOME/src"
 # whatever the system ships.
 export EDITOR="nvim"
 
-# Turns on Claude Code's debug log in ~/.claude/debug. It has to be in the
-# launch environment, because settings.json env is applied after the logger
-# reads it. DEBUG would work too but reaches every other tool.
-# com.user.claude-debug-env copies this into launchd for apps that exec claude
-# without a shell. macOS only, where the claude repo's index caps the logs.
-[[ "$OSTYPE" == darwin* ]] && export DEBUG_SDK=1
-
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_DATA_HOME="$HOME/.local/share"
 export XDG_STATE_HOME="$HOME/.local/state"

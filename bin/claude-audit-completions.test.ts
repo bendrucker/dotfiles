@@ -3,6 +3,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -129,6 +130,7 @@ const STRINGS_STUB = `#!/bin/sh
 case "$1" in
   stub-probe) printf 'strings-stub\\n'; exit 0 ;;
 esac
+[ -n "$STRINGS_LOG" ] && printf '%s\\n' "$3" >>"$STRINGS_LOG"
 cat "$AUDIT_FIXTURES/strings-$2.txt"
 `;
 
@@ -814,5 +816,19 @@ describe("end to end", () => {
       `Notes:\n  no hidden command was scraped from ${join(stubs, "claude")}, ` +
       "which holds a script rather than a binary\n";
     expect(run([]).stdout).toContain(expected);
+  });
+
+  test("scrapes the binary behind a wrapper script", () => {
+    const binary = join(tools, "claude");
+    writeFileSync(binary, "\x7fELF");
+    chmodSync(binary, 0o755);
+    process.env.STRINGS_LOG = join(sandbox, "strings.log");
+
+    try {
+      run([]);
+      expect(readFileSync(process.env.STRINGS_LOG, "utf8")).toBe(`${binary}\n${binary}\n`);
+    } finally {
+      delete process.env.STRINGS_LOG;
+    }
   });
 });
