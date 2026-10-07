@@ -7,16 +7,20 @@ import { join } from "node:path";
 import { canonicalJson } from "#jobs/json";
 import { log, type Output } from "#jobs/output";
 
-const SETTINGS = "user/settings.json";
+export const SETTINGS = "user/settings.json";
 
 const CLAUDE_INSTALL = join(import.meta.dir, "install.sh");
 
-export function settingsLink(): string {
+function settingsLink(): string {
   return join(process.env.HOME || homedir(), ".claude", "settings.json");
 }
 
 // A file that is not a symlink, which is what a replace-and-rename leaves.
-export function isRegularFile(path: string): boolean {
+export function settingsReplaced(): boolean {
+  return isRegularFile(settingsLink());
+}
+
+function isRegularFile(path: string): boolean {
   try {
     return lstatSync(path).isFile();
   } catch {
@@ -28,8 +32,8 @@ export function isRegularFile(path: string): boolean {
 // the reverts can see it, before relinking discards the file. A working copy
 // that already differs from HEAD is not overwritten.
 export function adoptReplacedSettings(out: Output, repoDir: string): void {
+  if (!settingsReplaced()) return;
   const link = settingsLink();
-  if (!isRegularFile(link)) return;
 
   const working = join(repoDir, SETTINGS);
   const replaced = readText(link);

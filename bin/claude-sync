@@ -56,9 +56,9 @@ import {
 } from "#jobs/report";
 import {
   adoptReplacedSettings,
-  isRegularFile,
   relinkClaudeHome,
-  settingsLink,
+  SETTINGS,
+  settingsReplaced,
 } from "../claude/settings-link";
 import { revertRemoteHookRewrite } from "../macos/vibe-island-hooks";
 import { installClaudeHooks } from "../moshi/claude-hooks";
@@ -66,8 +66,6 @@ import { installClaudeHooks } from "../moshi/claude-hooks";
 const TITLE = "Claude Sync";
 const SYNC_JOB = "claude-sync";
 const DRIFT_JOB = "claude-plugin-drift";
-
-const SETTINGS = "user/settings.json";
 
 // ~/.dotfiles is a symlink to the checkout, so the audit is found through the
 // resolved path rather than the invoked one.
@@ -390,11 +388,11 @@ export function installAgentHooks(
     // there, it holds the sync gate shut on every later run, and clearing that
     // gate is what lets this step run again at all.
     if (!restoreSettings(out, settings, before)) ok = false;
-    if (isRegularFile(settingsLink()) && !relinkClaudeHome(out, repoDir, env)) ok = false;
+    if (settingsReplaced() && !relinkClaudeHome(out, repoDir, env)) ok = false;
   }
 
   if (!installClaudeHooks(out, env)) ok = false;
-  if (isRegularFile(settingsLink())) {
+  if (settingsReplaced()) {
     adoptReplacedSettings(out, repoDir);
     if (!relinkClaudeHome(out, repoDir, env)) ok = false;
   }
