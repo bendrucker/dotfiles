@@ -15,6 +15,13 @@
         "(?m)^(?<depName>[^\\s#/]+/[^\\s#]+)\\s+(?<currentValue>\\S+)"
       ],
       "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["(^|/)mise\\.toml$"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[^=\\n]+=\\s*\"(?<currentValue>[^\"]+)\""
+      ]
     }
   ],
   "packageRules": [
@@ -24,6 +31,11 @@
     },
     {
       "matchManagers": ["mise", "pep621"],
+      "minimumReleaseAge": "2 weeks"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": ["**/mise.toml"],
       "minimumReleaseAge": "2 weeks"
     }
   ]
