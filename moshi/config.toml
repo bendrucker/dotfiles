@@ -1,0 +1,7 @@
+# reload.sh restarts the daemon when this changes. `moshi-hook set` writes
+# through the symlink, so a CLI change shows up as a diff here.
+
+[gateway]
+always_on_discovery = true
+usage_collection = true
+suppress_push_while_unlocked = true
