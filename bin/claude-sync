@@ -3,9 +3,10 @@
 // Claude configuration sync, run nightly from launchd with --full. A hand run
 // without it only refreshes the marketplaces and updates the plugins.
 //
-// It reverts a cosmetic rewrite of a tracked settings file, syncs the repo,
-// reinstalls the vendor hooks, then brings the installed plugins to what the
-// synced settings.json declares: uninstall what it no longer names, refresh
+// It reverts a cosmetic rewrite of a tracked settings file and a Vibe Island
+// remote-hook rewrite, syncs the repo, relinks ~/.claude, reinstalls the vendor
+// hooks, then brings the installed plugins to what the synced settings.json
+// declares: uninstall what it no longer names, refresh
 // every marketplace, and update every plugin installed at user scope, disabled
 // ones included. `claude plugin enable` does not update, so a plugin skipped
 // while disabled would come back stale months later.
@@ -17,7 +18,7 @@
 // to-do for a later sync failure.
 
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -46,9 +47,10 @@ import {
   type Output,
   type SpawnOptions,
 } from "#jobs/output";
-import { byCodeUnit, canonicalJson } from "#jobs/json";
+import { byCodeUnit, canonicalJson, parseJson } from "#jobs/json";
 import {
   type Finding,
+  notify,
   reportFailure,
   reportFindings,
   reportSuccess,
@@ -61,9 +63,15 @@ const DRIFT_JOB = "claude-plugin-drift";
 
 const SETTINGS = "user/settings.json";
 
+// What Vibe Island writes into every hook when it deploys its remote agent to
+// this machine from another one. The binary is only installed on that path
+// while the agent is, so every hook event fails without it.
+const VIBE_ISLAND_HOOK = "vibe-island/bin/vibe-island-hook";
+
 // ~/.dotfiles is a symlink to the checkout, so the audit is found through the
 // resolved path rather than the invoked one.
 const BIN = dirname(realpathSync(import.meta.path));
+const CLAUDE_INSTALL = join(BIN, "..", "claude", "install.sh");
 
 // $HOME is read before the account's own home directory, because that is what
 // the shell expanded and what a spec re-points between examples.
@@ -90,13 +98,104 @@ export function revertCosmeticJsonChanges(out: Output, repoDir: string): void {
   }
 }
 
+function settingsLink(): string {
+  return join(process.env.HOME || homedir(), ".claude", "settings.json");
+}
+
+// herdr, moshi and Vibe Island all write ~/.claude/settings.json by replacing
+// it, which leaves Claude reading a file the repo no longer reaches. What the
+// replacement changed goes into the working copy, where the gate and the reverts
+// can see it, before relinking discards the file. A working copy that already
+// differs from HEAD is not overwritten, and the relink discards the file.
+export function adoptReplacedSettings(out: Output, repoDir: string): void {
+  const link = settingsLink();
+  if (!isRegularFile(link)) return;
+
+  const working = join(repoDir, SETTINGS);
+  const replaced = readText(link);
+  const canonical = canonicalJson(replaced);
+  if (canonical !== undefined && canonical === canonicalJson(readText(working))) return;
+
+  if (gitQuiet(["status", "--porcelain", "--", SETTINGS], repoDir).stdout !== "") {
+    log(out, "warn", `Discarding the replaced ~/.claude/settings.json: ${SETTINGS} already has local changes`);
+    return;
+  }
+
+  log(out, "warn", `Moving the replaced ~/.claude/settings.json into ${SETTINGS}`);
+  writeFileSync(working, replaced);
+}
+
+// Every `.command` anywhere under `.hooks`.
+export function hookCommands(settings: unknown): unknown[] {
+  if (!isRecord(settings)) return [];
+
+  const commands: unknown[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (!isRecord(node)) return;
+    if (node.command !== undefined) commands.push(node.command);
+    for (const value of Object.values(node)) walk(value);
+  };
+
+  walk(settings.hooks);
+  return commands;
+}
+
+// Vibe Island's SSH remote deploy rewrites this machine's hooks with no
+// preference to stop it. A rewrite confined to .hooks is discarded. A change
+// reaching outside .hooks is left for the gate.
+export function revertVibeIslandHookRewrite(out: Output, repoDir: string): void {
+  const path = join(repoDir, SETTINGS);
+  if (!isFile(path)) return;
+
+  const blob = gitQuiet(["show", `HEAD:${SETTINGS}`], repoDir);
+  if (blob.status !== 0) return;
+
+  const committed = new Set(hookCommands(parseJson(blob.stdout)));
+  const added = hookCommands(parseJson(readText(path))).some(
+    (command) =>
+      typeof command === "string" && command.includes(VIBE_ISLAND_HOOK) && !committed.has(command),
+  );
+  if (!added) return;
+
+  const workingRest = canonicalJson(readText(path), "del(.hooks)");
+  if (workingRest === undefined || workingRest !== canonicalJson(blob.stdout, "del(.hooks)")) return;
+
+  log(out, "warn", `Reverting Vibe Island's remote hook rewrite in ${SETTINGS}`);
+  out.run(["git", "-C", repoDir, "checkout", "HEAD", "--", SETTINGS]);
+  notify(TITLE, "Reverted Vibe Island's remote hook rewrite in settings.json");
+}
+
+// claude/install.sh's own linker, which warns for each link it repairs.
+export function relinkClaudeHome(
+  out: Output,
+  repoDir: string,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const status = out.run(
+    ["bash", "-c", '. "$1" && install_claude_symlinks', "bash", CLAUDE_INSTALL],
+    { env: { ...env, CLAUDE_REPO_HOME: repoDir }, stdin: "ignore" },
+  );
+  if (status !== 0) {
+    log(out, "warn", "Could not relink ~/.claude");
+    return false;
+  }
+  return true;
+}
+
 export function syncRepo(out: Output, repoDir: string): boolean {
   log(out, "info", "Syncing Claude repository...");
 
   if (!isDirectory(repoDir)) return false;
 
-  // Before the gate, so a tree dirtied only by a reformat is clean by the time
-  // it looks. A dirty tracked file stalls the sync behind it every night.
+  // Before the gate, so a tree dirtied only by a reformat or a remote hook
+  // rewrite is clean by the time it looks. A dirty tracked file stalls the sync
+  // behind it every night.
+  adoptReplacedSettings(out, repoDir);
+  revertVibeIslandHookRewrite(out, repoDir);
   revertCosmeticJsonChanges(out, repoDir);
 
   if (!reviewDirty(out, repoDir, TITLE)) return false;
@@ -348,9 +447,11 @@ function claude(out: Output, args: string[], env: Record<string, string | undefi
 // herdr instead of a commit. The installer also appends a SessionStart entry to
 // settings.json: it matches its own entry by exact command string and cannot
 // recognize the committed $HOME form. herdr's status check reads only the
-// script's version marker, so that edit is discarded.
+// script's version marker, so that edit is discarded, whether it came through
+// the link or replaced it.
 //
-// moshi's edit stays, so its install runs after herdr's restore.
+// moshi's edit stays, so its install runs after herdr's restore. It replaces
+// the link as it writes, so what it changed is carried into the working copy.
 export function installAgentHooks(
   out: Output,
   repoDir: string,
@@ -377,9 +478,14 @@ export function installAgentHooks(
     // there, it holds the sync gate shut on every later run, and clearing that
     // gate is what lets this step run again at all.
     if (!restoreSettings(out, settings, before)) ok = false;
+    if (isRegularFile(settingsLink()) && !relinkClaudeHome(out, repoDir, env)) ok = false;
   }
 
   if (!installClaudeHooks(out, env)) ok = false;
+  if (isRegularFile(settingsLink())) {
+    adoptReplacedSettings(out, repoDir);
+    if (!relinkClaudeHome(out, repoDir, env)) ok = false;
+  }
 
   return ok;
 }
@@ -533,7 +639,11 @@ export interface SyncOptions extends AuditOptions {
 }
 
 export function sync(out: Output, repoDir: string, options: SyncOptions = {}): number {
-  if (!syncRepo(out, repoDir)) return 1;
+  const synced = syncRepo(out, repoDir);
+  // Whether or not the gate let the pull through, so a refused sync still leaves
+  // Claude reading the repo.
+  const linked = !isDirectory(repoDir) || relinkClaudeHome(out, repoDir);
+  if (!synced) return 1;
 
   // Claude Code clones marketplaces and plugins from `git@github.com:` and
   // re-clones them on every update, so those remotes are not ours to rewrite.
@@ -544,10 +654,10 @@ export function sync(out: Output, repoDir: string, options: SyncOptions = {}): n
   // No audit follows to catch a stale plugin, so a failed refresh fails the run.
   if (options.interactive) {
     const refreshed = updateMarketplaces(out, env);
-    return updatePlugins(out, env) && refreshed ? 0 : 1;
+    return updatePlugins(out, env) && refreshed && linked ? 0 : 1;
   }
 
-  let status = 0;
+  let status = linked ? 0 : 1;
   // After the sync, so the pull that removes a stale script from the clone runs
   // against a clean tree and the installer puts the current one back.
   if (!installAgentHooks(out, repoDir, env)) status = 1;
@@ -638,6 +748,19 @@ function readText(path: string): string {
   } catch {
     return "";
   }
+}
+
+// A file that is not a symlink, which is what a replace-and-rename leaves.
+function isRegularFile(path: string): boolean {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isFile(path: string): boolean {

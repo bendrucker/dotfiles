@@ -7,16 +7,14 @@
 # installed on machines the app SSHes into, so every hook event in a session
 # started afterward fails.
 #
-# An earlier version replaced the symlink with a regular file instead, which
-# left Claude Code reading a file no longer connected to the repo. That one has
-# a defense: claude/install.sh restores a replaced symlink. A write that comes
-# through one does not. It leaves a dirty tracked file, and the nightly sync
-# stops on it and files a to-do rather than repairing it.
-#
 # This preference opts out of that management, recording a standing choice so a
 # new machine does not arrive with the app owning the hook config again. Opting
 # out is not passive: the app removes its hook entries from settings.json rather
 # than leaving behind whatever it last wrote.
+#
+# The preference does not reach the SSH remote deploy, which writes the same
+# shape into the hooks of the machine it deploys to and has no setting to stop
+# it. bin/claude-sync reverts that rewrite and relinks a replaced settings.json.
 #
 # A running app holds its own cached copy of the preference and can write that
 # copy back, which is how an earlier opt-out was lost while this preference

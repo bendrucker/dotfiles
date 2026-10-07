@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Capture, SpawnOptions } from "#jobs/output";
@@ -9,14 +18,17 @@ import {
   driftReport,
   failureFields,
   failureFingerprint,
+  adoptReplacedSettings,
   installAgentHooks,
   keptPlugins,
   main,
   pruneMarketplaces,
   prunePlugins,
+  relinkClaudeHome,
   reportDrift,
   repoRevision,
   revertCosmeticJsonChanges,
+  revertVibeIslandHookRewrite,
   sync,
   syncRepo,
   updateMarketplaces,
@@ -256,20 +268,38 @@ function writePluginFixture(): void {
     { name: "gamma", source: "./plugins/gamma" },
   ]);
   writeMarketplace("third", [{ name: "beta", source: "./plugins/beta" }]);
-  writeSettings(
-    { "alpha@first": true, "beta@third": true, "gamma@first": true, "disabled@first": false },
-    { first: {}, third: {} },
-  );
   writeKnownMarketplaces(["first", "third"]);
 }
 
+// Committed to the repo, which ~/.claude/settings.json links into.
+const DECLARATION = {
+  enabledPlugins: { "alpha@first": true, "beta@third": true, "gamma@first": true, "disabled@first": false },
+  extraKnownMarketplaces: { first: {}, third: {} },
+};
+
 const GUARDED_HOOK = '/bin/sh -c [ -x "$HOME/.vibe-island/bin/vibe-island-bridge" ] && exit 0';
+const REMOTE_HOOK = "VIBE_ISLAND_PORTS=1 ~/.vibe-island/bin/vibe-island-hook --host user@example";
 
 function settingsJson(command: unknown, extra = "bar"): unknown {
   return {
+    ...DECLARATION,
     env: { EXAMPLE: extra },
     hooks: { SessionStart: [{ hooks: [{ type: "command", command }] }] },
   };
+}
+
+function settingsLink(): string {
+  return join(sandbox, ".claude", "settings.json");
+}
+
+function linked(): boolean {
+  return lstatSync(settingsLink()).isSymbolicLink();
+}
+
+// What an installer that writes by replace-and-rename leaves behind.
+function replaceLink(settings: unknown): void {
+  rmSync(settingsLink());
+  writeFileSync(settingsLink(), `${JSON.stringify(settings)}\n`);
 }
 
 function writeRepoSettings(settings: unknown, indent = 2): void {
@@ -314,17 +344,19 @@ beforeEach(() => {
   // both answers come from a stub rather than from whichever machine runs this.
   writeScript(join(stubs, "scutil"), `printf '%s\\n' 'Testbox'`);
   writeScript(join(stubs, "ioreg"), `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST`);
-  // Both installers rewrite the repo's settings.json, which is the whole of what
-  // the install step has to sort out. herdr writes before it can fail, so a
-  // failed run still leaves an entry for the discard to take back.
+  // Both installers rewrite settings.json, which is the whole of what the install
+  // step has to sort out. herdr writes through the link, or replaces it with
+  // HERDR_REPLACES, and writes before it can fail, so a failed run still leaves
+  // an entry for the discard to take back. moshi-hook replaces the link with the
+  // file plus its entry, as the real one does.
   const hookLog = join(sandbox, "hooks.log");
-  const settingsWrite = (name: string) =>
-    `printf '{"${name}":1}\\n' >"$AGENT_HOOK_REPO/user/settings.json"`;
+  const replaceLink = (name: string) =>
+    `jq '. + {"${name}":1}' "$HOME/.claude/settings.json" >"$HOME/.claude/settings.json.new" && mv "$HOME/.claude/settings.json.new" "$HOME/.claude/settings.json"`;
   writeScript(
     join(stubs, "herdr"),
     [
       `printf '%s %s\\n' "herdr" "$*" >>"${hookLog}"`,
-      settingsWrite("herdr"),
+      `if [ -n "$HERDR_REPLACES" ]; then ${replaceLink("herdr")}; else printf '{"herdr":1}\\n' >"$AGENT_HOOK_REPO/user/settings.json"; fi`,
       `[ -n "$HERDR_LOCKS" ] && chmod 0444 "$AGENT_HOOK_REPO/user/settings.json"`,
       '[ -n "$HERDR_FAILS" ] && exit 1',
       "exit 0",
@@ -334,7 +366,7 @@ beforeEach(() => {
     join(stubs, "moshi-hook"),
     [
       `printf '%s %s\\n' "moshi-hook" "$*" >>"${hookLog}"`,
-      settingsWrite("moshi-hook"),
+      replaceLink("moshi-hook"),
       "exit 0",
     ].join("\n"),
   );
@@ -352,6 +384,7 @@ beforeEach(() => {
   process.env.AGENT_HOOK_REPO = repo;
   process.env.HERDR_FAILS = "";
   process.env.HERDR_LOCKS = "";
+  process.env.HERDR_REPLACES = "";
   writeFileSync(process.env.CLAUDE_PLUGIN_LOG, "");
 
   writePluginFixture();
@@ -368,6 +401,7 @@ beforeEach(() => {
   run(["git", "-C", repo, "commit", "-q", "-m", "settings"]);
   run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
   run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+  symlinkSync(join(repo, "user", "settings.json"), settingsLink());
 
   // A stub that failed to shadow the real CLI would enumerate this machine's own
   // plugins, and every example after it would be asserting against the runner.
@@ -398,6 +432,7 @@ afterEach(() => {
   delete process.env.AGENT_HOOK_REPO;
   delete process.env.HERDR_FAILS;
   delete process.env.HERDR_LOCKS;
+  delete process.env.HERDR_REPLACES;
   rmSync(sandbox, { recursive: true, force: true });
 });
 
@@ -792,6 +827,93 @@ describe("revertCosmeticJsonChanges", () => {
   });
 });
 
+describe("relinkClaudeHome", () => {
+  test("relinks a file that replaced its link and names it", () => {
+    replaceLink({ replaced: 1 });
+
+    expect(relinkClaudeHome(out, repo)).toBe(true);
+    expect(out.captured()).toContain("Relinked ~/.claude/settings.json");
+    expect(linked()).toBe(true);
+  });
+
+  test("links what the repo holds and stays quiet about links already there", () => {
+    writeFileSync(join(repo, "user", "CLAUDE.md"), "# Claude\n");
+
+    expect(relinkClaudeHome(out, repo)).toBe(true);
+    expect(lstatSync(join(sandbox, ".claude", "CLAUDE.md")).isSymbolicLink()).toBe(true);
+    expect(out.captured()).not.toContain("Relinked");
+  });
+
+  test("fails when a directory sits where a link belongs", () => {
+    rmSync(settingsLink());
+    mkdirSync(settingsLink());
+
+    expect(relinkClaudeHome(out, repo)).toBe(false);
+    expect(out.captured()).toContain("Could not relink ~/.claude");
+  });
+});
+
+describe("adoptReplacedSettings", () => {
+  test("carries a replaced file's change into the working copy", () => {
+    replaceLink(settingsJson(GUARDED_HOOK, "changed"));
+    adoptReplacedSettings(out, repo);
+
+    expect(git("diff", "--", "user/settings.json")).toContain("changed");
+  });
+
+  test("leaves the working copy alone when the replacement changed nothing", () => {
+    replaceLink(settingsJson(GUARDED_HOOK));
+    adoptReplacedSettings(out, repo);
+
+    expect(settingsStatus()).toBe("clean");
+    expect(out.captured()).toBe("");
+  });
+
+  test("does not overwrite a working copy that already has local changes", () => {
+    writeRepoSettings(settingsJson(GUARDED_HOOK, "local"));
+    replaceLink(settingsJson(GUARDED_HOOK, "replaced"));
+    adoptReplacedSettings(out, repo);
+
+    expect(git("diff", "--", "user/settings.json")).toContain("local");
+    expect(out.captured()).toContain("already has local changes");
+  });
+});
+
+// Vibe Island's SSH remote deploy writes the remote agent's hook into every
+// event on the machine it deploys to, and nothing on that machine stops it.
+describe("revertVibeIslandHookRewrite", () => {
+  test("discards the rewrite and says so", () => {
+    writeRepoSettings(settingsJson(REMOTE_HOOK));
+    revertVibeIslandHookRewrite(out, repo);
+
+    expect(out.captured()).toContain("Reverting Vibe Island's remote hook rewrite");
+    expect(readLog("notifications")).toContain("remote hook rewrite");
+    expect(settingsStatus()).toBe("clean");
+  });
+
+  test("discards a rewrite that also reordered the file", () => {
+    writeRepoSettings(settingsJson(REMOTE_HOOK), 4);
+    revertVibeIslandHookRewrite(out, repo);
+
+    expect(settingsStatus()).toBe("clean");
+  });
+
+  test("leaves a rewrite that reaches outside the hooks for the gate", () => {
+    writeRepoSettings(settingsJson(REMOTE_HOOK, "changed"));
+    revertVibeIslandHookRewrite(out, repo);
+
+    expect(settingsStatus()).toBe("dirty");
+    expect(readLog("notifications")).toBe("");
+  });
+
+  test("leaves a hook change that names some other command", () => {
+    writeRepoSettings(settingsJson("echo hello"));
+    revertVibeIslandHookRewrite(out, repo);
+
+    expect(settingsStatus()).toBe("dirty");
+  });
+});
+
 describe("syncRepo", () => {
   test("refuses a repo directory that is not there", () => {
     expect(syncRepo(out, join(sandbox, "missing"))).toBe(false);
@@ -1118,22 +1240,43 @@ describe("installAgentHooks", () => {
     return JSON.parse(readFileSync(join(repo, "user", "settings.json"), "utf8"));
   }
 
+  // Without the Homebrew prefix, so removing a stub leaves that installer absent
+  // instead of reaching a real one on the runner.
+  function without(...installers: string[]): Record<string, string | undefined> {
+    for (const name of installers) rmSync(join(stubs, name));
+    symlinkSync(Bun.which("jq") ?? "/usr/bin/jq", join(stubs, "jq"));
+    return { ...process.env, PATH: `${stubs}:/usr/bin:/bin` };
+  }
+
+  // moshi replaces the link, so its entry only reaches the gate by being carried
+  // into the working copy.
   test("discards herdr's settings edit and keeps moshi's", () => {
     expect(installAgentHooks(out, repo, process.env)).toBe(true);
     expect(readLog("hooks.log")).toBe(
       "herdr integration install claude\nmoshi-hook install --target claude\n",
     );
-    expect(repoSettings()).toEqual({ "moshi-hook": 1 });
+    expect(repoSettings()).toEqual({ ...(settingsJson(GUARDED_HOOK) as object), "moshi-hook": 1 });
+    expect(linked()).toBe(true);
+  });
+
+  // Replacing the link leaves the repo untouched, so the discard has to come
+  // from relinking rather than from restoring the repo file.
+  test("discards herdr's edit when it replaces the link", () => {
+    const env = without("moshi-hook");
+
+    expect(installAgentHooks(out, repo, { ...env, HERDR_REPLACES: "1" })).toBe(true);
+    expect(out.captured()).toContain("Relinked ~/.claude/settings.json");
+    expect(linked()).toBe(true);
+    expect(settingsStatus()).toBe("clean");
   });
 
   // herdr writes its entry before it can fail on a later step. The discard has to
   // take that back too: left in the tree, it holds the sync gate shut on every
   // later run, and that gate is what this step needs to clear to run again.
   test("reports a failed install and still discards what it wrote", () => {
-    process.env.HERDR_FAILS = "1";
-    rmSync(join(stubs, "moshi-hook"));
+    const env = without("moshi-hook");
 
-    expect(installAgentHooks(out, repo, process.env)).toBe(false);
+    expect(installAgentHooks(out, repo, { ...env, HERDR_FAILS: "1" })).toBe(false);
     expect(out.captured()).toContain("herdr integration install failed");
     expect(settingsStatus()).toBe("clean");
   });
@@ -1142,29 +1285,26 @@ describe("installAgentHooks", () => {
   // install started belongs to whoever made it, and restoring the committed file
   // would take that with it.
   test("keeps an edit the install did not make", () => {
-    rmSync(join(stubs, "moshi-hook"));
+    const env = without("moshi-hook");
     writeRepoSettings({ unrelated: 1 });
 
-    expect(installAgentHooks(out, repo, process.env)).toBe(true);
+    expect(installAgentHooks(out, repo, env)).toBe(true);
     expect(repoSettings()).toEqual({ unrelated: 1 });
   });
 
   // The entry survives a restore that could not write, and the sync gate blocks
   // on it the next night. Reporting it here is what says which run put it there.
   test("reports a restore that could not run", () => {
-    rmSync(join(stubs, "moshi-hook"));
-    process.env.HERDR_LOCKS = "1";
+    const env = without("moshi-hook");
 
-    expect(installAgentHooks(out, repo, process.env)).toBe(false);
+    expect(installAgentHooks(out, repo, { ...env, HERDR_LOCKS: "1" })).toBe(false);
     expect(out.captured()).toContain("Could not discard herdr's edit");
     expect(repoSettings()).toEqual({ herdr: 1 });
   });
 
   // A missing installer stays out of the log rather than warning every night.
   test("skips an installer that is not on PATH", () => {
-    rmSync(join(stubs, "herdr"));
-    rmSync(join(stubs, "moshi-hook"));
-    const env = { ...process.env, PATH: `${stubs}:/usr/bin:/bin` };
+    const env = without("herdr", "moshi-hook");
 
     expect(installAgentHooks(out, repo, env)).toBe(true);
     expect(out.captured()).toBe("");
@@ -1241,6 +1381,23 @@ describe("sync", () => {
     process.env.CLAUDE_REFRESH_FAILS = "1";
     expect(sync(out, repo, { audit: auditStub(0), interactive })).toBe(expected);
     expect(readLog("plugin.log")).toContain("update alpha@first");
+  });
+
+  test("heals a remote hook rewrite that replaced the link", () => {
+    replaceLink(settingsJson(REMOTE_HOOK));
+
+    expect(sync(out, repo, { audit: auditStub(0) })).toBe(0);
+    expect(linked()).toBe(true);
+    expect(readFileSync(settingsLink(), "utf8")).not.toContain("vibe-island-hook");
+    expect(readLog("notifications")).toContain("remote hook rewrite");
+  });
+
+  test("relinks even when the gate refuses", () => {
+    writeRepoSettings(settingsJson(GUARDED_HOOK, "changed"));
+    replaceLink(settingsJson(GUARDED_HOOK));
+
+    expect(sync(out, repo, { audit: auditStub(0) })).toBe(1);
+    expect(linked()).toBe(true);
   });
 
   test("leaves the plugins unattempted when the sync refuses", () => {
