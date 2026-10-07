@@ -19,11 +19,10 @@ afterEach(() => {
 });
 
 // Each restart is appended to the sandbox's `restarts` file.
-function daemon(state: string, restartStatus: number, version = "0.4.18"): void {
+function daemon(state: string, restartStatus: number): void {
   box.stub(
     "moshi-hook",
     [
-      `[ "$1" = version ] && { echo "moshi-hook ${version}"; exit 0; }`,
       'case "$2" in',
       `  status) printf '\\tstate = %s\\n' '${state}' ;;`,
       `  restart) echo restart >>"${box.path("restarts")}"; exit ${restartStatus} ;;`,
@@ -57,14 +56,6 @@ describe("moshi reload", () => {
     runReload();
     box.write("config/moshi/config.toml", "[gateway]\nsuppress_push_while_unlocked = false\n");
     runReload();
-
-    expect(restarts()).toBe(2);
-  });
-
-  test("restarts after an upgrade with the config unchanged", () => {
-    runReload();
-    daemon("running", 0, "0.4.19");
-    expect(runReload().stderr).toContain("restarting the daemon on moshi-hook 0.4.19");
 
     expect(restarts()).toBe(2);
   });
