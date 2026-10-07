@@ -1,6 +1,5 @@
 // herdr and moshi write ~/.claude/settings.json by replacing it, which leaves
-// Claude reading a file the repo no longer reaches. bin/claude-sync carries what
-// the replacement changed into the working copy and relinks.
+// Claude reading a file the repo no longer reaches.
 
 import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -27,8 +26,7 @@ export function isRegularFile(path: string): boolean {
 
 // What the replacement changed goes into the working copy, where the gate and
 // the reverts can see it, before relinking discards the file. A working copy
-// that already differs from HEAD is not overwritten, and the relink discards the
-// file.
+// that already differs from HEAD is not overwritten.
 export function adoptReplacedSettings(out: Output, repoDir: string): void {
   const link = settingsLink();
   if (!isRegularFile(link)) return;
@@ -57,7 +55,6 @@ export function adoptReplacedSettings(out: Output, repoDir: string): void {
   }
 }
 
-// claude/install.sh's own linker, which warns for each link it repairs.
 export function relinkClaudeHome(
   out: Output,
   repoDir: string,
