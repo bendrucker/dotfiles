@@ -37,6 +37,12 @@
       "matchManagers": ["custom.regex"],
       "matchFileNames": ["**/mise.toml"],
       "minimumReleaseAge": "2 weeks"
+    },
+    {
+      "matchManagers": ["mise"],
+      "matchFileNames": ["python/mise.toml"],
+      "matchDepNames": ["uv"],
+      "enabled": false
     }
   ]
 }
