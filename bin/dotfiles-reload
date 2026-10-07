@@ -9,7 +9,7 @@
 # down with it. A tool whose only path to new config is a restart therefore has
 # no `reload.sh` and picks the change up whenever it next starts.
 #
-# moshi is the exception: an unapplied config change or upgrade is worse than
+# moshi is the exception: an unapplied config change is worse than
 # the unlikely approval a 3am restart drops.
 #
 # Each `<topic>/reload.sh` self-gates and exits 0 without work when its tool

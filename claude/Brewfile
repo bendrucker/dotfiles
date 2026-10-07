@@ -7,7 +7,7 @@ cask 'claude-devtools'
 cask 'commander'
 brew 'agent-browser'
 brew 'ast-grep'
-brew 'rjyo/moshi/moshi-hook', start_service: true
+brew 'rjyo/moshi/moshi-hook', restart_service: :changed
 if OS.mac?
   brew 'steipete/tap/peekaboo'
 end
