@@ -8,7 +8,8 @@ devashish2203/herdr-worktrunk
 natori-hrj/herdr-lazy
 persiyanov/herdr-reviewr
 plannotator/herdr-annotate
-smarzban/herdr-file-viewer
+# Held at v1.17.0: main is at v1.18.0, which has no release to download.
+smarzban/herdr-file-viewer@v1.17.0
 
 # The two zenbu-labs entries build by piping a vendor install script to bash,
 # which fetches a ~130MB tarball of a vendored Electron rather than compiling.
