@@ -64,6 +64,10 @@ A hand run of `claude-sync`, say after pushing to the config repo, only refreshe
 
 The herdr install writes `~/.claude/hooks/herdr-agent-state.sh`, which the config repo gitignores. It also appends a `SessionStart` entry to `settings.json`, which the sync discards: herdr cannot recognize the committed `$HOME` form of the same entry and only checks the script's version marker. What comes back is the file as it stood before the install, so an edit already in the tree survives. The restore runs whether or not the install finished, because an entry left behind stops the next night's run at the sync gate, before it reaches the step that would clear it. The moshi install's edits stay. A diff in `settings.json` is a moshi upgrade, and the run stops at that same gate until the diff is committed.
 
+The herdr and moshi installs both write `~/.claude/settings.json` by replacing it, which breaks the symlink into the config repo. Every run relinks `~/.claude` with `install_claude_symlinks` from `claude/install.sh`, after the gate and after each install, and warns for each link it repaired. Before the gate, the sync copies a replaced `settings.json` into the config repo when its content differs, so a real change stops at the gate instead of being lost in the relink. A replacement that is not valid JSON is discarded.
+
+Vibe Island's SSH remote deploy rewrites the hook commands in `settings.json` on the machine it deploys to. Each one then names `vibe-island-hook`, a binary only its remote agent installs. Its `hookAutoConfig_claude` preference covers local hooks only. No setting stops the remote write. When every hook command the committed file lacks names `vibe-island-hook` and nothing outside `.hooks` changed, the sync restores the committed file and posts a notification. Any other change is left for the gate.
+
 A plugin no longer offered by its marketplace is left alone. Nothing can update it, so the fix is to uninstall it, and the audit says so.
 
 ### Pruning
@@ -101,6 +105,16 @@ A payload whose source still offers the version already installed is reported as
 Payload directories carry an `.in_use` directory holding one file per session PID. Check those with `kill -0` before removing anything by hand. Deleting a payload out from under a live session breaks its skill loads until restart, which is why the audit only ever reports.
 
 `claude-sync` runs the audit after updating and files its findings as a Things to-do on a latch separate from the sync's own. Drift outlives the run that should have fixed it, so one stale plugin sharing the sync latch would suppress the to-do for a later sync failure. The latch also holds a fingerprint of which plugins are flagged, so a plugin that goes stale months later reopens it instead of hiding behind one that has been stale all along.
+
+## Debug Log
+
+A Claude Code process launched with `DEBUG_SDK=1` in its environment writes a debug log to `~/.claude/debug/<session-id>.txt`. The session index in [`bendrucker/claude`](https://github.com/bendrucker/claude) ingests those logs and enforces their size cap. Claude Code reads `DEBUG_SDK` only from its launch environment. As of 2.1.291, setting it in `settings.json` `env` arrives after the logger has started and never produces a log. `ls -t ~/.claude/debug | head` shows whether new sessions are writing one.
+
+`bin/claude` sets it on macOS and execs the next `claude` on `$PATH`. Exporting it from `.zshenv` would hand a generic name to every process a shell starts, and the wrapper confines it to Claude Code and what that spawns. A caller's own value wins, so `DEBUG_SDK= claude` runs one session without a log.
+
+The wrapper covers every launch that resolves `claude` through `$PATH`: terminals, herdr panes and `herdr agent start`, mosh logins, and launchd jobs under `zsh -l`. Raycast and the `claude-cli://` handler start the Homebrew binary by absolute path, so their sessions don't log.
+
+`DEBUG` would turn the log on too, but every tool those sessions spawn reads it, such as the `debug` npm package. The category filter (`--debug=<filter>`) works only as a command-line argument, so the log records every category. Measured in October 2026, a session's log runs about 0.3 times its transcript size plus roughly 90 KB at startup.
 
 ## Computer Use
 

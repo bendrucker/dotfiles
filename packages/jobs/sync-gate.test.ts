@@ -377,6 +377,15 @@ describe("openPr against changes that do not name this machine", () => {
     expect(subject).toBe("sync: local changes captured");
   });
 
+  // Secretive refuses to sign while the Mac is locked, which is when this runs.
+  test("commits unsigned where signing is on", () => {
+    run(["git", "-C", repo, "config", "commit.gpgsign", "true"]);
+    run(["git", "-C", repo, "config", "gpg.program", "false"]);
+    writeFileSync(join(repo, "file.txt"), "unremarkable\n");
+    expect(openPr(out, repo, "Title")).toBe(true);
+    expect(stripNewlines(git("log", "-1", "--format=%G?", "--branches=sync/*").stdout)).toBe("N");
+  });
+
   test("returns to the base branch with the change carried away", () => {
     writeFileSync(join(repo, "file.txt"), "unremarkable\n");
     expect(openPr(out, repo, "Title")).toBe(true);

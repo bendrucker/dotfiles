@@ -117,7 +117,7 @@ The root Brewfile additionally evaluates `~/Brewfile.local` when present. Use it
 
 Topic directories can contain `mise.toml` files for tool versions and `[bootstrap]` config. Each one is linked into `~/.config/mise/conf.d/` by a `symlinks.conf` entry in its topic, and mise merges them alphabetically. A `mise.toml` without that entry is trusted by `mise/install.sh` and otherwise never loaded.
 
-Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`). Renovate tracks `mise.toml` files and auto-merges non-major updates after a 2-week release age delay. Using `"latest"` prevents Renovate from detecting new versions. For tools not available in the mise registry, use the `github:` backend (e.g., `"github:owner/repo" = "1.2.3"`) to install pre-built release binaries.
+Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`). Renovate tracks `mise.toml` files and auto-merges non-major updates after a 2-week release age delay. Using `"latest"` prevents Renovate from detecting new versions. For tools not available in the mise registry, use the `github:` backend (e.g., `"github:owner/repo" = "1.2.3"`) to install pre-built release binaries. A tool whose version is a template, like `uv` in `python/mise.toml` following a project's `required-version`, keeps its default in `[vars]` under a `# renovate:` comment, which a regex manager in `.github/renovate.json` tracks. Disable the mise manager for that tool in the same file, or it reads the template as the current version and opens a PR replacing it with a literal.
 
 #### Neovim Plugins
 
@@ -341,9 +341,11 @@ The `EXPIRES:` marker and the runner compose rather than overlap. The runner mak
 
 ### Config Reloads
 
-`bin/dotfiles-reload` runs every `<topic>/reload.sh`, so a config change reaches a program that has been running for weeks instead of waiting for a restart. `scripts/install` and `dotfiles dev enable|disable` call it directly. `bin/dotfiles-sync` calls it only when the pull moved the tree, and its `--bootstrap` path reaches it through `scripts/install` instead. `herdr/` and `terminal/` are the topics that have one.
+`bin/dotfiles-reload` runs every `<topic>/reload.sh`, so a config change reaches a program that has been running for weeks instead of waiting for a restart. `scripts/install` and `dotfiles dev enable|disable` call it directly. `bin/dotfiles-sync` calls it only when the pull moved the tree, and its `--bootstrap` path reaches it through `scripts/install` instead. `herdr/`, `terminal/`, and `moshi/` are the topics that have one.
 
 Every reload is in place. The program re-reads its config and keeps its state, sessions, and child processes. Nothing here may restart a server, kill a session, or drop in-flight work. This runs unattended from the 3am job, where a restart takes live work down with it, so a tool whose only path to new config is a restart gets no `reload.sh` and picks the change up on its next start.
+
+`moshi/reload.sh` is the one exception: it restarts moshi-hook when its config changed, since an unapplied change is worse than the unlikely approval a 3am restart drops.
 
 A `reload.sh` self-gates. Exit 0 without work when the tool isn't installed or isn't running, since a fresh machine and CI hit both cases. Assume roughly a minute of runtime: the dispatcher caps each script there so a wedged peer can't hang the nightly job.
 

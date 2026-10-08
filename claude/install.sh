@@ -1,10 +1,8 @@
 #!/bin/bash
 set -e
 
-[[ "$(uname -s)" == "Darwin" ]] || exit 0
-
 # shellcheck source=../scripts/shell/symlinks.sh
-. "$(cd "$(dirname "$0")/.." && pwd)/scripts/shell/symlinks.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/shell/symlinks.sh"
 
 CLAUDE_REPO_URL="https://github.com/bendrucker/claude.git"
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
@@ -24,6 +22,8 @@ setup_claude_repo() {
   git -C "$CLAUDE_REPO_HOME" remote set-head origin --auto 2>/dev/null || true
 }
 
+# Also sourced by claude/settings-link.ts to relink after installers replace
+# ~/.claude/settings.json.
 install_claude_symlinks() {
   local source_dir="$CLAUDE_REPO_HOME/user"
   local target_dir="$HOME/.claude"
@@ -42,8 +42,17 @@ install_claude_symlinks() {
     name="$(basename "$item")"
     local target="$target_dir/$name"
 
+    local repaired=""
+    if [[ -e "$target" || -L "$target" ]] && [[ "$(readlink "$target")" != "$item" ]]; then
+      repaired=1
+    fi
+
     symlink_create "$item" "$target"
-    echo "  ✓ ~/.claude/$name"
+    if [[ -n "$repaired" ]]; then
+      gum log --level warn "Relinked ~/.claude/$name, which no longer pointed into the repo"
+    else
+      echo "  ✓ ~/.claude/$name"
+    fi
 
     desired+="${desired:+$'\n'}$target"
   done
@@ -51,5 +60,8 @@ install_claude_symlinks() {
   find "$target_dir" -maxdepth 1 -type l | symlink_prune "$CLAUDE_REPO_HOME/user" "$desired"
 }
 
-setup_claude_repo
-install_claude_symlinks
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  [[ "$(uname -s)" == "Darwin" ]] || exit 0
+  setup_claude_repo
+  install_claude_symlinks
+fi

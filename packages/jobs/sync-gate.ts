@@ -234,8 +234,9 @@ export function openPr(out: Output, repoDir: string, title: string): boolean {
 
   // The message names nothing about the machine. It used to carry `hostname -s`,
   // publishing the host to a public remote on every sync, and the branch name
-  // already dates the run.
-  if (out.run(["git", "-C", repoDir, "commit", "-m", "sync: local changes captured"]) !== 0) {
+  // already dates the run. It goes unsigned because the signing key lives in
+  // Secretive, which refuses to sign while the Mac is locked.
+  if (out.run(["git", "-C", repoDir, "commit", "--no-gpg-sign", "-m", "sync: local changes captured"]) !== 0) {
     log(out, "error", "Failed to commit local changes");
     out.run(["git", "-C", repoDir, "checkout", base]);
     return false;

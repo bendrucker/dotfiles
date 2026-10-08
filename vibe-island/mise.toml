@@ -1,5 +1,6 @@
 # Vibe Island otherwise writes remote-host hooks through the ~/.claude
-# symlink into the tracked settings.json, and every hook then fails.
+# symlink into the tracked settings.json, and every hook then fails. The SSH
+# remote deploy ignores this preference, and bin/claude-sync reverts its rewrite.
 [bootstrap.macos.defaults."app.vibeisland.macos"]
 hookAutoConfig_claude = false
 

@@ -1,0 +1,10 @@
+#!/bin/sh
+# git's gpg.ssh.program. ssh-keygen signs through $SSH_AUTH_SOCK and ignores
+# IdentityAgent, so in a herdr pane it reaches herdr's agent, which is empty.
+# The signing key lives in Secretive, so ask Secretive whenever it runs.
+secretive="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+if [ -S "$secretive" ]; then
+  SSH_AUTH_SOCK="$secretive"
+  export SSH_AUTH_SOCK
+fi
+exec ssh-keygen "$@"

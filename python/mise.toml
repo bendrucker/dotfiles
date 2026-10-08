@@ -1,3 +1,22 @@
+[vars]
+# renovate: datasource=github-releases depName=astral-sh/uv
+uv_default = "0.12.18"
+
+# uv refuses to run under a version that misses a project's
+# `[tool.uv] required-version`, so follow the nearest pyproject.toml that pins
+# an exact one (`==X.Y.Z` or bare `X.Y.Z`). Any other specifier, or no pin,
+# gets the default. Tera v2 reads escapes in string literals, hence `\\[`.
 [tools]
+uv = '''
+{%- set pin = "(?m)^\\[tool[.]uv\\][ \t]*(?:#.*)?\n(?:[^\\[\n].*\n|\n)*?[ \t]*required-version[ \t]*=[ \t]*[\"'](?:==)?[ \t]*([0-9]+[.][0-9]+[.][0-9]+)[ \t]*[\"']" -%}
+{%- set parts = cwd | split(pat="/") -%}
+{%- set files = [(parts[0:i] | join(sep="/")) ~ "/pyproject.toml" for i in range(start=1, end=parts | length + 1)] -%}
+{%- set pinned = [read_file(path=f) for f in files if f is file] -%}
+{%- set pinned = [c for c in pinned if c is matching(pat=pin)] -%}
+{%- if pinned -%}
+{{- pinned | last | regex_replace(pattern="(?s)^.*?" ~ pin ~ ".*$", rep="$1") -}}
+{%- else -%}
+{{- vars.uv_default -}}
+{%- endif -%}
+'''
 python = "3.14.7"
-uv = "0.12.13"

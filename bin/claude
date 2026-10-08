@@ -1,0 +1,28 @@
+#!/bin/sh
+#/ Usage: claude [<args>...]
+#/ Run the real Claude Code with its debug log turned on.
+
+# Claude Code reads DEBUG_SDK only from its launch environment, and setting it
+# here rather than exporting it from .zshenv keeps a generic name out of every
+# other process. macOS only, where the claude repo's index caps the logs.
+if [ "$(uname -s)" = Darwin ]; then
+  DEBUG_SDK="${DEBUG_SDK-1}"
+  export DEBUG_SDK
+fi
+
+self="$(readlink -f "$0")"
+real=""
+IFS=:
+for dir in $PATH; do
+  candidate="$dir/claude"
+  [ -x "$candidate" ] || continue
+  [ "$(readlink -f "$candidate")" = "$self" ] && continue
+  real="$candidate"
+  break
+done
+
+if [ -z "$real" ]; then
+  echo "claude: no Claude Code binary on \$PATH besides $self" >&2
+  exit 127
+fi
+exec "$real" "$@"
