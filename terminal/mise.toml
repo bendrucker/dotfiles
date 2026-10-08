@@ -1,2 +1,7 @@
 [tools]
 "github:RivoLink/leaf" = "1.28.2"
+
+# iTerm2 expands ~ in this path itself.
+[bootstrap.macos.defaults."com.googlecode.iterm2"]
+PrefsCustomFolder = "~/.dotfiles/terminal"
+LoadPrefsFromCustomFolder = true

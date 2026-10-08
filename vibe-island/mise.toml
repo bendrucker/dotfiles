@@ -1,0 +1,15 @@
+# Vibe Island otherwise writes remote-host hooks through the ~/.claude
+# symlink into the tracked settings.json, and every hook then fails.
+[bootstrap.macos.defaults."app.vibeisland.macos"]
+hookAutoConfig_claude = false
+
+# A running Vibe Island writes its cached value back over the opt-out, so it is
+# quit before the write. Only when the value is wrong, since hooks run on every
+# bootstrap.
+[bootstrap.hooks]
+pre-defaults = """
+[ "$(defaults read app.vibeisland.macos hookAutoConfig_claude 2>/dev/null)" = 0 ] \
+  || osascript -e 'if application "Vibe Island" is running then quit application "Vibe Island"' \
+  || true
+"""
+post-defaults = "[ ! -d '/Applications/Vibe Island.app' ] || pgrep -x vibe-island >/dev/null || open -g -a 'Vibe Island' || true"

@@ -1,0 +1,34 @@
+[bootstrap.macos.dock]
+autohide = true
+autohide_delay = 0.0
+apps = []
+
+[bootstrap.macos.defaults."com.apple.dock"]
+persistent-others = []
+contents-immutable = false
+
+[bootstrap.macos.defaults.NSGlobalDomain]
+# tracking: 2nd fastest setting
+"com.apple.mouse.scaling" = 2.5
+AppleICUForce24HourTime = true
+
+# right click for Magic Mouse 2
+[bootstrap.macos.defaults."com.apple.driver.AppleBluetoothMultitouch.mouse"]
+MouseButtonMode = "TwoButton"
+
+# monday: first day of week
+[[bootstrap.macos.defaults_entries]]
+domain = "NSGlobalDomain"
+key = "AppleFirstWeekday"
+path = ["gregorian"]
+value = 2
+
+# Spotlight > Show Spotlight search : ^Space
+[[bootstrap.macos.defaults_entries]]
+domain = "com.apple.symbolichotkeys"
+key = "AppleSymbolicHotKeys"
+path = ["64"]
+value = { enabled = true, value = { type = "standard", parameters = [65535, 49, 262144] } }
+
+[bootstrap.hooks]
+post-defaults = "killall Dock SystemUIServer 2>/dev/null || true"

@@ -6,6 +6,8 @@ fi
 
 shopt -s extglob
 
+mise bootstrap --only macos-defaults --yes
+
 for file in "$ZSH"/macos/!(install).sh
 do
   bash "$file"

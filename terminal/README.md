@@ -6,8 +6,8 @@ Shell and terminal emulator configuration.
 
 `ghostty.config` sets the font, titlebar, selection rendering, shell
 integration, and the Hyper+A keybind below. `symlinks.conf` maps it to
-`~/.config/ghostty/config`. `install.sh` covers what a symlink cannot: the yazi
-flavors and the iTerm2 preferences folder.
+`~/.config/ghostty/config`. `install.sh` installs the yazi flavors, and
+`mise.toml` points iTerm2 at its preferences folder.
 
 Ghostty draws a selection by inverting foreground and background rather than
 tinting, so a selection reads the same whether herdr is intercepting the mouse
