@@ -27,8 +27,8 @@ fi
 # TCC forbids scripting these grants. aw-watcher-window reads window titles
 # through the Accessibility API, and the permission prompt only fires when
 # aw-qt is first launched from an already-granted terminal
-# (ActivityWatch/activitywatch#376). After this one-time setup, the
-# com.user.activitywatch LaunchAgent supervises autostart on every login.
+# (ActivityWatch/activitywatch#376). After this one-time setup, the LaunchAgent
+# in mise.activitywatch.toml supervises autostart on every login.
 if [[ -z "${NONINTERACTIVE-}" ]]; then
   gum log --level info "ActivityWatch one-time setup (TCC cannot automate these):"
   gum log --level info "  1. Grant Accessibility to ActivityWatch: System Settings > Privacy & Security > Accessibility (window titles need it)"
@@ -61,24 +61,9 @@ else
   gum log --level warn "uv not found; skipping aw-import-screentime (run scripts/install after mise install)"
 fi
 
-# Gated on the binary because a KeepAlive agent with a missing exec target
-# respawns forever. That gate has to live here, not in macos/install.sh, which
-# may run first.
-# shellcheck source=../macos/shell/launch-agent.sh
-source "$ZSH/macos/shell/launch-agent.sh"
-
-if [[ -x "$HOME/.local/bin/aw-import-screentime" ]]; then
-  install_launch_agent com.user.aw-import-screentime.plist "Screen Time import" || true
-else
-  gum log --level warn "aw-import-screentime not installed, skipping Screen Time import agent"
-  remove_launch_agent com.user.aw-import-screentime.plist
-fi
-
-# The LaunchAgent runs the importer through /bin/zsh, so zsh is the process TCC
-# holds responsible for reading the Biome store.
+# The LaunchAgent in mise.aw-import-screentime.toml runs the importer through
+# /bin/zsh, so zsh is the process TCC holds responsible for the Biome store.
 if [[ -z "${NONINTERACTIVE-}" ]]; then
   gum log --level info "Screen Time import one-time setup:"
   gum log --level info "  Grant Full Disk Access to /bin/zsh: System Settings > Privacy & Security > Full Disk Access (reads ~/Library/Biome)"
 fi
-
-exit "${launchd_failed:-0}"

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
-import { FORMULAE, up } from "./202610080001-pin-cli-tools-in-mise";
+import { FORMULAE, up } from "./202610080002-pin-cli-tools-in-mise";
 
 let box: Sandbox;
 let commands: string[][];

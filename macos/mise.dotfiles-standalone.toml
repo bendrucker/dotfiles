@@ -1,0 +1,15 @@
+[bootstrap.macos.launchd.agents.claude-sync]
+program = "/bin/zsh"
+args = ["-lc", "$HOME/.dotfiles/bin/claude-sync --full"]
+start_calendar_interval = { hour = 3, minute = 30 }
+stdout_path = "/tmp/claude-sync.log"
+stderr_path = "/tmp/claude-sync.log"
+environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
+
+[bootstrap.macos.launchd.agents.worktree-prune]
+program = "/bin/zsh"
+args = ["-lc", "$HOME/.dotfiles/bin/worktree-prune"]
+start_calendar_interval = { hour = 4, minute = 0 }
+stdout_path = "/tmp/worktree-prune.log"
+stderr_path = "/tmp/worktree-prune.log"
+environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }

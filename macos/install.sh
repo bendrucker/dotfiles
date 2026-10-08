@@ -16,66 +16,22 @@ do
   bash "$file"
 done
 
-# shellcheck source=shell/launch-agent.sh
-source "$ZSH/macos/shell/launch-agent.sh"
-
-setup_dotfiles_upgrade() {
-  # Remove old sync job (replaced by upgrade job which includes sync)
-  # EXPIRES: 2026-10-26 every machine has run the upgrade job at least once
-  local old_sync_plist="$HOME/Library/LaunchAgents/com.user.dotfiles-sync.plist"
-  launchctl bootout "gui/$UID/com.user.dotfiles-sync" 2>/dev/null || true
-  rm -f "$old_sync_plist"
-
-  install_launch_agent com.user.dotfiles-upgrade.plist "nightly dotfiles upgrade"
-}
-
-setup_worktree_prune() {
-  install_launch_agent com.user.worktree-prune.plist "nightly worktree prune"
-}
-
-setup_claude_sync() {
-  # The job was called claude-upgrade, under a label and plist of its own. The
-  # rename leaves that plist behind, and a file left in LaunchAgents reloads at
-  # next login, so it is removed rather than only booted out.
-  # EXPIRES: 2027-03-07 every machine has run scripts/install since the rename
-  launchctl bootout "gui/$UID/com.user.claude-upgrade" 2>/dev/null || true
-  rm -f "$HOME/Library/LaunchAgents/com.user.claude-upgrade.plist"
-  rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/claude-upgrade.status"
-
-  install_launch_agent com.user.claude-sync.plist "nightly Claude sync"
-}
-
-# The theme-sync watcher is core functionality, so it runs in every mode.
-# The plist resolves $HOME/.dotfiles, which works for both symlink and
-# separate-directory installs.
-install_launch_agent com.user.theme-sync.plist "theme-sync watcher"
-
-# aw-qt supervises the ActivityWatch capture stack. This LaunchAgent is the sole
-# autostart, so leave AW's built-in login item disabled to avoid a double launch.
-install_launch_agent com.user.activitywatch.plist "ActivityWatch capture"
-
-# The Screen Time import agent is installed by activitywatch/install.sh, which
-# is where its binary comes from.
-
-# Gated because launchctl bootstrap fails outright on a missing Program, which
-# would take scripts/install down with it. The binary comes from
-# go/default-go-packages via mise, and the config is machine-local and
-# untracked, so neither exists on a fresh machine or in CI. Nothing is removed
-# in the else branch: tailgate holds OAuth tokens that a teardown drops, and a
-# path check that misfires must not be what costs them.
-if [[ -x "$HOME/src/go/bin/tailgate" && -f "$HOME/.config/tailgate/tailgate.hujson" ]]; then
-  install_launch_agent me.bendrucker.tailgate.plist "tailgate MCP gateway"
-else
-  gum log --level warn "tailgate binary or config missing, skipping its launchd agent"
+# LaunchAgents are declared in the topic mise.toml fragments, and
+# mise/miserc.toml.tera selects which of them apply on this machine.
+if ! mise bootstrap --only macos-launchd-agents --yes; then
+  gum log --level error "mise bootstrap could not apply the LaunchAgents"
+  launchd_failed=1
 fi
 
-# Only setup upgrade if we're in separate-directory mode (not a symlink)
-if [[ ! -L "$HOME/.dotfiles" ]]; then
-  setup_dotfiles_upgrade
-  setup_claude_sync
-  setup_worktree_prune
+# The old nightly job keeps running until its replacement has loaded, so a
+# failed install leaves one in place to retry. Disabled rather than booted out,
+# since it is usually the job running this install.
+# EXPIRES: 2027-04-08 every machine has run scripts/install since the move
+if launchctl print "gui/$UID/dev.mise.dotfiles-upgrade" >/dev/null 2>&1; then
+  launchctl disable "gui/$UID/com.user.dotfiles-upgrade" 2>/dev/null || true
+  rm -f "$HOME/Library/LaunchAgents/com.user.dotfiles-upgrade.plist"
 fi
 
-# Exit nonzero if the defaults or any agent failed, so the failure is not
+# Exit nonzero if the defaults or the agents failed, so the failure is not
 # swallowed by a zero exit. Each was already logged above.
 exit $(( ${launchd_failed:-0} || ${defaults_failed:-0} ))

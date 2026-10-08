@@ -1,0 +1,9 @@
+# aw-qt supervises the ActivityWatch capture stack. This agent is the sole
+# autostart, so leave AW's built-in login item disabled to avoid a double launch.
+[bootstrap.macos.launchd.agents.activitywatch]
+program = "/Applications/ActivityWatch.app/Contents/MacOS/aw-qt"
+run_at_load = true
+keep_alive = true
+stdout_path = "/tmp/activitywatch.log"
+stderr_path = "/tmp/activitywatch.log"
+environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }

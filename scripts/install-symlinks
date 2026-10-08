@@ -10,6 +10,16 @@ DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 
 desired_targets=""
 
+link() {
+  symlink_create "$1" "$2"
+  if [ -z "$desired_targets" ]; then
+    desired_targets="$2"
+  else
+    desired_targets="$desired_targets
+$2"
+  fi
+}
+
 for conf in "$DOTFILES_ROOT"/*/symlinks.conf; do
   [ -f "$conf" ] || continue
   topic_dir="$(dirname "$conf")"
@@ -20,14 +30,18 @@ for conf in "$DOTFILES_ROOT"/*/symlinks.conf; do
       echo "install-symlinks: $conf: source '$src' does not exist" >&2
       exit 1
     fi
-    symlink_create "$topic_dir/$src" "$dst"
-    if [ -z "$desired_targets" ]; then
-      desired_targets="$dst"
-    else
-      desired_targets="$desired_targets
-$dst"
-    fi
+    link "$topic_dir/$src" "$dst"
   done < "$conf"
+done
+
+# A topic's mise.toml becomes the conf.d fragment <topic>.toml, and each
+# mise.<env>.toml becomes <topic>.<env>.toml, which mise loads only while <env>
+# is selected. mise/miserc.toml.tera is what selects them.
+for config in "$DOTFILES_ROOT"/*/mise.toml "$DOTFILES_ROOT"/*/mise.*.toml; do
+  [ -f "$config" ] || continue
+  topic="$(basename "$(dirname "$config")")"
+  name="$(basename "$config")"
+  link "$config" "$XDG_CONFIG_HOME/mise/conf.d/$topic${name#mise}"
 done
 
 # Remove stale symlinks pointing into DOTFILES_ROOT that are no longer declared.

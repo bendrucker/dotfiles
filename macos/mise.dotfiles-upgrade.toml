@@ -1,0 +1,9 @@
+[bootstrap.macos.launchd.agents.dotfiles-upgrade]
+program = "/bin/zsh"
+args = ["-lc", "$HOME/.dotfiles/bin/dotfiles-upgrade"]
+start_calendar_interval = { hour = 3, minute = 0 }
+stdout_path = "/tmp/dotfiles-upgrade.log"
+stderr_path = "/tmp/dotfiles-upgrade.log"
+# DOTFILES_JOB reaches the scripts/install this job runs, where
+# mise/miserc.toml.tera reads it to leave this agent out of the apply.
+environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", DOTFILES_JOB = "dotfiles-upgrade" }

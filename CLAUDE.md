@@ -117,7 +117,9 @@ The root Brewfile additionally evaluates `~/Brewfile.local` when present. Use it
 
 #### mise Aggregation
 
-Topic directories can contain `mise.toml` files for tool versions and `[bootstrap]` config. Each one is linked into `~/.config/mise/conf.d/` by a `symlinks.conf` entry in its topic, and mise merges them alphabetically. A `mise.toml` without that entry is installed from by `mise/install.sh` and otherwise never loaded.
+Topic directories can contain `mise.toml` files for tool versions and `[bootstrap]` config. `scripts/install-symlinks` links each one to `~/.config/mise/conf.d/<topic>.toml`, where mise merges them alphabetically. Nothing goes in `symlinks.conf` for them.
+
+A topic's `mise.<env>.toml` is a module, linked to `conf.d/<topic>.<env>.toml` and loaded only while `<env>` is selected. `mise/miserc.toml.tera` selects them per machine from file tests and the environment. LaunchAgents use this: `[bootstrap.macos.launchd.agents]` entries whose program may be missing, or which the nightly job must not reload under itself, sit in modules that the template leaves out. A gate that stops matching leaves its agent loaded, so a commit removing an agent's program ships a migration that removes the agent.
 
 Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`). Renovate tracks `mise.toml` files and auto-merges non-major updates after a 2-week release age delay. Using `"latest"` prevents Renovate from detecting new versions. For tools not available in the mise registry, use the `github:` backend (e.g., `"github:owner/repo" = "1.2.3"`) to install pre-built release binaries. A tool whose version is a template, like `uv` in `python/mise.toml` following a project's `required-version`, keeps its default in `[vars]` under a `# renovate:` comment, which a regex manager in `.github/renovate.json` tracks. Disable the mise manager for that tool in the same file, or it reads the template as the current version and opens a PR replacing it with a literal.
 
@@ -242,7 +244,7 @@ The audit reports and never removes, for the same reason `scripts/brew-drift` do
 
 ### Automated Nightly Upgrades (macOS)
 
-- `macos/com.user.dotfiles-upgrade.plist` runs `bin/dotfiles-upgrade` daily at 3am
+- The `dotfiles-upgrade` LaunchAgent in `macos/mise.dotfiles-upgrade.toml` runs `bin/dotfiles-upgrade` daily at 3am
 - Syncs dotfiles, runs `scripts/install`, runs `brew cleanup`, reports undeclared packages
 - Files a Things to-do on failure, one per cause per machine (see [Failure Reporting](#failure-reporting))
 
