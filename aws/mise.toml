@@ -1,4 +1,4 @@
 # The Homebrew cask installs a .pkg, which needs sudo, so the nightly upgrade
 # would fail on every new release. aqua fetches the same AWS binary unprivileged.
 [tools]
-"aqua:aws/session-manager-plugin" = "1.2.835.0"
+"aqua:aws/session-manager-plugin" = { version = "1.2.835.0", os = ["macos"] }
