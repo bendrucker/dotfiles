@@ -103,6 +103,18 @@ jobs:
           ~/.cargo/bin
           ~/.cargo/.crates.toml
           ~/.cargo/.crates2.json
+    # herdr reads which plugins are installed from plugins.json, so the plugin
+    # trees alone restore as missing and every one is installed again.
+    - name: Restore herdr plugins
+      id: herdr
+      uses: actions/cache/restore@v6
+      with:
+        key: herdr-plugins-${{ runner.os }}-${{ hashFiles('herdr/plugins.list') }}
+        restore-keys: |
+          herdr-plugins-${{ runner.os }}-
+        path: |
+          ~/.config/herdr/plugins/github
+          ~/.config/herdr/plugins.json
     # Formulae and casks come from the live API while the image pins brew, so
     # they use DSL it lacks. Must follow the cache restore, which rewrites
     # brew's own prefix. Updates brew only: bottles stay pinned by
@@ -213,6 +225,14 @@ jobs:
         path: |
           /opt/homebrew-cached
           /home/linuxbrew/.linuxbrew
+    - name: Save herdr plugins
+      if: ${{ github.event_name != 'pull_request' && steps.herdr.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        key: ${{ steps.herdr.outputs.cache-primary-key }}
+        path: |
+          ~/.config/herdr/plugins/github
+          ~/.config/herdr/plugins.json
     - name: Save cargo-installed binaries
       if: ${{ github.event_name != 'pull_request' }}
       uses: actions/cache/save@v6
