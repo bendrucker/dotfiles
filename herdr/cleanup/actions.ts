@@ -111,10 +111,19 @@ function remove(row: Row, run: Runner): Outcome {
   return "done";
 }
 
+// The pull request on the row belongs to the branch the forge was asked about,
+// so a checkout that has moved since then has none the board knows of.
+function moved(row: Row, now: Row): string | undefined {
+  if (now.branch === "") return `${row.label} has no branch checked out`;
+  if (now.branch !== row.branch) return `${row.label} is on ${now.branch} now, not ${row.branch}, so press r first`;
+  return undefined;
+}
+
 export function prune(row: Row, run: Runner): Outcome {
   if (row.step !== "prune") return fail(`${row.label} is not merged or closed (${row.reason}), so p leaves it alone`);
   const now = current(row, run);
-  if (now.branch === "") return fail(`${row.label} has no branch checked out, so nothing was removed`);
+  const why = moved(row, now);
+  if (why) return fail(`${why}. Nothing was removed`);
   if (now.flags.length > 0) {
     if (!run(["gum", "confirm", "--default=false", confirmText(now)], { terminal: "all" }).ok) return "cancelled";
   }
@@ -127,7 +136,8 @@ export function close(row: Row, run: Runner): Outcome {
   if (row.forge === undefined) return fail(`${row.label}'s origin is neither GitHub nor GitLab, so ${row.pr.ref} can't be closed from here`);
   if ((row.openPrs ?? 1) > 1) return fail(`${row.label} has ${row.openPrs} open pull requests, so close them on the forge`);
   const now = current(row, run);
-  if (now.branch === "") return fail(`${row.label} has no branch checked out, so nothing was closed`);
+  const why = moved(row, now);
+  if (why) return fail(`${why}. Nothing was closed`);
   const number = String(row.pr.number);
   const cmd = row.forge === "github" ? ["gh", "pr", "close", number] : ["glab", "mr", "close", number];
   const question = [`Close ${row.pr.ref} and prune ${row.label}?`];

@@ -69,12 +69,12 @@ const CHECK = [
 
 describe("prune", () => {
   test("reads the checkout, trashes it, hands the stale entry to wt, then closes the workspace", () => {
-    const { run, calls } = recorder([], WAKE_TEXT, "", { branch: "renamed\n" });
+    const { run, calls } = recorder();
     expect(prune(makeRow({ flags: ["dirty"] }), run)).toBe("done");
     expect(calls).toEqual([
       ...CHECK,
       "trash /src/.worktrees/repo/topic",
-      "wt -C /src/repo remove renamed --foreground --yes",
+      "wt -C /src/repo remove topic --foreground --yes",
       "herdr workspace close w1",
     ]);
   });
@@ -91,7 +91,14 @@ describe("prune", () => {
       name: "a detached checkout",
       row: {},
       checkout: { branch: "" },
-      error: "topic has no branch checked out, so nothing was removed",
+      error: "topic has no branch checked out. Nothing was removed",
+      ran: CHECK.length,
+    },
+    {
+      name: "a checkout that moved to another branch",
+      row: {},
+      checkout: { branch: "other\n" },
+      error: "topic is on other now, not topic, so press r first. Nothing was removed",
       ran: CHECK.length,
     },
   ])("removes nothing for $name", ({ row, checkout, error, ran }) => {
