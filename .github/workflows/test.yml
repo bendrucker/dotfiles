@@ -4,6 +4,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # A weekly run with every cache skipped installs today's bottles, mise
+  # tools, and plugin heads from scratch, catching the upstream breakage that
+  # a cached prefix hides from PRs.
+  schedule:
+    - cron: '0 9 * * 1'
 # A push to a PR supersedes the run still testing its previous commit, and
 # macOS runners are scarce enough that the stale run delays the new one.
 # main keeps every run, since each one saves the caches PRs restore.
@@ -51,11 +56,13 @@ jobs:
         rm -rf ~/Library/Caches/Homebrew/Backup
         brew link --overwrite openssl@3 || true
     # Caches are restored here and saved at the end of the job, and only by
-    # runs outside a PR. Branch caches are invisible to other PRs, so a PR's
-    # save holds GBs no other run can read, and pushing the repo past its
-    # 10 GB cap evicts the main caches every PR restores from.
+    # pushes and dispatches, never by a PR or the uncached weekly run. Branch
+    # caches are invisible to other PRs, so a PR's save holds GBs no other run
+    # can read, and pushing the repo past its 10 GB cap evicts the main caches
+    # every PR restores from.
     - name: Restore mise installs
       id: mise
+      if: ${{ github.event_name != 'schedule' }}
       uses: actions/cache/restore@v6
       with:
         key: mise-${{ runner.os }}-${{ hashFiles('**/mise.toml') }}
@@ -74,6 +81,7 @@ jobs:
       run: sudo install -d -o "$USER" -g admin /opt/homebrew-cached
     - name: Restore Homebrew packages
       id: homebrew
+      if: ${{ github.event_name != 'schedule' }}
       uses: actions/cache/restore@v6
       with:
         # runner.os does not distinguish Ubuntu releases, and the cached prefix
@@ -91,6 +99,7 @@ jobs:
         sudo mv /opt/homebrew-cached /opt/homebrew
     - name: Restore cargo-installed binaries
       id: cargo
+      if: ${{ github.event_name != 'schedule' }}
       uses: actions/cache/restore@v6
       with:
         # No repo file hashes to the crate version, so key on run_id: the
@@ -107,6 +116,7 @@ jobs:
     # trees alone restore as missing and every one is installed again.
     - name: Restore herdr plugins
       id: herdr
+      if: ${{ github.event_name != 'schedule' }}
       uses: actions/cache/restore@v6
       with:
         key: herdr-plugins-${{ runner.os }}-${{ hashFiles('herdr/plugins.list') }}
@@ -203,7 +213,7 @@ jobs:
           launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
         done
     - name: Save mise installs
-      if: ${{ github.event_name != 'pull_request' && steps.mise.outputs.cache-hit != 'true' }}
+      if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.mise.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
       with:
         key: ${{ steps.mise.outputs.cache-primary-key }}
@@ -212,13 +222,13 @@ jobs:
     # The save reads the prefix from where the restore writes it, and the
     # link keeps the zstd it compresses with resolving its libraries.
     - name: Stage Homebrew for saving
-      if: ${{ runner.os == 'macOS' && github.event_name != 'pull_request' && steps.homebrew.outputs.cache-hit != 'true' }}
+      if: ${{ runner.os == 'macOS' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.homebrew.outputs.cache-hit != 'true' }}
       run: |
         sudo rm -rf /opt/homebrew-cached
         sudo mv /opt/homebrew /opt/homebrew-cached
         sudo ln -s /opt/homebrew-cached /opt/homebrew
     - name: Save Homebrew packages
-      if: ${{ github.event_name != 'pull_request' && steps.homebrew.outputs.cache-hit != 'true' }}
+      if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.homebrew.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
       with:
         key: ${{ steps.homebrew.outputs.cache-primary-key }}
@@ -226,7 +236,7 @@ jobs:
           /opt/homebrew-cached
           /home/linuxbrew/.linuxbrew
     - name: Save herdr plugins
-      if: ${{ github.event_name != 'pull_request' && steps.herdr.outputs.cache-hit != 'true' }}
+      if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.herdr.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
       with:
         key: ${{ steps.herdr.outputs.cache-primary-key }}
@@ -234,7 +244,7 @@ jobs:
           ~/.config/herdr/plugins/github
           ~/.config/herdr/plugins.json
     - name: Save cargo-installed binaries
-      if: ${{ github.event_name != 'pull_request' }}
+      if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
       uses: actions/cache/save@v6
       with:
         key: ${{ steps.cargo.outputs.cache-primary-key }}
