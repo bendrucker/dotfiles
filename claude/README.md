@@ -106,16 +106,6 @@ Payload directories carry an `.in_use` directory holding one file per session PI
 
 `claude-sync` runs the audit after updating and files its findings as a Things to-do on a latch separate from the sync's own. Drift outlives the run that should have fixed it, so one stale plugin sharing the sync latch would suppress the to-do for a later sync failure. The latch also holds a fingerprint of which plugins are flagged, so a plugin that goes stale months later reopens it instead of hiding behind one that has been stale all along.
 
-## Debug Log
-
-A Claude Code process launched with `DEBUG_SDK=1` in its environment writes a debug log to `~/.claude/debug/<session-id>.txt`. The session index in [`bendrucker/claude`](https://github.com/bendrucker/claude) ingests those logs and enforces their size cap. Claude Code reads `DEBUG_SDK` only from its launch environment. As of 2.1.291, setting it in `settings.json` `env` arrives after the logger has started and never produces a log. `ls -t ~/.claude/debug | head` shows whether new sessions are writing one.
-
-`bin/claude` sets it on macOS and execs the next `claude` on `$PATH`. Exporting it from `.zshenv` would hand a generic name to every process a shell starts, and the wrapper confines it to Claude Code and what that spawns. A caller's own value wins, so `DEBUG_SDK= claude` runs one session without a log.
-
-The wrapper covers every launch that resolves `claude` through `$PATH`: terminals, herdr panes and `herdr agent start`, mosh logins, and launchd jobs under `zsh -l`. Raycast and the `claude-cli://` handler start the Homebrew binary by absolute path, so their sessions don't log.
-
-`DEBUG` would turn the log on too, but every tool those sessions spawn reads it, such as the `debug` npm package. The category filter (`--debug=<filter>`) works only as a command-line argument, so the log records every category. Measured in October 2026, a session's log runs about 0.3 times its transcript size plus roughly 90 KB at startup.
-
 ## Computer Use
 
 Claude Code's built-in `computer-use` MCP drives the macOS GUI with screenshots and mouse/keyboard input. [Peekaboo](https://github.com/steipete/peekaboo) is the accessibility-tree fallback for cases where screenshot perception is brittle or too costly: `peekaboo see` snapshots the AX tree with element IDs, then `peekaboo click`/`type` target those IDs. Call it from any agent via the CLI.
