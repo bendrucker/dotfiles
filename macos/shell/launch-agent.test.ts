@@ -9,39 +9,15 @@ function launchAgentPlan(...args: string[]) {
 }
 
 describe("launch_agent_plan", () => {
-  describe("for every combination of inputs", () => {
-    test.each<{ unchanged: number; loaded: number; is_self: number; plan: string }>([
-      { unchanged: 1, loaded: 1, is_self: 0, plan: "skip" },
-      { unchanged: 1, loaded: 1, is_self: 1, plan: "skip" },
-      { unchanged: 1, loaded: 0, is_self: 0, plan: "bootstrap" },
-      { unchanged: 1, loaded: 0, is_self: 1, plan: "bootstrap" },
-      { unchanged: 0, loaded: 1, is_self: 0, plan: "reinstall" },
-      { unchanged: 0, loaded: 1, is_self: 1, plan: "defer" },
-      { unchanged: 0, loaded: 0, is_self: 0, plan: "bootstrap" },
-      { unchanged: 0, loaded: 0, is_self: 1, plan: "bootstrap" },
-    ])(
-      "plans $plan when unchanged=$unchanged loaded=$loaded is_self=$is_self",
-      ({ unchanged, loaded, is_self, plan }) => {
-        const r = launchAgentPlan(String(unchanged), String(loaded), String(is_self));
-        expect(r.status).toBe(0);
-        expect(r.stdout.trim()).toBe(plan);
-      },
-    );
-  });
-
-  test("never boots out the job this process runs under", () => {
-    const outcomes: string[] = [];
-    for (const unchanged of ["0", "1"]) {
-      for (const loaded of ["0", "1"]) {
-        outcomes.push(launchAgentPlan(unchanged, loaded, "1").stdout.trim());
-      }
-    }
-    expect(outcomes).not.toContain("reinstall");
-  });
-
-  test("reloads a job whose plist is installed but unloaded", () => {
-    const r = launchAgentPlan("1", "0", "0");
-    expect(r.stdout.trim()).toBe("bootstrap");
+  test.each<{ unchanged: number; loaded: number; plan: string }>([
+    { unchanged: 1, loaded: 1, plan: "skip" },
+    { unchanged: 1, loaded: 0, plan: "bootstrap" },
+    { unchanged: 0, loaded: 1, plan: "reinstall" },
+    { unchanged: 0, loaded: 0, plan: "bootstrap" },
+  ])("plans $plan when unchanged=$unchanged loaded=$loaded", ({ unchanged, loaded, plan }) => {
+    const r = launchAgentPlan(String(unchanged), String(loaded));
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe(plan);
   });
 
   // A held job is one whose process outlives installs, like the herdr server
@@ -51,9 +27,7 @@ describe("launch_agent_plan", () => {
     const outcomes: string[] = [];
     for (const unchanged of ["0", "1"]) {
       for (const loaded of ["0", "1"]) {
-        for (const is_self of ["0", "1"]) {
-          outcomes.push(launchAgentPlan(unchanged, loaded, is_self, "1").stdout.trim());
-        }
+        outcomes.push(launchAgentPlan(unchanged, loaded, "1").stdout.trim());
       }
     }
     expect(outcomes).not.toContain("bootstrap");
@@ -61,7 +35,7 @@ describe("launch_agent_plan", () => {
   });
 
   test("skips a held job that is already current", () => {
-    expect(launchAgentPlan("1", "1", "0", "1").stdout.trim()).toBe("skip");
+    expect(launchAgentPlan("1", "1", "1").stdout.trim()).toBe("skip");
   });
 });
 

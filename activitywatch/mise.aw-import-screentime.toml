@@ -1,0 +1,8 @@
+[bootstrap.macos.launchd.agents.aw-import-screentime]
+program = "/bin/zsh"
+args = ["-lc", 'exec "$HOME/.local/bin/aw-import-screentime" watch']
+run_at_load = true
+keep_alive = true
+stdout_path = "/tmp/aw-import-screentime.log"
+stderr_path = "/tmp/aw-import-screentime.log"
+environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }

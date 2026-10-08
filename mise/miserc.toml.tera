@@ -1,0 +1,34 @@
+# Selects which of this repo's mise modules load on this machine. A module is a
+# conf.d fragment named <topic>.<env>.toml, which loads only while <env> is in
+# the list below. Each module declares a LaunchAgent that must not be applied
+# here, either because its program is missing or because applying it would kill
+# the run doing the applying.
+#
+# A template error falls back to the raw text, which is not valid TOML and stops
+# every mise command, so each filter that can throw sits behind a test.
+env_conf_d = true
+
+{% set dotfiles = [env.HOME, ".dotfiles"] | join_path %}
+{% set standalone = false %}
+{% if dotfiles is dir %}{% set standalone = dotfiles | canonicalize == dotfiles %}{% endif %}
+{% set tailgate_config = [xdg_config_home, "tailgate", "tailgate.hujson"] | join_path %}
+{% set tailgate_bin = [env.HOME, "src", "go", "bin", "tailgate"] | join_path %}
+{% set aw_import_screentime = [env.HOME, ".local", "bin", "aw-import-screentime"] | join_path %}
+
+env = [
+  # launchctl bootstrap fails outright on a missing Program, which fails the
+  # whole apply. Casks are skipped in CI, and the other two come from installs
+  # that run earlier in scripts/install but can be absent.
+  {% if "/Applications/ActivityWatch.app" is dir %}"activitywatch",{% endif %}
+  {% if aw_import_screentime is file %}"aw-import-screentime",{% endif %}
+  {% if tailgate_bin is file and tailgate_config is file %}"tailgate",{% endif %}
+
+  # The nightly jobs need ~/.dotfiles to be a clone of its own. A symlink means
+  # it points into a development checkout they must not sync or prune.
+  {% if standalone %}"dotfiles-standalone",{% endif %}
+
+  # mise boots out an agent whose plist changed, and that kills the job's whole
+  # process tree. The nightly run applies agents through scripts/install, so it
+  # leaves its own agent out and the next interactive install updates it.
+  {% if standalone and get_env(name="DOTFILES_JOB", default="") != "dotfiles-upgrade" %}"dotfiles-upgrade",{% endif %}
+]

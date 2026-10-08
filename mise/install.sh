@@ -17,5 +17,10 @@ for file in */mise.toml; do
   (cd "${file:h}" && mise install)
 done
 
+# A module declares bootstrap config and no tools, so it only needs trusting.
+for file in */mise.*.toml(N); do
+  mise trust "$file" --yes 2>/dev/null
+done
+
 # Activate mise shims so that installers can use any shell
 eval "$(mise activate --shims)"

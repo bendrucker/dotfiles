@@ -1,0 +1,12 @@
+# Loads only where mise/miserc.toml.tera finds the binary and its untracked
+# config. A gate that stops matching leaves the agent loaded, because tailgate
+# holds OAuth tokens that a teardown drops.
+[bootstrap.macos.launchd.agents.tailgate]
+program = "~/src/go/bin/tailgate"
+args = ["-config", "{{ xdg_config_home }}/tailgate/tailgate.hujson"]
+run_at_load = true
+keep_alive = true
+throttle_interval = 60
+stdout_path = "~/Library/Logs/tailgate.log"
+stderr_path = "~/Library/Logs/tailgate.log"
+environment = { PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" }

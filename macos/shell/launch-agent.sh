@@ -1,58 +1,22 @@
 # shellcheck shell=bash
-# LaunchAgent installation, sourced by macos/install.sh and by a topic
-# installer that owns an agent of its own.
-#
-# The nightly com.user.dotfiles-upgrade job runs scripts/install, so this code
-# routinely runs as a descendant of a job it is about to reinstall. launchctl
-# bootout tears down the job's whole process tree, so reinstalling that label
-# kills the run partway: the bootstrap that would put the job back never
-# executes, launchd is left without it, and nothing reports the failure because
-# the reporting code died with the rest of the tree.
-
-# Does launchd hold a job for this label?
-launch_agent_loaded() {
-  launchctl print "gui/$UID/$1" >/dev/null 2>&1
-}
-
-# Is this process part of the job for this label? launchd puts XPC_SERVICE_NAME
-# in the job's own environment, but libxpc rewrites it on every exec, so a
-# descendant as deep as a topic installer is only recognized by the pid walk.
-launch_agent_is_self() {
-  local label="$1"
-
-  [[ "${XPC_SERVICE_NAME:-}" == "$label" ]] && return 0
-
-  local job_pid
-  job_pid=$(launchctl print "gui/$UID/$label" 2>/dev/null |
-    awk '$1 == "pid" && $2 == "=" { print $3; exit }')
-  [[ -n "$job_pid" ]] || return 1
-
-  local pid=$$
-  while [[ -n "$pid" ]] && [[ "$pid" -gt 1 ]]; do
-    [[ "$pid" == "$job_pid" ]] && return 0
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
-  done
-
-  return 1
-}
+# LaunchAgent installation for a job whose process must outlive installs, which
+# mise's launchd support cannot express: it boots out any agent whose plist
+# changed. herdr/install.sh is the caller, for the server that owns every pane.
 
 # What installing a label should do, given whether the rendered plist already
-# matches the installed one, whether launchd has the job, whether this process
-# is running under that job, and whether the caller holds a live process that
-# neither a bootout nor a second copy may disturb.
+# matches the installed one, whether launchd has the job, and whether the caller
+# holds a live process that neither a bootout nor a second copy may disturb.
 #
 #   skip       leave the file and launchd alone
 #   defer      write the plist and leave launchd as it is
 #   bootstrap  write and load, with nothing to tear down first
 #   reinstall  tear the job down and load it again
 launch_agent_plan() {
-  local unchanged="$1" loaded="$2" is_self="$3" hold="${4:-0}"
+  local unchanged="$1" loaded="$2" hold="${3:-0}"
 
   if ((unchanged && loaded)); then
     echo skip
   elif ((hold)); then
-    echo defer
-  elif ((is_self && loaded)); then
     echo defer
   elif ((!loaded)); then
     echo bootstrap
@@ -61,13 +25,11 @@ launch_agent_plan() {
   fi
 }
 
-# Passing hold=1 writes the plist without touching launchd, for a job whose
-# process must outlive every install.
+# Passing hold=1 writes the plist without touching launchd.
 install_launch_agent() {
   local plist_path="$1"
   local description="$2"
   local hold="${3:-0}"
-  [[ "$plist_path" == */* ]] || plist_path="macos/$plist_path"
   local plist_name="${plist_path##*/}"
   local plist_src="$ZSH/$plist_path"
   local plist_dst="$HOME/Library/LaunchAgents/$plist_name"
@@ -81,17 +43,16 @@ install_launch_agent() {
   mkdir -p "$HOME/Library/LaunchAgents"
 
   # launchd expands nothing outside ProgramArguments, which the shell handles,
-  # so keys it reads itself (WatchPaths) carry __HOME__ and get it here.
+  # so keys it reads itself carry __HOME__ and get it here.
   local rendered
   rendered=$(sed "s|__HOME__|$HOME|g" "$plist_src")
 
-  local unchanged=0 loaded=0 is_self=0
+  local unchanged=0 loaded=0
   [[ -f "$plist_dst" ]] && [[ "$rendered" == "$(cat "$plist_dst")" ]] && unchanged=1
-  launch_agent_loaded "$label" && loaded=1
-  launch_agent_is_self "$label" && is_self=1
+  launchctl print "gui/$UID/$label" >/dev/null 2>&1 && loaded=1
 
   local plan
-  plan=$(launch_agent_plan "$unchanged" "$loaded" "$is_self" "$hold")
+  plan=$(launch_agent_plan "$unchanged" "$loaded" "$hold")
 
   if [[ "$plan" == skip ]]; then
     gum log --level info "$description launchd agent already current"
@@ -106,11 +67,8 @@ install_launch_agent() {
 
   printf '%s\n' "$rendered" >"$plist_dst"
 
-  if [[ "$plan" == defer ]] && ((hold)); then
+  if [[ "$plan" == defer ]]; then
     gum log --level warn "$description is running, so launchd was left alone. The plist written takes effect at next login, or now by stopping it and running: launchctl bootout gui/$UID/$label; launchctl bootstrap gui/$UID $plist_dst"
-    return
-  elif [[ "$plan" == defer ]]; then
-    gum log --level warn "$description launchd agent is the job running this install, so it keeps its old config. It picks the new one up at next login, or now via: launchctl bootout gui/$UID/$label && launchctl bootstrap gui/$UID $plist_dst"
     return
   fi
 
@@ -126,19 +84,6 @@ install_launch_agent() {
     gum log --level info "$description launchd agent installed"
   else
     gum log --level error "$description launchd agent failed to load. Run: launchctl bootstrap gui/$UID $plist_dst"
-    # shellcheck disable=SC2034 # macos/install.sh exits on this
-    launchd_failed=1
     return 1
   fi
-}
-
-# Tear a job down and remove its plist. An installer whose agent depends on a
-# binary calls this when the binary is absent, so a KeepAlive agent does not
-# respawn against a missing exec target.
-remove_launch_agent() {
-  local plist_name="$1"
-  local label="${plist_name%.plist}"
-
-  launchctl bootout "gui/$UID/$label" 2>/dev/null || true
-  rm -f "$HOME/Library/LaunchAgents/$plist_name"
 }

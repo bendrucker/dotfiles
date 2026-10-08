@@ -124,12 +124,7 @@ A `~/Brewfile.local` is evaluated last, if present, for machine-specific package
 
 ### Language Versions with mise
 
-Each language topic pins its versions in a `mise.toml` and links it into [mise](https://mise.jdx.dev/)'s drop-in config directory through its `symlinks.conf`, namespaced by topic:
-
-```ini
-# go/symlinks.conf
-mise.toml:$XDG_CONFIG_HOME/mise/conf.d/go.toml
-```
+Each language topic pins its versions in a `mise.toml`. `scripts/install-symlinks` links every topic's `mise.toml` into [mise](https://mise.jdx.dev/)'s drop-in config directory, namespaced by topic, so `go/mise.toml` becomes `conf.d/go.toml`.
 
 mise merges everything in `conf.d/` automatically. Each topic owns its runtime versions without a shared config file. Versions are pinned exactly (never `latest`) so [Renovate](https://github.com/renovatebot/renovate) can track and bump them.
 
@@ -161,7 +156,7 @@ Writing the flag file and re-running `install-symlinks` happen in one step. It e
 
 ### Sync and Upgrade
 
-A launchd agent ([`macos/com.user.dotfiles-upgrade.plist`](macos/com.user.dotfiles-upgrade.plist)) runs [`bin/dotfiles-upgrade`](bin/dotfiles-upgrade) nightly. It syncs from the remote, reruns `scripts/install`, and cleans up stale packages. On failure it files a Things task with the error.
+A launchd agent declared in [`macos/mise.dotfiles-upgrade.toml`](macos/mise.dotfiles-upgrade.toml) runs [`bin/dotfiles-upgrade`](bin/dotfiles-upgrade) nightly. It syncs from the remote, reruns `scripts/install`, and cleans up stale packages. On failure it files a Things task with the error.
 
 `dotfiles sync` runs the same pull by hand. It refuses to sync a dirty tree, fast-forwards only, and updates submodules.
 

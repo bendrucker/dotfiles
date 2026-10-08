@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 //
 // Nightly dotfiles sync and dependency upgrade, run unattended from launchd at
-// 3am (macos/com.user.dotfiles-upgrade.plist). Syncs dotfiles, runs
+// 3am (macos/mise.dotfiles-upgrade.toml). Syncs dotfiles, runs
 // scripts/install, cleans up Homebrew, reports packages no Brewfile declares,
 // and files a Things to-do on a failure nobody is awake to read.
 //

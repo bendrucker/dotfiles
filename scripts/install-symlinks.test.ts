@@ -58,3 +58,26 @@ describe("install-symlinks remove_stale", () => {
     expect(lstatSync(join(home, ".unrelated")).isSymbolicLink()).toBe(true);
   });
 });
+
+describe("install-symlinks mise fragments", () => {
+  test.each<{ name: string; source: string; fragment: string }>([
+    { name: "base config", source: "mise.toml", fragment: "topic.toml" },
+    { name: "env module", source: "mise.tailgate.toml", fragment: "topic.tailgate.toml" },
+  ])("links a topic's $name into conf.d", ({ source, fragment }) => {
+    box.write(`root/topic/${source}`, "");
+
+    expect(runInstall().status).toBe(0);
+
+    expect(lstatSync(join(xdg, "mise", "conf.d", fragment)).isSymbolicLink()).toBe(true);
+  });
+
+  test("prunes the fragment of a module the topic no longer has", () => {
+    box.mkdir("home", ".config", "mise", "conf.d");
+    const fragment = join(xdg, "mise", "conf.d", "topic.retired.toml");
+    symlinkSync(join(root, "topic", "mise.retired.toml"), fragment);
+
+    expect(runInstall().status).toBe(0);
+
+    expect(() => lstatSync(fragment)).toThrow();
+  });
+});

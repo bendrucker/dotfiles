@@ -32,3 +32,12 @@ value = { enabled = true, value = { type = "standard", parameters = [65535, 49, 
 
 [bootstrap.hooks]
 post-defaults = "killall Dock SystemUIServer 2>/dev/null || true"
+
+[bootstrap.macos.launchd.agents.theme-sync]
+program = "/bin/zsh"
+args = ["-lc", 'exec "$HOME/.dotfiles/theme/bin/watch-theme-change"']
+run_at_load = true
+keep_alive = true
+stdout_path = "/tmp/theme-sync.log"
+stderr_path = "/tmp/theme-sync.log"
+environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
