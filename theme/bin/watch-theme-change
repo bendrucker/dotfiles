@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 [[ "$(uname -s)" == "Darwin" ]] || exit 0
 
 bin_dir="$(cd "$(dirname "$0")" && pwd)"
-exec dark-notify -c "$bin_dir/theme-sync"
+
+# `dark-notify -c` spawns its command and never waits on it, leaving a zombie
+# per appearance change. Reading its output and running theme-sync here reaps
+# each one. A failed sync is logged rather than ending the watcher.
+dark-notify | while read -r appearance; do
+  "$bin_dir/theme-sync" "$appearance" || echo "theme-sync $appearance exited $?" >&2
+done
