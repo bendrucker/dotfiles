@@ -6,11 +6,6 @@ set -e
 
 cd "$(dirname "$0")"/..
 
-for file in */mise.toml; do
-  [ -f "$file" ] || continue
-  mise trust "$file" --yes 2>/dev/null
-done
-
 # Each topic's file reaches mise through a conf.d link, and install-symlinks
 # lays those after this runs. Installing from inside each topic directory finds
 # the file without its link, so a tool new to this run is on disk before a
@@ -18,6 +13,7 @@ done
 echo "› mise install"
 for file in */mise.toml; do
   [ -f "$file" ] || continue
+  mise trust "$file" --yes 2>/dev/null
   (cd "${file:h}" && mise install)
 done
 

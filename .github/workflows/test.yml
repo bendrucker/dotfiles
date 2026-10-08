@@ -234,7 +234,7 @@ jobs:
       - name: Install lint dependencies
         uses: jdx/mise-action@v5.1.1
         with:
-          install_args: aqua:ast-grep/ast-grep aqua:duckdb/duckdb aqua:gitleaks/gitleaks
+          install_args: aqua:ast-grep/ast-grep aqua:duckdb/duckdb aqua:gitleaks/gitleaks aqua:j178/prek
       # Homebrew's libxml2 is keg-only, so apt is what puts xmllint on PATH.
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y libxml2-utils
@@ -242,7 +242,15 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       # herdr is not installed here and its formula has no Linux bottle, so the
       # config check runs in bootstrap instead, where brew bundle put it.
-      - uses: j178/prek-action@v3.0.1
+      # The prek pinned in system/mise.toml rather than prek-action's own, so a
+      # Renovate bump to it runs here before it reaches a machine.
+      - name: Cache hook environments
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/prek
+          key: prek-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Run hooks
+        run: prek run --all-files --show-diff-on-failure --color=always
         env:
           SKIP: herdr-config
       # prek runs the gitleaks hook above, but that hook scans the staged diff,
