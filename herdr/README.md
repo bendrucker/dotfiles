@@ -73,33 +73,44 @@ own rules and a path or a flag comes back in pieces
 
 ## Cleanup board
 
-`prefix+alt+f` opens the board from the local plugin in `cleanup/`, an overlay
-listing each worktree workspace that needs you or is ready to finish. A row
-leads with the next step, then its pull request and the reason: `go` to an agent
-that is blocked, done, failing CI, or ready to merge, `wake` an idle agent whose
-pull request moved after it stopped, or `prune` a merged or closed one.
-Everything else is counted in the header and hidden.
+`prefix+alt+f` opens the board, an overlay from the local plugin in `cleanup/`.
+It lists each worktree workspace that needs you or is ready to finish, and
+counts the rest in the header. A row leads with its next step:
 
-| Key     | Action                                                                      |
-| ------- | --------------------------------------------------------------------------- |
-| `enter` | Focus the workspace's agent pane and close the board                        |
-| `p`     | On a `prune` row, trash the checkout, `wt remove`, then close the workspace |
-| `x`     | Close the pull request or merge request, then prune                         |
-| `w`     | Edit and send a `[herdr-cleanup]` prompt to the agent                       |
-| `r`     | Re-query the forge for every workspace, `work` included, and reload         |
-| `m`     | Show or hide rows from the `work` machine                                   |
+- `go`: the agent is blocked or done, or the pull request is failing CI,
+  conflicting, or ready to merge
+- `wake`: the agent is idle and its pull request moved after it stopped
+- `prune`: the pull request was merged or closed
 
-Prune asks first when the workspace has a live agent, uncommitted or unpushed
-work, or ignored files, and lists up to ten of those files. It reads the
+`enter` performs `go`, `w` performs `wake`, and `p` performs `prune`.
+
+| Key     | Action                                                                          |
+| ------- | ------------------------------------------------------------------------------- |
+| `enter` | Focus the workspace's agent pane and close the board                            |
+| `p`     | On a `prune` row, trash the checkout, run `wt remove`, then close the workspace |
+| `x`     | Close an open pull request, or a GitLab merge request, then prune               |
+| `w`     | Edit and send a `[herdr-cleanup]` prompt to the agent                           |
+| `r`     | Re-query the forge for every workspace shown, and reload                        |
+| `m`     | Show or hide rows from the `work` machine                                       |
+| `q`     | Close the board                                                                 |
+
+`p` asks first when the workspace has a working agent, uncommitted or unpushed
+work, or ignored files, and lists up to ten of the ignored files. It reads the
 checkout again on the keypress rather than trusting the board, and asks
-whenever git cannot answer. `x` always asks, and refuses a branch with more
-than one open pull request. `wt remove` deletes the branch only when it was
-merged, leaving the rest for `wt-prune`.
+whenever git cannot answer. The checkout goes to the Trash first, so ignored
+files stay recoverable, and the workspace closes last because the board may be
+running inside it. `wt remove` deletes the branch only when it was merged.
+`wt-prune` handles the rest. `x` always asks, and refuses a branch with more
+than one open pull request.
 
 The board reads pull request state from
 `$XDG_STATE_HOME/dotfiles/herdr-pr-state/<workspace>.json`, which
 `bin/herdr-workspace-status` writes each time the forge answers. The header
-shows the oldest of those as `forge 5m ago`, so a forge that has stopped
-answering shows up as an age that keeps growing. Rows from `work` come
-over `ssh work`, which needs this branch synced there, and read as
-`work unreachable` when the host does not answer in ten seconds.
+shows the oldest of those files as `forge 5m ago`, so a forge that has stopped
+answering shows up as an age that keeps growing.
+
+`work` is the ssh host alias of the other machine. Its rows start hidden, and
+`m` toggles them through a flag file under `$XDG_STATE_HOME/dotfiles`, so the
+choice persists. They come over `ssh work`, which needs this code merged and
+synced to `~/.dotfiles` there, and the header reads `work unreachable` when the
+host does not answer in ten seconds.
