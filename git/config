@@ -2,7 +2,6 @@
 [user]
   name = Ben Drucker
   email = bvdrucker@gmail.com
-  signingkey = 720D491425B2016D
 
 [credential]
   helper = osxkeychain
@@ -35,6 +34,14 @@
 [include]
   path = ~/.config/git/delta-catppuccin.gitconfig
   path = ~/.config/git/delta-flavor.conf
+
+# Signing keys are per machine, held in Secretive's Secure Enclave. The key and
+# the switch that turns signing on live in config.local. See README.md.
+[gpg]
+  format = ssh
+
+[gpg "ssh"]
+  program = git-ssh-sign
 
 [commit]
   verbose = true
