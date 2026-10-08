@@ -50,8 +50,13 @@ jobs:
         rm -f /opt/homebrew/bin/openssl
         rm -rf ~/Library/Caches/Homebrew/Backup
         brew link --overwrite openssl@3 || true
-    - name: Cache mise installs
-      uses: actions/cache@v6
+    # Caches are restored here and saved at the end of the job, and only by
+    # runs outside a PR. Branch caches are invisible to other PRs, so a PR's
+    # save holds GBs no other run can read, and pushing the repo past its
+    # 10 GB cap evicts the main caches every PR restores from.
+    - name: Restore mise installs
+      id: mise
+      uses: actions/cache/restore@v6
       with:
         key: mise-${{ runner.os }}-${{ hashFiles('**/mise.toml') }}
         restore-keys: |
@@ -67,9 +72,9 @@ jobs:
       run: |
         sudo mv /opt/homebrew /opt/homebrew.image
         sudo install -d -o "$USER" -g admin /opt/homebrew
-    - name: Cache Homebrew packages
+    - name: Restore Homebrew packages
       id: homebrew
-      uses: actions/cache@v6
+      uses: actions/cache/restore@v6
       with:
         # runner.os does not distinguish Ubuntu releases, and the cached prefix
         # holds brew itself, so a v3 cache would restore 22.04's brew and glibc.
@@ -84,12 +89,13 @@ jobs:
       run: |
         sudo rm -rf /opt/homebrew
         sudo mv /opt/homebrew.image /opt/homebrew
-    - name: Cache cargo-installed binaries
-      uses: actions/cache@v6
+    - name: Restore cargo-installed binaries
+      id: cargo
+      uses: actions/cache/restore@v6
       with:
         # No repo file hashes to the crate version, so key on run_id: the
         # exact key never pre-exists, the cache (a few MB) re-saves every
-        # run, and restore-keys pull the most recent prior save.
+        # saving run, and restore-keys pull the most recent prior save.
         key: cargo-install-${{ runner.os }}-${{ github.run_id }}
         restore-keys: |
           cargo-install-${{ runner.os }}-
@@ -184,6 +190,30 @@ jobs:
           label=$(plutil -extract Label raw "$plist" 2>/dev/null) || continue
           launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
         done
+    - name: Save mise installs
+      if: ${{ github.event_name != 'pull_request' && steps.mise.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        key: ${{ steps.mise.outputs.cache-primary-key }}
+        path: |
+          ~/.local/share/mise
+    - name: Save Homebrew packages
+      if: ${{ github.event_name != 'pull_request' && steps.homebrew.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        key: ${{ steps.homebrew.outputs.cache-primary-key }}
+        path: |
+          /opt/homebrew
+          /home/linuxbrew/.linuxbrew
+    - name: Save cargo-installed binaries
+      if: ${{ github.event_name != 'pull_request' }}
+      uses: actions/cache/save@v6
+      with:
+        key: ${{ steps.cargo.outputs.cache-primary-key }}
+        path: |
+          ~/.cargo/bin
+          ~/.cargo/.crates.toml
+          ~/.cargo/.crates2.json
   links:
     name: link schemes
     runs-on: ubuntu-latest
