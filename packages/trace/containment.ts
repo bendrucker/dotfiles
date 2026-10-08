@@ -11,11 +11,9 @@ export function covers(outer: Pick<Span, "start" | "end">, inner: Pick<Span, "st
  * that began first: a parent's B line always precedes its child's.
  */
 export function nestShell(spans: Span[]): void {
-  const order = spans
-    .map((span, index) => ({ span, index }))
-    .sort((a, b) => a.span.start - b.span.start || b.span.end - a.span.end || a.index - b.index);
+  const order = [...spans].sort((a, b) => a.start - b.start || b.end - a.end);
   const stack: Span[] = [];
-  for (const { span } of order) {
+  for (const span of order) {
     while (stack.length > 0 && !covers(stack[stack.length - 1] as Span, span)) stack.pop();
     span.parent = stack[stack.length - 1];
     stack.push(span);

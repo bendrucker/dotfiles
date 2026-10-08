@@ -17,7 +17,7 @@ export interface Tree {
   nodes: Node[];
 }
 
-export function randomHex(bytes: number): string {
+function randomHex(bytes: number): string {
   return Buffer.from(crypto.getRandomValues(new Uint8Array(bytes))).toString("hex");
 }
 

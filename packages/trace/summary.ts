@@ -24,6 +24,11 @@ function label(text: string): string {
   return text.replace(/[:;#]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "(unnamed)";
 }
 
+function bounds(tree: Tree): { origin: number; total: number } {
+  const origin = Math.min(...tree.roots.map((root) => root.span.start));
+  return { origin, total: Math.max(...tree.roots.map((root) => root.span.end)) - origin };
+}
+
 function sectionOf(node: Node): Node {
   let current = node;
   while (current.parent?.parent) current = current.parent;
@@ -35,8 +40,7 @@ function sectionOf(node: Node): Node {
  * with the axis in elapsed time from the first span.
  */
 export function gantt(tree: Tree): string {
-  const origin = Math.min(...tree.roots.map((root) => root.span.start));
-  const total = Math.max(...tree.roots.map((root) => root.span.end)) - origin;
+  const { origin, total } = bounds(tree);
   const picked = tree.nodes
     .filter((node) => node.depth <= GANTT_DEPTH || duration(node.span) >= total * GANTT_SHARE)
     .sort((a, b) => duration(b.span) - duration(a.span))
@@ -75,28 +79,19 @@ export function topTable(tree: Tree, count: number): string {
 
 export function indentedTree(tree: Tree, minSeconds: number): { text: string; hidden: number } {
   const lines: string[] = [];
-  let hidden = 0;
   const visit = (node: Node) => {
-    if (duration(node.span) < minSeconds * 1e6) {
-      hidden += countSubtree(node);
-      return;
-    }
+    if (duration(node.span) < minSeconds * 1e6) return;
     const mark = node.span.error ? "  ✗" : "";
     lines.push(`${"  ".repeat(node.depth)}${node.span.name}  ${formatDuration(duration(node.span))}${mark}`);
     for (const child of node.children) visit(child);
   };
   for (const root of tree.roots) visit(root);
-  return { text: lines.join("\n"), hidden };
-}
-
-function countSubtree(node: Node): number {
-  return 1 + node.children.reduce((sum, child) => sum + countSubtree(child), 0);
+  return { text: lines.join("\n"), hidden: tree.nodes.length - lines.length };
 }
 
 export function renderSummary(tree: Tree, options: SummaryOptions): string {
   const failed = tree.roots.some((root) => root.span.error);
-  const origin = Math.min(...tree.roots.map((root) => root.span.start));
-  const total = Math.max(...tree.roots.map((root) => root.span.end)) - origin;
+  const { total } = bounds(tree);
   const { text, hidden } = indentedTree(tree, options.min);
 
   return [
