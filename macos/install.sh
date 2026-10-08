@@ -6,6 +6,11 @@ fi
 
 shopt -s extglob
 
+if ! mise bootstrap --only macos-defaults --yes; then
+  gum log --level error "mise bootstrap could not apply the macOS defaults"
+  defaults_failed=1
+fi
+
 for file in "$ZSH"/macos/!(install).sh
 do
   bash "$file"
@@ -71,6 +76,6 @@ if [[ ! -L "$HOME/.dotfiles" ]]; then
   setup_worktree_prune
 fi
 
-# Exit nonzero if any agent failed to load, so the failure is not swallowed by
-# a zero exit. install_launch_agent already logs which one and how to recover.
-exit "${launchd_failed:-0}"
+# Exit nonzero if the defaults or any agent failed, so the failure is not
+# swallowed by a zero exit. Each was already logged above.
+exit $(( ${launchd_failed:-0} || ${defaults_failed:-0} ))

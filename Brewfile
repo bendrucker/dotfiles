@@ -77,7 +77,6 @@ cask 'ollama-app'
 cask 'raycast'
 cask 'slack'
 cask 'the-unarchiver'
-cask 'vibe-island'
 cask 'zoom'
 
 mas '1Password for Safari', id: 1569813296

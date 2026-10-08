@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { must, run, sandbox, stubGum, type Sandbox } from "#harness";
 import type { Output } from "#jobs/output";
-import { isRemoteHookRewrite, revertRemoteHookRewrite } from "./vibe-island-hooks";
+import { isRemoteHookRewrite, revertRemoteHookRewrite } from "./remote-hooks";
 
 const LOCAL_HOOK = "$HOME/.claude/hooks/guard.sh";
 const REMOTE_HOOK = "VIBE_ISLAND_PORTS=1 ~/.vibe-island/bin/vibe-island-hook --host user@example";
@@ -61,7 +61,7 @@ describe("revertRemoteHookRewrite", () => {
   };
 
   beforeEach(() => {
-    box = sandbox("vibe-island-hooks");
+    box = sandbox("remote-hooks");
     stubGum(box);
     box.stub("osascript", `printf '%s\\n' "$2" >>"${box.path("notifications")}"`);
     process.env.PATH = `${box.bin}:${path}`;

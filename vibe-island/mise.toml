@@ -1,0 +1,34 @@
+# Vibe Island otherwise writes remote-host hooks through the ~/.claude
+# symlink into the tracked settings.json, and every hook then fails. The SSH
+# remote deploy ignores this preference, and bin/claude-sync reverts its rewrite.
+[bootstrap.macos.defaults."app.vibeisland.macos"]
+hookAutoConfig_claude = false
+
+# A running Vibe Island writes its cached value back over the opt-out, so it is
+# quit before the write and reopened after. The marker limits the reopen to a
+# quit made here, since hooks run on every bootstrap.
+[bootstrap.hooks]
+pre-defaults = """
+marker="${TMPDIR:-/tmp}/vibe-island-quit-by-mise"
+rm -f "$marker"
+[ "$(defaults read app.vibeisland.macos hookAutoConfig_claude 2>/dev/null)" != 0 ] || exit 0
+pgrep -x vibe-island >/dev/null || exit 0
+if ! osascript -e 'quit application "Vibe Island"'; then
+  echo "Vibe Island would not quit, so it may write back over the opt-out" >&2
+  exit 0
+fi
+touch "$marker"
+for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x vibe-island >/dev/null || break; sleep 1; done
+if pgrep -x vibe-island >/dev/null; then
+  echo "Vibe Island is still running, so it may write back over the opt-out" >&2
+fi
+"""
+post-defaults = """
+marker="${TMPDIR:-/tmp}/vibe-island-quit-by-mise"
+[ -f "$marker" ] || exit 0
+rm -f "$marker"
+if ! open -g -a 'Vibe Island'; then
+  echo "Vibe Island was quit to apply its preference and could not be reopened" >&2
+  osascript -e 'display notification "Reopen it by hand." with title "Vibe Island could not be reopened"' || true
+fi
+"""

@@ -60,7 +60,7 @@ import {
   SETTINGS,
   settingsReplaced,
 } from "../claude/settings-link";
-import { revertRemoteHookRewrite } from "../macos/vibe-island-hooks";
+import { revertRemoteHookRewrite } from "../vibe-island/remote-hooks";
 import { installClaudeHooks } from "../moshi/claude-hooks";
 
 const TITLE = "Claude Sync";
