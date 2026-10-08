@@ -87,6 +87,8 @@ Give a tool its own directory when it has something to put there: config files t
 
 Homebrew is the default for a new tool. It links into `$HOMEBREW_PREFIX/bin`, a path that survives upgrades and is visible to every process rather than only shells that ran `mise activate`, and `brew bundle` tracks the current release. Use `mise.toml` when the version has to vary by directory, which is what mise resolves per-project: language runtimes and project-pinned tools like `terraform`. Declaring a tool in both is fine. mise's install directories come first on `$PATH`. A mise pin wins where one applies and the Homebrew copy covers everywhere else.
 
+A tool this repo's own scripts, tests, or CI call is the exception. Those are pinned in `system/mise.toml` and declared in no Brewfile, so a breaking release arrives as a Renovate PR that the `bootstrap` job judges before any machine runs it. Renovate batches that file into one weekly PR and automerges it, majors included, so the only update that needs attention is one CI fails. `gum` stays on Homebrew despite its callers, because `scripts/homebrew.sh` installs it before mise exists.
+
 #### Brewfile Aggregation
 
 The root `Brewfile` recursively loads all topic Brewfiles using:
@@ -298,13 +300,12 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 
 `scripts/install` is the main entry point:
 1. `brew bundle` — Install Brewfile dependencies, leaving the self-updating casks alone where `scripts/brew-managed-machine` says another manager owns them
-2. Symlink `*/mise.toml` → `~/.config/mise/conf.d/`
-3. `mise install` — Install language runtimes
-4. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
-5. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
-6. Run `scripts/install-topics`, which runs each `<topic>/install.sh`, including `credentials/install.sh`, which chmods credential files to `0600`
-7. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
-8. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
+2. `mise install` from each topic directory holding a `mise.toml`, which finds the file before its `conf.d` link exists
+3. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
+4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`, including each `mise.toml` into `~/.config/mise/conf.d/`
+5. Run `scripts/install-topics`, which runs each `<topic>/install.sh`, including `credentials/install.sh`, which chmods credential files to `0600`
+6. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
+7. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
 
 ### Migrations
 

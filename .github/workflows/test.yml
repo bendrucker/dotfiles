@@ -111,6 +111,10 @@ jobs:
           python@3.11
           python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # scripts/install puts the mise shims on PATH for its own children only.
+    # Later steps reach the pinned tools, like hyperfine below, through these.
+    - name: Add mise shims to PATH
+      run: echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
     # actions/checkout writes credentials to ~/.gitconfig, which takes
     # precedence over the XDG path (~/.config/git/config) where
     # install-symlinks places the dotfiles git config.
@@ -200,31 +204,37 @@ jobs:
             os: macos-15
     name: skill tests (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    # The pins live in a topic file that reaches mise through a conf.d link
+    # only bootstrap lays, so name it here for mise-action and the shims.
+    env:
+      MISE_GLOBAL_CONFIG_FILE: ${{ github.workspace }}/system/mise.toml
     steps:
       - uses: actions/checkout@v7
-      - name: Add brew to Linux PATH
-        if: runner.os == 'Linux'
-        run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
       - uses: oven-sh/setup-bun@v2
       # The skill under test queries shell history through duckdb, and builds
       # its own fixture database the same way.
-      - name: Install duckdb
-        run: brew install duckdb
+      - uses: jdx/mise-action@v5.1.1
+        with:
+          install_args: aqua:duckdb/duckdb
       # A leading ./ is what makes bun read this as a path. Bare, it is a filter
       # matched against discovered files, and discovery skips dot directories.
       - name: Run tests
         run: bun test ./.claude/skills/
   lint:
     runs-on: ubuntu-latest
+    # The pins live in a topic file that reaches mise through a conf.d link
+    # only bootstrap lays, so name it here for mise-action and the shims.
+    env:
+      MISE_GLOBAL_CONFIG_FILE: ${{ github.workspace }}/system/mise.toml
     steps:
       - uses: actions/checkout@v7
         with:
           # The secret scan below reads history, which a shallow checkout omits.
           fetch-depth: 0
-      - name: Add brew to PATH
-        run: echo "$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)/bin" >> "$GITHUB_PATH"
       - name: Install lint dependencies
-        run: brew install ast-grep duckdb gitleaks
+        uses: jdx/mise-action@v5.1.1
+        with:
+          install_args: aqua:ast-grep/ast-grep aqua:duckdb/duckdb aqua:gitleaks/gitleaks
       # Homebrew's libxml2 is keg-only, so apt is what puts xmllint on PATH.
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y libxml2-utils

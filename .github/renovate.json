@@ -40,6 +40,15 @@
     },
     {
       "matchManagers": ["mise"],
+      "matchFileNames": ["system/mise.toml"],
+      "groupName": "pinned CLI tools",
+      "schedule": ["* 0-5 * * 1"],
+      "separateMajorMinor": false,
+      "automerge": true,
+      "rebaseWhen": "conflicted"
+    },
+    {
+      "matchManagers": ["mise"],
       "matchFileNames": ["python/mise.toml"],
       "matchDepNames": ["uv"],
       "enabled": false
