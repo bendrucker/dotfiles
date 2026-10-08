@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
-import { RETIRED, up } from "./202610080001-launchd-agents-to-mise";
+import { RETIRED, up } from "./202610080003-launchd-agents-to-mise";
 
 let box: Sandbox;
 let launchctl: string[][];
