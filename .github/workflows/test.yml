@@ -128,8 +128,6 @@ jobs:
           --export-json /tmp/bench.json \
           --export-markdown /tmp/bench.md
 
-        median=$(python3 -c "import json; print(json.load(open('/tmp/bench.json'))['results'][0]['median'])")
-
         {
           echo '## Shell Startup Benchmark'
           echo ''
@@ -145,7 +143,7 @@ jobs:
 
         python3 -c "
         import json, sys
-        median = json.load(open('/tmp/bench.json'))['results'][0]['median']
+        median = json.load(open('/tmp/bench.json'))['results'][0]['summary']['time_wall_clock']['median']
         if median > 1.0:
             print(f'FAIL: median startup {median:.3f}s > 1.0s')
             sys.exit(1)
