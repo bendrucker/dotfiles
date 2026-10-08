@@ -270,6 +270,27 @@ report_workspace() {
   done
   herdr workspace report-metadata "${args[@]}" >/dev/null 2>&1 ||
     echo "herdr-workspace-status: could not report $label ($id)" >&2
+
+  cache_workspace "$id" "$path" "$branch" "$default" "$prs" "$n" "$([ "$local_glyph" = "$GLYPH_DIRTY" ] && echo true || echo false)"
+}
+
+# What the cleanup board reads instead of asking the forge itself. A forge that
+# did not answer returned before this, so the file keeps its last fetched_at and
+# the board can say how old it is.
+CACHE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/herdr-pr-state"
+
+cache_workspace() {
+  local id=$1 path=$2 branch=$3 default=$4 prs=$5 unpushed=$6 dirty=$7 pending
+  mkdir -p "$CACHE_DIR" 2>/dev/null || return 0
+  pending="$CACHE_DIR/.$id.$$"
+  jq -n \
+    --arg workspace_id "$id" --arg path "$path" --arg branch "$branch" --arg default "$default" \
+    --argjson prs "$prs" --argjson unpushed "$unpushed" --argjson dirty "$dirty" \
+    --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{workspace_id: $workspace_id, path: $path, branch: $branch, default: $default,
+      prs: $prs, unpushed: $unpushed, dirty: $dirty, fetched_at: $fetched_at}' >"$pending" 2>/dev/null ||
+    { rm -f "$pending"; return 0; }
+  mv -f "$pending" "$CACHE_DIR/$id.json" 2>/dev/null || rm -f "$pending"
 }
 
 workspaces=$(herdr workspace list 2>/dev/null | jq -r '
