@@ -2,6 +2,12 @@
 
 Shell integration for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
+## Installation
+
+`claude/install-native` runs Anthropic's native installer on macOS and Linux. It puts `claude` in `~/.local/bin` and keeps it current with its own background updater, so a release arrives the day it ships. The script does nothing once `~/.local/bin/claude` exists, so the nightly install downloads it only the first time.
+
+`.zshenv` puts `~/.local/bin` right after the dotfiles `bin/`, so the [`bin/claude` wrapper](#debug-log) resolves the native binary when it looks up the real `claude`.
+
 ## Worktree Aliases
 
 Launch Claude in a [Worktrunk](https://worktrunk.dev) worktree. All variants pass `--name` to Claude, set from the branch name, and append a system prompt telling Claude it is in a dedicated worktree it can work in directly.
