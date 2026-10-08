@@ -112,7 +112,7 @@ jobs:
           python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     # scripts/install puts the mise shims on PATH for its own children only.
-    # Later steps reach the pinned tools, like hyperfine below, through these.
+    # Later steps reach the pinned tools through these.
     - name: Add mise shims to PATH
       run: echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
     # actions/checkout writes credentials to ~/.gitconfig, which takes

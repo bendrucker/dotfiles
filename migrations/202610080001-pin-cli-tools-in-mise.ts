@@ -28,7 +28,7 @@ export const FORMULAE = [
 export function up(context: Context): void {
   for (const name of FORMULAE) {
     // brew refuses while another installed formula depends on this one, and
-    // that formula is a reason to keep it rather than a reason to retry nightly.
+    // that holds on every later run, so a refusal is logged and skipped.
     try {
       removeFormula(context, name);
     } catch (error) {
