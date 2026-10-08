@@ -2,7 +2,6 @@ tap 'rjyo/moshi'
 tap 'steipete/tap'
 
 cask 'claude'
-cask 'claude-code@latest'
 cask 'claude-devtools'
 cask 'commander'
 brew 'agent-browser'

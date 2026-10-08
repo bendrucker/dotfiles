@@ -2,6 +2,12 @@
 
 Shell integration for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
+## Installation
+
+`claude/install-native` runs Anthropic's native installer, which puts `claude` in `~/.local/bin` and keeps it current with its own background updater. A release arrives the day it ships, where a Homebrew cask waits on its bump and the next nightly `brew bundle`. The script does nothing once `~/.local/bin/claude` exists, so the nightly install pays for it once.
+
+`.zshenv` puts `~/.local/bin` right after `~/.dotfiles/bin`, so `bin/claude` (below) finds the native binary next.
+
 ## Worktree Aliases
 
 Launch Claude in a [Worktrunk](https://worktrunk.dev) worktree. All variants pass `--name` to Claude, set from the branch name, and append a system prompt telling Claude it is in a dedicated worktree it can work in directly.
@@ -112,7 +118,7 @@ A Claude Code process launched with `DEBUG_SDK=1` in its environment writes a de
 
 `bin/claude` sets it on macOS and execs the next `claude` on `$PATH`. Exporting it from `.zshenv` would hand a generic name to every process a shell starts, and the wrapper confines it to Claude Code and what that spawns. A caller's own value wins, so `DEBUG_SDK= claude` runs one session without a log.
 
-The wrapper covers every launch that resolves `claude` through `$PATH`: terminals, herdr panes and `herdr agent start`, mosh logins, and launchd jobs under `zsh -l`. Raycast and the `claude-cli://` handler start the Homebrew binary by absolute path, so their sessions don't log.
+The wrapper covers every launch that resolves `claude` through `$PATH`: terminals, herdr panes and `herdr agent start`, mosh logins, and launchd jobs under `zsh -l`. Raycast and the `claude-cli://` handler start the native binary by absolute path, so their sessions don't log.
 
 `DEBUG` would turn the log on too, but every tool those sessions spawn reads it, such as the `debug` npm package. The category filter (`--debug=<filter>`) works only as a command-line argument, so the log records every category. Measured in October 2026, a session's log runs about 0.3 times its transcript size plus roughly 90 KB at startup.
 

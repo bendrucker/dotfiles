@@ -1,4 +1,4 @@
-// Claude Code comes from the `claude-code@latest` cask in claude/Brewfile. An
+// Claude Code comes from claude/install-native, outside npm and mise. An
 // older `npm i -g @anthropic-ai/claude-code` into a mise node left a `claude`
 // in that install's bin, and mise shims every bin of every installed version,
 // active or not, ahead of Homebrew on PATH.

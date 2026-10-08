@@ -61,6 +61,7 @@ install_claude_symlinks() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  "$(dirname "${BASH_SOURCE[0]}")/install-native"
   [[ "$(uname -s)" == "Darwin" ]] || exit 0
   setup_claude_repo
   install_claude_symlinks
