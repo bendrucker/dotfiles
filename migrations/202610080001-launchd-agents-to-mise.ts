@@ -24,18 +24,11 @@ export const RETIRED = [
   "com.user.claude-upgrade",
 ];
 
-// The nightly job is normally the process running this migration, and a bootout
-// kills the job's whole process tree. Disabling it instead stops every later
-// launch and leaves this run alive. launchd drops the job at next login, once
-// its plist is gone.
-export const RUNNING_JOB = "com.user.dotfiles-upgrade";
-
 export function up(context: Context): void {
   const domain = `gui/${process.getuid?.() ?? 0}`;
 
-  for (const label of [...RETIRED, RUNNING_JOB]) {
-    const action = label === RUNNING_JOB ? "disable" : "bootout";
-    context.out.read(["launchctl", action, `${domain}/${label}`]);
+  for (const label of RETIRED) {
+    context.out.read(["launchctl", "bootout", `${domain}/${label}`]);
 
     const plist = join(context.home, "Library", "LaunchAgents", `${label}.plist`);
     if (!exists(plist)) continue;

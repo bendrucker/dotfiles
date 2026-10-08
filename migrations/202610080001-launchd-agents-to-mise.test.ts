@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
-import { RETIRED, RUNNING_JOB, up } from "./202610080001-launchd-agents-to-mise";
+import { RETIRED, up } from "./202610080001-launchd-agents-to-mise";
 
 let box: Sandbox;
 let launchctl: string[][];
@@ -43,18 +43,24 @@ function plist(label: string): string {
 }
 
 describe("launchd-agents-to-mise", () => {
-  test("removes every retired plist, the running job's included", () => {
-    for (const label of [...RETIRED, RUNNING_JOB]) box.write(`home/Library/LaunchAgents/${label}.plist`, "");
+  test("boots out and removes every retired agent", () => {
+    for (const label of RETIRED) box.write(`home/Library/LaunchAgents/${label}.plist`, "");
 
     up(context());
 
-    for (const label of [...RETIRED, RUNNING_JOB]) expect(exists(plist(label))).toBe(false);
+    for (const label of RETIRED) expect(exists(plist(label))).toBe(false);
+    expect(launchctl).toEqual(RETIRED.map(() => ["bootout"]));
   });
 
-  test("disables the job that runs migrations rather than booting it out", () => {
+  // The nightly job runs this migration, and nothing replaces it until
+  // macos/install.sh has loaded dev.mise.dotfiles-upgrade. Retiring it here
+  // would leave no nightly job if the install failed in between.
+  test("leaves the nightly job for macos/install.sh to retire", () => {
+    box.write("home/Library/LaunchAgents/com.user.dotfiles-upgrade.plist", "");
+
     up(context());
 
-    expect(launchctl).toEqual([...RETIRED.map(() => ["bootout"]), ["disable"]]);
+    expect(exists(plist("com.user.dotfiles-upgrade"))).toBe(true);
   });
 
   test("leaves the agents mise installed alone", () => {
