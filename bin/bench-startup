@@ -35,7 +35,7 @@ if [[ "${1:-}" == "--profile" ]]; then
 fi
 
 if ! command -v hyperfine &>/dev/null; then
-  echo "hyperfine not found — install with: brew install hyperfine" >&2
+  echo "hyperfine not found — run mise install, which reads system/mise.toml" >&2
   exit 1
 fi
 
