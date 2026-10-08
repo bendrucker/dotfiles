@@ -10,3 +10,7 @@ topic_dir="$(cd "$(dirname "$0")" && pwd)"
 config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/git"
 mkdir -p "$config_dir"
 cp "$topic_dir/delta-flavor.conf" "$config_dir/delta-flavor.conf"
+
+if command -v bun >/dev/null 2>&1; then
+  "$topic_dir/install-signing"
+fi
