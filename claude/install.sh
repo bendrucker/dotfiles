@@ -61,8 +61,10 @@ install_claude_symlinks() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  # The config setup first, so a failed download doesn't hold it back.
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    setup_claude_repo
+    install_claude_symlinks
+  fi
   "$(dirname "${BASH_SOURCE[0]}")/install-native"
-  [[ "$(uname -s)" == "Darwin" ]] || exit 0
-  setup_claude_repo
-  install_claude_symlinks
 fi

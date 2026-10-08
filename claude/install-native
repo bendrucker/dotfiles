@@ -16,7 +16,7 @@ fi
 
 # Fetched before running, so a failed download fails here rather than piping
 # nothing into bash and reporting success.
-installer=$(curl -fsSL https://claude.ai/install.sh)
+installer=$(curl -fsSL --connect-timeout 30 --max-time 120 https://claude.ai/install.sh)
 bash -c "$installer"
 
 if [ ! -x "$target" ]; then
