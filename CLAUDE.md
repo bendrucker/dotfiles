@@ -298,7 +298,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 
 `scripts/install` is the main entry point:
 1. `brew bundle` — Install Brewfile dependencies, leaving the self-updating casks alone where `scripts/brew-managed-machine` says another manager owns them
-2. Symlink `*/mise.toml` → `~/.config/mise/conf.d/`
+2. Trust `*/mise.toml`
 3. `mise install` — Install language runtimes
 4. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
 5. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
