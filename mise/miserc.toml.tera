@@ -13,14 +13,11 @@ env_conf_d = true
 {% if dotfiles is dir %}{% set standalone = dotfiles | canonicalize == dotfiles %}{% endif %}
 {% set tailgate_config = [xdg_config_home, "tailgate", "tailgate.hujson"] | join_path %}
 {% set tailgate_bin = [env.HOME, "src", "go", "bin", "tailgate"] | join_path %}
-{% set aw_import_screentime = [env.HOME, ".local", "bin", "aw-import-screentime"] | join_path %}
 
 env = [
   # launchctl bootstrap fails outright on a missing Program, which fails the
-  # whole apply. Casks are skipped in CI, and the other two come from installs
-  # that run earlier in scripts/install but can be absent.
-  {% if "/Applications/ActivityWatch.app" is dir %}"activitywatch",{% endif %}
-  {% if aw_import_screentime is file %}"aw-import-screentime",{% endif %}
+  # whole apply. tailgate comes from an install that runs earlier in
+  # scripts/install but can be absent.
   {% if tailgate_bin is file and tailgate_config is file %}"tailgate",{% endif %}
 
   # The nightly jobs need ~/.dotfiles to be a clone of its own. A symlink means
