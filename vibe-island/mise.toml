@@ -28,5 +28,6 @@ marker="${TMPDIR:-/tmp}/vibe-island-quit-by-mise"
 rm -f "$marker"
 if ! open -g -a 'Vibe Island'; then
   echo "Vibe Island was quit to apply its preference and could not be reopened" >&2
+  osascript -e 'display notification "Reopen it by hand." with title "Vibe Island could not be reopened"' || true
 fi
 """
