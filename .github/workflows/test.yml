@@ -52,18 +52,32 @@ jobs:
           mise-${{ runner.os }}-
         path: |
           ~/.local/share/mise
+    # The cache holds the whole prefix, so a restore lands where the image's
+    # Homebrew was rather than on top of it. Bootstrap's cleanup leaves the
+    # prefix holding exactly the Brewfile, which is what gets saved, and
+    # restoring it skips pouring every bottle again.
+    - name: Set aside the image's Homebrew
+      if: ${{ runner.os == 'macOS' }}
+      run: |
+        sudo mv /opt/homebrew /opt/homebrew.image
+        sudo install -d -o "$USER" -g admin /opt/homebrew
     - name: Cache Homebrew packages
+      id: homebrew
       uses: actions/cache@v6
       with:
         # runner.os does not distinguish Ubuntu releases, and the cached prefix
         # holds brew itself, so a v3 cache would restore 22.04's brew and glibc.
-        key: homebrew-v4-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
+        key: homebrew-v5-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
         restore-keys: |
-          homebrew-v4-${{ runner.os }}-
+          homebrew-v5-${{ runner.os }}-
         path: |
-          ~/Library/Caches/Homebrew
-          /opt/homebrew/Library/Taps
+          /opt/homebrew
           /home/linuxbrew/.linuxbrew
+    - name: Fall back to the image's Homebrew
+      if: ${{ runner.os == 'macOS' && steps.homebrew.outputs.cache-matched-key == '' }}
+      run: |
+        sudo rm -rf /opt/homebrew
+        sudo mv /opt/homebrew.image /opt/homebrew
     - name: Cache cargo-installed binaries
       uses: actions/cache@v6
       with:
