@@ -1,7 +1,3 @@
-// Claude Code moved from the `claude-code@latest` cask to Anthropic's native
-// installer, whose background updater delivers a release the day it ships
-// rather than after the cask bump and the next 3am bundle.
-//
 // Migrations run before the topic installers, so the native build is installed
 // here first. Removing the cask before then would leave the machine without a
 // `claude` until claude/install.sh ran, and a failed install would leave it

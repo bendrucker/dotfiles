@@ -20,7 +20,6 @@ beforeEach(() => {
 
 afterEach(() => box.remove());
 
-// curl prints the installer it was given and records that it ran.
 function stubCurl(installer: string, status = 0): void {
   box.write("installer.sh", `${installer}\n`);
   box.stub("curl", `touch ${box.path("curl-ran")}\ncat ${box.path("installer.sh")}\nexit ${status}`);

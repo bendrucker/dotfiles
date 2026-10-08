@@ -1,7 +1,6 @@
-// Claude Code comes from claude/install-native, outside npm and mise. An
-// older `npm i -g @anthropic-ai/claude-code` into a mise node left a `claude`
-// in that install's bin, and mise shims every bin of every installed version,
-// active or not, ahead of Homebrew on PATH.
+// mise shims every bin of every installed version, active or not, ahead of
+// Homebrew on PATH, so a leftover `claude` in an old npm install shadows the
+// native one.
 //
 // Only the package goes, not the node version holding it. Nothing in this repo
 // declares that version, but a project on some machine may still pin it.
