@@ -63,32 +63,32 @@ jobs:
           mise-${{ runner.os }}-
         path: |
           ~/.local/share/mise
-    # The cache holds the whole prefix, so a restore lands where the image's
-    # Homebrew was rather than on top of it. Bootstrap's cleanup leaves the
-    # prefix holding exactly the Brewfile, which is what gets saved, and
-    # restoring it skips pouring every bottle again.
-    - name: Set aside the image's Homebrew
+    # The cache holds the whole prefix, staged at /opt/homebrew-cached so the
+    # restore runs with the image's prefix still in place: its gtar and zstd
+    # link libraries by absolute path under /opt/homebrew, so they cannot run
+    # from anywhere else. A hit then swaps the staged prefix in. Bootstrap's
+    # cleanup leaves the prefix holding exactly the Brewfile, which is what
+    # gets saved, and restoring it skips pouring every bottle again.
+    - name: Stage the cached Homebrew
       if: ${{ runner.os == 'macOS' }}
-      run: |
-        sudo mv /opt/homebrew /opt/homebrew.image
-        sudo install -d -o "$USER" -g admin /opt/homebrew
+      run: sudo install -d -o "$USER" -g admin /opt/homebrew-cached
     - name: Restore Homebrew packages
       id: homebrew
       uses: actions/cache/restore@v6
       with:
         # runner.os does not distinguish Ubuntu releases, and the cached prefix
         # holds brew itself, so a v3 cache would restore 22.04's brew and glibc.
-        key: homebrew-v5-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
+        key: homebrew-v6-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
         restore-keys: |
-          homebrew-v5-${{ runner.os }}-
+          homebrew-v6-${{ runner.os }}-
         path: |
-          /opt/homebrew
+          /opt/homebrew-cached
           /home/linuxbrew/.linuxbrew
-    - name: Fall back to the image's Homebrew
-      if: ${{ runner.os == 'macOS' && steps.homebrew.outputs.cache-matched-key == '' }}
+    - name: Swap in the cached Homebrew
+      if: ${{ runner.os == 'macOS' && steps.homebrew.outputs.cache-matched-key != '' }}
       run: |
-        sudo rm -rf /opt/homebrew
-        sudo mv /opt/homebrew.image /opt/homebrew
+        sudo mv /opt/homebrew /opt/homebrew.image
+        sudo mv /opt/homebrew-cached /opt/homebrew
     - name: Restore cargo-installed binaries
       id: cargo
       uses: actions/cache/restore@v6
@@ -197,13 +197,21 @@ jobs:
         key: ${{ steps.mise.outputs.cache-primary-key }}
         path: |
           ~/.local/share/mise
+    # The save reads the prefix from where the restore writes it, and the
+    # link keeps the zstd it compresses with resolving its libraries.
+    - name: Stage Homebrew for saving
+      if: ${{ runner.os == 'macOS' && github.event_name != 'pull_request' && steps.homebrew.outputs.cache-hit != 'true' }}
+      run: |
+        sudo rm -rf /opt/homebrew-cached
+        sudo mv /opt/homebrew /opt/homebrew-cached
+        sudo ln -s /opt/homebrew-cached /opt/homebrew
     - name: Save Homebrew packages
       if: ${{ github.event_name != 'pull_request' && steps.homebrew.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
       with:
         key: ${{ steps.homebrew.outputs.cache-primary-key }}
         path: |
-          /opt/homebrew
+          /opt/homebrew-cached
           /home/linuxbrew/.linuxbrew
     - name: Save cargo-installed binaries
       if: ${{ github.event_name != 'pull_request' }}
