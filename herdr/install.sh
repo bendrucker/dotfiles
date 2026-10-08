@@ -72,7 +72,12 @@ fi
 # where that happens. It reinstalls every unpinned entry, missing ones included,
 # which is why it comes first: sync then has only pinned entries left to place,
 # instead of installing everything a second time.
-"$lazy" update || echo "✗ herdr-lazy update did not run; plugins may be stale" >&2
+#
+# CI restores the plugins from a cache keyed on plugins.list and leaves moving
+# them to the nightly upgrade, since update would reinstall every one of them.
+if [[ -z "${CI:-}" ]]; then
+  "$lazy" update || echo "✗ herdr-lazy update did not run; plugins may be stale" >&2
+fi
 
 # Pinned entries, which update skips, plus anything sitting at the wrong commit.
 # --prune makes the list authoritative in both directions, so dropping an entry
