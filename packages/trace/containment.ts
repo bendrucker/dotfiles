@@ -22,7 +22,6 @@ export function nestShell(spans: Span[]): void {
   }
 }
 
-/** The innermost shell span covering an interval, which is where a tool-derived span belongs. */
 export function deepestCovering(shell: Span[], start: number, end: number): Span | undefined {
   let best: Span | undefined;
   for (const span of shell) {

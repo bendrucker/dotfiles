@@ -31,8 +31,8 @@ trace_run() {
   fi
 }
 
-# A failure under set -e skips every trace_end, so the report closes whatever
-# this process left open at the X line, carrying its exit status.
+# A failure under set -e skips every trace_end, so an EXIT trap records the
+# exit status as an X line.
 if [ -n "${DOTFILES_TRACE_DIR-}" ]; then
   [ -n "${ZSH_VERSION-}" ] && zmodload zsh/datetime
   mkdir -p "$DOTFILES_TRACE_DIR"

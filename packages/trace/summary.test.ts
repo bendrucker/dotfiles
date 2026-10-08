@@ -10,7 +10,6 @@ function makeSpan(name: string, start: number, end: number, parent?: Span, overr
   return { name, start: T0 + start * S, end: T0 + end * S, error: false, source: "shell", parent, ...overrides };
 }
 
-/** The shape of a bootstrap run: a long silent bundle, a failed topic, and a sub-second step. */
 function fixture() {
   const root = makeSpan("bootstrap", 0, 400, undefined, { error: true });
   const homebrew = makeSpan("homebrew.sh", 1, 5, root);

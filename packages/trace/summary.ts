@@ -2,7 +2,6 @@ import { duration } from "#trace/span";
 import type { Node, Tree } from "#trace/tree";
 
 export interface SummaryOptions {
-  /** Rows in the self-time table. */
   top: number;
   /** Seconds below which the tree hides a span. */
   min: number;
@@ -32,9 +31,8 @@ function sectionOf(node: Node): Node {
 }
 
 /**
- * A gantt of the top two levels plus anything holding a twentieth of the run.
- * Offsets from the first span rather than epochs, so the axis reads as elapsed
- * minutes and seconds wherever the reader is.
+ * A gantt of the top two levels plus anything holding a twentieth of the run,
+ * with the axis in elapsed time from the first span.
  */
 export function gantt(tree: Tree): string {
   const origin = Math.min(...tree.roots.map((root) => root.span.start));
@@ -63,7 +61,7 @@ export function gantt(tree: Tree): string {
   );
 }
 
-/** The spans holding the most time of their own, which is where a slow run spends it. */
+/** The spans holding the most time of their own. */
 export function topTable(tree: Tree, count: number): string {
   const rows = [...tree.nodes]
     .sort((a, b) => b.self - a.self)

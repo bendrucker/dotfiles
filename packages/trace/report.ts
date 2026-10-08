@@ -10,10 +10,6 @@ export type Collect = (dir: string, shell: Span[]) => Span[] | Promise<Span[]>;
 
 const SOURCES = join(import.meta.dir, "sources");
 
-/**
- * Each tool gets its own file under sources/, found by listing the directory,
- * so adding one leaves this file and every other source unchanged.
- */
 export function sourceFiles(dir = SOURCES): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
