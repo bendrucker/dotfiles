@@ -21,37 +21,91 @@ function makeRow(overrides: Partial<Row> = {}): Row {
   };
 }
 
-function recorder(failing: string[] = [], written = WAKE_TEXT, refusal = ""): { run: Runner; calls: string[] } {
+const OPEN_PR = { number: 7, state: "OPEN", ref: "repo#7" } as const;
+
+function errorsFrom(act: () => void): string[] {
+  const errors: string[] = [];
+  const original = console.error;
+  console.error = (message: string) => errors.push(message);
+  try {
+    act();
+  } finally {
+    console.error = original;
+  }
+  return errors;
+}
+
+interface Checkout {
+  status?: string;
+  ahead?: string;
+}
+
+function recorder(
+  failing: string[] = [],
+  written = WAKE_TEXT,
+  refusal = "",
+  checkout: Checkout = {},
+): { run: Runner; calls: string[] } {
   const calls: string[] = [];
   const run: Runner = (cmd) => {
     const line = cmd.join(" ");
     calls.push(line);
     const ok = !failing.some((prefix) => line.startsWith(prefix));
     if (line.startsWith("gum write")) return { ok, stdout: written, stderr: "" };
+    if (line.includes(" status --porcelain")) return { ok, stdout: ok ? (checkout.status ?? "") : "", stderr: "" };
+    if (line.includes(" rev-list ")) return { ok, stdout: ok ? (checkout.ahead ?? "0\n") : "", stderr: "" };
     return { ok, stdout: "", stderr: ok ? "" : refusal };
   };
   return { run, calls };
 }
 
+const CHECK = [
+  "git -C /src/.worktrees/repo/topic status --porcelain --ignored",
+  "git -C /src/.worktrees/repo/topic rev-list --count HEAD --not --remotes",
+];
+
 describe("prune", () => {
-  test("trashes the checkout before handing the stale entry to wt", () => {
+  test("reads the checkout, then trashes it before handing the stale entry to wt", () => {
     const { run, calls } = recorder();
-    expect(prune(makeRow(), run)).toBe("done");
+    expect(prune(makeRow({ flags: ["dirty"] }), run)).toBe("done");
     expect(calls).toEqual([
+      ...CHECK,
       "herdr workspace close w1",
       "trash /src/.worktrees/repo/topic",
       "wt -C /src/repo remove topic --foreground --yes",
     ]);
   });
 
-  test.each<{ name: string; failing: string[]; ran: number; outcome: Outcome }>([
-    { name: "asks first and stops on no when a flag is set", failing: ["gum confirm"], ran: 1, outcome: "cancelled" },
-    { name: "never calls wt when the Trash refuses", failing: ["trash"], ran: 3, outcome: "failed" },
-  ])("$name", ({ failing, ran, outcome }) => {
-    const { run, calls } = recorder(failing);
-    expect(prune(makeRow({ flags: ["dirty"] }), run)).toBe(outcome);
-    expect(calls).toHaveLength(ran);
-    expect(calls.some((c) => c.startsWith("wt "))).toBe(false);
+  test.each<{ name: string; flags: string[]; failing: string[]; checkout: Checkout; asked: string }>([
+    {
+      name: "work done since the cache was written",
+      flags: [],
+      failing: [],
+      checkout: { status: " M file\n!! debug.log\n", ahead: "2\n" },
+      asked: "Prune topic? dirty, unpushed:2, ignored:1",
+    },
+    { name: "a checkout git cannot read", flags: [], failing: ["git -C"], checkout: {}, asked: "Prune topic? unreadable" },
+    { name: "a live agent", flags: ["live", "dirty"], failing: [], checkout: {}, asked: "Prune topic? live" },
+  ])("asks before removing $name", ({ flags, failing, checkout, asked }) => {
+    const { run, calls } = recorder([...failing, "gum confirm"], WAKE_TEXT, "", checkout);
+    expect(prune(makeRow({ flags }), run)).toBe("cancelled");
+    expect(calls.find((c) => c.startsWith("gum confirm"))).toStartWith(`gum confirm --default=false ${asked}`);
+    expect(calls.some((c) => c.startsWith("herdr workspace close"))).toBe(false);
+  });
+
+  test("counts unpushed commits from the forge's copy of the branch when it has one", () => {
+    const { run, calls } = recorder();
+    prune(makeRow({ pr: { number: 7, state: "MERGED", ref: "repo#7", head: "abc123" } }), run);
+    expect(calls[1]).toBe("git -C /src/.worktrees/repo/topic rev-list --count abc123..HEAD");
+  });
+
+  test.each<{ name: string; failing: string; ran: string }>([
+    { name: "the workspace will not close", failing: "herdr workspace close", ran: "herdr workspace close w1" },
+    { name: "the Trash refuses", failing: "trash", ran: "trash /src/.worktrees/repo/topic" },
+  ])("stops when $name", ({ failing, ran }) => {
+    const { run, calls } = recorder([failing]);
+    expect(errorsFrom(() => expect(prune(makeRow(), run)).toBe("failed"))).toHaveLength(1);
+    expect(calls.at(-1)).toBe(ran);
   });
 });
 
@@ -74,20 +128,6 @@ test("the confirmation lists the flags and at most ten ignored paths", () => {
       …and 2 more"
   `);
 });
-
-const OPEN_PR = { number: 7, state: "OPEN", ref: "repo#7" } as const;
-
-function errorsFrom(act: () => void): string[] {
-  const errors: string[] = [];
-  const original = console.error;
-  console.error = (message: string) => errors.push(message);
-  try {
-    act();
-  } finally {
-    console.error = original;
-  }
-  return errors;
-}
 
 describe("close", () => {
   test.each<{ forge: "github" | "gitlab"; command: string }>([

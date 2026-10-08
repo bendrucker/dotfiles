@@ -120,7 +120,7 @@ describe("buildRows", () => {
     const git = (): GitFacts => ({ originUrl, ignored: [] });
     const [row] = buildRows(makeSources({ caches: { w1: makeCache() }, git }));
     expect(row?.forge).toBe(forge);
-    expect(row?.pr).toEqual({ number: 12, state: "OPEN", ref });
+    expect(row?.pr).toEqual({ number: 12, state: "OPEN", ref, head: "abc" });
   });
 
   test("prefers the open PR over a newer closed one", () => {

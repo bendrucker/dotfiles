@@ -72,6 +72,12 @@ describe("the work machine", () => {
   });
 });
 
+test("says herdr is unreachable rather than showing an empty live board", () => {
+  box.stub("herdr", "exit 1");
+  expect(cleanup("lines").stdout).toContain("herdr unreachable");
+  expect(cleanup("rows", "--json").status).toBe(1);
+});
+
 test("names a local workspace it cannot find", () => {
   const result = cleanup("prune", "w404");
   expect(result.status).toBe(1);

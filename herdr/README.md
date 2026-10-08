@@ -90,7 +90,9 @@ Everything else is counted in the header and hidden.
 | `m`     | Show or hide rows from the `work` machine                             |
 
 Prune asks first when the workspace has a live agent, uncommitted or unpushed
-work, or ignored files, and lists up to ten of those files. `wt remove` deletes
+work, or ignored files, and lists up to ten of those files. It reads the
+checkout again on the keypress rather than trusting the board, and asks
+whenever git cannot answer. `wt remove` deletes
 the branch only when it was merged, leaving the rest for `wt-prune`.
 
 The board reads pull request state from

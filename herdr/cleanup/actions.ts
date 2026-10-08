@@ -77,18 +77,44 @@ export function confirmText(row: Row): string {
   return lines.join("\n");
 }
 
+// The board's flags come from a cache that can be minutes old, so the safety
+// check reads the checkout again at the moment of removal. A read that fails
+// becomes a flag of its own, which forces the confirmation.
+export function current(row: Row, run: Runner): Row {
+  const flags = row.flags.filter((flag) => flag === "live");
+  const status = run(["git", "-C", row.path, "status", "--porcelain", "--ignored"]);
+  const lines = status.stdout.split("\n").filter(Boolean);
+  const ignored = lines.filter((line) => line.startsWith("!! ")).map((line) => line.slice(3));
+  // The forge's copy of the branch is the baseline, since a merged branch's
+  // remote ref is usually deleted. Without one, any remote will do.
+  const base = row.pr?.head ? [`${row.pr.head}..HEAD`] : ["HEAD", "--not", "--remotes"];
+  const ahead = run(["git", "-C", row.path, "rev-list", "--count", ...base]);
+  const unpushed = Number.parseInt(ahead.stdout, 10);
+  if (!status.ok || !ahead.ok || Number.isNaN(unpushed)) flags.push("unreadable");
+  if (lines.some((line) => !line.startsWith("!! "))) flags.push("dirty");
+  if (unpushed > 0) flags.push(`unpushed:${unpushed}`);
+  if (ignored.length > 0) flags.push(`ignored:${ignored.length}`);
+  return { ...row, flags, ignored };
+}
+
 // The checkout goes to the Trash before Worktrunk sees it, so whatever it held
 // stays recoverable, and `wt remove` only has a stale entry and a branch left.
-export function prune(row: Row, run: Runner): Outcome {
-  if (row.flags.length > 0) {
-    if (!run(["gum", "confirm", "--default=false", confirmText(row)], { terminal: "all" }).ok) return "cancelled";
-  }
-  run(["herdr", "workspace", "close", row.workspaceId]);
+function remove(row: Row, run: Runner): Outcome {
+  const closed = run(["herdr", "workspace", "close", row.workspaceId]);
+  if (!closed.ok) return fail(`could not close the ${row.label} workspace, leaving the checkout in place: ${reason(closed)}`);
   const trashed = run(["trash", row.path]);
   if (!trashed.ok) return fail(`could not move ${row.path} to the Trash, leaving it in place: ${reason(trashed)}`);
   const removed = run(["wt", "-C", row.repoRoot, "remove", row.branch, "--foreground", "--yes"]);
   if (!removed.ok) return fail(`${row.path} is in the Trash, but wt remove failed for ${row.branch}: ${reason(removed)}`);
   return "done";
+}
+
+export function prune(row: Row, run: Runner): Outcome {
+  const now = current(row, run);
+  if (now.flags.length > 0) {
+    if (!run(["gum", "confirm", "--default=false", confirmText(now)], { terminal: "all" }).ok) return "cancelled";
+  }
+  return remove(now, run);
 }
 
 export function close(row: Row, run: Runner): Outcome {
@@ -97,12 +123,13 @@ export function close(row: Row, run: Runner): Outcome {
   if (row.forge === undefined) return fail(`${row.label}'s origin is neither GitHub nor GitLab, so ${row.pr.ref} can't be closed from here`);
   const number = String(row.pr.number);
   const cmd = row.forge === "github" ? ["gh", "pr", "close", number] : ["glab", "mr", "close", number];
+  const now = current(row, run);
   const question = [`Close ${row.pr.ref} and prune ${row.label}?`];
-  if (row.flags.length > 0) question.push("", confirmText(row));
+  if (now.flags.length > 0) question.push("", confirmText(now));
   if (!run(["gum", "confirm", "--default=false", question.join("\n")], { terminal: "all" }).ok) return "cancelled";
   const closed = run(cmd, { cwd: row.path });
   if (!closed.ok) return fail(`could not close ${row.pr.ref}: ${reason(closed)}`);
-  return prune({ ...row, flags: [] }, run);
+  return remove(now, run);
 }
 
 export function wake(row: Row, run: Runner): Outcome {

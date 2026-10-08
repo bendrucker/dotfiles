@@ -21,7 +21,7 @@ const agentStatePath = join(state, "herdr-agent-state.json");
 const machineFlag = join(state, "herdr-cleanup-machines");
 const workspaceStatus = join(dirname(dirname(dirname(self))), "bin", "herdr-workspace-status");
 
-function localRows(): Row[] {
+function localRows(): Row[] | undefined {
   return loadRows({ cacheDir, agentStatePath, now: Date.now() });
 }
 
@@ -61,7 +61,7 @@ function lines(): void {
 }
 
 function find(target: string): Row | undefined {
-  return localRows().find((row) => row.workspaceId === target);
+  return localRows()?.find((row) => row.workspaceId === target);
 }
 
 // A remote row's action runs the same subcommand on that machine, with a
@@ -152,9 +152,15 @@ function main(argv: string[]): number {
       Bun.spawnSync({ cmd: [workspaceStatus], stdio: ["ignore", "ignore", "ignore"] });
       lines();
       return 0;
-    case "rows":
-      console.log(arg === "--json" ? JSON.stringify(localRows()) : render(localRows(), [], false, Date.now()).join("\n"));
+    case "rows": {
+      const rows = localRows();
+      if (arg === "--json") {
+        // Fail rather than answer with no rows, so the far side shows the machine as unreachable.
+        if (rows === undefined) return 1;
+        console.log(JSON.stringify(rows));
+      } else console.log(render(rows, [], false, Date.now()).join("\n"));
       return 0;
+    }
     case "toggle-machine":
       if (existsSync(machineFlag)) rmSync(machineFlag);
       else {

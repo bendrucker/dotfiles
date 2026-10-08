@@ -20,7 +20,7 @@ export interface Row {
   repoName: string;
   branch: string;
   forge: Forge | undefined;
-  pr?: { number: number; state: PrState; ref: string };
+  pr?: { number: number; state: PrState; ref: string; head?: string };
   /** The pane to focus or wake. */
   agentPane?: string;
   step: Step;
@@ -82,7 +82,7 @@ function isChecks(value: unknown): value is Checks {
 
 function parsePr(value: unknown): PrInfo | undefined {
   if (!isRecord(value)) return undefined;
-  const { number, state, draft, conflicting, checks, updated } = value;
+  const { number, state, draft, conflicting, checks, updated, head } = value;
   if (typeof number !== "number" || !isPrState(state) || !isChecks(checks)) return undefined;
   return {
     number,
@@ -91,6 +91,7 @@ function parsePr(value: unknown): PrInfo | undefined {
     conflicting: conflicting === true,
     checks,
     updated: text(updated),
+    ...(typeof head === "string" && head !== "" ? { head } : {}),
   };
 }
 
@@ -220,7 +221,7 @@ function rowFor(
     repoName: workspace.repoName,
     branch: cache?.branch ?? "",
     forge,
-    pr: pr && { number: pr.number, state: pr.state, ref: `${workspace.repoName}${mark}${pr.number}` },
+    pr: pr && { number: pr.number, state: pr.state, ref: `${workspace.repoName}${mark}${pr.number}`, head: pr.head },
     agentPane: pickPane(agents, disposition.pane),
     step: disposition.step,
     reason: disposition.reason,
@@ -302,12 +303,13 @@ function gitFacts(path: string): GitFacts {
   return { originUrl: originUrl || undefined, ignored };
 }
 
-export function loadRows(options: { cacheDir: string; agentStatePath: string; now: number }): Row[] {
+/** Undefined when herdr can't be read, so a down server never reads as an empty board. */
+export function loadRows(options: { cacheDir: string; agentStatePath: string; now: number }): Row[] | undefined {
   let snapshot: unknown;
   try {
     snapshot = JSON.parse(run(["herdr", "api", "snapshot"]));
   } catch {
-    snapshot = undefined;
+    return undefined;
   }
   return buildRows({
     snapshot,

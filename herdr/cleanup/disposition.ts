@@ -9,6 +9,8 @@ export interface PrInfo {
   conflicting: boolean;
   checks: Checks;
   updated: string;
+  /** The commit the forge holds for the branch. */
+  head?: string;
 }
 
 export interface AgentInfo {

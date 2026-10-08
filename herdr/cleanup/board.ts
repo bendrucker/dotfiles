@@ -18,11 +18,11 @@ export function key(row: Row): string {
 
 // Three header lines, then one line per actionable row as `<key>\t<display>`.
 // The header has an empty key so `--with-nth=2..` still shows it.
-export function render(local: Row[], remote: Row[] | undefined, showRemote: boolean, now: number): string[] {
-  const rows = [...local, ...(remote ?? [])];
+export function render(local: Row[] | undefined, remote: Row[] | undefined, showRemote: boolean, now: number): string[] {
+  const rows = [...(local ?? []), ...(remote ?? [])];
   const shown = rows.filter((row) => row.step !== "collapsed");
   const sum = summarize(rows);
-  const freshness = [`forge ${age(summarize(local).oldestFetch, now)}`, "herdr live"];
+  const freshness = [`forge ${age(summarize(local ?? []).oldestFetch, now)}`, local === undefined ? "herdr unreachable" : "herdr live"];
   if (showRemote) freshness.push(remote === undefined ? `${MACHINE} unreachable` : `${MACHINE} ${age(summarize(remote).oldestFetch, now)}`);
 
   const table = alignColumns(
