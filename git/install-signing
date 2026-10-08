@@ -44,20 +44,23 @@ for (const [key, value] of [
 
 const email = output(["git", "config", "user.email"]);
 const allowed = existsSync(allowedSigners) ? readFileSync(allowedSigners, "utf8") : "";
-if (email && !allowed.includes(publicKey)) appendFileSync(allowedSigners, `${email} ${publicKey}\n`);
+if (email && !allowed.includes(publicKey)) {
+  const separator = allowed && !allowed.endsWith("\n") ? "\n" : "";
+  appendFileSync(allowedSigners, `${separator}${email} ${publicKey}\n`);
+}
 
 if (previous === signingKey) process.exit(0);
 
 // A new key goes to GitHub once, when it is first configured, so a missing
 // scope reports here instead of on every install after.
 const title = `${values.name} (${machineName()})`;
-const added = Bun.spawnSync({
+const added = Bun.which("gh") && Bun.spawnSync({
   cmd: ["gh", "ssh-key", "add", "-", "--type", "signing", "--title", title],
   stdin: new TextEncoder().encode(publicKey),
   stdout: "ignore",
   stderr: "pipe",
 });
-if (added.exitCode !== 0) {
+if (!added || added.exitCode !== 0) {
   console.error(`Could not add the signing key to GitHub. Grant the scope and add it:
   gh auth refresh -h github.com -s admin:ssh_signing_key
   echo '${publicKey}' | gh ssh-key add - --type signing --title '${title}'`);

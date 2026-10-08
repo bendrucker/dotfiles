@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 
@@ -61,6 +62,25 @@ describe("install-signing", () => {
     expect(r.status).toBe(0);
     expect(r.stderr).toContain("gh auth refresh -h github.com -s admin:ssh_signing_key");
     expect(r.stderr).toContain(`echo '${key}' | gh ssh-key add`);
+  });
+
+  test("prints the commands to run without gh", () => {
+    rmSync(join(box.bin, "gh"));
+    const tools = box.mkdir("tools");
+    symlinkSync(Bun.which("git") ?? "git", join(tools, "git"));
+    symlinkSync(process.execPath, join(tools, "bun"));
+    const r = run([script], {
+      onlyPath: [box.bin, tools],
+      env: { HOME: box.dir, XDG_CONFIG_HOME: box.path("config"), GIT_CONFIG_GLOBAL: box.path("gitconfig") },
+    });
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain(`echo '${key}' | gh ssh-key add`);
+  });
+
+  test("starts a new line after a signer file missing its final newline", () => {
+    box.write("config/git/allowed_signers", "me@example.com ecdsa-sha2-nistp256 AAAAother");
+    install();
+    expect(box.read("config/git/allowed_signers")).toBe(`me@example.com ecdsa-sha2-nistp256 AAAAother\nme@example.com ${key}\n`);
   });
 
   test.each<{ name: string; lines: string[] }>([
