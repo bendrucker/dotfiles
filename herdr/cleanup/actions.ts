@@ -1,11 +1,8 @@
-import { join } from "node:path";
 import type { Row } from "./rows";
 
-const BIN = join(import.meta.dir, "bin", "herdr-cleanup");
-
 export const WAKE_TEXT = [
-  "[herdr-cleanup] PR state may be stale.",
-  "Re-check CI, reviews, and merge status, then continue toward merging. If blocked, say what you need from me.",
+  "[herdr-cleanup] Your PR needs work.",
+  "Re-check CI, reviews, and merge conflicts, then continue toward merging. If blocked, say what you need from me.",
 ].join("\n");
 
 export type Outcome = "done" | "cancelled" | "failed";
@@ -80,7 +77,7 @@ export function confirmText(row: Row): string {
   return lines.join("\n");
 }
 
-// The board's flags come from a cache that can be minutes old, so the safety
+// The board's flags come from a wt list that can be minutes old, so the safety
 // check reads the checkout again at the moment of removal, branch included. A
 // read that fails becomes a flag of its own, which forces the confirmation.
 export function current(row: Row, run: Runner): Row {
@@ -88,9 +85,9 @@ export function current(row: Row, run: Runner): Row {
   const status = run(["git", "-C", row.path, "status", "--porcelain", "--ignored"]);
   const lines = status.stdout.split("\n").filter(Boolean);
   const ignored = lines.filter((line) => line.startsWith("!! ")).map((line) => line.slice(3));
-  // The forge's copy of the branch is the baseline, since a merged branch's
-  // remote ref is usually deleted. Without one, any remote will do.
-  const base = row.pr?.head ? [`${row.pr.head}..HEAD`] : ["HEAD", "--not", "--remotes"];
+  // A merged branch's remote ref is usually deleted, but wt found its content
+  // in the default branch, so only commits made since then are at risk.
+  const base = row.step === "prune" && row.head ? [`${row.head}..HEAD`] : ["HEAD", "--not", "--remotes"];
   const ahead = run(["git", "-C", row.path, "rev-list", "--count", ...base]);
   const unpushed = Number.parseInt(ahead.stdout, 10);
   const branch = run(["git", "-C", row.path, "branch", "--show-current"]).stdout.trim();
@@ -135,9 +132,7 @@ export function prune(row: Row, run: Runner): Outcome {
 
 export function close(row: Row, run: Runner): Outcome {
   if (row.pr === undefined) return fail(`${row.label} has no pull request to close`);
-  if (row.pr.state !== "OPEN") return fail(`${row.pr.ref} is already ${row.pr.state.toLowerCase()}, so press p to prune`);
   if (row.forge === undefined) return fail(`${row.label}'s origin is neither GitHub nor GitLab, so ${row.pr.ref} can't be closed from here`);
-  if ((row.openPrs ?? 1) > 1) return fail(`${row.label} has ${row.openPrs} open pull requests, so close them on the forge`);
   const now = current(row, run);
   const why = moved(row, now);
   if (why) return fail(`${why}. Nothing was closed`);
@@ -153,7 +148,11 @@ export function close(row: Row, run: Runner): Outcome {
 
 export function wake(row: Row, run: Runner): Outcome {
   if (row.agentPane === undefined) return fail(`${row.label} has no agent pane to wake`);
-  const edited = run([process.execPath, BIN, "write", WAKE_TEXT, `Wake ${row.label}`], { terminal: "stderr" });
+  // At --width=0 gum stops wrapping and opens scrolled to the cursor at the end,
+  // which hides the [herdr-cleanup] tag the prompt is meant to show.
+  const width = Math.max(40, (process.stderr.columns ?? 80) - 4);
+  const editor = ["gum", "write", `--width=${width}`, "--height=6", "--char-limit=0", `--value=${WAKE_TEXT}`];
+  const edited = run(editor, { terminal: "stderr" });
   const text = edited.stdout.trim();
   if (!edited.ok || text === "") return "cancelled";
   const sent = run(["herdr", "agent", "prompt", row.agentPane, text]);

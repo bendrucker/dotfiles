@@ -6,27 +6,17 @@
 
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { close, go, prune, spawn, wake } from "../actions";
-import { MACHINE, render } from "../board";
-import { edit } from "../prompt";
+import { HEADER_LINES, MACHINE, render } from "../board";
 import { loadRows, type Row } from "../rows";
 
 const REMOTE_SCRIPT = "~/.dotfiles/herdr/cleanup/bin/herdr-cleanup";
 const REMOTE_TIMEOUT_MS = 10_000;
-const REFRESH_TIMEOUT_MS = 60_000;
-const REMOTE_STATUS = "~/.dotfiles/herdr/bin/herdr-workspace-status";
 
 const self = realpathSync(import.meta.path);
 const state = join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "dotfiles");
-const cacheDir = join(state, "herdr-pr-state");
-const agentStatePath = join(state, "herdr-agent-state.json");
 const machineFlag = join(state, "herdr-cleanup-machines");
-const workspaceStatus = join(dirname(dirname(dirname(self))), "bin", "herdr-workspace-status");
-
-function localRows(): Row[] | undefined {
-  return loadRows({ cacheDir, agentStatePath, now: Date.now() });
-}
 
 function isRow(value: unknown): value is Row {
   if (typeof value !== "object" || value === null) return false;
@@ -57,18 +47,9 @@ function remoteRows(): Row[] | undefined {
   }
 }
 
-// A forge that hangs costs one timeout rather than the board.
-function refresh(): void {
-  const options = { stdio: ["ignore", "ignore", "ignore"], timeout: REFRESH_TIMEOUT_MS } as const;
-  Bun.spawnSync({ cmd: [workspaceStatus], ...options });
-  if (existsSync(machineFlag)) {
-    Bun.spawnSync({ cmd: ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", MACHINE, REMOTE_STATUS], ...options });
-  }
-}
-
 function lines(): void {
   const showRemote = existsSync(machineFlag);
-  const output = render(localRows(), showRemote ? remoteRows() : [], showRemote, Date.now());
+  const output = render(loadRows(), showRemote ? remoteRows() : [], showRemote);
   console.log(output.join("\n"));
 }
 
@@ -85,7 +66,7 @@ function act(action: string, target: string | undefined): number {
     });
     return child.exitCode ?? 1;
   }
-  const rows = localRows();
+  const rows = loadRows();
   if (rows === undefined) {
     console.error("herdr-cleanup: herdr is unreachable");
     return 1;
@@ -118,7 +99,7 @@ function board(): number {
       "--no-input",
       "--ansi",
       "--color=header:-1",
-      "--header-lines=3",
+      `--header-lines=${HEADER_LINES}`,
       "--delimiter=\t",
       "--with-nth=2..",
       "--layout=reverse",
@@ -134,7 +115,7 @@ function board(): number {
       "--bind",
       `w:execute(${bin} wake {1})+${reload}`,
       "--bind",
-      `r:reload(${bin} refresh)`,
+      `r:${reload}`,
       "--bind",
       `m:execute-silent(${bin} toggle-machine)+${reload}`,
       "--bind",
@@ -146,7 +127,7 @@ function board(): number {
 }
 
 function usage(): number {
-  console.error("usage: herdr-cleanup open | board | lines | refresh | rows [--json] | toggle-machine | go|prune|close|wake <workspace> | write <text> <title>");
+  console.error("usage: herdr-cleanup open | board | lines | rows [--json] | toggle-machine | go|prune|close|wake <workspace>");
   return 2;
 }
 
@@ -166,17 +147,13 @@ function main(argv: string[]): number {
     case "lines":
       lines();
       return 0;
-    case "refresh":
-      refresh();
-      lines();
-      return 0;
     case "rows": {
-      const rows = localRows();
+      const rows = loadRows();
       if (arg === "--json") {
         // Fail rather than answer with no rows, so the far side shows the machine as unreachable.
         if (rows === undefined) return 1;
         console.log(JSON.stringify(rows));
-      } else console.log(render(rows, [], false, Date.now()).join("\n"));
+      } else console.log(render(rows, [], false).join("\n"));
       return 0;
     }
     case "toggle-machine":
@@ -196,15 +173,4 @@ function main(argv: string[]): number {
   }
 }
 
-// The wake prompt's editor prints what to send on stdout, and exits 1 on cancel.
-async function write(value: string, title: string): Promise<number> {
-  const text = await edit(value, title);
-  if (text === undefined) return 1;
-  process.stdout.write(text);
-  return 0;
-}
-
-if (import.meta.main) {
-  const [command, ...rest] = process.argv.slice(2);
-  process.exit(command === "write" ? await write(rest[0] ?? "", rest[1] ?? "") : main(process.argv.slice(2)));
-}
+if (import.meta.main) process.exit(main(process.argv.slice(2)));

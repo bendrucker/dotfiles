@@ -196,13 +196,13 @@ report_workspace() {
   # that does not answer, from a rate limit or a lapsed login or no network,
   # leaves the last report standing until its TTL runs out, since a report
   # built without it would say the pull request is gone.
-  local prs='[]' pr_head='' pr_bucket='' pr_glyph='' unasked=
+  local prs='[]' pr_head='' pr_bucket='' pr_glyph=''
   host=$(remote_host "$(git -C "$path" config --get remote.origin.url 2>/dev/null)")
   if [ -n "$default" ] && [ "$branch" != "$default" ] && [ "${branch#@}" = "$branch" ]; then
     case "$host" in
-      "") unasked=1 ;;
-      github.com) if command -v gh >/dev/null 2>&1; then prs=$(github_prs "$path" "$branch" "$default") || prs=; else unasked=1; fi ;;
-      *) if command -v glab >/dev/null 2>&1; then prs=$(gitlab_prs "$path" "$branch" "$default") || prs=; else unasked=1; fi ;;
+      "") ;;
+      github.com) command -v gh >/dev/null 2>&1 && { prs=$(github_prs "$path" "$branch" "$default") || prs=; } ;;
+      *) command -v glab >/dev/null 2>&1 && { prs=$(gitlab_prs "$path" "$branch" "$default") || prs=; } ;;
     esac
     if [ -z "$prs" ]; then
       echo "herdr-workspace-status: $host did not answer for $label ($id), keeping its last report" >&2
@@ -270,30 +270,6 @@ report_workspace() {
   done
   herdr workspace report-metadata "${args[@]}" >/dev/null 2>&1 ||
     echo "herdr-workspace-status: could not report $label ($id)" >&2
-
-  # A forge nobody asked has no answer to cache, and an empty list with a fresh
-  # time would tell the board the branch has no pull request.
-  [ -n "$unasked" ] ||
-    cache_workspace "$id" "$path" "$branch" "$default" "$prs" "$n" "$([ "$local_glyph" = "$GLYPH_DIRTY" ] && echo true || echo false)"
-}
-
-# What the cleanup board reads instead of asking the forge itself. A forge that
-# did not answer returned before this, so the file keeps its last fetched_at and
-# the board can say how old it is.
-CACHE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/herdr-pr-state"
-
-cache_workspace() {
-  local id=$1 path=$2 branch=$3 default=$4 prs=$5 unpushed=$6 dirty=$7 pending
-  mkdir -p "$CACHE_DIR" 2>/dev/null || return 0
-  pending="$CACHE_DIR/.$id.$$"
-  jq -n \
-    --arg workspace_id "$id" --arg path "$path" --arg branch "$branch" --arg default "$default" \
-    --argjson prs "$prs" --argjson unpushed "$unpushed" --argjson dirty "$dirty" \
-    --arg fetched_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{workspace_id: $workspace_id, path: $path, branch: $branch, default: $default,
-      prs: $prs, unpushed: $unpushed, dirty: $dirty, fetched_at: $fetched_at}' >"$pending" 2>/dev/null ||
-    { rm -f "$pending"; return 0; }
-  mv -f "$pending" "$CACHE_DIR/$id.json" 2>/dev/null || rm -f "$pending"
 }
 
 workspaces=$(herdr workspace list 2>/dev/null | jq -r '

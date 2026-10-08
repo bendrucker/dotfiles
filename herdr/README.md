@@ -77,12 +77,18 @@ own rules and a path or a flag comes back in pieces
 It lists each worktree workspace that needs you or is ready to finish, and
 counts the rest in the header. A row leads with its next step:
 
-- `go`: the agent is blocked or done, or the pull request is failing CI,
-  conflicting, or ready to merge
-- `wake`: the agent is idle and its pull request moved after it stopped
-- `prune`: the pull request was merged or closed
+- `review`: the agent is waiting on you to review something. The row shows
+  the kind (`plan`, `code`, `pr-body`, `doc`, `question`) and the agent's
+  one-line summary, read from the `review`, `review_kind` and `review_summary`
+  pane tokens that the Claude `review:human` skill and hooks report
+- `go`: the agent is blocked or done, or the pull request is ready to merge,
+  or it is failing CI with no agent to fix it
+- `wake`: the agent is idle and its pull request is failing CI, conflicting,
+  or has changes requested
+- `prune`: Worktrunk found the branch's content in the default branch and no
+  pull request is open
 
-`enter` performs `go`, `w` performs `wake`, and `p` performs `prune`.
+`enter` performs `review` and `go`, `w` performs `wake`, and `p` performs `prune`.
 
 | Key     | Action                                                                          |
 | ------- | ------------------------------------------------------------------------------- |
@@ -90,7 +96,7 @@ counts the rest in the header. A row leads with its next step:
 | `p`     | On a `prune` row, trash the checkout, run `wt remove`, then close the workspace |
 | `x`     | Close an open pull request, or a GitLab merge request, then prune               |
 | `w`     | Edit and send a `[herdr-cleanup]` prompt to the agent                           |
-| `r`     | Re-query the forge for every workspace shown, and reload                        |
+| `r`     | Reload                                                                          |
 | `m`     | Show or hide rows from the `work` machine                                       |
 | `q`     | Close the board                                                                 |
 
@@ -100,14 +106,13 @@ checkout again on the keypress rather than trusting the board, and asks
 whenever git cannot answer. The checkout goes to the Trash first, so ignored
 files stay recoverable, and the workspace closes last because the board may be
 running inside it. `wt remove` deletes the branch only when it was merged.
-`wt-prune` handles the rest. `x` always asks, and refuses a branch with more
-than one open pull request.
+`wt-prune` handles the rest, including a branch whose pull request was closed
+without merging, which the board counts as collapsed. `x` always asks.
 
-The board reads pull request state from
-`$XDG_STATE_HOME/dotfiles/herdr-pr-state/<workspace>.json`, which
-`bin/herdr-workspace-status` writes each time the forge answers. The header
-shows the oldest of those files as `forge 5m ago`, so a forge that has stopped
-answering shows up as an age that keeps growing.
+Branch, pull request, and CI state come from `wt list --full --format=json`,
+run once per repository. Worktrunk caches CI for under a minute, so `r` sees
+a new result soon after the forge does. A workspace wt does not list shows as
+`go` with `wt failed` or `not in wt list` rather than disappearing.
 
 `work` is the ssh host alias of the other machine. Its rows start hidden, and
 `m` toggles them through a flag file under `$XDG_STATE_HOME/dotfiles`, so the

@@ -11,7 +11,7 @@ function makeRow(overrides: Partial<Row> = {}): Row {
     repoName: "repo",
     branch: "topic",
     forge: "github",
-    pr: { number: 7, state: "MERGED", ref: "repo#7" },
+    head: "abc123",
     agentPane: "w1:p2",
     step: "prune",
     reason: "merged",
@@ -21,7 +21,7 @@ function makeRow(overrides: Partial<Row> = {}): Row {
   };
 }
 
-const OPEN_PR = { number: 7, state: "OPEN", ref: "repo#7" } as const;
+const OPEN_PR = { number: 7, ref: "repo#7" };
 
 function errorsFrom(act: () => void): string[] {
   const errors: string[] = [];
@@ -52,7 +52,7 @@ function recorder(
     const line = cmd.join(" ");
     calls.push(line);
     const ok = !failing.some((prefix) => line.startsWith(prefix));
-    if (line.includes("herdr-cleanup write")) return { ok, stdout: written, stderr: "" };
+    if (line.startsWith("gum write")) return { ok, stdout: written, stderr: "" };
     if (line.includes(" status --porcelain")) return { ok, stdout: ok ? (checkout.status ?? "") : "", stderr: "" };
     if (line.includes(" rev-list ")) return { ok, stdout: ok ? (checkout.ahead ?? "0\n") : "", stderr: "" };
     if (line.includes(" branch --show-current")) return { ok, stdout: ok ? (checkout.branch ?? "topic\n") : "", stderr: "" };
@@ -63,7 +63,7 @@ function recorder(
 
 const CHECK = [
   "git -C /src/.worktrees/repo/topic status --porcelain --ignored",
-  "git -C /src/.worktrees/repo/topic rev-list --count HEAD --not --remotes",
+  "git -C /src/.worktrees/repo/topic rev-list --count abc123..HEAD",
   "git -C /src/.worktrees/repo/topic branch --show-current",
 ];
 
@@ -109,7 +109,7 @@ describe("prune", () => {
 
   test.each<{ name: string; flags: string[]; live?: boolean; failing: string[]; checkout: Checkout; asked: string }>([
     {
-      name: "work done since the cache was written",
+      name: "work done since wt listed it",
       flags: [],
       failing: [],
       checkout: { status: " M file\n!! debug.log\n", ahead: "2\n" },
@@ -124,10 +124,13 @@ describe("prune", () => {
     expect(calls.some((c) => c.startsWith("trash"))).toBe(false);
   });
 
-  test("counts unpushed commits from the forge's copy of the branch when it has one", () => {
+  test.each<{ name: string; row: Partial<Row>; range: string }>([
+    { name: "since wt found it merged", row: {}, range: "abc123..HEAD" },
+    { name: "against every remote without a head", row: { head: undefined }, range: "HEAD --not --remotes" },
+  ])("counts unpushed commits $name", ({ row, range }) => {
     const { run, calls } = recorder();
-    prune(makeRow({ pr: { number: 7, state: "MERGED", ref: "repo#7", head: "abc123" } }), run);
-    expect(calls[1]).toBe("git -C /src/.worktrees/repo/topic rev-list --count abc123..HEAD");
+    prune(makeRow(row), run);
+    expect(calls[1]).toBe(`git -C /src/.worktrees/repo/topic rev-list --count ${range}`);
   });
 
   test.each<{ name: string; failing: string; ran: string }>([
@@ -179,16 +182,11 @@ describe("close", () => {
   });
 
   test.each<{ name: string; row: Partial<Row>; error: string }>([
-    { name: "an already merged PR", row: {}, error: "repo#7 is already merged, so press p to prune" },
+    { name: "a branch with no PR", row: {}, error: "topic has no pull request to close" },
     {
       name: "an origin on neither forge",
       row: { pr: OPEN_PR, forge: undefined },
       error: "topic's origin is neither GitHub nor GitLab, so repo#7 can't be closed from here",
-    },
-    {
-      name: "a branch with more than one open PR",
-      row: { pr: OPEN_PR, openPrs: 2 },
-      error: "topic has 2 open pull requests, so close them on the forge",
     },
   ])("runs nothing for $name", ({ row, error }) => {
     const { run, calls } = recorder();
@@ -207,7 +205,7 @@ describe("wake", () => {
   test("draws the editor on stderr and reads the text from stdout", () => {
     const seen: (string | undefined)[] = [];
     const run: Runner = (cmd, options) => {
-      if (cmd[2] === "write") seen.push(options?.terminal);
+      if (cmd[1] === "write") seen.push(options?.terminal);
       return { ok: true, stdout: "hi", stderr: "" };
     };
     wake(makeRow(), run);

@@ -13,7 +13,7 @@ const REMOTE_ROW = {
   repoName: "repo",
   branch: "far",
   forge: "github",
-  pr: { number: 7, state: "MERGED", ref: "repo#7" },
+  pr: { number: 7, ref: "repo#7" },
   step: "prune",
   reason: "merged",
   flags: [],
@@ -41,7 +41,7 @@ describe("the work machine", () => {
     box.write("ssh-out", JSON.stringify([REMOTE_ROW]));
     const out = Bun.stripANSI(cleanup("lines").stdout);
     expect(out).not.toContain("work:");
-    expect(out).toContain("herdr live\n");
+    expect(out).toContain("0 collapsed\n");
     expect(box.read("ssh.log")).toBe("");
   });
 
@@ -56,7 +56,7 @@ describe("the work machine", () => {
 
   test("says it is unreachable when ssh fails", () => {
     cleanup("toggle-machine");
-    expect(Bun.stripANSI(cleanup("lines").stdout)).toContain("herdr live · work unreachable");
+    expect(Bun.stripANSI(cleanup("lines").stdout)).toContain("0 collapsed · work unreachable");
   });
 
   test("toggles back off", () => {

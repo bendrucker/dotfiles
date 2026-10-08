@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildRows, forgeOf, summarize, type GitFacts, type Row, type Sources } from "./rows";
-
-const NOW = Date.parse("2026-10-07T12:00:00Z");
+import { buildRows, repoRoots, summarize, type Row, type Sources } from "./rows";
 
 interface WorkspaceFixture {
   workspace_id: string;
@@ -14,12 +12,7 @@ function makeWorkspace(overrides: Partial<WorkspaceFixture> = {}): WorkspaceFixt
   return {
     workspace_id: id,
     label: id,
-    worktree: {
-      checkout_path: `/wt/${id}`,
-      is_linked_worktree: true,
-      repo_root: "/repo",
-      repo_name: "dotfiles",
-    },
+    worktree: { checkout_path: `/wt/${id}`, is_linked_worktree: true, repo_root: "/repo", repo_name: "dotfiles" },
     ...overrides,
   };
 }
@@ -28,32 +21,23 @@ function makeAgent(overrides: Record<string, unknown> = {}): Record<string, unkn
   return { pane_id: "p1", workspace_id: "w1", agent_status: "idle", ...overrides };
 }
 
-function makePr(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+// One entry of `wt list --format=json` at schema 2, holding only what the board reads.
+function makeItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    number: 12,
-    state: "OPEN",
-    draft: false,
-    conflicting: false,
-    checks: "pending",
-    updated: "2026-10-07T10:00:00Z",
-    head: "abc",
-    stacked: false,
+    branch: "topic",
+    head: { sha: "abc123" },
+    worktree: { path: "/wt/w1", changes: { staged: false, modified: false, untracked: false } },
+    default_branch: { ahead: 1, behind: 0, merge_conflicts: false },
+    upstream: null,
+    pr: { number: 12, mergeable: null },
+    checks: { status: "running", source: "pr", stale: false },
+    display: { state: "ahead" },
     ...overrides,
   };
 }
 
-function makeCache(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    workspace_id: "w1",
-    path: "/wt/w1",
-    branch: "topic",
-    default: "main",
-    prs: [makePr()],
-    unpushed: 0,
-    dirty: false,
-    fetched_at: "2026-10-07T11:00:00Z",
-    ...overrides,
-  };
+function makeList(items: Record<string, unknown>[], provider = "github"): unknown {
+  return { schema: 2, repo: { default_branch: "main", forge: { provider } }, items };
 }
 
 function makeSnapshot(workspaces: WorkspaceFixture[], agents: Record<string, unknown>[] = []): unknown {
@@ -63,10 +47,8 @@ function makeSnapshot(workspaces: WorkspaceFixture[], agents: Record<string, unk
 function makeSources(overrides: Partial<Sources> = {}): Sources {
   return {
     snapshot: makeSnapshot([makeWorkspace()]),
-    caches: {},
-    agentState: undefined,
-    git: () => ({ originUrl: "git@github.com:me/dotfiles.git", ignored: [] }),
-    now: NOW,
+    wt: { "/repo": makeList([makeItem()]) },
+    ignored: () => [],
     ...overrides,
   };
 }
@@ -88,20 +70,16 @@ function makeRow(overrides: Partial<Row> = {}): Row {
   };
 }
 
+function only(sources: Partial<Sources>): Row | undefined {
+  return buildRows(makeSources(sources))[0];
+}
+
 describe("buildRows", () => {
   test.each([
-    {
-      name: "workspace without a worktree",
-      workspaces: [makeWorkspace({ worktree: undefined })],
-      kept: [],
-    },
+    { name: "workspace without a worktree", workspaces: [makeWorkspace({ worktree: undefined })], kept: [] },
     {
       name: "main checkout",
-      workspaces: [
-        makeWorkspace({
-          worktree: { checkout_path: "/repo", is_linked_worktree: false, repo_root: "/repo", repo_name: "dotfiles" },
-        }),
-      ],
+      workspaces: [makeWorkspace({ worktree: { checkout_path: "/repo", is_linked_worktree: false, repo_root: "/repo", repo_name: "dotfiles" } })],
       kept: [],
     },
     { name: "linked worktree", workspaces: [makeWorkspace()], kept: ["w1"] },
@@ -111,65 +89,69 @@ describe("buildRows", () => {
   });
 
   test.each([
-    { name: "github", originUrl: "git@github.com:me/dotfiles.git", forge: "github", ref: "dotfiles#12" },
-    { name: "github https", originUrl: "https://github.com/me/dotfiles", forge: "github", ref: "dotfiles#12" },
-    { name: "gitlab", originUrl: "git@gitlab.com:me/dotfiles.git", forge: "gitlab", ref: "dotfiles!12" },
-    { name: "self-hosted", originUrl: "ssh://git@git.corp.example/me/dotfiles", forge: "gitlab", ref: "dotfiles!12" },
-    { name: "no origin", originUrl: undefined, forge: undefined, ref: "dotfiles#12" },
-  ])("forge ref: $name", ({ originUrl, forge, ref }) => {
-    const git = (): GitFacts => ({ originUrl, ignored: [] });
-    const [row] = buildRows(makeSources({ caches: { w1: makeCache() }, git }));
-    expect(row?.forge).toBe(forge);
-    expect(row?.pr).toEqual({ number: 12, state: "OPEN", ref, head: "abc" });
+    { provider: "github", forge: "github", ref: "dotfiles#12" },
+    { provider: "gitlab", forge: "gitlab", ref: "dotfiles!12" },
+    { provider: "gitea", forge: undefined, ref: "dotfiles#12" },
+  ])("forge ref: $provider", ({ provider, forge, ref }) => {
+    const row = only({ wt: { "/repo": makeList([makeItem()], provider) } });
+    expect(row).toMatchObject({ forge, pr: { number: 12, ref }, branch: "topic", head: "abc123" });
   });
 
-  test("prefers the open PR over a newer closed one", () => {
-    const prs = [makePr({ number: 3, state: "CLOSED", updated: "2026-10-07T11:30:00Z" }), makePr({ number: 4 })];
-    const [row] = buildRows(makeSources({ caches: { w1: makeCache({ prs }) } }));
-    expect(row?.pr?.number).toBe(4);
-  });
-
-  test("counts open PRs and a working agent for the removal checks", () => {
-    const prs = [makePr({ number: 4 }), makePr({ number: 5 }), makePr({ number: 3, state: "MERGED" })];
-    const snapshot = makeSnapshot([makeWorkspace()], [makeAgent({ agent_status: "working" })]);
-    const [row] = buildRows(makeSources({ snapshot, caches: { w1: makeCache({ prs }) } }));
-    expect(row).toMatchObject({ openPrs: 2, live: true });
-  });
-
-  test("keeps the PRs it understands when one entry is malformed", () => {
-    const prs = [makePr({ state: "MERGED" }), { number: "x" }];
-    const [row] = buildRows(makeSources({ caches: { w1: makeCache({ prs }) } }));
-    expect(row).toMatchObject({ step: "prune", reason: "merged" });
-  });
-
-  test("ignores a cache another session wrote under the same workspace id", () => {
-    const [row] = buildRows(makeSources({ caches: { w1: makeCache({ path: "/elsewhere/w1" }) } }));
-    expect(row?.pr).toBeUndefined();
-  });
-
-  test("a missing cache decides from agents alone", () => {
-    const snapshot = makeSnapshot([makeWorkspace()], [makeAgent({ agent_status: "blocked" })]);
-    const [row] = buildRows(makeSources({ snapshot }));
-    expect(row).toMatchObject({ step: "go", reason: "blocked", agentPane: "p1", branch: "" });
-    expect(row?.pr).toBeUndefined();
-    expect(row?.fetchedAt).toBeUndefined();
-  });
-
-  test("a missing cache and no agents reads no PR", () => {
-    const [row] = buildRows(makeSources());
-    expect(row).toMatchObject({ step: "collapsed", reason: "no PR" });
+  test.each<{ name: string; item: Record<string, unknown>; step: string; reason: string }>([
+    { name: "running checks", item: {}, step: "collapsed", reason: "checks running" },
+    { name: "failed checks", item: { checks: { status: "failed" } }, step: "go", reason: "CI failing" },
+    { name: "unknown checks", item: { checks: { status: "weird" } }, step: "collapsed", reason: "open PR" },
+    { name: "conflicts the forge found", item: { pr: { number: 12, mergeable: false }, checks: null }, step: "go", reason: "conflicting" },
+    {
+      name: "conflicts wt found",
+      item: { default_branch: { merge_conflicts: true }, checks: { status: "passed" } },
+      step: "go",
+      reason: "conflicting",
+    },
+    { name: "changes requested", item: { pr: { number: 12, review: "changes_requested" } }, step: "go", reason: "changes requested" },
+    { name: "a draft", item: { pr: { number: 12, review: "draft" }, checks: { status: "passed" } }, step: "collapsed", reason: "draft" },
+    { name: "green", item: { checks: { status: "passed" } }, step: "go", reason: "ready to merge" },
+    { name: "integrated with no PR", item: { pr: null, display: { state: "integrated" } }, step: "prune", reason: "merged" },
+    { name: "empty", item: { pr: null, display: { state: "empty" } }, step: "collapsed", reason: "no commits" },
+    { name: "a PR without a number", item: { pr: { number: "12" } }, step: "collapsed", reason: "no PR" },
+  ])("reads wt: $name", ({ item, step, reason }) => {
+    expect(only({ wt: { "/repo": makeList([makeItem(item)]) } })).toMatchObject({ step, reason });
   });
 
   test.each([
-    { name: "not an object", cache: "nope" },
-    { name: "prs not an array", cache: { prs: {} } },
-    { name: "unknown PR state", cache: makeCache({ prs: [makePr({ state: "WEIRD" })] }) },
-    { name: "unknown checks", cache: makeCache({ prs: [makePr({ checks: "meh" })] }) },
-    { name: "PR without a number", cache: makeCache({ prs: [makePr({ number: "12" })] }) },
-  ])("invalid cache is ignored: $name", ({ cache }) => {
-    const [row] = buildRows(makeSources({ caches: { w1: cache } }));
-    expect(row).toMatchObject({ step: "collapsed", reason: "no PR" });
-    expect(row?.pr).toBeUndefined();
+    { name: "wt failed for the repo", wt: {}, reason: "wt failed" },
+    { name: "wt does not list the checkout", wt: { "/repo": makeList([]) }, reason: "not in wt list" },
+    { name: "wt printed something else", wt: { "/repo": { items: "nope" } }, reason: "wt failed" },
+  ])("asks to be looked at when $name", ({ wt, reason }) => {
+    expect(only({ wt })).toMatchObject({ step: "go", reason, branch: "" });
+  });
+
+  test("a prune row carries flags from wt and the ignored files", () => {
+    const item = makeItem({
+      pr: null,
+      display: { state: "integrated" },
+      worktree: { path: "/wt/w1", changes: { untracked: true } },
+      upstream: { ahead: 2 },
+    });
+    const row = only({ wt: { "/repo": makeList([item]) }, ignored: () => [".env", "node_modules/"] });
+    expect(row).toMatchObject({
+      step: "prune",
+      reason: "merged",
+      flags: ["dirty", "unpushed:2", "ignored:2"],
+      ignored: [".env", "node_modules/"],
+    });
+  });
+
+  test("reads ignored files only for a row that may be pruned", () => {
+    const read: string[] = [];
+    only({ ignored: (path) => (read.push(path), []) });
+    expect(read).toEqual([]);
+  });
+
+  test("a review token puts the pane at the top with its kind and summary", () => {
+    const tokens = { review: "x", review_kind: "plan", review_summary: "approve the Worktrunk plan" };
+    const row = only({ snapshot: makeSnapshot([makeWorkspace()], [makeAgent({ pane_id: "a" }), makeAgent({ pane_id: "b", tokens })]) });
+    expect(row).toMatchObject({ step: "review", reason: "plan", detail: "approve the Worktrunk plan", agentPane: "b" });
   });
 
   test.each([
@@ -201,68 +183,39 @@ describe("buildRows", () => {
       ],
       pane: "c",
     },
-    {
-      name: "done before any",
-      agents: [makeAgent({ pane_id: "a" }), makeAgent({ pane_id: "b", tokens: { agent_done: "✓" } })],
-      pane: "b",
-    },
+    { name: "done before any", agents: [makeAgent({ pane_id: "a" }), makeAgent({ pane_id: "b", tokens: { agent_done: "✓" } })], pane: "b" },
     { name: "first agent otherwise", agents: [makeAgent({ pane_id: "a" }), makeAgent({ pane_id: "b" })], pane: "a" },
   ])("agent pane: $name", ({ agents, pane }) => {
-    const [row] = buildRows(makeSources({ snapshot: makeSnapshot([makeWorkspace()], agents) }));
-    expect(row?.agentPane).toBe(pane);
+    expect(only({ snapshot: makeSnapshot([makeWorkspace()], agents) })?.agentPane).toBe(pane);
   });
 
-  test("wake targets the idle pane from the agent state file", () => {
+  test("a working agent marks the row live", () => {
+    expect(only({ snapshot: makeSnapshot([makeWorkspace()], [makeAgent({ agent_status: "working" })]) })?.live).toBe(true);
+  });
+
+  test("sorts review, go, wake, prune, collapsed, then by label", () => {
+    const ids = ["c1", "c2", "p1", "g1", "g2", "k1", "r1"];
+    const labels: Record<string, string> = { c1: "zeta", c2: "alpha", p1: "beta", g1: "omega", g2: "gamma", k1: "kappa", r1: "rho" };
     const snapshot = makeSnapshot(
-      [makeWorkspace()],
-      [makeAgent({ pane_id: "a", agent_status: "working" }), makeAgent({ pane_id: "b" })],
-    );
-    const agentState = {
-      a: { lastWorkingAt: NOW },
-      b: { wasWorking: false, lastWorkingAt: Date.parse("2026-10-07T09:00:00Z") },
-      c: "garbage",
-    };
-    const [row] = buildRows(makeSources({ snapshot, agentState, caches: { w1: makeCache() } }));
-    expect(row).toMatchObject({ step: "wake", reason: "PR updated since agent idled", agentPane: "b" });
-  });
-
-  test("prune row carries flags from cache and git", () => {
-    const cache = makeCache({ prs: [makePr({ state: "MERGED" })], dirty: true, unpushed: 2 });
-    const git = (): GitFacts => ({ originUrl: "git@github.com:me/d.git", ignored: [".env", "node_modules/"] });
-    const [row] = buildRows(makeSources({ caches: { w1: cache }, git }));
-    expect(row).toMatchObject({
-      step: "prune",
-      reason: "merged",
-      flags: ["dirty", "unpushed:2", "ignored:2"],
-      ignored: [".env", "node_modules/"],
-      fetchedAt: "2026-10-07T11:00:00Z",
-      branch: "topic",
-    });
-  });
-
-  test("sorts go, wake, prune, collapsed then by label", () => {
-    const snapshot = makeSnapshot(
-      [
-        makeWorkspace({ workspace_id: "c1", label: "zeta" }),
-        makeWorkspace({ workspace_id: "c2", label: "alpha" }),
-        makeWorkspace({ workspace_id: "p1", label: "beta" }),
-        makeWorkspace({ workspace_id: "g1", label: "omega" }),
-        makeWorkspace({ workspace_id: "g2", label: "gamma" }),
-        makeWorkspace({ workspace_id: "k1", label: "kappa" }),
-      ],
+      ids.map((id) => makeWorkspace({ workspace_id: id, label: labels[id] ?? id })),
       [
         makeAgent({ pane_id: "pg1", workspace_id: "g1", agent_status: "blocked" }),
         makeAgent({ pane_id: "pg2", workspace_id: "g2", agent_status: "blocked" }),
         makeAgent({ pane_id: "pk1", workspace_id: "k1" }),
+        makeAgent({ pane_id: "pr1", workspace_id: "r1", tokens: { review: "x", review_kind: "code" } }),
       ],
     );
-    const caches = {
-      p1: makeCache({ path: "/wt/p1", prs: [makePr({ state: "MERGED" })] }),
-      k1: makeCache({ path: "/wt/k1", prs: [makePr()] }),
+    const item = (id: string, overrides: Record<string, unknown> = {}) =>
+      makeItem({ worktree: { path: `/wt/${id}`, changes: {} }, pr: null, ...overrides });
+    const wt = {
+      "/repo": makeList([
+        ...["c1", "c2", "g1", "g2", "r1"].map((id) => item(id)),
+        item("p1", { display: { state: "integrated" } }),
+        item("k1", { pr: { number: 3 }, checks: { status: "failed" } }),
+      ]),
     };
-    const agentState = { pk1: { lastWorkingAt: Date.parse("2026-10-07T09:00:00Z") } };
-    const rows = buildRows(makeSources({ snapshot, caches, agentState }));
-    expect(rows.map((row) => `${row.step}:${row.label}`)).toEqual([
+    expect(buildRows(makeSources({ snapshot, wt })).map((row) => `${row.step}:${row.label}`)).toEqual([
+      "review:rho",
       "go:gamma",
       "go:omega",
       "wake:kappa",
@@ -273,34 +226,17 @@ describe("buildRows", () => {
   });
 });
 
-describe("forgeOf", () => {
-  test.each([
-    { name: "scp-style", url: "git@github.com:a/b.git", forge: "github" },
-    { name: "https with user", url: "https://user@github.com/a/b", forge: "github" },
-    { name: "upper case host", url: "https://GitHub.com/a/b", forge: "github" },
-    { name: "other host", url: "https://gitlab.example.com/a/b", forge: "gitlab" },
-    { name: "empty", url: "", forge: undefined },
-    { name: "missing", url: undefined, forge: undefined },
-  ])("$name", ({ url, forge }) => {
-    expect(forgeOf(url)).toBe(forge);
-  });
+test("asks wt about each repo once", () => {
+  const snapshot = makeSnapshot([
+    makeWorkspace({ workspace_id: "a" }),
+    makeWorkspace({ workspace_id: "b" }),
+    makeWorkspace({ workspace_id: "c", worktree: { checkout_path: "/wt/c", is_linked_worktree: true, repo_root: "/other", repo_name: "o" } }),
+  ]);
+  expect(repoRoots(snapshot)).toEqual(["/repo", "/other"]);
 });
 
-describe("summarize", () => {
-  test.each([
-    { name: "no rows", rows: [], expected: { needYou: 0, finish: 0, collapsed: 0, oldestFetch: undefined } },
-    {
-      name: "counts by step and finds the oldest fetch",
-      rows: [
-        makeRow({ step: "go", fetchedAt: "2026-10-07T11:00:00Z" }),
-        makeRow({ step: "wake", fetchedAt: "2026-10-07T08:00:00Z" }),
-        makeRow({ step: "prune" }),
-        makeRow({ step: "prune", fetchedAt: "2026-10-07T09:00:00Z" }),
-        makeRow({ step: "collapsed" }),
-      ],
-      expected: { needYou: 2, finish: 2, collapsed: 1, oldestFetch: "2026-10-07T08:00:00Z" },
-    },
-  ])("$name", ({ rows, expected }) => {
-    expect(summarize(rows)).toEqual(expected);
-  });
+test("summarize counts what needs you, what can finish, and the rest", () => {
+  const steps: Row["step"][] = ["review", "go", "wake", "prune", "prune", "collapsed"];
+  const rows = steps.map((step) => makeRow({ step }));
+  expect(summarize(rows)).toEqual({ needYou: 3, finish: 2, collapsed: 1 });
 });

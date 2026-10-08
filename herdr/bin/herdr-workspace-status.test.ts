@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { must, quote, run, sandbox, type Sandbox } from "#harness";
 import { launcherContract } from "#harness/launchers";
@@ -103,11 +103,7 @@ function stubGlab(box: Sandbox, repo: string): void {
 // The herdr server runs the script from `/bin/sh -lc` with no locale set,
 // where a glob `?` matches one byte and a glyph is three.
 function reportWorkspace(box: Sandbox) {
-  return run([script], { path: [box.bin], env: { LC_ALL: "C", XDG_STATE_HOME: box.path("state") } });
-}
-
-function readCache(box: Sandbox): { prs: { number: number }[]; unpushed: number; dirty: boolean; fetched_at: string } {
-  return JSON.parse(box.read("state/dotfiles/herdr-pr-state/w1.json"));
+  return run([script], { path: [box.bin], env: { LC_ALL: "C" } });
 }
 
 let box: Sandbox;
@@ -305,38 +301,5 @@ describe("herdr-workspace-status", () => {
     const reported = box.read("reported");
     expect(reported).not.toContain("--token");
     expect(reported).toContain("--clear-token");
-  });
-
-  test("caches the pull requests and local state for the cleanup board", () => {
-    const repo = setupRepo(box);
-    stubGh(box, repo);
-    expect(reportWorkspace(box).status).toBe(0);
-    const cached = readCache(box);
-    expect(cached.prs.map((pr) => pr.number)).toEqual([7, 3]);
-    expect(cached.dirty).toBe(true);
-    expect(cached.unpushed).toBe(1);
-    expect(cached.fetched_at).toMatch(/^\d{4}-\d\d-\d\dT/);
-  });
-
-  test("writes no cache for a branch whose forge it could not ask", () => {
-    const repo = setupRepo(box);
-    must(["git", "-C", repo, "remote", "remove", "origin"]);
-    expect(reportWorkspace(box).status).toBe(0);
-    expect(existsSync(box.path("state/dotfiles/herdr-pr-state/w1.json"))).toBe(false);
-  });
-
-  test("leaves the cache and its fetched_at alone when the forge does not answer", () => {
-    const repo = setupRepo(box);
-    stubGh(box, repo);
-    expect(reportWorkspace(box).status).toBe(0);
-    const cachePath = box.path("state/dotfiles/herdr-pr-state/w1.json");
-    const stale = { ...readCache(box), fetched_at: "2000-01-01T00:00:00Z" };
-    writeFileSync(cachePath, JSON.stringify(stale));
-    box.stub("gh", "exit 1");
-    expect(reportWorkspace(box).status).toBe(0);
-    expect(readCache(box).fetched_at).toBe("2000-01-01T00:00:00Z");
-    stubGh(box, repo);
-    expect(reportWorkspace(box).status).toBe(0);
-    expect(readCache(box).fetched_at).not.toBe("2000-01-01T00:00:00Z");
   });
 });

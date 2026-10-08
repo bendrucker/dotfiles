@@ -1,16 +1,13 @@
-export type PrState = "OPEN" | "MERGED" | "CLOSED";
-export type Checks = "ok" | "fail" | "pending" | "none";
-export type Step = "prune" | "go" | "wake" | "collapsed";
+export type Checks = "passed" | "running" | "failed" | "no-ci" | "none";
+export type Review = "changes_requested" | "pending" | "draft" | "approved";
+export type Step = "review" | "go" | "wake" | "prune" | "collapsed";
 
+/** The branch's open pull request, as Worktrunk reports it. */
 export interface PrInfo {
   number: number;
-  state: PrState;
-  draft: boolean;
   conflicting: boolean;
   checks: Checks;
-  updated: string;
-  /** The commit the forge holds for the branch. */
-  head?: string;
+  review?: Review;
 }
 
 export interface AgentInfo {
@@ -18,13 +15,17 @@ export interface AgentInfo {
   status: string;
   blockedToken: boolean;
   doneToken: boolean;
+  /** Set while the agent waits on a review from you, from the `$review` token. */
+  review?: { kind?: string; summary?: string };
 }
 
 export interface DispositionInput {
-  prs: PrInfo[];
+  /** Worktrunk found the branch's content in the default branch. */
+  integrated: boolean;
+  /** The branch sits at the default branch's commit with nothing of its own. */
+  empty: boolean;
+  pr?: PrInfo;
   agents: AgentInfo[];
-  /** Last time each pane was seen working, in ms since the epoch. */
-  lastWorked: Record<string, number>;
   dirty: boolean;
   unpushed: number;
   ignored: string[];
@@ -34,7 +35,9 @@ export interface Disposition {
   step: Step;
   reason: string;
   flags: string[];
-  /** The pane to wake, set only on a wake. */
+  /** What the review is for, set only on a review. */
+  detail?: string;
+  /** The pane the step acts on. */
   pane?: string;
 }
 
@@ -47,57 +50,56 @@ export function pruneFlags(input: DispositionInput): string[] {
   return flags;
 }
 
-function time(iso: string): number {
-  const ms = Date.parse(iso);
-  return Number.isNaN(ms) ? 0 : ms;
+function idle(agent: AgentInfo): boolean {
+  return agent.status !== "working" && agent.status !== "blocked" && !agent.blockedToken;
 }
 
-function pruneReason(prs: PrInfo[]): string | undefined {
-  if (prs.length === 0 || prs.some((pr) => pr.state === "OPEN")) return undefined;
-  if (prs.some((pr) => pr.state === "MERGED")) return "merged";
-  const newest = prs.reduce((a, b) => (time(b.updated) > time(a.updated) ? b : a));
-  return newest.state === "CLOSED" ? "closed" : undefined;
-}
-
-function goReason(input: DispositionInput, open: PrInfo[]): string | undefined {
-  const { agents } = input;
-  const working = agents.some((agent) => agent.status === "working");
-  if (agents.some((agent) => agent.status === "blocked" || agent.blockedToken)) return "blocked";
-  if (open.some((pr) => pr.checks === "fail")) return "CI failing";
-  if (open.some((pr) => pr.conflicting)) return "conflicting";
-  if (agents.some((agent) => agent.doneToken)) return "done, review";
-  if (!working && open.some((pr) => !pr.draft && pr.checks === "ok")) return "ready to merge";
+// Problems the agent can work on without you.
+function fixable(pr: PrInfo | undefined): string | undefined {
+  if (pr === undefined) return undefined;
+  if (pr.checks === "failed") return "CI failing";
+  if (pr.conflicting) return "conflicting";
+  if (pr.review === "changes_requested") return "changes requested";
   return undefined;
 }
 
-function wakePane(input: DispositionInput, open: PrInfo[]): string | undefined {
-  const newest = Math.max(0, ...open.map((pr) => time(pr.updated)));
-  return input.agents.find((agent) => {
-    if (agent.status === "working" || agent.status === "blocked") return false;
-    const worked = input.lastWorked[agent.paneId];
-    return worked !== undefined && newest > worked;
-  })?.paneId;
+function ready(pr: PrInfo | undefined): string | undefined {
+  if (pr === undefined || pr.review === "draft") return undefined;
+  if (pr.checks !== "passed" && pr.checks !== "no-ci") return undefined;
+  return pr.review === "pending" ? "awaiting review" : "ready to merge";
 }
 
-function collapsedReason(input: DispositionInput, open: PrInfo[]): string {
+function collapsedReason(input: DispositionInput): string {
   if (input.agents.some((agent) => agent.status === "working")) return "working";
-  if (input.prs.length === 0) return "no PR";
-  if (open.length > 0 && open.every((pr) => pr.draft)) return "draft";
-  if (open.some((pr) => pr.checks === "pending")) return "checks pending";
+  if (input.empty) return "no commits";
+  if (input.pr === undefined) return "no PR";
+  if (input.pr.review === "draft") return "draft";
+  if (input.pr.checks === "running") return "checks running";
   return "open PR";
 }
 
 export function dispose(input: DispositionInput): Disposition {
-  const merged = pruneReason(input.prs);
-  if (merged) return { step: "prune", reason: merged, flags: pruneFlags(input) };
+  const { agents, pr } = input;
 
-  const open = input.prs.filter((pr) => pr.state === "OPEN");
+  const reviewing = agents.find((agent) => agent.review !== undefined);
+  if (reviewing?.review) {
+    return { step: "review", reason: reviewing.review.kind || "review", detail: reviewing.review.summary, flags: [], pane: reviewing.paneId };
+  }
 
-  const go = goReason(input, open);
-  if (go) return { step: "go", reason: go, flags: [] };
+  if (input.integrated && pr === undefined) return { step: "prune", reason: "merged", flags: pruneFlags(input) };
 
-  const pane = wakePane(input, open);
-  if (pane) return { step: "wake", reason: "PR updated since agent idled", flags: [], pane };
+  if (agents.some((agent) => agent.status === "blocked" || agent.blockedToken)) return { step: "go", reason: "blocked", flags: [] };
+  const problem = fixable(pr);
+  if (problem) {
+    const waiting = agents.find(idle);
+    if (waiting) return { step: "wake", reason: problem, flags: [], pane: waiting.paneId };
+    if (agents.length === 0) return { step: "go", reason: problem, flags: [] };
+  }
 
-  return { step: "collapsed", reason: collapsedReason(input, open), flags: [] };
+  if (agents.some((agent) => agent.doneToken)) return { step: "go", reason: "done", flags: [] };
+
+  const merge = agents.some((agent) => agent.status === "working") ? undefined : ready(pr);
+  if (merge) return { step: "go", reason: merge, flags: [] };
+
+  return { step: "collapsed", reason: collapsedReason(input), flags: [] };
 }

@@ -1,23 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import {
-  dispose,
-  pruneFlags,
-  type AgentInfo,
-  type DispositionInput,
-  type PrInfo,
-} from "./disposition";
-
+import { dispose, pruneFlags, type AgentInfo, type DispositionInput, type PrInfo } from "./disposition";
 
 function makePr(overrides: Partial<PrInfo> = {}): PrInfo {
-  return {
-    number: 1,
-    state: "OPEN",
-    draft: false,
-    conflicting: false,
-    checks: "pending",
-    updated: "2026-10-07T10:00:00Z",
-    ...overrides,
-  };
+  return { number: 1, conflicting: false, checks: "running", ...overrides };
 }
 
 function makeAgent(overrides: Partial<AgentInfo> = {}): AgentInfo {
@@ -25,195 +10,145 @@ function makeAgent(overrides: Partial<AgentInfo> = {}): AgentInfo {
 }
 
 function makeInput(overrides: Partial<DispositionInput> = {}): DispositionInput {
-  return { prs: [], agents: [], lastWorked: {}, dirty: false, unpushed: 0, ignored: [], ...overrides };
+  return { integrated: false, empty: false, agents: [], dirty: false, unpushed: 0, ignored: [], ...overrides };
 }
 
-const before = Date.parse("2026-10-07T09:00:00Z");
-const after = Date.parse("2026-10-07T11:00:00Z");
-
 describe("dispose", () => {
-  test.each([
+  test.each<{ name: string; input: DispositionInput; step: string; reason: string; pane?: string }>([
     {
-      name: "merged PR prunes",
-      input: makeInput({ prs: [makePr({ state: "MERGED" })] }),
-      step: "prune",
-      reason: "merged",
+      name: "an agent waiting on review leads with its kind",
+      input: makeInput({ agents: [makeAgent({ review: { kind: "plan", summary: "approve the data plan" } })] }),
+      step: "review",
+      reason: "plan",
+      pane: "p1",
     },
     {
-      name: "newest PR closed prunes",
-      input: makeInput({ prs: [makePr({ state: "CLOSED" })] }),
-      step: "prune",
-      reason: "closed",
+      name: "a review with no kind still asks for you",
+      input: makeInput({ agents: [makeAgent({ status: "blocked", review: {} })] }),
+      step: "review",
+      reason: "review",
+      pane: "p1",
     },
     {
-      name: "older merged beats newer closed",
-      input: makeInput({
-        prs: [makePr({ number: 1, state: "MERGED" }), makePr({ number: 2, state: "CLOSED", updated: "2026-10-07T11:00:00Z" })],
-      }),
-      step: "prune",
-      reason: "merged",
+      name: "a review outranks a merged branch",
+      input: makeInput({ integrated: true, agents: [makeAgent({ review: { kind: "code" } })] }),
+      step: "review",
+      reason: "code",
+      pane: "p1",
     },
+    { name: "integrated with no open PR prunes", input: makeInput({ integrated: true }), step: "prune", reason: "merged" },
     {
       name: "merged with a blocked agent still prunes",
-      input: makeInput({ prs: [makePr({ state: "MERGED" })], agents: [makeAgent({ status: "blocked" })] }),
+      input: makeInput({ integrated: true, agents: [makeAgent({ status: "blocked" })] }),
       step: "prune",
       reason: "merged",
     },
     {
-      name: "an open PR alongside a merged one does not prune",
-      input: makeInput({ prs: [makePr({ number: 1, state: "MERGED" }), makePr({ number: 2, checks: "pending" })] }),
+      name: "integrated content with an open PR waits for the PR",
+      input: makeInput({ integrated: true, pr: makePr() }),
       step: "collapsed",
-      reason: "checks pending",
+      reason: "checks running",
     },
-    {
-      name: "blocked status goes",
-      input: makeInput({ agents: [makeAgent({ status: "blocked" })] }),
-      step: "go",
-      reason: "blocked",
-    },
-    {
-      name: "blocked token goes",
-      input: makeInput({ agents: [makeAgent({ blockedToken: true })] }),
-      step: "go",
-      reason: "blocked",
-    },
-    {
-      name: "done token goes",
-      input: makeInput({ agents: [makeAgent({ doneToken: true })] }),
-      step: "go",
-      reason: "done, review",
-    },
-    {
-      name: "failing checks go",
-      input: makeInput({ prs: [makePr({ checks: "fail" })] }),
-      step: "go",
-      reason: "CI failing",
-    },
-    {
-      name: "conflicting goes",
-      input: makeInput({ prs: [makePr({ conflicting: true, checks: "ok" })] }),
-      step: "go",
-      reason: "conflicting",
-    },
-    {
-      name: "green non-draft with an idle agent is ready to merge",
-      input: makeInput({ prs: [makePr({ checks: "ok" })], agents: [makeAgent()] }),
-      step: "go",
-      reason: "ready to merge",
-    },
-    {
-      name: "green non-draft with no agent is ready to merge",
-      input: makeInput({ prs: [makePr({ checks: "ok" })] }),
-      step: "go",
-      reason: "ready to merge",
-    },
+    { name: "blocked status goes", input: makeInput({ agents: [makeAgent({ status: "blocked" })] }), step: "go", reason: "blocked" },
+    { name: "blocked token goes", input: makeInput({ agents: [makeAgent({ blockedToken: true })] }), step: "go", reason: "blocked" },
     {
       name: "blocked outranks failing CI",
-      input: makeInput({ prs: [makePr({ checks: "fail" })], agents: [makeAgent({ status: "blocked" })] }),
+      input: makeInput({ pr: makePr({ checks: "failed" }), agents: [makeAgent({ status: "blocked" })] }),
       step: "go",
       reason: "blocked",
     },
     {
-      name: "failing CI outranks done token",
-      input: makeInput({ prs: [makePr({ checks: "fail" })], agents: [makeAgent({ doneToken: true })] }),
+      name: "failing CI wakes an idle agent",
+      input: makeInput({ pr: makePr({ checks: "failed" }), agents: [makeAgent()] }),
+      step: "wake",
+      reason: "CI failing",
+      pane: "p1",
+    },
+    {
+      name: "conflicts wake an idle agent",
+      input: makeInput({ pr: makePr({ conflicting: true, checks: "passed" }), agents: [makeAgent()] }),
+      step: "wake",
+      reason: "conflicting",
+      pane: "p1",
+    },
+    {
+      name: "requested changes wake an idle agent",
+      input: makeInput({ pr: makePr({ checks: "passed", review: "changes_requested" }), agents: [makeAgent()] }),
+      step: "wake",
+      reason: "changes requested",
+      pane: "p1",
+    },
+    {
+      name: "wakes the idle pane out of several",
+      input: makeInput({
+        pr: makePr({ checks: "failed" }),
+        agents: [makeAgent({ paneId: "p1", status: "working" }), makeAgent({ paneId: "p2", status: "done" })],
+      }),
+      step: "wake",
+      reason: "CI failing",
+      pane: "p2",
+    },
+    {
+      name: "failing CI with no agent needs you",
+      input: makeInput({ pr: makePr({ checks: "failed" }) }),
       step: "go",
       reason: "CI failing",
     },
     {
-      name: "green PR with a working agent is not ready",
-      input: makeInput({ prs: [makePr({ checks: "ok" })], agents: [makeAgent({ status: "working" })] }),
+      name: "failing CI under a working agent waits",
+      input: makeInput({ pr: makePr({ checks: "failed" }), agents: [makeAgent({ status: "working" })] }),
+      step: "collapsed",
+      reason: "working",
+    },
+    {
+      name: "failing CI outranks a done token",
+      input: makeInput({ pr: makePr({ checks: "failed" }), agents: [makeAgent({ doneToken: true })] }),
+      step: "wake",
+      reason: "CI failing",
+      pane: "p1",
+    },
+    { name: "done token goes", input: makeInput({ agents: [makeAgent({ doneToken: true })] }), step: "go", reason: "done" },
+    {
+      name: "green with an idle agent is ready to merge",
+      input: makeInput({ pr: makePr({ checks: "passed" }), agents: [makeAgent()] }),
+      step: "go",
+      reason: "ready to merge",
+    },
+    { name: "no CI counts as green", input: makeInput({ pr: makePr({ checks: "no-ci" }) }), step: "go", reason: "ready to merge" },
+    {
+      name: "green but awaiting a required review",
+      input: makeInput({ pr: makePr({ checks: "passed", review: "pending" }) }),
+      step: "go",
+      reason: "awaiting review",
+    },
+    {
+      name: "green with a working agent is not ready",
+      input: makeInput({ pr: makePr({ checks: "passed" }), agents: [makeAgent({ status: "working" })] }),
       step: "collapsed",
       reason: "working",
     },
     {
       name: "green draft is not ready",
-      input: makeInput({ prs: [makePr({ checks: "ok", draft: true })], agents: [makeAgent()] }),
+      input: makeInput({ pr: makePr({ checks: "passed", review: "draft" }), agents: [makeAgent()] }),
       step: "collapsed",
       reason: "draft",
     },
-    {
-      name: "pending checks collapse",
-      input: makeInput({ prs: [makePr()], agents: [makeAgent()] }),
-      step: "collapsed",
-      reason: "checks pending",
-    },
-    {
-      name: "no PR and no agents collapses",
-      input: makeInput(),
-      step: "collapsed",
-      reason: "no PR",
-    },
-    {
-      name: "unknown checks with no signal collapse",
-      input: makeInput({ prs: [makePr({ checks: "none" })], agents: [makeAgent()] }),
-      step: "collapsed",
-      reason: "open PR",
-    },
-  ])("$name", ({ input, step, reason }) => {
+    { name: "running checks collapse", input: makeInput({ pr: makePr(), agents: [makeAgent()] }), step: "collapsed", reason: "checks running" },
+    { name: "unknown checks collapse", input: makeInput({ pr: makePr({ checks: "none" }) }), step: "collapsed", reason: "open PR" },
+    { name: "a branch with no commits collapses", input: makeInput({ empty: true }), step: "collapsed", reason: "no commits" },
+    { name: "no PR collapses", input: makeInput(), step: "collapsed", reason: "no PR" },
+  ])("$name", ({ input, step, reason, pane }) => {
     const result = dispose(input);
-    expect({ step: result.step, reason: result.reason }).toEqual({ step, reason });
+    expect({ step: result.step, reason: result.reason, pane: result.pane }).toEqual({ step, reason, pane });
   });
 
-  test.each([
-    {
-      name: "PR updated after the agent last worked wakes it",
-      input: makeInput({ prs: [makePr()], agents: [makeAgent()], lastWorked: { p1: before } }),
-      step: "wake",
-      pane: "p1",
-    },
-    {
-      name: "PR older than last work does not wake",
-      input: makeInput({ prs: [makePr()], agents: [makeAgent()], lastWorked: { p1: after } }),
-      step: "collapsed",
-      pane: undefined,
-    },
-    {
-      name: "a pane with no recorded work is not woken",
-      input: makeInput({ prs: [makePr()], agents: [makeAgent()] }),
-      step: "collapsed",
-      pane: undefined,
-    },
-    {
-      name: "a working agent is not woken",
-      input: makeInput({ prs: [makePr()], agents: [makeAgent({ status: "working" })], lastWorked: { p1: before } }),
-      step: "collapsed",
-      pane: undefined,
-    },
-    {
-      name: "picks the idle pane out of several",
-      input: makeInput({
-        prs: [makePr()],
-        agents: [makeAgent({ paneId: "p1", status: "working" }), makeAgent({ paneId: "p2" })],
-        lastWorked: { p1: before, p2: before },
-      }),
-      step: "wake",
-      pane: "p2",
-    },
-    {
-      name: "skips a pane that worked after the update",
-      input: makeInput({
-        prs: [makePr()],
-        agents: [makeAgent({ paneId: "p1" }), makeAgent({ paneId: "p2", status: "done" })],
-        lastWorked: { p1: after, p2: before },
-      }),
-      step: "wake",
-      pane: "p2",
-    },
-    {
-      name: "go outranks wake",
-      input: makeInput({ prs: [makePr({ checks: "fail" })], agents: [makeAgent()], lastWorked: { p1: before } }),
-      step: "go",
-      pane: undefined,
-    },
-  ])("wake: $name", ({ input, step, pane }) => {
-    const result = dispose(input);
-    expect({ step: result.step, pane: result.pane }).toEqual({ step, pane });
+  test("a review carries the agent's summary", () => {
+    const result = dispose(makeInput({ agents: [makeAgent({ review: { kind: "pr-body", summary: "write the body" } })] }));
+    expect(result.detail).toBe("write the body");
   });
 
   test("a working agent on a merged branch stays prune and is flagged live", () => {
-    const result = dispose(
-      makeInput({ prs: [makePr({ state: "MERGED" })], agents: [makeAgent({ status: "working" })] }),
-    );
+    const result = dispose(makeInput({ integrated: true, agents: [makeAgent({ status: "working" })] }));
     expect(result).toEqual({ step: "prune", reason: "merged", flags: ["live"] });
   });
 
@@ -232,12 +167,7 @@ describe("pruneFlags", () => {
     { name: "ignored", input: makeInput({ ignored: ["a/", "b"] }), flags: ["ignored:2"] },
     {
       name: "all together",
-      input: makeInput({
-        agents: [makeAgent({ status: "working" })],
-        dirty: true,
-        unpushed: 1,
-        ignored: ["x"],
-      }),
+      input: makeInput({ agents: [makeAgent({ status: "working" })], dirty: true, unpushed: 1, ignored: ["x"] }),
       flags: ["live", "dirty", "unpushed:1", "ignored:1"],
     },
   ])("$name", ({ input, flags }) => {

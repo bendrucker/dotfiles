@@ -1,14 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import {
-  dispose,
-  type AgentInfo,
-  type Checks,
-  type DispositionInput,
-  type PrInfo,
-  type PrState,
-  type Step,
-} from "./disposition";
+import { dispose, type AgentInfo, type Checks, type PrInfo, type Review, type Step } from "./disposition";
 
 export type Forge = "github" | "gitlab";
 
@@ -19,33 +9,30 @@ export interface Row {
   repoRoot: string;
   repoName: string;
   branch: string;
+  /** The commit Worktrunk judged, so a removal can tell what landed since. */
+  head?: string;
   forge: Forge | undefined;
-  pr?: { number: number; state: PrState; ref: string; head?: string };
-  /** Open PRs on the branch, of which `pr` shows the newest. */
-  openPrs?: number;
+  pr?: { number: number; ref: string };
   /** An agent in the workspace is working, which any removal has to ask about. */
   live?: boolean;
   /** The pane to focus or wake. */
   agentPane?: string;
   step: Step;
   reason: string;
+  /** What a review asks of you, in the agent's words. */
+  detail?: string;
   flags: string[];
   ignored: string[];
-  fetchedAt?: string;
   machine?: string;
 }
 
-export interface GitFacts {
-  originUrl?: string;
-  ignored: string[];
-}
+/** One repo's `wt list --format=json`, or undefined when wt failed there. */
+export type WtLists = Record<string, unknown>;
 
 export interface Sources {
   snapshot: unknown;
-  caches: Record<string, unknown>;
-  agentState: unknown;
-  git: (path: string) => GitFacts;
-  now: number;
+  wt: WtLists;
+  ignored: (path: string) => string[];
 }
 
 interface Workspace {
@@ -56,17 +43,24 @@ interface Workspace {
   repoName: string;
 }
 
-interface Cache {
+interface Worktree {
   branch: string;
-  prs: PrInfo[];
-  unpushed: number;
+  head?: string;
+  integrated: boolean;
+  empty: boolean;
   dirty: boolean;
-  fetchedAt?: string;
+  unpushed: number;
+  pr?: PrInfo;
 }
 
-const PR_STATES: readonly string[] = ["OPEN", "MERGED", "CLOSED"];
-const CHECKS: readonly string[] = ["ok", "fail", "pending", "none"];
-const STEP_ORDER: Step[] = ["go", "wake", "prune", "collapsed"];
+interface RepoList {
+  forge: Forge | undefined;
+  worktrees: Map<string, Worktree>;
+}
+
+const CHECKS: readonly string[] = ["passed", "running", "failed", "no-ci"];
+const REVIEWS: readonly string[] = ["changes_requested", "pending", "draft", "approved"];
+const STEP_ORDER: Step[] = ["review", "go", "wake", "prune", "collapsed"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -76,44 +70,58 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function isPrState(value: unknown): value is PrState {
-  return typeof value === "string" && PR_STATES.includes(value);
+function list(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function isChecks(value: unknown): value is Checks {
   return typeof value === "string" && CHECKS.includes(value);
 }
 
-function parsePr(value: unknown): PrInfo | undefined {
-  if (!isRecord(value)) return undefined;
-  const { number, state, draft, conflicting, checks, updated, head } = value;
-  if (typeof number !== "number" || !isPrState(state) || !isChecks(checks)) return undefined;
+function isReview(value: unknown): value is Review {
+  return typeof value === "string" && REVIEWS.includes(value);
+}
+
+function checksOf(value: unknown): Checks {
+  const status = isRecord(value) ? value.status : undefined;
+  return isChecks(status) ? status : "none";
+}
+
+function parseWorktree(item: Record<string, unknown>): Worktree {
+  const head = isRecord(item.head) ? text(item.head.sha) : "";
+  const changes = isRecord(item.worktree) && isRecord(item.worktree.changes) ? item.worktree.changes : {};
+  const state = isRecord(item.display) ? text(item.display.state) : "";
+  const fromDefault = isRecord(item.default_branch) ? item.default_branch : {};
+  const ahead = isRecord(item.upstream) ? item.upstream.ahead : undefined;
+  const pr = isRecord(item.pr) ? item.pr : {};
   return {
-    number,
-    state,
-    draft: draft === true,
-    conflicting: conflicting === true,
-    checks,
-    updated: text(updated),
-    ...(typeof head === "string" && head !== "" ? { head } : {}),
+    branch: text(item.branch),
+    ...(head ? { head } : {}),
+    integrated: state === "integrated",
+    empty: state === "empty",
+    dirty: ["staged", "modified", "untracked", "renamed", "deleted", "conflicted"].some((kind) => changes[kind] === true),
+    unpushed: typeof ahead === "number" ? ahead : 0,
+    ...(typeof pr.number === "number" && {
+      pr: {
+        number: pr.number,
+        conflicting: pr.mergeable === false || fromDefault.merge_conflicts === true,
+        checks: checksOf(item.checks),
+        ...(isReview(pr.review) && { review: pr.review }),
+      },
+    }),
   };
 }
 
-// Workspace ids are short and every herdr session reuses them, so a cache file
-// written for another session's workspace has to be told apart by its path.
-function parseCache(value: unknown, path: string): Cache | undefined {
-  if (!isRecord(value) || !Array.isArray(value.prs)) return undefined;
-  if (text(value.path) !== path) return undefined;
-  // An entry this reader doesn't understand is dropped rather than the file,
-  // so the rest of the workspace's state still reaches the board.
-  const prs = value.prs.map(parsePr);
-  return {
-    branch: text(value.branch),
-    prs: prs.filter((pr) => pr !== undefined),
-    unpushed: typeof value.unpushed === "number" ? value.unpushed : 0,
-    dirty: value.dirty === true,
-    fetchedAt: text(value.fetched_at) || undefined,
-  };
+function parseList(value: unknown): RepoList | undefined {
+  if (!isRecord(value) || !Array.isArray(value.items)) return undefined;
+  const provider = isRecord(value.repo) && isRecord(value.repo.forge) ? text(value.repo.forge.provider) : "";
+  const worktrees = new Map<string, Worktree>();
+  for (const item of value.items) {
+    if (!isRecord(item) || !isRecord(item.worktree)) continue;
+    const path = text(item.worktree.path);
+    if (path !== "") worktrees.set(path, parseWorktree(item));
+  }
+  return { forge: provider === "github" || provider === "gitlab" ? provider : undefined, worktrees };
 }
 
 function parseWorkspace(value: unknown): Workspace | undefined {
@@ -124,13 +132,7 @@ function parseWorkspace(value: unknown): Workspace | undefined {
   if (id === "" || path === "") return undefined;
   const repoRoot = text(worktree.repo_root);
   if (path === repoRoot) return undefined;
-  return {
-    id,
-    label: text(value.label),
-    path,
-    repoRoot,
-    repoName: text(worktree.repo_name),
-  };
+  return { id, label: text(value.label), path, repoRoot, repoName: text(worktree.repo_name) };
 }
 
 function parseAgent(value: unknown): (AgentInfo & { workspaceId: string }) | undefined {
@@ -139,12 +141,16 @@ function parseAgent(value: unknown): (AgentInfo & { workspaceId: string }) | und
   const workspaceId = text(value.workspace_id);
   if (paneId === "" || workspaceId === "") return undefined;
   const tokens = isRecord(value.tokens) ? value.tokens : {};
+  const review = text(tokens.review) !== "";
   return {
     paneId,
     workspaceId,
     status: text(value.agent_status),
     blockedToken: text(tokens.agent_blocked) !== "",
     doneToken: text(tokens.agent_done) !== "",
+    ...(review && {
+      review: { kind: text(tokens.review_kind) || undefined, summary: text(tokens.review_summary) || undefined },
+    }),
   };
 }
 
@@ -154,42 +160,14 @@ function parseSnapshot(snapshot: unknown): {
 } {
   const inner = isRecord(snapshot) && isRecord(snapshot.result) ? snapshot.result.snapshot : undefined;
   if (!isRecord(inner)) return { workspaces: [], agents: [] };
-  const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
   return {
     workspaces: list(inner.workspaces).map(parseWorkspace).filter((w) => w !== undefined),
     agents: list(inner.agents).map(parseAgent).filter((a) => a !== undefined),
   };
 }
 
-function parseLastWorked(agentState: unknown): Record<string, number> {
-  const lastWorked: Record<string, number> = {};
-  if (!isRecord(agentState)) return lastWorked;
-  for (const [pane, entry] of Object.entries(agentState)) {
-    if (isRecord(entry) && typeof entry.lastWorkingAt === "number" && Number.isFinite(entry.lastWorkingAt)) {
-      lastWorked[pane] = entry.lastWorkingAt;
-    }
-  }
-  return lastWorked;
-}
-
-export function forgeOf(originUrl: string | undefined): Forge | undefined {
-  if (!originUrl) return undefined;
-  const match = /^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^/:]+)/i.exec(originUrl.trim());
-  if (!match?.[1]) return undefined;
-  return match[1].toLowerCase() === "github.com" ? "github" : "gitlab";
-}
-
-function newestPr(prs: PrInfo[]): PrInfo | undefined {
-  const open = prs.filter((pr) => pr.state === "OPEN");
-  const pool = open.length > 0 ? open : prs;
-  return pool.reduce<PrInfo | undefined>(
-    (best, pr) => (best === undefined || Date.parse(pr.updated) > Date.parse(best.updated) ? pr : best),
-    undefined,
-  );
-}
-
-function pickPane(agents: AgentInfo[], woken: string | undefined): string | undefined {
-  if (woken) return woken;
+function pickPane(agents: AgentInfo[], chosen: string | undefined): string | undefined {
+  if (chosen) return chosen;
   return (
     agents.find((a) => a.status === "blocked" || a.blockedToken) ??
     agents.find((a) => a.status === "done" || a.doneToken) ??
@@ -197,136 +175,101 @@ function pickPane(agents: AgentInfo[], woken: string | undefined): string | unde
   )?.paneId;
 }
 
-function rowFor(
-  workspace: Workspace,
-  agents: AgentInfo[],
-  cache: Cache | undefined,
-  sources: Sources,
-  lastWorked: Record<string, number>,
-): Row {
-  const git = sources.git(workspace.path);
-  const forge = forgeOf(git.originUrl);
-  const input: DispositionInput = {
-    prs: cache?.prs ?? [],
-    agents,
-    lastWorked,
-    dirty: cache?.dirty ?? false,
-    unpushed: cache?.unpushed ?? 0,
-    ignored: git.ignored,
-  };
-  const disposition = dispose(input);
-  const pr = newestPr(input.prs);
-  const mark = forge === "gitlab" ? "!" : "#";
-
-  return {
+function rowFor(workspace: Workspace, agents: AgentInfo[], repo: RepoList | undefined, sources: Sources): Row {
+  const base = {
     workspaceId: workspace.id,
     label: workspace.label,
     path: workspace.path,
     repoRoot: workspace.repoRoot,
     repoName: workspace.repoName,
-    branch: cache?.branch ?? "",
-    forge,
-    pr: pr && { number: pr.number, state: pr.state, ref: `${workspace.repoName}${mark}${pr.number}`, head: pr.head },
-    openPrs: input.prs.filter((p) => p.state === "OPEN").length,
     live: agents.some((agent) => agent.status === "working"),
+    forge: repo?.forge,
+  };
+  const worktree = repo?.worktrees.get(workspace.path);
+  // Without wt's view the board can't say what the branch is, so the row asks
+  // to be looked at rather than vanishing into the collapsed count.
+  if (worktree === undefined) {
+    const reason = repo === undefined ? "wt failed" : "not in wt list";
+    return { ...base, branch: "", agentPane: pickPane(agents, undefined), step: "go", reason, flags: [], ignored: [] };
+  }
+
+  const prune = worktree.integrated && worktree.pr === undefined;
+  const ignored = prune ? sources.ignored(workspace.path) : [];
+  const disposition = dispose({ ...worktree, agents, ignored });
+  const mark = repo?.forge === "gitlab" ? "!" : "#";
+  return {
+    ...base,
+    branch: worktree.branch,
+    ...(worktree.head && { head: worktree.head }),
+    ...(worktree.pr && { pr: { number: worktree.pr.number, ref: `${workspace.repoName}${mark}${worktree.pr.number}` } }),
     agentPane: pickPane(agents, disposition.pane),
     step: disposition.step,
     reason: disposition.reason,
+    ...(disposition.detail && { detail: disposition.detail }),
     flags: disposition.flags,
-    ignored: git.ignored,
-    fetchedAt: cache?.fetchedAt,
+    ignored,
   };
 }
 
 export function buildRows(sources: Sources): Row[] {
   const { workspaces, agents } = parseSnapshot(sources.snapshot);
-  const lastWorked = parseLastWorked(sources.agentState);
-
   return workspaces
     .map((workspace) =>
       rowFor(
         workspace,
         agents.filter((agent) => agent.workspaceId === workspace.id),
-        parseCache(sources.caches[workspace.id], workspace.path),
+        parseList(sources.wt[workspace.repoRoot]),
         sources,
-        lastWorked,
       ),
     )
-    .sort(
-      (a, b) =>
-        STEP_ORDER.indexOf(a.step) - STEP_ORDER.indexOf(b.step) || a.label.localeCompare(b.label),
-    );
+    .sort((a, b) => STEP_ORDER.indexOf(a.step) - STEP_ORDER.indexOf(b.step) || a.label.localeCompare(b.label));
 }
 
-export function summarize(rows: Row[]): {
-  needYou: number;
-  finish: number;
-  collapsed: number;
-  oldestFetch?: string;
-} {
+export function summarize(rows: Row[]): { needYou: number; finish: number; collapsed: number } {
   const count = (...steps: Step[]) => rows.filter((row) => steps.includes(row.step)).length;
-  const fetched = rows.map((row) => row.fetchedAt).filter((at) => at !== undefined);
-  return {
-    needYou: count("go", "wake"),
-    finish: count("prune"),
-    collapsed: count("collapsed"),
-    oldestFetch: fetched.sort()[0],
-  };
+  return { needYou: count("review", "go", "wake"), finish: count("prune"), collapsed: count("collapsed") };
 }
 
-function readJson(path: string): unknown {
+function run(cmd: string[]): { ok: boolean; stdout: string } {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "ignore" });
+    return { ok: result.success, stdout: result.stdout.toString() };
+  } catch {
+    return { ok: false, stdout: "" };
+  }
+}
+
+function json(cmd: string[]): unknown {
+  const result = run(cmd);
+  if (!result.ok) return undefined;
+  try {
+    return JSON.parse(result.stdout);
   } catch {
     return undefined;
   }
 }
 
-function readCaches(cacheDir: string): Record<string, unknown> {
-  const caches: Record<string, unknown> = {};
-  let names: string[];
-  try {
-    names = readdirSync(cacheDir);
-  } catch {
-    return caches;
-  }
-  for (const name of names) {
-    if (name.endsWith(".json")) caches[name.slice(0, -".json".length)] = readJson(join(cacheDir, name));
-  }
-  return caches;
+// --full adds CI, and the summary is a model call the board has no use for.
+export function wtList(repoRoot: string): unknown {
+  return json(["wt", "-C", repoRoot, "list", "--full", "--format=json", "--config-set", "list.summary=false"]);
 }
 
-function run(cmd: string[]): string {
-  try {
-    const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "ignore" });
-    return result.success ? result.stdout.toString() : "";
-  } catch {
-    return "";
-  }
-}
-
-function gitFacts(path: string): GitFacts {
-  const originUrl = run(["git", "-C", path, "config", "--get", "remote.origin.url"]).trim();
-  const ignored = run(["git", "-C", path, "status", "--ignored", "--porcelain"])
-    .split("\n")
+function ignoredFiles(path: string): string[] {
+  return run(["git", "-C", path, "status", "--ignored", "--porcelain"])
+    .stdout.split("\n")
     .filter((line) => line.startsWith("!! "))
     .map((line) => line.slice(3));
-  return { originUrl: originUrl || undefined, ignored };
+}
+
+export function repoRoots(snapshot: unknown): string[] {
+  return [...new Set(parseSnapshot(snapshot).workspaces.map((workspace) => workspace.repoRoot))];
 }
 
 /** Undefined when herdr can't be read, so a down server never reads as an empty board. */
-export function loadRows(options: { cacheDir: string; agentStatePath: string; now: number }): Row[] | undefined {
-  let snapshot: unknown;
-  try {
-    snapshot = JSON.parse(run(["herdr", "api", "snapshot"]));
-  } catch {
-    return undefined;
-  }
-  return buildRows({
-    snapshot,
-    caches: readCaches(options.cacheDir),
-    agentState: readJson(options.agentStatePath),
-    git: gitFacts,
-    now: options.now,
-  });
+export function loadRows(): Row[] | undefined {
+  const snapshot = json(["herdr", "api", "snapshot"]);
+  if (snapshot === undefined) return undefined;
+  const wt: WtLists = {};
+  for (const root of repoRoots(snapshot)) wt[root] = wtList(root);
+  return buildRows({ snapshot, wt, ignored: ignoredFiles });
 }
