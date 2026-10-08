@@ -5,9 +5,12 @@ export const WAKE_TEXT = [
   "Re-check CI, reviews, and merge status, then continue toward merging. If blocked, say what you need from me.",
 ].join("\n");
 
+export type Outcome = "done" | "cancelled" | "failed";
+
 export interface Result {
   ok: boolean;
   stdout: string;
+  stderr: string;
 }
 
 /** Runs a command. `interactive` hands it the terminal, for gum. */
@@ -21,21 +24,40 @@ export const spawn: Runner = (cmd, options = {}) => {
       env: process.env,
       stdin: "inherit",
       stdout: options.interactive ? "inherit" : "pipe",
-      stderr: "inherit",
+      stderr: options.interactive ? "inherit" : "pipe",
     });
-    return { ok: child.exitCode === 0, stdout: child.stdout?.toString() ?? "" };
-  } catch {
-    return { ok: false, stdout: "" };
+    return { ok: child.exitCode === 0, stdout: child.stdout?.toString() ?? "", stderr: child.stderr?.toString() ?? "" };
+  } catch (error) {
+    return { ok: false, stdout: "", stderr: String(error) };
   }
 };
 
-function say(message: string): void {
+function fail(message: string): Outcome {
   console.error(`herdr-cleanup: ${message}`);
+  return "failed";
 }
 
-export function go(row: Row, run: Runner): boolean {
-  if (row.agentPane !== undefined && run(["herdr", "agent", "focus", row.agentPane]).ok) return true;
-  return run(["herdr", "workspace", "focus", row.workspaceId]).ok;
+// herdr reports a refused request as one JSON object on stderr.
+function reason(result: Result): string {
+  const text = result.stderr.trim();
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed === "object" && parsed !== null && "error" in parsed) {
+      const { error } = parsed;
+      if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
+        return error.message;
+      }
+    }
+  } catch {
+    // Not JSON, so the raw text is the best there is.
+  }
+  return text.split("\n").at(-1) || "no reason given";
+}
+
+export function go(row: Row, run: Runner): Outcome {
+  if (row.agentPane !== undefined && run(["herdr", "agent", "focus", row.agentPane]).ok) return "done";
+  const focused = run(["herdr", "workspace", "focus", row.workspaceId]);
+  return focused.ok ? "done" : fail(`could not focus ${row.label}: ${reason(focused)}`);
 }
 
 export function confirmText(row: Row): string {
@@ -48,50 +70,35 @@ export function confirmText(row: Row): string {
 
 // The checkout goes to the Trash before Worktrunk sees it, so whatever it held
 // stays recoverable, and `wt remove` only has a stale entry and a branch left.
-export function prune(row: Row, run: Runner): boolean {
+export function prune(row: Row, run: Runner): Outcome {
   if (row.flags.length > 0) {
-    if (!run(["gum", "confirm", "--default=false", confirmText(row)], { interactive: true }).ok) return false;
+    if (!run(["gum", "confirm", "--default=false", confirmText(row)], { interactive: true }).ok) return "cancelled";
   }
   run(["herdr", "workspace", "close", row.workspaceId]);
-  if (!run(["trash", row.path]).ok) {
-    say(`could not move ${row.path} to the Trash, leaving it in place`);
-    return false;
-  }
-  if (!run(["wt", "-C", row.repoRoot, "remove", row.branch, "--foreground", "--yes"]).ok) {
-    say(`${row.path} is in the Trash, but wt remove failed for ${row.branch}`);
-    return false;
-  }
-  return true;
+  const trashed = run(["trash", row.path]);
+  if (!trashed.ok) return fail(`could not move ${row.path} to the Trash, leaving it in place: ${reason(trashed)}`);
+  const removed = run(["wt", "-C", row.repoRoot, "remove", row.branch, "--foreground", "--yes"]);
+  if (!removed.ok) return fail(`${row.path} is in the Trash, but wt remove failed for ${row.branch}: ${reason(removed)}`);
+  return "done";
 }
 
-export function close(row: Row, run: Runner): boolean {
-  if (row.pr === undefined || row.forge === undefined) {
-    say(`${row.label} has no pull request to close`);
-    return false;
-  }
+export function close(row: Row, run: Runner): Outcome {
+  if (row.pr === undefined || row.forge === undefined) return fail(`${row.label} has no pull request to close`);
   const number = String(row.pr.number);
   const cmd = row.forge === "github" ? ["gh", "pr", "close", number] : ["glab", "mr", "close", number];
   const question = [`Close ${row.pr.ref} and prune ${row.label}?`];
   if (row.flags.length > 0) question.push("", confirmText(row));
-  if (!run(["gum", "confirm", "--default=false", question.join("\n")], { interactive: true }).ok) return false;
-  if (!run(cmd, { cwd: row.path }).ok) {
-    say(`could not close ${row.pr.ref}`);
-    return false;
-  }
+  if (!run(["gum", "confirm", "--default=false", question.join("\n")], { interactive: true }).ok) return "cancelled";
+  const closed = run(cmd, { cwd: row.path });
+  if (!closed.ok) return fail(`could not close ${row.pr.ref}: ${reason(closed)}`);
   return prune({ ...row, flags: [] }, run);
 }
 
-export function wake(row: Row, run: Runner): boolean {
-  if (row.agentPane === undefined) {
-    say(`${row.label} has no agent pane to wake`);
-    return false;
-  }
+export function wake(row: Row, run: Runner): Outcome {
+  if (row.agentPane === undefined) return fail(`${row.label} has no agent pane to wake`);
   const edited = run(["gum", "write", "--width=80", "--height=6", `--value=${WAKE_TEXT}`], { interactive: false });
   const text = edited.stdout.trim();
-  if (!edited.ok || text === "") return false;
-  if (!run(["herdr", "agent", "prompt", row.agentPane, text]).ok) {
-    say(`herdr refused the prompt for ${row.label}; a blocked agent takes no prompt until it is answered`);
-    return false;
-  }
-  return true;
+  if (!edited.ok || text === "") return "cancelled";
+  const sent = run(["herdr", "agent", "prompt", row.agentPane, text]);
+  return sent.ok ? "done" : fail(`herdr refused the prompt for ${row.label}: ${reason(sent)}`);
 }

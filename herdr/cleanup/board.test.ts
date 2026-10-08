@@ -42,8 +42,9 @@ describe("render", () => {
     const remote = [makeRow({ workspaceId: "w9", label: "far", machine: "work", fetchedAt: "2026-10-07T19:00:00Z" })];
     expect(render(local, remote, true, NOW)).toMatchInlineSnapshot(`
       [
-        "cleanup · 2 need you · 1 safe to finish · 1 collapsed",
-        "forge 2m ago · herdr live · work 1h ago   enter go · p prune · x close · w wake · r refresh · m work · q quit",
+        "	cleanup · 2 need you · 1 safe to finish · 1 collapsed",
+        "	forge 2m ago · herdr live · work 1h ago",
+        "	enter go · p prune · x close · w wake · r refresh · m work · q quit",
         "local:w1	topic     repo#7  CI failing          → go",
         "local:w2	landed    repo#3  merged · ignored:2  → prune",
         "work:w9	work:far  repo#7  CI failing          → go",
@@ -52,6 +53,6 @@ describe("render", () => {
   });
 
   test("says the machine is unreachable rather than showing nothing", () => {
-    expect(render([], undefined, true, NOW)[1]).toStartWith("forge never · herdr live · work unreachable");
+    expect(render([], undefined, true, NOW)[1]).toStartWith("\tforge never · herdr live · work unreachable");
   });
 });

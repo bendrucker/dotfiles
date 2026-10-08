@@ -16,7 +16,8 @@ export function key(row: Row): string {
   return `${row.machine ?? "local"}:${row.workspaceId}`;
 }
 
-// Two header lines, then one line per actionable row as `<key>\t<display>`.
+// Three header lines, then one line per actionable row as `<key>\t<display>`.
+// The header has an empty key so `--with-nth=2..` still shows it.
 // fzf shows the display and hands the key back to whichever action runs.
 export function render(local: Row[], remote: Row[] | undefined, showRemote: boolean, now: number): string[] {
   const rows = [...local, ...(remote ?? [])];
@@ -34,8 +35,9 @@ export function render(local: Row[], remote: Row[] | undefined, showRemote: bool
     ]),
   );
   return [
-    `cleanup · ${sum.needYou} need you · ${sum.finish} safe to finish · ${sum.collapsed} collapsed`,
-    `${freshness.join(" · ")}   enter go · p prune · x close · w wake · r refresh · m ${MACHINE} · q quit`,
+    `\tcleanup · ${sum.needYou} need you · ${sum.finish} safe to finish · ${sum.collapsed} collapsed`,
+    `\t${freshness.join(" · ")}`,
+    `\tenter go · p prune · x close · w wake · r refresh · m ${MACHINE} · q quit`,
     ...shown.map((row, i) => `${key(row)}\t${table[i]}`),
   ];
 }

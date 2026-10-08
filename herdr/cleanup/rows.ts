@@ -94,8 +94,11 @@ function parsePr(value: unknown): PrInfo | undefined {
   };
 }
 
-function parseCache(value: unknown): Cache | undefined {
+// Workspace ids are short and every herdr session reuses them, so a cache file
+// written for another session's workspace has to be told apart by its path.
+function parseCache(value: unknown, path: string): Cache | undefined {
   if (!isRecord(value) || !Array.isArray(value.prs)) return undefined;
+  if (text(value.path) !== path) return undefined;
   const prs = value.prs.map(parsePr);
   if (prs.some((pr) => pr === undefined)) return undefined;
   return {
@@ -236,7 +239,7 @@ export function buildRows(sources: Sources): Row[] {
       rowFor(
         workspace,
         agents.filter((agent) => agent.workspaceId === workspace.id),
-        parseCache(sources.caches[workspace.id]),
+        parseCache(sources.caches[workspace.id], workspace.path),
         sources,
         lastWorked,
       ),

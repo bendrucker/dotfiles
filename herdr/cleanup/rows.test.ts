@@ -129,6 +129,11 @@ describe("buildRows", () => {
     expect(row?.pr?.number).toBe(4);
   });
 
+  test("ignores a cache another session wrote under the same workspace id", () => {
+    const [row] = buildRows(makeSources({ caches: { w1: makeCache({ path: "/elsewhere/w1" }) } }));
+    expect(row?.pr).toBeUndefined();
+  });
+
   test("a missing cache decides from agents alone", () => {
     const snapshot = makeSnapshot([makeWorkspace()], [makeAgent({ agent_status: "blocked" })]);
     const [row] = buildRows(makeSources({ snapshot }));
@@ -239,8 +244,8 @@ describe("buildRows", () => {
       ],
     );
     const caches = {
-      p1: makeCache({ prs: [makePr({ state: "MERGED" })] }),
-      k1: makeCache({ prs: [makePr()] }),
+      p1: makeCache({ path: "/wt/p1", prs: [makePr({ state: "MERGED" })] }),
+      k1: makeCache({ path: "/wt/k1", prs: [makePr()] }),
     };
     const agentState = { pk1: { lastWorkingAt: Date.parse("2026-10-07T09:00:00Z") } };
     const rows = buildRows(makeSources({ snapshot, caches, agentState }));
