@@ -83,10 +83,12 @@ function act(action: string, target: string | undefined): number {
   }
   const handlers = { go, prune, close, wake } as const;
   if (!(action in handlers)) return usage();
+  // Clear what fzf left behind, so a failure is the only message on screen.
+  if (process.stdout.isTTY) process.stdout.write("\x1b[2J\x1b[H");
   const outcome = handlers[action as keyof typeof handlers](row, spawn);
   if (outcome === "failed" && process.stdin.isTTY) {
     // fzf reloads over the screen once this exits, which would erase the reason.
-    spawn(["gum", "input", "--placeholder=press enter to go back"], { interactive: true });
+    spawn(["gum", "input", "--placeholder=press enter to go back"], { terminal: "all" });
   }
   return outcome === "failed" ? 1 : 0;
 }

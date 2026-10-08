@@ -75,10 +75,10 @@ own rules and a path or a flag comes back in pieces
 
 `prefix+alt+f` opens the board from the local plugin in `cleanup/`, an overlay
 listing each worktree workspace that needs you or is ready to finish. A row
-names its pull request, the reason, and the next step: `go` to an agent that is
-blocked, done, failing CI, or ready to merge, `wake` an idle agent whose pull
-request moved after it stopped, or `prune` a merged or closed one. Everything
-else is counted in the header and hidden.
+leads with the next step, then its pull request and the reason: `go` to an agent
+that is blocked, done, failing CI, or ready to merge, `wake` an idle agent whose
+pull request moved after it stopped, or `prune` a merged or closed one.
+Everything else is counted in the header and hidden.
 
 | Key     | Action                                                                |
 | ------- | --------------------------------------------------------------------- |

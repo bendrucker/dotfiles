@@ -77,13 +77,28 @@ test("the confirmation lists the flags and at most ten ignored paths", () => {
   `);
 });
 
+const OPEN_PR = { number: 7, state: "OPEN", ref: "repo#7" } as const;
+
+// Runs `act` and returns what it reported on stderr.
+function errorsFrom(act: () => void): string[] {
+  const errors: string[] = [];
+  const original = console.error;
+  console.error = (message: string) => errors.push(message);
+  try {
+    act();
+  } finally {
+    console.error = original;
+  }
+  return errors;
+}
+
 describe("close", () => {
   test.each<{ forge: "github" | "gitlab"; command: string }>([
     { forge: "github", command: "gh pr close 7" },
     { forge: "gitlab", command: "glab mr close 7" },
   ])("closes on $forge and prunes without asking twice", ({ forge, command }) => {
     const { run, calls } = recorder();
-    expect(close(makeRow({ forge, flags: ["dirty"] }), run)).toBe("done");
+    expect(close(makeRow({ forge, pr: OPEN_PR, flags: ["dirty"] }), run)).toBe("done");
     expect(calls.filter((c) => c.startsWith("gum confirm"))).toHaveLength(1);
     expect(calls).toContain(command);
     expect(calls.at(-1)).toStartWith("wt -C");
@@ -91,8 +106,21 @@ describe("close", () => {
 
   test("leaves the worktree when the forge refuses", () => {
     const { run, calls } = recorder(["gh pr close"]);
-    expect(close(makeRow(), run)).toBe("failed");
+    expect(close(makeRow({ pr: OPEN_PR }), run)).toBe("failed");
     expect(calls.some((c) => c.startsWith("trash"))).toBe(false);
+  });
+
+  test.each<{ name: string; row: Partial<Row>; error: string }>([
+    { name: "an already merged PR", row: {}, error: "repo#7 is already merged, so press p to prune" },
+    {
+      name: "an origin on neither forge",
+      row: { pr: OPEN_PR, forge: undefined },
+      error: "topic's origin is neither GitHub nor GitLab, so repo#7 can't be closed from here",
+    },
+  ])("runs nothing for $name", ({ row, error }) => {
+    const { run, calls } = recorder();
+    expect(errorsFrom(() => expect(close(makeRow(row), run)).toBe("failed"))).toEqual([`herdr-cleanup: ${error}`]);
+    expect(calls).toEqual([]);
   });
 });
 
@@ -103,18 +131,25 @@ describe("wake", () => {
     expect(calls.at(-1)).toBe("herdr agent prompt w1:p2 [herdr-cleanup] rebase first");
   });
 
-  test("reports why herdr refused the prompt", () => {
-    const refusal = JSON.stringify({ error: { code: "agent_not_ready", message: "agent w1:p2 is blocked" } });
+  test("draws the editor on stderr and reads the text from stdout", () => {
+    const seen: (string | undefined)[] = [];
+    const run: Runner = (cmd, options) => {
+      if (cmd[1] === "write") seen.push(options?.terminal);
+      return { ok: true, stdout: "hi", stderr: "" };
+    };
+    wake(makeRow(), run);
+    expect(seen).toEqual(["stderr"]);
+  });
+
+  test.each<{ name: string; code: string; reason: string }>([
+    { name: "a known code", code: "agent_not_ready", reason: "the agent isn't at its prompt, nothing was sent" },
+    { name: "an unknown code", code: "other", reason: "agent w1:p2 is busy" },
+  ])("reports why herdr refused the prompt: $name", ({ code, reason }) => {
+    const refusal = JSON.stringify({ error: { code, message: "agent w1:p2 is busy" } });
     const { run } = recorder(["herdr agent prompt"], WAKE_TEXT, refusal);
-    const errors: string[] = [];
-    const original = console.error;
-    console.error = (message: string) => errors.push(message);
-    try {
-      expect(wake(makeRow(), run)).toBe("failed");
-    } finally {
-      console.error = original;
-    }
-    expect(errors).toEqual(["herdr-cleanup: herdr refused the prompt for topic: agent w1:p2 is blocked"]);
+    expect(errorsFrom(() => expect(wake(makeRow(), run)).toBe("failed"))).toEqual([
+      `herdr-cleanup: herdr refused the prompt for topic: ${reason}`,
+    ]);
   });
 
   test.each<{ name: string; row: Partial<Row>; written: string; outcome: Outcome }>([

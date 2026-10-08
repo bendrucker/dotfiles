@@ -27,11 +27,12 @@ export function render(local: Row[], remote: Row[] | undefined, showRemote: bool
   if (showRemote) freshness.push(remote === undefined ? `${MACHINE} unreachable` : `${MACHINE} ${age(summarize(remote).oldestFetch, now)}`);
 
   const table = alignColumns(
+    // The step leads so a narrow overlay truncates the reason rather than the step.
     shown.map((row) => [
+      `→ ${row.step}`,
       `${row.machine ? `${row.machine}:` : ""}${row.label}`,
       row.pr?.ref ?? "",
       [row.reason, ...row.flags].join(" · "),
-      `→ ${row.step}`,
     ]),
   );
   return [

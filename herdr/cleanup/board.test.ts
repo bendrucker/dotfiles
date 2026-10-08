@@ -45,9 +45,9 @@ describe("render", () => {
         "	cleanup · 2 need you · 1 safe to finish · 1 collapsed",
         "	forge 2m ago · herdr live · work 1h ago",
         "	enter go · p prune · x close · w wake · r refresh · m work · q quit",
-        "local:w1	topic     repo#7  CI failing          → go",
-        "local:w2	landed    repo#3  merged · ignored:2  → prune",
-        "work:w9	work:far  repo#7  CI failing          → go",
+        "local:w1	→ go     topic     repo#7  CI failing",
+        "local:w2	→ prune  landed    repo#3  merged · ignored:2",
+        "work:w9	→ go     work:far  repo#7  CI failing",
       ]
     `);
   });
