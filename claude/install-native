@@ -17,7 +17,7 @@ fi
 # Fetched before running, so a failed download fails here rather than piping
 # nothing into bash and reporting success.
 installer=$(curl -fsSL https://claude.ai/install.sh)
-printf '%s\n' "$installer" | bash
+bash -c "$installer"
 
 if [ ! -x "$target" ]; then
   echo "install-native: the installer finished without installing $target" >&2
