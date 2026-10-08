@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { repoRoot, sandbox, type Sandbox } from "#harness";
 import type { Context, Platform } from "#migrations/migration";
 import {
   devRoot,
@@ -124,6 +124,12 @@ describe("discover", () => {
   test("a tree with no migrations directory has no migrations", () => {
     expect(discover(box.path("nowhere"))).toEqual([]);
     expect(latestVersion([])).toBe(0);
+  });
+
+  // Two PRs merged on one day can each claim the same version, and the runner
+  // then refuses every migration on every machine.
+  test("the repo's own migrations each hold a version of their own", () => {
+    expect(() => discover(repoRoot)).not.toThrow();
   });
 });
 
