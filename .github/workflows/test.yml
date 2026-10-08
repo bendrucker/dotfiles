@@ -134,8 +134,15 @@ jobs:
     - name: Print Homebrew configuration
       run: brew config
     - name: Bootstrap
+      id: bootstrap
       run: ./scripts/bootstrap
       env:
+        # scripts/shell/trace.sh records a span per step here, for the report
+        # and artifact below.
+        DOTFILES_TRACE_DIR: ${{ runner.temp }}/trace
+        # A debug re-run prints each formula's steps, and GitHub timestamps
+        # every log line.
+        HOMEBREW_VERBOSE: ${{ runner.debug == '1' && '1' || '' }}
         # skip updates/upgrades to speed up install and keep cached bottles
         # stable. Upgrades relink against host libs that may be missing on
         # later runs (e.g. bat against libllhttp.so on Linux).
@@ -160,6 +167,36 @@ jobs:
           python@3.11
           python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # A bun of the report's own: bootstrap may have failed before installing
+    # one, and setup-bun would put an unpinned bun ahead of the mise shims.
+    - name: Install trace report runtime
+      if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
+      env:
+        # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
+        BUN_VERSION: 1.4.2
+      run: |
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64) target=linux-x64 ;;
+          macOS-ARM64) target=darwin-aarch64 ;;
+          *) echo "no bun build for $RUNNER_OS-$RUNNER_ARCH" >&2; exit 1 ;;
+        esac
+        curl --fail --silent --show-error --location --output "$RUNNER_TEMP/bun.zip" \
+          "https://github.com/oven-sh/bun/releases/download/bun-v$BUN_VERSION/bun-$target.zip"
+        unzip -q -j "$RUNNER_TEMP/bun.zip" -d "$RUNNER_TEMP/bun"
+    - name: Report bootstrap trace
+      if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
+      env:
+        TRACE: ${{ runner.temp }}/trace
+      run: |
+        "$RUNNER_TEMP/bun/bun" scripts/trace-report "$TRACE" --summary "$TRACE/summary.md" --otlp "$TRACE/otlp.json"
+        cat "$TRACE/summary.md" >> "$GITHUB_STEP_SUMMARY"
+    - name: Upload bootstrap trace
+      if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: bootstrap-trace-${{ matrix.name }}
+        path: ${{ runner.temp }}/trace
+        if-no-files-found: warn
     # scripts/install puts the mise shims on PATH for its own children only.
     # Later steps reach the pinned tools through these.
     - name: Add mise shims to PATH

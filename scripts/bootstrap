@@ -7,6 +7,10 @@
 cd "$(dirname "$0")/.." || exit 1
 DOTFILES_ROOT=$(pwd -P)
 
+# shellcheck source=scripts/shell/trace.sh
+. "$DOTFILES_ROOT/scripts/shell/trace.sh"
+trace_begin bootstrap
+
 NO_PROMPT=false
 for arg in "$@"; do
   case $arg in
@@ -15,7 +19,9 @@ for arg in "$@"; do
 done
 
 # Install Homebrew and gum up front; setup_gitconfig prompts via gum.
+trace_begin homebrew.sh
 "$DOTFILES_ROOT/scripts/homebrew.sh"
+trace_end
 
 setup_gitconfig () {
   [ -f git/config.local ] && return
@@ -43,15 +49,22 @@ init_submodules () {
   git -C "$DOTFILES_ROOT" submodule update --init --recursive
 }
 
+trace_begin gitconfig
 setup_gitconfig
+trace_end
+trace_begin submodules
 init_submodules
+trace_end
 
 # dotf installs Homebrew packages, builds the default package lists, links
 # configs, and runs every topic installer.
+trace_begin dotf
 # shellcheck disable=SC1091
 if ! source ./bin/dotf; then
   gum log --level error 'error installing dependencies'
   exit 1
 fi
+trace_end
 
 gum log --level info 'all installed'
+trace_end

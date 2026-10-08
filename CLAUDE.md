@@ -29,6 +29,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 | `#migrations/*` | What a one-time migration is, and the runner behind `bin/dotfiles-migrate` |
 | `#worktree/*` | Worktrunk state, forge queries, column alignment |
 | `#plugins` | The installed Claude Code plugins |
+| `#trace/*` | The bootstrap trace: event parsing, span nesting, the OTLP export and the step summary |
 
 Bun resolves `imports` from the root `package.json` alone, so a specifier resolves with no `node_modules` and no install step. That is what keeps this compatible with the 3am jobs, which run `$HOME/.dotfiles/bin/*` under bun straight from a fast-forwarded clone. `bun.lock` covers the one devDependency in [Linting TypeScript](#linting-typescript), which no script imports, so a clone nothing has installed into still runs every one of them. Adding a runtime dependency to one of these modules would mean the job could not import it until something had installed it, so `#jobs/*`, `#migrations/*`, and everything `bin/dotfiles-sync` reaches stays dependency-free.
 
@@ -308,6 +309,10 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 5. Run `scripts/install-topics`, which runs each `<topic>/install.sh`, including `credentials/install.sh`, which chmods credential files to `0600`
 6. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
 7. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
+
+### Bootstrap Tracing
+
+Setting `DOTFILES_TRACE_DIR` makes the bootstrap path record a span per step. Unset, `scripts/shell/trace.sh` does nothing, so the nightly job never pays for it. The shell side only appends timestamped `B`/`E`/`X` lines to `events.tsv`, because it runs before bun is installed. `scripts/trace-report` (on `#trace/*`) pairs them into a tree, nests each tool's own records under it from `packages/trace/sources/<tool>.ts`, and writes an OTLP/JSON export and a markdown summary. CI runs it after `Bootstrap` on a pinned bun and uploads the whole directory as the `bootstrap-trace-<os>` artifact.
 
 ### Migrations
 

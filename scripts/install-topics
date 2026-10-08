@@ -14,6 +14,9 @@
 # submodule's own tree out without naming any of them.
 set -e
 
+# shellcheck source=scripts/shell/trace.sh
+. "$(dirname "$0")/shell/trace.sh"
+
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 cd "$DOTFILES_ROOT"
 
@@ -57,5 +60,7 @@ for installer in */install.sh; do
   esac
   if declares_submodule "$topic"; then continue; fi
 
+  trace_begin "topic $topic"
   "./$installer"
+  trace_end
 done
