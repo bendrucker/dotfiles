@@ -82,6 +82,12 @@ fi
 # an entry its source does not confirm.
 "$lazy" sync --prune || echo "✗ herdr-lazy sync did not run; plugins may be missing or unlisted" >&2
 
+# The cleanup board lives in this repo, so it is linked rather than listed.
+# Linking through the installed path keeps it on whatever ~/.dotfiles holds.
+if ! herdr plugin list --json 2>/dev/null | jq -e '.result.plugins[]? | select(.plugin_id == "bendrucker.cleanup")' >/dev/null 2>&1; then
+  herdr plugin link "$PWD/cleanup" || echo "✗ could not link the cleanup plugin" >&2
+fi
+
 # With this on, a plugin added to the list later installs on the next herdr
 # start instead of waiting for someone to re-run this script.
 "$lazy" auto-sync on || echo "✗ could not turn on auto-sync" >&2

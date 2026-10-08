@@ -214,14 +214,12 @@ description = "claude background agents"
 width = "85%"
 height = "85%"
 
-# Spelled out rather than named bare: the server holds the environment it
-# started with, so a bare name resolves against a PATH that can predate
-# herdr/path.zsh. $ZSH keeps this on a dev checkout while dev mode is on.
+# herdr/cleanup is linked by install.sh rather than listed in plugins.list.
 [[keys.command]]
 key = "prefix+alt+f"
-type = "shell"
-command = "${ZSH:-$HOME/.dotfiles}/herdr/bin/herdr-flock"
-description = "flock coordinator (focus or create)"
+type = "plugin_action"
+command = "bendrucker.cleanup.open"
+description = "cleanup board"
 
 [ui]
 agent_panel_sort = "priority"
