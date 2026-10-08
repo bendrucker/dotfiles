@@ -9,7 +9,8 @@ trace_now() {
   if [ -n "${EPOCHREALTIME-}" ]; then
     _trace_f=${EPOCHREALTIME#*[.,]}000000000
     trace_t=${EPOCHREALTIME%[.,]*}${_trace_f%"${_trace_f#?????????}"}
-    return
+    # Bare, bash 5.2 returns the status the EXIT trap fired with, and set -e quits.
+    return 0
   fi
   trace_t=$(date +%s%N)
   case $trace_t in *[!0-9]* | "") trace_t=$(perl -MTime::HiRes=time -e 'printf "%.0f", time * 1e9' 2>/dev/null || echo "$(date +%s)000000000") ;; esac
