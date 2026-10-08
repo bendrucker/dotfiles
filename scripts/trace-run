@@ -1,0 +1,80 @@
+#!/usr/bin/env bun
+//
+// Run one command as a span of the bootstrap trace, timing each line it prints.
+// Output passes through unchanged. Each line is also written to
+// $DOTFILES_TRACE_DIR/lines/<pid>-<ns>.tsv as `<ns> <fd> <text>`, which is
+// what a tool whose output marks its own progress gets its spans from.
+// Exits with the command's status. Without DOTFILES_TRACE_DIR it only runs it.
+
+import { appendFileSync, mkdirSync } from "node:fs";
+import { constants } from "node:os";
+import { join } from "node:path";
+import { appendEvent, nowNs } from "#trace/record";
+
+const USAGE = "usage: trace-run [--name <span>] -- <command>...";
+
+// bun consumes the first `--` after a script path itself, so the separator is
+// optional: `bun trace-run -- cmd` arrives here as `cmd`.
+function parse(argv: string[]): { name?: string; cmd: string[] } {
+  let rest = argv;
+  let name: string | undefined;
+  if (rest[0] === "--name") {
+    name = rest[1];
+    rest = rest.slice(2);
+  }
+  if (rest[0] === "--") rest = rest.slice(1);
+  return { name, cmd: rest };
+}
+
+async function pump(stream: ReadableStream<Uint8Array>, out: NodeJS.WriteStream, fd: 1 | 2, file?: string) {
+  const decoder = new TextDecoder();
+  let partial = "";
+  for await (const chunk of stream) {
+    out.write(chunk);
+    if (!file) continue;
+    const lines = (partial + decoder.decode(chunk, { stream: true })).split("\n");
+    partial = lines.pop() ?? "";
+    const at = nowNs();
+    if (lines.length > 0) appendFileSync(file, lines.map((line) => `${at}\t${fd}\t${line}\n`).join(""));
+  }
+  if (file && partial) appendFileSync(file, `${nowNs()}\t${fd}\t${partial}\n`);
+}
+
+function exitStatus(proc: { exitCode: number | null; signalCode: string | null }): number {
+  if (proc.exitCode !== null) return proc.exitCode;
+  const signal = proc.signalCode as keyof typeof constants.signals | null;
+  return 128 + (signal ? constants.signals[signal] : 0);
+}
+
+async function main(): Promise<number> {
+  const { name, cmd } = parse(process.argv.slice(2));
+  if (cmd.length === 0) {
+    console.error(USAGE);
+    return 2;
+  }
+  const dir = process.env.DOTFILES_TRACE_DIR || undefined;
+  let file: string | undefined;
+  if (dir) {
+    mkdirSync(join(dir, "lines"), { recursive: true });
+    file = join(dir, "lines", `${process.pid}-${nowNs()}.tsv`);
+    appendEvent(dir, "B", 0, name ?? cmd.join(" "));
+  }
+
+  let proc: Bun.Subprocess<"inherit", "pipe", "pipe">;
+  try {
+    proc = Bun.spawn({ cmd, stdin: "inherit", stdout: "pipe", stderr: "pipe" });
+  } catch (error) {
+    console.error(`trace-run: ${cmd[0]}: ${error instanceof Error ? error.message : error}`);
+    if (dir) appendEvent(dir, "E", 127);
+    return 127;
+  }
+  for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => proc.kill(signal));
+  await Promise.all([pump(proc.stdout, process.stdout, 1, file), pump(proc.stderr, process.stderr, 2, file)]);
+  await proc.exited;
+
+  const status = exitStatus(proc);
+  if (dir) appendEvent(dir, "E", status);
+  return status;
+}
+
+process.exitCode = await main();

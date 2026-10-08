@@ -1,0 +1,58 @@
+#!/usr/bin/env bun
+//
+// Turn a bootstrap trace directory into a span tree. Writes the step-summary
+// markdown to --summary (stdout when absent) and the full OTLP/JSON export to
+// --otlp.
+
+import { writeFileSync } from "node:fs";
+import { hostname } from "node:os";
+import { parseArgs } from "node:util";
+import { toOtlp } from "#trace/otlp";
+import { loadTrace } from "#trace/report";
+import { renderSummary } from "#trace/summary";
+
+const USAGE = "usage: trace-report <dir> [--summary <file>] [--otlp <file>] [--top <n>] [--min <seconds>]";
+
+function usage(): never {
+  console.error(USAGE);
+  process.exit(2);
+}
+
+let parsed;
+try {
+  parsed = parseArgs({
+    args: process.argv.slice(2),
+    allowPositionals: true,
+    options: {
+      summary: { type: "string" },
+      otlp: { type: "string" },
+      top: { type: "string", default: "15" },
+      min: { type: "string", default: "1" },
+    },
+  });
+} catch {
+  usage();
+}
+const { values, positionals } = parsed;
+
+const [dir] = positionals;
+const top = Number(values.top);
+const min = Number(values.min);
+if (!dir || positionals.length > 1 || !Number.isInteger(top) || top < 0 || !(min >= 0)) usage();
+
+let tree;
+try {
+  tree = await loadTrace(dir);
+} catch (error) {
+  console.error(`trace-report: ${error instanceof Error ? error.message : error}`);
+  process.exit(1);
+}
+
+const summary = renderSummary(tree, { top, min });
+if (values.summary) writeFileSync(values.summary, summary);
+else process.stdout.write(summary);
+
+if (values.otlp) {
+  const resource = { "service.name": "dotfiles-bootstrap", "host.name": hostname(), "os.type": process.platform };
+  writeFileSync(values.otlp, `${JSON.stringify(toOtlp(tree, resource))}\n`);
+}

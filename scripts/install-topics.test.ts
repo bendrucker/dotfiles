@@ -47,6 +47,21 @@ describe("install-topics", () => {
     expect(ran()).toEqual(["git/install.sh", "macos/install.sh", "terminal/install.sh"]);
   });
 
+  test("marks a span per installer when tracing", () => {
+    installer("git/install.sh");
+    box.stub("root/macos/install.sh", "exit 3");
+
+    const r = run([script, root], { env: { LOG: box.path("ran"), DOTFILES_TRACE_DIR: box.path("trace") } });
+    expect(r.status).toBe(3);
+    const events = box.read("trace/events.tsv").split("\n").filter(Boolean).map((line) => line.split("\t"));
+    expect(events.map(([kind, , , st, name]) => [kind, st, name])).toEqual([
+      ["B", "0", "topic git"],
+      ["E", "0", ""],
+      ["B", "0", "topic macos"],
+      ["X", "3", undefined],
+    ]);
+  });
+
   test("leaves mise to scripts/install, which sources it first", () => {
     installer("git/install.sh");
     installer("mise/install.sh");
