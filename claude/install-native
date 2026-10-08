@@ -1,0 +1,25 @@
+#!/bin/sh
+#/ Usage: install-native
+#/ Install Claude Code with Anthropic's native installer, unless it already is.
+#
+# The native build lives in ~/.local/bin and updates itself in the background,
+# so a release reaches this machine without waiting on a package manager. This
+# runs from the 3am job and from a migration, and neither the installer nor the
+# updater asks for a terminal or root.
+set -e
+
+target="$HOME/.local/bin/claude"
+
+if [ -x "$target" ]; then
+  exit 0
+fi
+
+# Fetched before running, so a failed download fails here rather than piping
+# nothing into bash and reporting success.
+installer=$(curl -fsSL --connect-timeout 30 --max-time 120 https://claude.ai/install.sh)
+bash -c "$installer"
+
+if [ ! -x "$target" ]; then
+  echo "install-native: the installer finished without installing $target" >&2
+  exit 1
+fi
