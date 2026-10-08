@@ -18,7 +18,6 @@ export function key(row: Row): string {
 
 // Three header lines, then one line per actionable row as `<key>\t<display>`.
 // The header has an empty key so `--with-nth=2..` still shows it.
-// fzf shows the display and hands the key back to whichever action runs.
 export function render(local: Row[], remote: Row[] | undefined, showRemote: boolean, now: number): string[] {
   const rows = [...local, ...(remote ?? [])];
   const shown = rows.filter((row) => row.step !== "collapsed");

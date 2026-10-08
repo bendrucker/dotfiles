@@ -21,8 +21,6 @@ function makeRow(overrides: Partial<Row> = {}): Row {
   };
 }
 
-// Records every command and fails the ones named in `failing`. `gum write`
-// answers with whatever `written` holds.
 function recorder(failing: string[] = [], written = WAKE_TEXT, refusal = ""): { run: Runner; calls: string[] } {
   const calls: string[] = [];
   const run: Runner = (cmd) => {
@@ -79,7 +77,6 @@ test("the confirmation lists the flags and at most ten ignored paths", () => {
 
 const OPEN_PR = { number: 7, state: "OPEN", ref: "repo#7" } as const;
 
-// Runs `act` and returns what it reported on stderr.
 function errorsFrom(act: () => void): string[] {
   const errors: string[] = [];
   const original = console.error;

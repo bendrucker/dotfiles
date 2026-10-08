@@ -40,7 +40,6 @@ function fail(message: string): Outcome {
   return "failed";
 }
 
-// Codes from herdr's JSON error that a user reads better in plain words.
 const HERDR_REASONS: Record<string, string> = {
   agent_not_ready: "the agent isn't at its prompt, nothing was sent",
   agent_not_found: "no agent is running there any more, nothing was sent",
