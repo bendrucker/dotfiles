@@ -31,10 +31,10 @@ superseded=$(cask_variants_superseded "$declared" "$installed")
 
 [ -n "$superseded" ] || exit 0
 
-# jq is installed by the brew bundle that runs after this. A machine with no
-# casks yet has nothing to retire and never reaches this point, so require jq
-# only once there is something to verify, and say so rather than skipping
-# quietly and letting bundle fail on the conflict instead.
+# jq ships in /usr/bin from macOS 15, and mise installs it after this. A
+# machine with no casks yet has nothing to retire and never reaches this point,
+# so require jq only once there is something to verify, and say so rather than
+# skipping quietly and letting bundle fail on the conflict instead.
 if ! command -v jq >/dev/null 2>&1; then
   echo "install-cask-variants: these casks are superseded by a variant the Brewfile declares," >&2
   echo "  but jq is not available to confirm the conflict. brew bundle will fail while they remain:" >&2

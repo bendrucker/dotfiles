@@ -26,7 +26,7 @@ repos:
       - id: ruff
       - id: ruff-format
 
-  # gitleaks-system runs the brew-installed binary, so the Brewfile owns the
+  # gitleaks-system runs the binary on PATH, so system/mise.toml owns the
   # version. The repo's other two ids build it from source or pull a Docker
   # image. pass_filenames is an override, not a preference: upstream omits it on
   # this id alone, and `gitleaks git` takes at most one path, so a commit

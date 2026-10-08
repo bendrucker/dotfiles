@@ -1,7 +1,6 @@
-// Claude Code comes from the `claude-code@latest` cask in claude/Brewfile. An
-// older `npm i -g @anthropic-ai/claude-code` into a mise node left a `claude`
+// An old `npm i -g @anthropic-ai/claude-code` into a mise node left a `claude`
 // in that install's bin, and mise shims every bin of every installed version,
-// active or not, ahead of Homebrew on PATH.
+// active or not.
 //
 // Only the package goes, not the node version holding it. Nothing in this repo
 // declares that version, but a project on some machine may still pin it.

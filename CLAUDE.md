@@ -87,6 +87,8 @@ Give a tool its own directory when it has something to put there: config files t
 
 Homebrew is the default for a new tool. It links into `$HOMEBREW_PREFIX/bin`, a path that survives upgrades and is visible to every process rather than only shells that ran `mise activate`, and `brew bundle` tracks the current release. Use `mise.toml` when the version has to vary by directory, which is what mise resolves per-project: language runtimes and project-pinned tools like `terraform`. Declaring a tool in both is fine. mise's install directories come first on `$PATH`. A mise pin wins where one applies and the Homebrew copy covers everywhere else.
 
+A tool this repo's own scripts, tests, or CI call is the exception. Those are pinned in `system/mise.toml` and declared in no Brewfile, so a breaking release arrives as a Renovate PR that the `bootstrap` job judges before any machine runs it. Renovate batches that file into one weekly PR and automerges it, majors included, so the only update that needs attention is one CI fails. `gum` stays on Homebrew despite its callers, because `scripts/homebrew.sh` installs it before mise exists.
+
 #### Brewfile Aggregation
 
 The root `Brewfile` recursively loads all topic Brewfiles using:
@@ -115,7 +117,7 @@ The root Brewfile additionally evaluates `~/Brewfile.local` when present. Use it
 
 #### mise Aggregation
 
-Topic directories can contain `mise.toml` files for tool versions and `[bootstrap]` config. Each one is linked into `~/.config/mise/conf.d/` by a `symlinks.conf` entry in its topic, and mise merges them alphabetically. A `mise.toml` without that entry is trusted by `mise/install.sh` and otherwise never loaded.
+Topic directories can contain `mise.toml` files for tool versions and `[bootstrap]` config. Each one is linked into `~/.config/mise/conf.d/` by a `symlinks.conf` entry in its topic, and mise merges them alphabetically. A `mise.toml` without that entry is installed from by `mise/install.sh` and otherwise never loaded.
 
 Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`). Renovate tracks `mise.toml` files and auto-merges non-major updates after a 2-week release age delay. Using `"latest"` prevents Renovate from detecting new versions. For tools not available in the mise registry, use the `github:` backend (e.g., `"github:owner/repo" = "1.2.3"`) to install pre-built release binaries. A tool whose version is a template, like `uv` in `python/mise.toml` following a project's `required-version`, keeps its default in `[vars]` under a `# renovate:` comment, which a regex manager in `.github/renovate.json` tracks. Disable the mise manager for that tool in the same file, or it reads the template as the current version and opens a PR replacing it with a literal.
 
@@ -298,13 +300,12 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 
 `scripts/install` is the main entry point:
 1. `brew bundle` — Install Brewfile dependencies, leaving the self-updating casks alone where `scripts/brew-managed-machine` says another manager owns them
-2. Trust `*/mise.toml`
-3. `mise install` — Install language runtimes
-4. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
-5. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`
-6. Run `scripts/install-topics`, which runs each `<topic>/install.sh`, including `credentials/install.sh`, which chmods credential files to `0600`
-7. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
-8. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
+2. `mise install` from each topic directory holding a `mise.toml`, which finds the file before its `conf.d` link exists
+3. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
+4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`, including each `mise.toml` into `~/.config/mise/conf.d/`
+5. Run `scripts/install-topics`, which runs each `<topic>/install.sh`, including `credentials/install.sh`, which chmods credential files to `0600`
+6. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
+7. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
 
 ### Migrations
 

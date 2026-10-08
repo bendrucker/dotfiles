@@ -1,0 +1,16 @@
+# The command line tools this repo's scripts, tests, and CI call, pinned so a
+# breaking release arrives as a Renovate PR that CI judges before it reaches a
+# machine. Renovate batches this file into one weekly PR and automerges it,
+# majors included. Tools used only by hand stay on Homebrew and track latest.
+[tools]
+"aqua:BurntSushi/ripgrep" = "15.2.0"
+"aqua:ast-grep/ast-grep" = "0.45.3"
+"aqua:duckdb/duckdb" = "1.5.6"
+"aqua:gitleaks/gitleaks" = "8.30.1"
+"aqua:j178/prek" = "0.5.5"
+"aqua:jqlang/jq" = "1.8.2"
+"aqua:koalaman/shellcheck" = "0.11.0"
+"aqua:mikefarah/yq" = "4.54.1"
+"aqua:rhysd/actionlint" = "1.7.12"
+"aqua:sharkdp/fd" = "10.5.0"
+"aqua:sharkdp/hyperfine" = "2.0.0"
