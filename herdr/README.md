@@ -70,3 +70,33 @@ and a word carrying `*` or `$(` would otherwise reach the parser as syntax.
 herdr exposes no word-separator setting, so a double-click takes a word by its
 own rules and a path or a flag comes back in pieces
 ([#713](https://github.com/bendrucker/dotfiles/issues/713)).
+
+## Cleanup board
+
+`prefix+alt+f` opens the board from the local plugin in `cleanup/`, an overlay
+listing each worktree workspace that needs you or is ready to finish. A row
+names its pull request, the reason, and the next step: `go` to an agent that is
+blocked, done, failing CI, or ready to merge, `wake` an idle agent whose pull
+request moved after it stopped, or `prune` a merged or closed one. Everything
+else is counted in the header and hidden.
+
+| Key     | Action                                                                |
+| ------- | --------------------------------------------------------------------- |
+| `enter` | Focus the workspace's agent pane and close the board                  |
+| `p`     | Close the workspace, move the checkout to the Trash, then `wt remove` |
+| `x`     | Close the pull request or merge request, then prune                   |
+| `w`     | Edit and send a `[herdr-cleanup]` prompt to the agent                 |
+| `r`     | Re-query the forge for every workspace and reload                     |
+| `m`     | Show or hide rows from the `work` machine                             |
+
+Prune asks first when the workspace has a live agent, uncommitted or unpushed
+work, or ignored files, and lists up to ten of those files. `wt remove` deletes
+the branch only when it was merged, leaving the rest for `wt-prune`.
+
+The board reads pull request state from
+`$XDG_STATE_HOME/dotfiles/herdr-pr-state/<workspace>.json`, which
+`bin/herdr-workspace-status` writes each time the forge answers. The header
+shows the oldest of those as `forge 5m ago`, so a forge that has stopped
+answering shows up as an age that keeps growing. Rows from `work` come
+over `ssh work`, which needs this branch synced there, and read as
+`work unreachable` when the host does not answer in ten seconds.
