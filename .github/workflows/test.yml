@@ -168,6 +168,16 @@ jobs:
             sys.exit(1)
         print(f'OK: median startup {median:.3f}s')
         "
+    # The agents bootstrap loads keep writing under ~/.local/share/mise, and tar
+    # aborts the post-job cache save on a file that changed while it read it.
+    # Labels come from the repo's own plists, never the runner's.
+    - name: Stop the launchd agents bootstrap loaded
+      if: ${{ always() && runner.os == 'macOS' }}
+      run: |
+        for plist in */*.plist; do
+          label=$(plutil -extract Label raw "$plist" 2>/dev/null) || continue
+          launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+        done
   links:
     name: link schemes
     runs-on: ubuntu-latest
