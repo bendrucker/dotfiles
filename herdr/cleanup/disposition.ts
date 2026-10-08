@@ -47,10 +47,6 @@ export function pruneFlags(input: DispositionInput): string[] {
   return flags;
 }
 
-export function needsConfirm(flags: string[]): boolean {
-  return flags.length > 0;
-}
-
 function time(iso: string): number {
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? 0 : ms;
@@ -91,7 +87,7 @@ function collapsedReason(input: DispositionInput, open: PrInfo[]): string {
   return "open PR";
 }
 
-export function dispose(input: DispositionInput, _now: number): Disposition {
+export function dispose(input: DispositionInput): Disposition {
   const merged = pruneReason(input.prs);
   if (merged) return { step: "prune", reason: merged, flags: pruneFlags(input) };
 

@@ -129,6 +129,19 @@ describe("buildRows", () => {
     expect(row?.pr?.number).toBe(4);
   });
 
+  test("counts open PRs and a working agent for the removal checks", () => {
+    const prs = [makePr({ number: 4 }), makePr({ number: 5 }), makePr({ number: 3, state: "MERGED" })];
+    const snapshot = makeSnapshot([makeWorkspace()], [makeAgent({ agent_status: "working" })]);
+    const [row] = buildRows(makeSources({ snapshot, caches: { w1: makeCache({ prs }) } }));
+    expect(row).toMatchObject({ openPrs: 2, live: true });
+  });
+
+  test("keeps the PRs it understands when one entry is malformed", () => {
+    const prs = [makePr({ state: "MERGED" }), { number: "x" }];
+    const [row] = buildRows(makeSources({ caches: { w1: makeCache({ prs }) } }));
+    expect(row).toMatchObject({ step: "prune", reason: "merged" });
+  });
+
   test("ignores a cache another session wrote under the same workspace id", () => {
     const [row] = buildRows(makeSources({ caches: { w1: makeCache({ path: "/elsewhere/w1" }) } }));
     expect(row?.pr).toBeUndefined();

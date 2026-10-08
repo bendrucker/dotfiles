@@ -196,13 +196,13 @@ report_workspace() {
   # that does not answer, from a rate limit or a lapsed login or no network,
   # leaves the last report standing until its TTL runs out, since a report
   # built without it would say the pull request is gone.
-  local prs='[]' pr_head='' pr_bucket='' pr_glyph=''
+  local prs='[]' pr_head='' pr_bucket='' pr_glyph='' unasked=
   host=$(remote_host "$(git -C "$path" config --get remote.origin.url 2>/dev/null)")
   if [ -n "$default" ] && [ "$branch" != "$default" ] && [ "${branch#@}" = "$branch" ]; then
     case "$host" in
-      "") ;;
-      github.com) command -v gh >/dev/null 2>&1 && { prs=$(github_prs "$path" "$branch" "$default") || prs=; } ;;
-      *) command -v glab >/dev/null 2>&1 && { prs=$(gitlab_prs "$path" "$branch" "$default") || prs=; } ;;
+      "") unasked=1 ;;
+      github.com) if command -v gh >/dev/null 2>&1; then prs=$(github_prs "$path" "$branch" "$default") || prs=; else unasked=1; fi ;;
+      *) if command -v glab >/dev/null 2>&1; then prs=$(gitlab_prs "$path" "$branch" "$default") || prs=; else unasked=1; fi ;;
     esac
     if [ -z "$prs" ]; then
       echo "herdr-workspace-status: $host did not answer for $label ($id), keeping its last report" >&2
@@ -271,7 +271,10 @@ report_workspace() {
   herdr workspace report-metadata "${args[@]}" >/dev/null 2>&1 ||
     echo "herdr-workspace-status: could not report $label ($id)" >&2
 
-  cache_workspace "$id" "$path" "$branch" "$default" "$prs" "$n" "$([ "$local_glyph" = "$GLYPH_DIRTY" ] && echo true || echo false)"
+  # A forge nobody asked has no answer to cache, and an empty list with a fresh
+  # time would tell the board the branch has no pull request.
+  [ -n "$unasked" ] ||
+    cache_workspace "$id" "$path" "$branch" "$default" "$prs" "$n" "$([ "$local_glyph" = "$GLYPH_DIRTY" ] && echo true || echo false)"
 }
 
 # What the cleanup board reads instead of asking the forge itself. A forge that

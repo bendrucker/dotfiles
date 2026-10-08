@@ -1,14 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   dispose,
-  needsConfirm,
   pruneFlags,
   type AgentInfo,
   type DispositionInput,
   type PrInfo,
 } from "./disposition";
 
-const NOW = Date.parse("2026-10-07T12:00:00Z");
 
 function makePr(overrides: Partial<PrInfo> = {}): PrInfo {
   return {
@@ -152,7 +150,7 @@ describe("dispose", () => {
       reason: "open PR",
     },
   ])("$name", ({ input, step, reason }) => {
-    const result = dispose(input, NOW);
+    const result = dispose(input);
     expect({ step: result.step, reason: result.reason }).toEqual({ step, reason });
   });
 
@@ -208,20 +206,19 @@ describe("dispose", () => {
       pane: undefined,
     },
   ])("wake: $name", ({ input, step, pane }) => {
-    const result = dispose(input, NOW);
+    const result = dispose(input);
     expect({ step: result.step, pane: result.pane }).toEqual({ step, pane });
   });
 
   test("a working agent on a merged branch stays prune and is flagged live", () => {
     const result = dispose(
       makeInput({ prs: [makePr({ state: "MERGED" })], agents: [makeAgent({ status: "working" })] }),
-      NOW,
     );
     expect(result).toEqual({ step: "prune", reason: "merged", flags: ["live"] });
   });
 
   test("non-prune dispositions carry no flags", () => {
-    expect(dispose(makeInput({ dirty: true, unpushed: 2 }), NOW).flags).toEqual([]);
+    expect(dispose(makeInput({ dirty: true, unpushed: 2 })).flags).toEqual([]);
   });
 });
 
@@ -245,14 +242,5 @@ describe("pruneFlags", () => {
     },
   ])("$name", ({ input, flags }) => {
     expect(pruneFlags(input)).toEqual(flags);
-  });
-});
-
-describe("needsConfirm", () => {
-  test.each([
-    { name: "no flags", flags: [], confirm: false },
-    { name: "any flag", flags: ["dirty"], confirm: true },
-  ])("$name", ({ flags, confirm }) => {
-    expect(needsConfirm(flags)).toBe(confirm);
   });
 });

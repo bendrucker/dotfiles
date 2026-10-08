@@ -21,6 +21,10 @@ export interface Row {
   branch: string;
   forge: Forge | undefined;
   pr?: { number: number; state: PrState; ref: string; head?: string };
+  /** Open PRs on the branch, of which `pr` shows the newest. */
+  openPrs?: number;
+  /** An agent in the workspace is working, which any removal has to ask about. */
+  live?: boolean;
   /** The pane to focus or wake. */
   agentPane?: string;
   step: Step;
@@ -100,8 +104,9 @@ function parsePr(value: unknown): PrInfo | undefined {
 function parseCache(value: unknown, path: string): Cache | undefined {
   if (!isRecord(value) || !Array.isArray(value.prs)) return undefined;
   if (text(value.path) !== path) return undefined;
+  // An entry this reader doesn't understand is dropped rather than the file,
+  // so the rest of the workspace's state still reaches the board.
   const prs = value.prs.map(parsePr);
-  if (prs.some((pr) => pr === undefined)) return undefined;
   return {
     branch: text(value.branch),
     prs: prs.filter((pr) => pr !== undefined),
@@ -209,7 +214,7 @@ function rowFor(
     unpushed: cache?.unpushed ?? 0,
     ignored: git.ignored,
   };
-  const disposition = dispose(input, sources.now);
+  const disposition = dispose(input);
   const pr = newestPr(input.prs);
   const mark = forge === "gitlab" ? "!" : "#";
 
@@ -222,6 +227,8 @@ function rowFor(
     branch: cache?.branch ?? "",
     forge,
     pr: pr && { number: pr.number, state: pr.state, ref: `${workspace.repoName}${mark}${pr.number}`, head: pr.head },
+    openPrs: input.prs.filter((p) => p.state === "OPEN").length,
+    live: agents.some((agent) => agent.status === "working"),
     agentPane: pickPane(agents, disposition.pane),
     step: disposition.step,
     reason: disposition.reason,
@@ -290,8 +297,12 @@ function readCaches(cacheDir: string): Record<string, unknown> {
 }
 
 function run(cmd: string[]): string {
-  const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "ignore" });
-  return result.success ? result.stdout.toString() : "";
+  try {
+    const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "ignore" });
+    return result.success ? result.stdout.toString() : "";
+  } catch {
+    return "";
+  }
 }
 
 function gitFacts(path: string): GitFacts {

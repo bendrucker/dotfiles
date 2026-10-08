@@ -13,6 +13,8 @@ import { loadRows, type Row } from "../rows";
 
 const REMOTE_SCRIPT = "~/.dotfiles/herdr/cleanup/bin/herdr-cleanup";
 const REMOTE_TIMEOUT_MS = 10_000;
+const REFRESH_TIMEOUT_MS = 60_000;
+const REMOTE_STATUS = "~/.dotfiles/herdr/bin/herdr-workspace-status";
 
 const self = realpathSync(import.meta.path);
 const state = join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "dotfiles");
@@ -38,19 +40,28 @@ function isRow(value: unknown): value is Row {
 }
 
 function remoteRows(): Row[] | undefined {
-  const child = Bun.spawnSync({
-    cmd: ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", MACHINE, `${REMOTE_SCRIPT} rows --json`],
-    stdin: "ignore",
-    stderr: "ignore",
-    timeout: REMOTE_TIMEOUT_MS,
-  });
-  if (child.exitCode !== 0) return undefined;
   try {
+    const child = Bun.spawnSync({
+      cmd: ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", MACHINE, `${REMOTE_SCRIPT} rows --json`],
+      stdin: "ignore",
+      stderr: "ignore",
+      timeout: REMOTE_TIMEOUT_MS,
+    });
+    if (child.exitCode !== 0) return undefined;
     const parsed: unknown = JSON.parse(child.stdout.toString());
     if (!Array.isArray(parsed)) return undefined;
     return parsed.filter(isRow).map((row) => ({ ...row, machine: MACHINE }));
   } catch {
     return undefined;
+  }
+}
+
+// A forge that hangs costs one timeout rather than the board.
+function refresh(): void {
+  const options = { stdio: ["ignore", "ignore", "ignore"], timeout: REFRESH_TIMEOUT_MS } as const;
+  Bun.spawnSync({ cmd: [workspaceStatus], ...options });
+  if (existsSync(machineFlag)) {
+    Bun.spawnSync({ cmd: ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", MACHINE, REMOTE_STATUS], ...options });
   }
 }
 
@@ -60,9 +71,6 @@ function lines(): void {
   console.log(output.join("\n"));
 }
 
-function find(target: string): Row | undefined {
-  return localRows()?.find((row) => row.workspaceId === target);
-}
 
 // A remote row's action runs the same subcommand on that machine, with a
 // terminal so gum can ask there.
@@ -76,7 +84,12 @@ function act(action: string, target: string | undefined): number {
     });
     return child.exitCode ?? 1;
   }
-  const row = find(workspace ?? "");
+  const rows = localRows();
+  if (rows === undefined) {
+    console.error("herdr-cleanup: herdr is unreachable");
+    return 1;
+  }
+  const row = rows.find((candidate) => candidate.workspaceId === workspace);
   if (row === undefined) {
     console.error(`herdr-cleanup: no worktree workspace ${workspace}`);
     return 1;
@@ -88,7 +101,9 @@ function act(action: string, target: string | undefined): number {
   const outcome = handlers[action as keyof typeof handlers](row, spawn);
   if (outcome === "failed" && process.stdin.isTTY) {
     // fzf reloads over the screen once this exits, which would erase the reason.
-    spawn(["gum", "input", "--placeholder=press enter to go back"], { terminal: "all" });
+    // go replaced fzf, so there is no board to go back to.
+    const next = action === "go" ? "close" : "go back";
+    spawn(["gum", "input", `--placeholder=press enter to ${next}`], { terminal: "all" });
   }
   return outcome === "failed" ? 1 : 0;
 }
@@ -149,7 +164,7 @@ function main(argv: string[]): number {
       lines();
       return 0;
     case "refresh":
-      Bun.spawnSync({ cmd: [workspaceStatus], stdio: ["ignore", "ignore", "ignore"] });
+      refresh();
       lines();
       return 0;
     case "rows": {

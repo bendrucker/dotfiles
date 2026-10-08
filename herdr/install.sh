@@ -82,9 +82,12 @@ fi
 # an entry its source does not confirm.
 "$lazy" sync --prune || echo "✗ herdr-lazy sync did not run; plugins may be missing or unlisted" >&2
 
-# The cleanup board lives in this repo, so it is linked rather than listed.
-# Linking through the installed path keeps it on whatever ~/.dotfiles holds.
-if ! herdr plugin list --json 2>/dev/null | jq -e '.result.plugins[]? | select(.plugin_id == "bendrucker.cleanup")' >/dev/null 2>&1; then
+# The cleanup board lives in this repo, so it is linked rather than listed. A
+# link left by a run from another checkout is moved here, so a deleted
+# worktree never strands the board.
+cleanup_root=$(herdr plugin list --json 2>/dev/null | jq -r '.result.plugins[]? | select(.plugin_id == "bendrucker.cleanup") | .plugin_root' 2>/dev/null || true)
+if [ "$cleanup_root" != "$PWD/cleanup" ]; then
+  [ -n "$cleanup_root" ] && herdr plugin unlink bendrucker.cleanup >/dev/null
   herdr plugin link "$PWD/cleanup" || echo "✗ could not link the cleanup plugin" >&2
 fi
 

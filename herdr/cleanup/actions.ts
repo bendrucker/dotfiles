@@ -78,10 +78,10 @@ export function confirmText(row: Row): string {
 }
 
 // The board's flags come from a cache that can be minutes old, so the safety
-// check reads the checkout again at the moment of removal. A read that fails
-// becomes a flag of its own, which forces the confirmation.
+// check reads the checkout again at the moment of removal, branch included. A
+// read that fails becomes a flag of its own, which forces the confirmation.
 export function current(row: Row, run: Runner): Row {
-  const flags = row.flags.filter((flag) => flag === "live");
+  const flags = row.live ? ["live"] : [];
   const status = run(["git", "-C", row.path, "status", "--porcelain", "--ignored"]);
   const lines = status.stdout.split("\n").filter(Boolean);
   const ignored = lines.filter((line) => line.startsWith("!! ")).map((line) => line.slice(3));
@@ -90,27 +90,31 @@ export function current(row: Row, run: Runner): Row {
   const base = row.pr?.head ? [`${row.pr.head}..HEAD`] : ["HEAD", "--not", "--remotes"];
   const ahead = run(["git", "-C", row.path, "rev-list", "--count", ...base]);
   const unpushed = Number.parseInt(ahead.stdout, 10);
+  const branch = run(["git", "-C", row.path, "branch", "--show-current"]).stdout.trim();
   if (!status.ok || !ahead.ok || Number.isNaN(unpushed)) flags.push("unreadable");
   if (lines.some((line) => !line.startsWith("!! "))) flags.push("dirty");
   if (unpushed > 0) flags.push(`unpushed:${unpushed}`);
   if (ignored.length > 0) flags.push(`ignored:${ignored.length}`);
-  return { ...row, flags, ignored };
+  return { ...row, branch, flags, ignored };
 }
 
 // The checkout goes to the Trash before Worktrunk sees it, so whatever it held
 // stays recoverable, and `wt remove` only has a stale entry and a branch left.
+// The workspace closes last: the board may be running inside it.
 function remove(row: Row, run: Runner): Outcome {
-  const closed = run(["herdr", "workspace", "close", row.workspaceId]);
-  if (!closed.ok) return fail(`could not close the ${row.label} workspace, leaving the checkout in place: ${reason(closed)}`);
   const trashed = run(["trash", row.path]);
   if (!trashed.ok) return fail(`could not move ${row.path} to the Trash, leaving it in place: ${reason(trashed)}`);
   const removed = run(["wt", "-C", row.repoRoot, "remove", row.branch, "--foreground", "--yes"]);
   if (!removed.ok) return fail(`${row.path} is in the Trash, but wt remove failed for ${row.branch}: ${reason(removed)}`);
+  const closed = run(["herdr", "workspace", "close", row.workspaceId]);
+  if (!closed.ok) return fail(`${row.label} is removed, but its workspace would not close: ${reason(closed)}`);
   return "done";
 }
 
 export function prune(row: Row, run: Runner): Outcome {
+  if (row.step !== "prune") return fail(`${row.label} is not merged or closed (${row.reason}), so p leaves it alone`);
   const now = current(row, run);
+  if (now.branch === "") return fail(`${row.label} has no branch checked out, so nothing was removed`);
   if (now.flags.length > 0) {
     if (!run(["gum", "confirm", "--default=false", confirmText(now)], { terminal: "all" }).ok) return "cancelled";
   }
@@ -121,9 +125,11 @@ export function close(row: Row, run: Runner): Outcome {
   if (row.pr === undefined) return fail(`${row.label} has no pull request to close`);
   if (row.pr.state !== "OPEN") return fail(`${row.pr.ref} is already ${row.pr.state.toLowerCase()}, so press p to prune`);
   if (row.forge === undefined) return fail(`${row.label}'s origin is neither GitHub nor GitLab, so ${row.pr.ref} can't be closed from here`);
+  if ((row.openPrs ?? 1) > 1) return fail(`${row.label} has ${row.openPrs} open pull requests, so close them on the forge`);
+  const now = current(row, run);
+  if (now.branch === "") return fail(`${row.label} has no branch checked out, so nothing was closed`);
   const number = String(row.pr.number);
   const cmd = row.forge === "github" ? ["gh", "pr", "close", number] : ["glab", "mr", "close", number];
-  const now = current(row, run);
   const question = [`Close ${row.pr.ref} and prune ${row.label}?`];
   if (now.flags.length > 0) question.push("", confirmText(now));
   if (!run(["gum", "confirm", "--default=false", question.join("\n")], { terminal: "all" }).ok) return "cancelled";

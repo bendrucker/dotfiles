@@ -318,6 +318,13 @@ describe("herdr-workspace-status", () => {
     expect(cached.fetched_at).toMatch(/^\d{4}-\d\d-\d\dT/);
   });
 
+  test("writes no cache for a branch whose forge it could not ask", () => {
+    const repo = setupRepo(box);
+    must(["git", "-C", repo, "remote", "remove", "origin"]);
+    expect(reportWorkspace(box).status).toBe(0);
+    expect(existsSync(box.path("state/dotfiles/herdr-pr-state/w1.json"))).toBe(false);
+  });
+
   test("leaves the cache and its fetched_at alone when the forge does not answer", () => {
     const repo = setupRepo(box);
     stubGh(box, repo);
