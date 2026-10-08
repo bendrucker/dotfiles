@@ -2,7 +2,6 @@ export type Checks = "passed" | "running" | "failed" | "no-ci" | "none";
 export type Review = "changes_requested" | "pending" | "draft" | "approved";
 export type Step = "review" | "go" | "wake" | "prune" | "collapsed";
 
-/** The branch's open pull request, as Worktrunk reports it. */
 export interface PrInfo {
   number: number;
   conflicting: boolean;
@@ -20,7 +19,6 @@ export interface AgentInfo {
 }
 
 export interface DispositionInput {
-  /** Worktrunk found the branch's content in the default branch. */
   integrated: boolean;
   /** The branch sits at the default branch's commit with nothing of its own. */
   empty: boolean;
@@ -35,9 +33,7 @@ export interface Disposition {
   step: Step;
   reason: string;
   flags: string[];
-  /** What the review is for, set only on a review. */
   detail?: string;
-  /** The pane the step acts on. */
   pane?: string;
 }
 

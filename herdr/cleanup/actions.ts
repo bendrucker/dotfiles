@@ -58,7 +58,6 @@ function reason(result: Result): string {
       }
     }
   } catch {
-    // Not JSON, so the raw text is the best there is.
   }
   return text.split("\n").at(-1) || "no reason given";
 }
@@ -78,8 +77,7 @@ export function confirmText(row: Row): string {
 }
 
 // The board's flags come from a wt list that can be minutes old, so the safety
-// check reads the checkout again at the moment of removal, branch included. A
-// read that fails becomes a flag of its own, which forces the confirmation.
+// check reads the checkout again at the moment of removal.
 export function current(row: Row, run: Runner): Row {
   const flags = row.live ? ["live"] : [];
   const status = run(["git", "-C", row.path, "status", "--porcelain", "--ignored"]);

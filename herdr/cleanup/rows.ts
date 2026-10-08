@@ -15,11 +15,9 @@ export interface Row {
   pr?: { number: number; ref: string };
   /** An agent in the workspace is working, which any removal has to ask about. */
   live?: boolean;
-  /** The pane to focus or wake. */
   agentPane?: string;
   step: Step;
   reason: string;
-  /** What a review asks of you, in the agent's words. */
   detail?: string;
   flags: string[];
   ignored: string[];
