@@ -35,13 +35,14 @@
   path = ~/.config/git/delta-catppuccin.gitconfig
   path = ~/.config/git/delta-flavor.conf
 
-# Signing keys are per machine, held in Secretive's Secure Enclave. The key and
-# the switch that turns signing on live in config.local. See README.md.
+# Signing keys are per machine, held in Secretive's Secure Enclave.
+# install-signing writes the key and turns signing on in config.local.
 [gpg]
   format = ssh
 
 [gpg "ssh"]
   program = git-ssh-sign
+  allowedSignersFile = ~/.config/git/allowed_signers
 
 [commit]
   verbose = true

@@ -1,17 +1,8 @@
 [user]
   name = AUTHORNAME
   email = AUTHOREMAIL
-  signingkey = key::SECRETIVE_PUBLIC_KEY
 [credential]
   helper = GIT_CREDENTIAL_HELPER
-
-# Commit signing. See README.md for creating the key.
-[commit]
-  gpgsign = true
-[tag]
-  gpgSign = true
-[gpg "ssh"]
-  allowedSignersFile = ~/.config/git/allowed_signers
 
 # Per-org identity, selected by remote URL rather than worktree path. When you
 # onboard an org, uncomment and point `path` at a private identity file (e.g.
