@@ -39,7 +39,7 @@ function cleanup(...args: string[]) {
 describe("the work machine", () => {
   test("stays off the board until toggled on", () => {
     box.write("ssh-out", JSON.stringify([REMOTE_ROW]));
-    const out = cleanup("lines").stdout;
+    const out = Bun.stripANSI(cleanup("lines").stdout);
     expect(out).not.toContain("work:");
     expect(out).toContain("herdr live\n");
     expect(box.read("ssh.log")).toBe("");
@@ -48,7 +48,7 @@ describe("the work machine", () => {
   test("adds its rows with a machine prefix and keys actions to it", () => {
     box.write("ssh-out", JSON.stringify([REMOTE_ROW, { label: "malformed" }]));
     cleanup("toggle-machine");
-    const out = cleanup("lines").stdout;
+    const out = Bun.stripANSI(cleanup("lines").stdout);
     expect(out).toContain("work:w9\t→ prune  work:far  repo#7  merged");
     expect(out).not.toContain("malformed");
     expect(box.read("ssh.log")).toContain("work ~/.dotfiles/herdr/cleanup/bin/herdr-cleanup rows --json");
@@ -56,7 +56,7 @@ describe("the work machine", () => {
 
   test("says it is unreachable when ssh fails", () => {
     cleanup("toggle-machine");
-    expect(cleanup("lines").stdout).toContain("herdr live · work unreachable");
+    expect(Bun.stripANSI(cleanup("lines").stdout)).toContain("herdr live · work unreachable");
   });
 
   test("toggles back off", () => {
@@ -74,7 +74,7 @@ describe("the work machine", () => {
 
 test("says herdr is unreachable rather than showing an empty live board", () => {
   box.stub("herdr", "exit 1");
-  expect(cleanup("lines").stdout).toContain("herdr unreachable");
+  expect(Bun.stripANSI(cleanup("lines").stdout)).toContain("herdr unreachable");
   expect(cleanup("rows", "--json").status).toBe(1);
 });
 

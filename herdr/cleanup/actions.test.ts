@@ -52,7 +52,7 @@ function recorder(
     const line = cmd.join(" ");
     calls.push(line);
     const ok = !failing.some((prefix) => line.startsWith(prefix));
-    if (line.startsWith("gum write")) return { ok, stdout: written, stderr: "" };
+    if (line.includes("herdr-cleanup write")) return { ok, stdout: written, stderr: "" };
     if (line.includes(" status --porcelain")) return { ok, stdout: ok ? (checkout.status ?? "") : "", stderr: "" };
     if (line.includes(" rev-list ")) return { ok, stdout: ok ? (checkout.ahead ?? "0\n") : "", stderr: "" };
     if (line.includes(" branch --show-current")) return { ok, stdout: ok ? (checkout.branch ?? "topic\n") : "", stderr: "" };
@@ -207,7 +207,7 @@ describe("wake", () => {
   test("draws the editor on stderr and reads the text from stdout", () => {
     const seen: (string | undefined)[] = [];
     const run: Runner = (cmd, options) => {
-      if (cmd[1] === "write") seen.push(options?.terminal);
+      if (cmd[2] === "write") seen.push(options?.terminal);
       return { ok: true, stdout: "hi", stderr: "" };
     };
     wake(makeRow(), run);

@@ -40,7 +40,7 @@ describe("render", () => {
       makeRow({ workspaceId: "w3", label: "busy", step: "collapsed", reason: "working" }),
     ];
     const remote = [makeRow({ workspaceId: "w9", label: "far", machine: "work", fetchedAt: "2026-10-07T19:00:00Z" })];
-    expect(render(local, remote, true, NOW)).toMatchInlineSnapshot(`
+    expect(render(local, remote, true, NOW).map(Bun.stripANSI)).toMatchInlineSnapshot(`
       [
         "	cleanup · 2 need you · 1 safe to finish · 1 collapsed",
         "	forge 2m ago · herdr live · work 1h ago",
@@ -53,6 +53,16 @@ describe("render", () => {
   });
 
   test("says the machine is unreachable rather than showing nothing", () => {
-    expect(render([], undefined, true, NOW)[1]).toStartWith("\tforge never · herdr live · work unreachable");
+    expect(Bun.stripANSI(render([], undefined, true, NOW)[1] ?? "")).toStartWith("\tforge never · herdr live · work unreachable");
+  });
+
+  test.each<{ name: string; row: Partial<Row>; colored: string }>([
+    { name: "a failing go row", row: {}, colored: "\x1b[1;31m→ go\x1b[0m" },
+    { name: "a stale wake row", row: { step: "wake", reason: "PR updated since agent idled" }, colored: "\x1b[33mPR updated since agent idled\x1b[0m" },
+    { name: "a merged prune row", row: { step: "prune", reason: "merged" }, colored: "\x1b[35mmerged\x1b[0m" },
+    { name: "a live flag", row: { step: "prune", reason: "merged", flags: ["live"] }, colored: "\x1b[31mlive\x1b[0m" },
+    { name: "the pull request", row: {}, colored: "\x1b[34mrepo#7\x1b[0m" },
+  ])("colors $name", ({ row, colored }) => {
+    expect(render([makeRow(row)], [], false, NOW)[3]).toContain(colored);
   });
 });

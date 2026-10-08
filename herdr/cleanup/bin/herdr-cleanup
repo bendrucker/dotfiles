@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { close, go, prune, spawn, wake } from "../actions";
 import { MACHINE, render } from "../board";
+import { edit } from "../prompt";
 import { loadRows, type Row } from "../rows";
 
 const REMOTE_SCRIPT = "~/.dotfiles/herdr/cleanup/bin/herdr-cleanup";
@@ -115,6 +116,8 @@ function board(): number {
     cmd: [
       "fzf",
       "--no-input",
+      "--ansi",
+      "--color=header:-1",
       "--header-lines=3",
       "--delimiter=\t",
       "--with-nth=2..",
@@ -143,7 +146,7 @@ function board(): number {
 }
 
 function usage(): number {
-  console.error("usage: herdr-cleanup open | board | lines | refresh | rows [--json] | toggle-machine | go|prune|close|wake <workspace>");
+  console.error("usage: herdr-cleanup open | board | lines | refresh | rows [--json] | toggle-machine | go|prune|close|wake <workspace> | write <text> <title>");
   return 2;
 }
 
@@ -193,4 +196,15 @@ function main(argv: string[]): number {
   }
 }
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+// The wake prompt's editor prints what to send on stdout, and exits 1 on cancel.
+async function write(value: string, title: string): Promise<number> {
+  const text = await edit(value, title);
+  if (text === undefined) return 1;
+  process.stdout.write(text);
+  return 0;
+}
+
+if (import.meta.main) {
+  const [command, ...rest] = process.argv.slice(2);
+  process.exit(command === "write" ? await write(rest[0] ?? "", rest[1] ?? "") : main(process.argv.slice(2)));
+}

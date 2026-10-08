@@ -1,4 +1,7 @@
+import { join } from "node:path";
 import type { Row } from "./rows";
+
+const BIN = join(import.meta.dir, "bin", "herdr-cleanup");
 
 export const WAKE_TEXT = [
   "[herdr-cleanup] PR state may be stale.",
@@ -150,11 +153,7 @@ export function close(row: Row, run: Runner): Outcome {
 
 export function wake(row: Row, run: Runner): Outcome {
   if (row.agentPane === undefined) return fail(`${row.label} has no agent pane to wake`);
-  // At --width=0 gum stops wrapping and opens scrolled to the cursor at the end,
-  // which hides the [herdr-cleanup] tag the prompt is meant to show.
-  const width = Math.max(40, (process.stderr.columns ?? 80) - 4);
-  const editor = ["gum", "write", `--width=${width}`, "--height=6", "--char-limit=0", `--value=${WAKE_TEXT}`];
-  const edited = run(editor, { terminal: "stderr" });
+  const edited = run([process.execPath, BIN, "write", WAKE_TEXT, `Wake ${row.label}`], { terminal: "stderr" });
   const text = edited.stdout.trim();
   if (!edited.ok || text === "") return "cancelled";
   const sent = run(["herdr", "agent", "prompt", row.agentPane, text]);
