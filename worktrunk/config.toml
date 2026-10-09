@@ -6,6 +6,17 @@ claude-trust = "claude-trust-worktree '{{ primary_worktree_path }}' '{{ worktree
 [[pre-start]]
 overlay = "claude-overlay link '{{ worktree_path }}' || true"
 
+# Record tracking here, outside the sandbox, so a sandboxed session can
+# `git push` without `-u` writing the shared `.git/config`.
+[[pre-start]]
+track-origin = """
+b={{ branch }}
+if git config --get remote.origin.url >/dev/null && ! git config --get "branch.$b.remote" >/dev/null; then
+  git config "branch.$b.remote" origin
+  git config "branch.$b.merge" "refs/heads/$b"
+fi
+"""
+
 [list]
 summary = true
 
