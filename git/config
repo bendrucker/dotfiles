@@ -97,3 +97,15 @@
 
 [include]
   path = ~/.config/git/config.local
+
+# github.com credentials come from gh rather than git-credential-osxkeychain,
+# whose keychain grant every Homebrew git upgrade drops. See GitHub Transport in
+# CLAUDE.md. This sits after the include so no helper config.local adds can
+# follow it, and the PATH covers git launched from a GUI app or launchd.
+[credential "https://github.com"]
+  helper =
+  helper = !PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin" gh auth git-credential
+
+[credential "https://gist.github.com"]
+  helper =
+  helper = !PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin" gh auth git-credential

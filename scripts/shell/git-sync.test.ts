@@ -27,11 +27,23 @@ afterEach(() => {
   box.remove();
 });
 
-function runLib(script: string, options: { args?: string[]; env?: Record<string, string | undefined> } = {}): Run {
+type Interpreter = "bash" | "zsh";
+
+interface LibOptions {
+  args?: string[];
+  env?: Record<string, string | undefined>;
+  shell?: Interpreter;
+}
+
+// scripts/setup sources the library under zsh, where arrays start at 1. An empty
+// ZDOTDIR keeps ~/.zshenv from reordering $PATH ahead of the stubs.
+function runLib(script: string, options: LibOptions = {}): Run {
+  const zdotdir = options.shell === "zsh" ? { ZDOTDIR: box.mkdir("zdotdir") } : {};
   return shell(`. ${quote(spinLib)}\n. ${quote(gitSyncLib)}\n${script}`, {
+    shell: options.shell,
     path: [box.bin],
     args: options.args,
-    env: { ...baseEnv, ...options.env },
+    env: { ...baseEnv, ...zdotdir, ...options.env },
   });
 }
 
@@ -62,14 +74,14 @@ function pinCount(url: string): number {
     .filter((line) => line === url).length;
 }
 
-function rewrite(url: string): Run {
+function rewrite(url: string, interpreter: Interpreter = "bash"): Run {
   return runLib(
     [
       `git -C ${quote(repo)} remote add origin "$1"`,
       `git_https_remote ${quote(repo)}`,
       `git -C ${quote(repo)} config --get remote.origin.url`,
     ].join("\n"),
-    { args: [url] },
+    { args: [url], shell: interpreter },
   );
 }
 
@@ -77,13 +89,13 @@ describe("git_https_remote", () => {
   test("rewrites an scp-style github remote", () => {
     const r = rewrite("git@github.com:bendrucker/claude.git");
     expect(r.stdout.trim()).toBe("https://github.com/bendrucker/claude.git");
-    expect(r.stderr).toContain("pushing over SSH");
+    expect(r.stderr).toContain("Pushing origin over SSH");
   });
 
   test("rewrites an ssh:// github remote", () => {
     const r = rewrite("ssh://git@github.com/bendrucker/claude.git");
     expect(r.stdout.trim()).toBe("https://github.com/bendrucker/claude.git");
-    expect(r.stderr).toContain("pushing over SSH");
+    expect(r.stderr).toContain("Pushing origin over SSH");
   });
 
   test("leaves an https github remote alone", () => {
@@ -118,6 +130,30 @@ describe("git_https_remote", () => {
     expect(pushUrl()).toBe("git@github.com:someone/fork.git");
   });
 
+  // Regression: an https remote with no pushurl pushes over HTTPS and falls
+  // through to the keychain credential helper.
+  test.each<Interpreter>(["bash", "zsh"])("gives an https remote an SSH pushurl under %s", (interpreter) => {
+    const r = rewrite("https://github.com/bendrucker/claude.git", interpreter);
+    expect(r.stdout.trim()).toBe("https://github.com/bendrucker/claude.git");
+    expect(pushUrl()).toBe("git@github.com:bendrucker/claude.git");
+    expect(r.stderr).toContain("Pushing origin over SSH");
+  });
+
+  // A pushurl outranks pushInsteadOf, so writing one would bypass a push-only
+  // route such as SSH over port 443.
+  test("leaves an https remote to a pushInsteadOf rule", () => {
+    must(["git", "config", "--file", global, "url.ssh://git@ssh.github.com:443/.pushInsteadOf", "https://github.com/"]);
+    rewrite("https://github.com/bendrucker/claude.git");
+    expect(pushUrl()).toBe("");
+  });
+
+  test("does not clobber the pushurl of an https remote", () => {
+    must(["git", "-C", repo, "remote", "add", "origin", "https://github.com/bendrucker/claude.git"]);
+    must(["git", "-C", repo, "remote", "set-url", "--push", "origin", "https://github.com/bendrucker/claude.git"]);
+    runLib(`git_https_remote ${quote(repo)}`);
+    expect(pushUrl()).toBe("https://github.com/bendrucker/claude.git");
+  });
+
   // Regression: `git remote get-url` resolves insteadOf rules, so reading the
   // remote through it reports HTTPS while .git/config still holds SSH, and the
   // rewrite silently never happens.
@@ -132,7 +168,7 @@ describe("git_https_remote", () => {
       { args: ["git@github.com:bendrucker/claude.git"] },
     );
     expect(r.stdout.trim()).toBe("https://github.com/bendrucker/claude.git");
-    expect(r.stderr).toContain("pushing over SSH");
+    expect(r.stderr).toContain("Pushing origin over SSH");
   });
 
   // Regression: a remote already stored as HTTPS looks done, and every 3am fetch

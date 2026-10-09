@@ -12,10 +12,11 @@
 #   Secretive refuses to sign while the Mac is locked, so a 3am launchd fetch
 #   dies on "agent refused operation". The synced repos are public, so HTTPS
 #   reads need no credentials, while pushes stay on the transport that already
-#   has them. Other hosts and URL forms are left alone.
+#   has them. An HTTPS github remote with no pushurl gets the SSH form as one.
+#   Other hosts and URL forms are left alone.
 #
-# git_https_pin <repo_dir> <remote> <https_url>
-#   Hold the remote on HTTPS when an insteadOf rule would send it back to SSH.
+# git_https_pin <repo_dir> <remote> <https_url> <resolved_url>
+#   Hold the remote on HTTPS when an insteadOf rule sends it back to SSH.
 #   Only SSH, since a rule routing it to another HTTPS host is a mirror or a
 #   proxy to leave in place. Called by git_https_remote. The comment above the
 #   function covers why storing an HTTPS URL is not by itself enough.
@@ -56,7 +57,8 @@ git_default_branch() {
   echo "${branch:-main}"
 }
 
-GIT_HTTPS_SSH_PREFIXES=("git@github.com:" "ssh://git@github.com/")
+GIT_HTTPS_SSH_BASE="git@github.com:"
+GIT_HTTPS_SSH_PREFIXES=("$GIT_HTTPS_SSH_BASE" "ssh://git@github.com/")
 GIT_HTTPS_BASE="https://github.com/"
 
 # Succeed when a URL is one of the github SSH forms.
@@ -107,13 +109,36 @@ git_https_remote() {
   [[ -n "$url" ]] || return 0
 
   if [[ "$stored" != "$url" ]]; then
-    gum log --level info "Fetching $remote over HTTPS, pushing over SSH"
-    git -C "$repo_dir" config --get "remote.$remote.pushurl" >/dev/null 2>&1 ||
-      git -C "$repo_dir" remote set-url --push "$remote" "$stored"
+    gum log --level info "Fetching $remote over HTTPS"
+    git_https_keep_push "$repo_dir" "$remote" "$stored"
     git -C "$repo_dir" remote set-url "$remote" "$url"
   fi
 
-  git_https_pin "$repo_dir" "$remote" "$url"
+  # --get-url resolves insteadOf without contacting the remote, so it reports
+  # the URL the fetch will really open.
+  local resolved
+  resolved=$(git -C "$repo_dir" ls-remote --get-url "$remote")
+
+  if [[ "$resolved" == "$url" ]]; then
+    # A clone that started on HTTPS has no SSH URL to keep, and an HTTPS push
+    # falls through to a credential helper instead of Secretive. A pushurl
+    # would also outrank a pushInsteadOf rule, so one of those wins.
+    if [[ "$(git -C "$repo_dir" remote get-url --push "$remote")" == "$url" ]]; then
+      git_https_keep_push "$repo_dir" "$remote" "$GIT_HTTPS_SSH_BASE${url#"$GIT_HTTPS_BASE"}"
+    fi
+  else
+    git_https_pin "$repo_dir" "$remote" "$url" "$resolved"
+  fi
+}
+
+# Set a pushurl unless the remote already has one, which may be a fork or a
+# route someone chose.
+git_https_keep_push() {
+  local repo_dir="$1" remote="$2" push_url="$3"
+
+  git -C "$repo_dir" config --get "remote.$remote.pushurl" >/dev/null 2>&1 && return 0
+  gum log --level info "Pushing $remote over SSH"
+  git -C "$repo_dir" remote set-url --push "$remote" "$push_url"
 }
 
 # Storing an HTTPS URL does not settle which transport the fetch uses. A
@@ -127,13 +152,7 @@ git_https_remote() {
 # HTTPS URL and mapping it to itself outranks any broader github.com rule while
 # leaving every other remote alone.
 git_https_pin() {
-  local repo_dir="$1" remote="$2" url="$3"
-
-  # --get-url resolves insteadOf without contacting the remote, so it reports
-  # the URL the fetch will really open.
-  local resolved
-  resolved=$(git -C "$repo_dir" ls-remote --get-url "$remote")
-  [[ "$resolved" == "$url" ]] && return 0
+  local repo_dir="$1" remote="$2" url="$3" resolved="$4"
 
   # SSH is the only transport this pin exists to escape, because it is the one
   # that cannot sign against a locked Mac. A rule sending the remote to another
@@ -147,8 +166,7 @@ git_https_pin() {
   # The rule was the only thing holding this remote on SSH. Record where it sent
   # pushes before the pin takes it out of the picture, so a push keeps the
   # transport its credentials are set up for.
-  git -C "$repo_dir" config --get "remote.$remote.pushurl" >/dev/null 2>&1 ||
-    git -C "$repo_dir" remote set-url --push "$remote" "$resolved"
+  git_https_keep_push "$repo_dir" "$remote" "$resolved"
 
   # --add, because insteadOf is multi-valued. A plain write refuses a key that
   # already carries more than one rule, and would drop a lone existing one. The

@@ -39,6 +39,12 @@ describe("git", () => {
     expect(r.stdout.trim()).toBe("true");
   });
 
+  test.each(["https://github.com", "https://gist.github.com"])("hands %s credentials to gh", (url) => {
+    const r = run(["git", "config", "--global", "--get-urlmatch", "credential.helper", url]);
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toEndWith(" gh auth git-credential");
+  });
+
   test("resolves the ignore file referenced by core.excludesfile", () => {
     const excludes = gitConfig("core.excludesfile").stdout.trim();
     const expanded = excludes.replace(/^~/, process.env.HOME ?? "");
