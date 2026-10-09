@@ -9,5 +9,5 @@ bin_dir="$(cd "$(dirname "$0")" && pwd)"
 # per appearance change. Reading its output and running theme-sync here reaps
 # each one. A failed sync is logged rather than ending the watcher.
 dark-notify | while read -r appearance; do
-  "$bin_dir/theme-sync" "$appearance" || echo "theme-sync $appearance exited $?" >&2
+  "$bin_dir/theme-sync" "$appearance" </dev/null || echo "theme-sync $appearance exited $?" >&2
 done

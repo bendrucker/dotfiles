@@ -15,6 +15,7 @@ describe("watch-theme-change", () => {
     box.stub(
       "theme-sync",
       [
+        "cat >/dev/null",
         'printf "start %s\\n" "$1" >>"$SYNC_LOG"',
         "sleep 0.1",
         'printf "end %s\\n" "$1" >>"$SYNC_LOG"',
