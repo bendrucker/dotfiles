@@ -35,6 +35,17 @@ export HERDR_LAZY_LIST="$PWD/plugins.list"
 
 lazy_repo=natori-hrj/herdr-lazy
 
+# shellcheck source=../scripts/shell/git-sync.sh
+source ../scripts/shell/git-sync.sh
+
+# herdr clones every plugin from https://github.com/<owner>/<repo>, which an
+# org's insteadOf rule can send back to SSH, and SSH cannot sign while the Mac
+# is locked. A subshell keeps the rewrite off everything else in this script.
+github_repos=(${(f)"$(grep -vE '^[[:space:]]*(#|$)' plugins.list | sed -E 's/@.*//' | cut -d/ -f1,2 | sort -u)"})
+over_https() {
+  (git_https_env "${github_repos[@]}" && "$@")
+}
+
 # This script installs herdr-lazy by hand, so nothing below would notice its
 # absence from the list. `update` only moves what the list names, which would
 # leave it as the one plugin frozen at whatever commit first got installed.
@@ -55,7 +66,7 @@ root=$(lazy_root)
 if [[ -z "$root" ]]; then
   echo "› herdr plugin install ${lazy_repo}"
   # Keep a flaky third-party build from aborting the rest under `set -e`.
-  herdr plugin install "$lazy_repo" --yes || true
+  over_https herdr plugin install "$lazy_repo" --yes || true
   root=$(lazy_root)
 fi
 
@@ -76,7 +87,7 @@ fi
 # CI restores the plugins from a cache keyed on plugins.list and leaves moving
 # them to the nightly upgrade, since update would reinstall every one of them.
 if [[ -z "${CI:-}" ]]; then
-  "$lazy" update || echo "✗ herdr-lazy update did not run; plugins may be stale" >&2
+  over_https "$lazy" update || echo "✗ herdr-lazy update did not run; plugins may be stale" >&2
 fi
 
 # Pinned entries, which update skips, plus anything sitting at the wrong commit.
@@ -85,7 +96,7 @@ fi
 # plugin whose owner/repo no entry claims, and reports rather than removes
 # anything else: a local link, herdr-lazy itself, and a plugin whose id matches
 # an entry its source does not confirm.
-"$lazy" sync --prune || echo "✗ herdr-lazy sync did not run; plugins may be missing or unlisted" >&2
+over_https "$lazy" sync --prune || echo "✗ herdr-lazy sync did not run; plugins may be missing or unlisted" >&2
 
 # With this on, a plugin added to the list later installs on the next herdr
 # start instead of waiting for someone to re-run this script.

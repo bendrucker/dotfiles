@@ -255,6 +255,24 @@ describe("git_https_env", () => {
     expect(r.stdout.trim()).toBe("https://github.com/bendrucker/claude.git");
   });
 
+  test("holds a named repo on HTTPS past a rule forcing SSH", () => {
+    forceSsh();
+    const r = runLib(
+      [
+        `git -C ${quote(repo)} remote add origin "$1"`,
+        `git -C ${quote(repo)} remote add other "$2"`,
+        "git_https_env bendrucker/claude",
+        `git -C ${quote(repo)} ls-remote --get-url origin`,
+        `git -C ${quote(repo)} ls-remote --get-url other`,
+      ].join("\n"),
+      { args: ["https://github.com/bendrucker/claude.git", "https://github.com/bendrucker/dotfiles.git"] },
+    );
+    expect(r.stdout.trim().split("\n")).toEqual([
+      "https://github.com/bendrucker/claude.git",
+      "git@github.com:bendrucker/dotfiles.git",
+    ]);
+  });
+
   // A ~/.zshenv.local can export its own GIT_CONFIG entries. Overwriting index
   // 0 and pinning the count at 2 would silently drop them.
   test("appends to inherited GIT_CONFIG entries", () => {
