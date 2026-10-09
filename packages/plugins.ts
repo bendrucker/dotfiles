@@ -33,11 +33,6 @@ export type SourceLookup =
 // read empty as "nothing is declared" and uninstall everything.
 export type Declaration = { ok: true; ids: Set<string> } | { ok: false; reason: string };
 
-// What a payload's manifest says it depends on. A manifest that exists and
-// cannot be read arrives as a failure rather than as no dependencies, because
-// the caller uninstalls whatever nothing accounts for.
-export type Dependencies = { ok: true; ids: string[] } | { ok: false; reason: string };
-
 const UNREADABLE = { ok: false, reason: "unreadable" } as const;
 const ABSENT = { ok: false, reason: "absent" } as const;
 
@@ -317,48 +312,37 @@ export function splitPluginId(id: string): { name: string; marketplace: string }
   return { name: id.slice(0, separator), marketplace: id.slice(separator + 1) };
 }
 
-// The plugin ids a payload's manifest names as its dependencies. Claude Code
-// installs a dependency at user scope without writing a settings.json key for
-// it, so nothing marks it as wanted and a prune reading the declaration alone
-// would take it out from under the plugin that needs it. A bare name resolves
-// against the marketplace the depending plugin came from, which is how the
-// manifests in the wild spell them.
+// The user-scope ids Claude Code installed as another plugin's dependency.
+// `claude plugin prune` owns those, and settings.json never names them, so a
+// prune reading the declaration alone would take one out from under the plugin
+// that needs it. `claude plugin list --json` drops the flag, which is why this
+// reads the CLI's own record.
 //
-// A payload with no manifest at all names no dependencies, which is the ordinary
-// answer for a plugin that ships none. A manifest that is there and cannot be
-// read is a different answer: it may name a dependency, and the caller would
-// uninstall that dependency on the strength of a file nothing parsed.
-export function pluginDependencies(id: string, installPath: string): Dependencies {
-  if (installPath === "") return { ok: true, ids: [] };
-
-  const manifest = join(installPath, ".claude-plugin", "plugin.json");
-  if (!isFile(manifest)) return { ok: true, ids: [] };
+// No record at all is a machine with nothing installed. A record that is there
+// and cannot be read is a failure, because every dependency it marks would be
+// uninstalled.
+export function autoInstalledPlugins(): Declaration {
+  const path = join(claudePluginsDir(), "installed_plugins.json");
+  if (!isFile(path)) return { ok: true, ids: new Set() };
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(manifest, "utf8").replace(BYTE_ORDER_MARK, ""));
+    parsed = JSON.parse(readFileSync(path, "utf8").replace(BYTE_ORDER_MARK, ""));
   } catch (error) {
-    return { ok: false, reason: `manifest could not be read: ${describe(error)}` };
+    return { ok: false, reason: `installed_plugins.json could not be read: ${describe(error)}` };
   }
-  if (!isRecord(parsed)) return { ok: false, reason: "manifest does not hold an object" };
-
-  const declared = parsed.dependencies;
-  if (declared === undefined || declared === null || declared === false) {
-    return { ok: true, ids: [] };
-  }
-  if (!Array.isArray(declared)) {
-    return { ok: false, reason: "manifest dependencies is not an array" };
+  if (!isRecord(parsed) || !isRecord(parsed.plugins)) {
+    return { ok: false, reason: "installed_plugins.json does not hold a plugins object" };
   }
 
-  const { marketplace } = splitPluginId(id);
-  const ids: string[] = [];
-  for (const entry of declared) {
-    // An entry in a shape nothing here reads leaves the rest of the list
-    // unaccounted for, and the plugin it meant to name would be uninstalled.
-    if (typeof entry !== "string" || entry === "") {
-      return { ok: false, reason: "manifest names a dependency that is not a name" };
+  const ids = new Set<string>();
+  for (const [id, records] of Object.entries(parsed.plugins)) {
+    if (!Array.isArray(records)) {
+      return { ok: false, reason: `installed_plugins.json ${id} is not a list of records` };
     }
-    ids.push(entry.includes("@") ? entry : `${entry}@${marketplace}`);
+    if (records.some((record) => isRecord(record) && record.scope === "user" && record.auto === true)) {
+      ids.add(id);
+    }
   }
   return { ok: true, ids };
 }

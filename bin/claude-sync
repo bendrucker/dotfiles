@@ -23,6 +23,7 @@ import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  autoInstalledPlugins,
   claudePluginsDir,
   comparePayload,
   declaredMarketplacePins,
@@ -32,7 +33,6 @@ import {
   type InstalledPlugin,
   installedPlugins,
   knownMarketplaces,
-  pluginDependencies,
   pluginInventory,
   pluginMarketplaces,
   pluginSource,
@@ -175,41 +175,6 @@ function onPin(name: string, ref: string | undefined): boolean {
   );
 }
 
-// The ids a prune must leave installed, or why the set could not be settled.
-export type Kept = { ok: true; ids: Set<string> } | { ok: false; reason: string };
-
-// The ids whose payloads the declaration accounts for: what settings.json names,
-// plus what those plugins name as their own dependencies. Claude Code installs a
-// dependency at user scope without writing a key for it, so reading the
-// declaration alone would uninstall it out from under the plugin that needs it,
-// every night, with nothing to put it back.
-//
-// A dependency is walked as well as kept. Reading only the manifests of the
-// directly declared plugins keeps a dependency while uninstalling the one it
-// depends on in turn, which breaks the chain at its second link.
-export function keptPlugins(declared: Set<string>, installed: InstalledPlugin[]): Kept {
-  const payloads = new Map(installed.map((plugin) => [plugin.id, plugin.installPath]));
-  const kept = new Set<string>();
-  const pending = [...declared];
-
-  while (pending.length > 0) {
-    const id = pending.pop();
-    if (id === undefined || kept.has(id)) continue;
-    kept.add(id);
-
-    // Declared but not installed: the update pass installs it, and there is no
-    // payload here to read a dependency out of.
-    const payload = payloads.get(id);
-    if (payload === undefined) continue;
-
-    const dependencies = pluginDependencies(id, payload);
-    if (!dependencies.ok) return { ok: false, reason: `${id}: ${dependencies.reason}` };
-    pending.push(...dependencies.ids);
-  }
-
-  return { ok: true, ids: kept };
-}
-
 // Uninstall the user-scope payloads settings.json no longer names.
 //
 // `claude plugin install` writes the plugin's key into settings.json itself, so
@@ -221,6 +186,10 @@ export function keptPlugins(declared: Set<string>, installed: InstalledPlugin[])
 // settings.json, so this cannot dirty the tracked config and stall the next
 // night's sync gate behind it. A plugin turned off with an explicit false still
 // has a key, which is what keeps it installed.
+//
+// A dependency Claude Code installed on its own has no key either. Those are
+// left to `claude plugin prune`, which removes the ones no remaining plugin
+// names.
 export function prunePlugins(out: Output, env: Record<string, string | undefined>): boolean {
   log(out, "info", "Pruning undeclared plugins...");
 
@@ -241,18 +210,17 @@ export function prunePlugins(out: Output, env: Record<string, string | undefined
     return false;
   }
 
-  // A dependency that could not be read leaves the payloads it names
-  // unaccounted for, and uninstalling on that is what breaks a declared plugin.
-  const kept = keptPlugins(declared.ids, installed.plugins);
-  if (!kept.ok) {
-    log(out, "warn", "Could not read which plugins are depended on");
-    out.write(2, `claude-plugins: ${kept.reason}\n`);
+  // Read as empty, every dependency would look undeclared and go.
+  const auto = autoInstalledPlugins();
+  if (!auto.ok) {
+    log(out, "warn", "Could not read which plugins were installed as dependencies");
+    out.write(2, `claude-plugins: ${auto.reason}\n`);
     return false;
   }
 
   let failed = 0;
   for (const plugin of installed.plugins) {
-    if (plugin.id === "" || kept.ids.has(plugin.id)) continue;
+    if (plugin.id === "" || declared.ids.has(plugin.id) || auto.ids.has(plugin.id)) continue;
 
     log(out, "info", `Uninstalling ${plugin.id} (no longer declared)...`);
     // One id per call: the CLI takes a single plugin and ignores anything after
@@ -264,8 +232,28 @@ export function prunePlugins(out: Output, env: Record<string, string | undefined
     }
   }
 
+  // After the uninstalls, so a dependency only a removed plugin named goes with it.
+  const pruned = pruneDependencies(out, env);
+
   if (failed > 0) {
     log(out, "warn", `${failed} plugin(s) failed to uninstall`);
+    return false;
+  }
+  return pruned;
+}
+
+// The CLI exits 0 when it declines to act because an installed plugin failed to
+// load, so its refusal is read off the message.
+function pruneDependencies(out: Output, env: Record<string, string | undefined>): boolean {
+  const pruned = out.read(["claude", "plugin", "prune", "--scope", "user", "--yes"], {
+    cwd: "/",
+    env,
+    stdin: "ignore",
+  });
+  out.write(1, pruned.stdout);
+
+  if (pruned.status !== 0 || pruned.stdout.startsWith("Skipped")) {
+    log(out, "warn", "Pruning unneeded dependencies had issues");
     return false;
   }
   return true;
@@ -430,7 +418,9 @@ function updatePlugin(
   env: Record<string, string | undefined>,
 ): boolean {
   for (let attempt = 1; attempt <= UPDATE_ATTEMPTS; attempt += 1) {
-    if (claude(out, ["plugin", "update", id], env) === 0) return true;
+    // Named, because a plugin also installed for a project leaves the CLI to
+    // guess which install is meant.
+    if (claude(out, ["plugin", "update", "--scope", "user", id], env) === 0) return true;
     if (attempt < UPDATE_ATTEMPTS) {
       log(out, "info", `Retrying ${id} (attempt ${attempt + 1}/${UPDATE_ATTEMPTS})...`);
       Bun.sleepSync(RETRY_PAUSE_MS);

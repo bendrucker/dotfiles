@@ -19,7 +19,6 @@ import {
   failureFields,
   failureFingerprint,
   installAgentHooks,
-  keptPlugins,
   main,
   pruneMarketplaces,
   prunePlugins,
@@ -171,17 +170,25 @@ const claudeStub = [
   'case "$2" in',
   '  list)   cat "$HOME/plugin-list.json" ;;',
   "  update)",
-  "    printf 'update %s\\n' \"$3\" >>\"$CLAUDE_PLUGIN_LOG\"",
-  '    case " $CLAUDE_UPDATE_FAILS " in *" $3 "*) exit 1 ;; esac',
+  // The id is the last argument, because the call names its scope in front of it.
+  "    for last; do :; done",
+  "    printf 'update %s\\n' \"$last\" >>\"$CLAUDE_PLUGIN_LOG\"",
+  '    case " $CLAUDE_UPDATE_FAILS " in *" $last "*) exit 1 ;; esac',
   // The intermittent shape the retry exists for: the first attempt refuses and
   // the next one takes.
   '    case " $CLAUDE_UPDATE_FAILS_ONCE " in',
-  '      *" $3 "*)',
-  '        [ -f "$HOME/refused-$3" ] || { : >"$HOME/refused-$3"; exit 1; }',
+  '      *" $last "*)',
+  '        [ -f "$HOME/refused-$last" ] || { : >"$HOME/refused-$last"; exit 1; }',
   "        ;;",
   "    esac",
   "    ;;",
   "  install) printf 'install %s\\n' \"$3\" >>\"$CLAUDE_PLUGIN_LOG\" ;;",
+  "  prune)",
+  "    printf 'prune\\n' >>\"$CLAUDE_PLUGIN_LOG\"",
+  // The real CLI declines with exit 0 when an installed plugin fails to load.
+  '    [ -n "$CLAUDE_PRUNE_SKIPS" ] && { printf "Skipped — cannot determine orphans\\n"; exit 0; }',
+  '    printf "Nothing to prune.\\n"',
+  "    ;;",
   // The name follows the verb, so a remove is `plugin marketplace remove <name>`.
   "  marketplace)",
   '    [ "$3" = "update" ] && printf \'update %s\\n\' "$4" >>"$HOME/refresh.log"',
@@ -219,11 +226,13 @@ function payload(...segments: string[]): string {
   return path;
 }
 
-// The manifest Claude Code reads out of an installed payload, which is the only
-// place a plugin's dependencies are written down.
-function writePayloadManifest(path: string, manifest: unknown): void {
-  mkdirSync(join(path, ".claude-plugin"), { recursive: true });
-  writeFileSync(join(path, ".claude-plugin", "plugin.json"), JSON.stringify(manifest));
+// The CLI's own install record, the only place it marks a plugin it installed
+// as another plugin's dependency.
+function writeInstalled(auto: string[]): void {
+  const dir = join(sandbox, ".claude", "plugins");
+  mkdirSync(dir, { recursive: true });
+  const plugins = Object.fromEntries(auto.map((id) => [id, [{ scope: "user", auto: true }]]));
+  writeFileSync(join(dir, "installed_plugins.json"), JSON.stringify({ version: 2, plugins }));
 }
 
 function writeMarketplace(name: string, entries: unknown[]): void {
@@ -424,96 +433,12 @@ afterEach(() => {
   delete process.env.CLAUDE_REFRESH_FAILS;
   delete process.env.CLAUDE_UNINSTALL_FAILS;
   delete process.env.CLAUDE_DRAINS_STDIN;
+  delete process.env.CLAUDE_PRUNE_SKIPS;
   delete process.env.AGENT_HOOK_REPO;
   delete process.env.HERDR_FAILS;
   delete process.env.HERDR_LOCKS;
   delete process.env.HERDR_REPLACES;
   rmSync(sandbox, { recursive: true, force: true });
-});
-
-describe("keptPlugins", () => {
-  function kept(declared: string[], installed: { id: string; installPath: string }[]): string[] {
-    const read = keptPlugins(new Set(declared), installed);
-    if (!read.ok) throw new Error(`kept failed: ${read.reason}`);
-    return [...read.ids].sort();
-  }
-
-  test("keeps what a declared plugin names as a dependency", () => {
-    const path = payload("first", "alpha", "1.0.0");
-    writePayloadManifest(path, { name: "alpha", dependencies: ["gamma"] });
-
-    expect(kept(["alpha@first"], [{ id: "alpha@first", installPath: path }])).toEqual([
-      "alpha@first",
-      "gamma@first",
-    ]);
-  });
-
-  // Keeping a dependency without reading its own manifest breaks the chain at
-  // its second link: gamma survives and the delta it needs is uninstalled.
-  test("walks a dependency of a dependency", () => {
-    const alpha = payload("first", "alpha", "1.0.0");
-    writePayloadManifest(alpha, { name: "alpha", dependencies: ["gamma"] });
-    const gamma = payload("first", "gamma", "1.0.0");
-    writePayloadManifest(gamma, { name: "gamma", dependencies: ["delta"] });
-
-    expect(
-      kept(
-        ["alpha@first"],
-        [
-          { id: "alpha@first", installPath: alpha },
-          { id: "gamma@first", installPath: gamma },
-        ],
-      ),
-    ).toEqual(["alpha@first", "delta@first", "gamma@first"]);
-  });
-
-  // Two plugins naming each other would otherwise queue each other forever.
-  test("settles on a dependency cycle", () => {
-    const alpha = payload("first", "alpha", "1.0.0");
-    writePayloadManifest(alpha, { name: "alpha", dependencies: ["gamma"] });
-    const gamma = payload("first", "gamma", "1.0.0");
-    writePayloadManifest(gamma, { name: "gamma", dependencies: ["alpha"] });
-
-    expect(
-      kept(
-        ["alpha@first"],
-        [
-          { id: "alpha@first", installPath: alpha },
-          { id: "gamma@first", installPath: gamma },
-        ],
-      ),
-    ).toEqual(["alpha@first", "gamma@first"]);
-  });
-
-  // Reading an undeclared plugin's dependencies would keep whatever it names
-  // alive alongside it, so a pair of leftovers would hold each other in place.
-  test("ignores what an undeclared plugin names", () => {
-    const path = payload("first", "stray", "1.0.0");
-    writePayloadManifest(path, { name: "stray", dependencies: ["gamma"] });
-
-    expect(kept(["alpha@first"], [{ id: "stray@first", installPath: path }])).toEqual([
-      "alpha@first",
-    ]);
-  });
-
-  test("takes a dependency that names its own marketplace as written", () => {
-    const path = payload("first", "alpha", "1.0.0");
-    writePayloadManifest(path, { name: "alpha", dependencies: ["beta@third"] });
-
-    expect(kept(["alpha@first"], [{ id: "alpha@first", installPath: path }])).toEqual([
-      "alpha@first",
-      "beta@third",
-    ]);
-  });
-
-  test("fails when a declared plugin's manifest cannot be read", () => {
-    const path = payload("first", "alpha", "1.0.0");
-    writePayloadManifest(path, "not json\n");
-
-    expect(keptPlugins(new Set(["alpha@first"]), [{ id: "alpha@first", installPath: path }])).toEqual(
-      { ok: false, reason: expect.stringContaining("alpha@first") },
-    );
-  });
 });
 
 describe("prunePlugins", () => {
@@ -538,23 +463,40 @@ describe("prunePlugins", () => {
     ]);
 
     expect(prunePlugins(out, process.env)).toBe(true);
-    expect(readLog("plugin.log")).toBe("");
+    expect(readLog("plugin.log")).toBe("prune\n");
   });
 
   // Claude Code installs a dependency without writing a settings.json key for
   // it, so the declaration alone would take it out from under the plugin that
   // needs it every night.
-  test("keeps a dependency of a declared plugin", () => {
-    const alpha = payload("first", "alpha", "1.0.0");
-    writePayloadManifest(alpha, { name: "alpha", dependencies: ["gamma"] });
+  test("leaves a dependency to the CLI's own prune", () => {
     writePluginList([
-      { id: "alpha@first", installPath: alpha },
+      { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
       { id: "gamma@first", installPath: payload("first", "gamma", "1.0.0") },
     ]);
     writeSettings({ "alpha@first": true });
+    writeInstalled(["gamma@first"]);
 
     expect(prunePlugins(out, process.env)).toBe(true);
-    expect(readLog("plugin.log")).toBe("");
+    expect(readLog("plugin.log")).toBe("prune\n");
+  });
+
+  // The prune follows the uninstalls, so a dependency only the removed plugin
+  // named is no longer needed by the time it looks.
+  test("prunes dependencies after uninstalling", () => {
+    writePluginList([{ id: "stray@first", installPath: payload("first", "stray", "1.0.0") }]);
+    writeSettings({ "alpha@first": true });
+
+    expect(prunePlugins(out, process.env)).toBe(true);
+    expect(readLog("plugin.log")).toBe("uninstall stray@first\nprune\n");
+  });
+
+  test("fails when the CLI declines to prune", () => {
+    writeSettings({ "alpha@first": true });
+    process.env.CLAUDE_PRUNE_SKIPS = "1";
+
+    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(out.captured()).toContain("Skipped");
   });
 
   // A declaration that could not be read accounts for nothing, and acting on it
@@ -576,16 +518,14 @@ describe("prunePlugins", () => {
     expect(readLog("plugin.log")).toBe("");
   });
 
-  // A manifest that is there and cannot be read may name a dependency, and the
-  // payload it names would go on the strength of a file nothing parsed.
-  test("uninstalls nothing when a declared plugin's manifest cannot be read", () => {
-    const alpha = payload("first", "alpha", "1.0.0");
-    writePayloadManifest(alpha, "not json\n");
+  // Read as empty, every dependency would look undeclared and go.
+  test("uninstalls nothing when the install record cannot be read", () => {
     writePluginList([
-      { id: "alpha@first", installPath: alpha },
+      { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
       { id: "stray@first", installPath: payload("first", "stray", "1.0.0") },
     ]);
     writeSettings({ "alpha@first": true });
+    writeFileSync(join(sandbox, ".claude", "plugins", "installed_plugins.json"), "not json\n");
 
     expect(prunePlugins(out, process.env)).toBe(false);
     expect(readLog("plugin.log")).toBe("");
@@ -616,7 +556,7 @@ describe("prunePlugins", () => {
     writeSettings({ "alpha@first": true, "gamma@first": true });
 
     expect(prunePlugins(out, process.env)).toBe(true);
-    expect(readLog("plugin.log")).toBe("");
+    expect(readLog("plugin.log")).toBe("prune\n");
   });
 });
 
