@@ -21,12 +21,13 @@
 #   proxy to leave in place. Called by git_https_remote. The comment above the
 #   function covers why storing an HTTPS URL is not by itself enough.
 #
-# git_https_env
+# git_https_env [owner/repo ...]
 #   Export the same rewrite as an insteadOf rule, for child processes cloning
 #   github.com remotes this repo does not own. Appends to any GIT_CONFIG_COUNT
 #   already in the environment rather than replacing it, so a machine-local
 #   entry survives. The rule outranks a pushurl, so scope it to the commands
-#   that need it rather than exporting it for a whole script.
+#   that need it rather than exporting it for a whole script. Each repo named
+#   also gets the env form of git_https_pin, for a tool that clones over HTTPS.
 #
 # git_sync <repo_dir> [branch]
 #   Guard the target (reject symlinks, non-repos, and dirty working trees),
@@ -182,11 +183,21 @@ git_https_pin() {
 }
 
 git_https_env() {
-  local i="${GIT_CONFIG_COUNT:-0}" prefix
+  local i="${GIT_CONFIG_COUNT:-0}" prefix repo
 
   for prefix in "${GIT_HTTPS_SSH_PREFIXES[@]}"; do
     export "GIT_CONFIG_KEY_$i=url.$GIT_HTTPS_BASE.insteadOf"
     export "GIT_CONFIG_VALUE_$i=$prefix"
+    i=$((i + 1))
+  done
+
+  # Git applies the longest matching rule, so mapping each repo URL to itself
+  # outranks an org rule that sends https://github.com/ to SSH. Only SSH, for
+  # the reason git_https_pin gives: a rule to another HTTPS host is a mirror.
+  for repo in "$@"; do
+    git_https_ssh_url "$(git ls-remote --get-url "$GIT_HTTPS_BASE$repo")" || continue
+    export "GIT_CONFIG_KEY_$i=url.$GIT_HTTPS_BASE$repo.insteadOf"
+    export "GIT_CONFIG_VALUE_$i=$GIT_HTTPS_BASE$repo"
     i=$((i + 1))
   done
 
