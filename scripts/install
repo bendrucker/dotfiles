@@ -24,11 +24,12 @@ trace_begin install-cask-variants
 ./scripts/install-cask-variants
 trace_end
 
-# Leave the casks that update themselves to whatever else manages this machine.
-# Homebrew cannot move a root-owned app aside without sudo, and 3am has no
-# terminal. An `if` condition is exempt from `set -e`.
-trace_begin brew-managed-machine
-if ./scripts/brew-managed-machine; then
+# Leave the casks that update themselves to their own updater on a managed
+# machine or from the nightly job. Homebrew cannot move a root-owned app aside
+# without sudo, and 3am has no terminal. An `if` condition is exempt from
+# `set -e`.
+trace_begin brew-leave-self-updating
+if ./scripts/brew-leave-self-updating; then
   export HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1
 fi
 trace_end

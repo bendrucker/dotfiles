@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+# Usage: brew-leave-self-updating [managed-preferences-dir]
+#
+# Exit 0 where Homebrew should leave the casks that update themselves alone,
+# which tells scripts/install to set HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS. See
+# the Externally Managed Casks section of CLAUDE.md.
+
+# The nightly job has no terminal for the sudo an upgrade can need, managed or
+# not. A hand run does, and keeps Homebrew's default.
+[ "${DOTFILES_JOB-}" = "dotfiles-upgrade" ] && exit 0
+
+exec "$(dirname "$0")/brew-managed-machine" "$@"
