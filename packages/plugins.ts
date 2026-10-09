@@ -312,6 +312,16 @@ export function splitPluginId(id: string): { name: string; marketplace: string }
   return { name: id.slice(0, separator), marketplace: id.slice(separator + 1) };
 }
 
+// The plugins map out of a parsed installed_plugins.json. The array form is an
+// older shape of the file that is still in the wild.
+export function installedRecords(parsed: unknown): unknown {
+  if (Array.isArray(parsed)) {
+    const entry = parsed.find((item) => isRecord(item) && item.key === "plugins");
+    return isRecord(entry) ? entry.value : undefined;
+  }
+  return isRecord(parsed) ? parsed.plugins : undefined;
+}
+
 // The user-scope ids Claude Code installed as another plugin's dependency.
 // `claude plugin prune` owns those, and settings.json never names them, so a
 // prune reading the declaration alone would take one out from under the plugin
@@ -331,12 +341,13 @@ export function autoInstalledPlugins(): Declaration {
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
-  if (!isRecord(parsed) || !isRecord(parsed.plugins)) {
+  const plugins = installedRecords(parsed);
+  if (!isRecord(plugins)) {
     return { ok: false, reason: "installed_plugins.json does not hold a plugins object" };
   }
 
   const ids = new Set<string>();
-  for (const [id, records] of Object.entries(parsed.plugins)) {
+  for (const [id, records] of Object.entries(plugins)) {
     if (!Array.isArray(records)) {
       return { ok: false, reason: `installed_plugins.json ${id} is not a list of records` };
     }

@@ -539,6 +539,13 @@ describe("autoInstalledPlugins", () => {
     return [...read.ids].sort();
   }
 
+  test("reads the older array form of the record", () => {
+    writeInstalled([
+      { key: "plugins", value: { "beta@market": [{ scope: "user", installPath: "/b", auto: true }] } },
+    ]);
+    expect(auto()).toEqual(["beta@market"]);
+  });
+
   test("names a plugin the CLI installed as a dependency at user scope", () => {
     writeInstalled({
       version: 2,
