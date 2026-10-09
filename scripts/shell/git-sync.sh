@@ -174,8 +174,10 @@ git_https_env() {
   done
 
   # Git applies the longest matching rule, so mapping each repo URL to itself
-  # outranks an org rule that sends https://github.com/ to SSH.
+  # outranks an org rule that sends https://github.com/ to SSH. Only SSH, for
+  # the reason git_https_pin gives: a rule to another HTTPS host is a mirror.
   for repo in "$@"; do
+    git_https_ssh_url "$(git ls-remote --get-url "$GIT_HTTPS_BASE$repo")" || continue
     export "GIT_CONFIG_KEY_$i=url.$GIT_HTTPS_BASE$repo.insteadOf"
     export "GIT_CONFIG_VALUE_$i=$GIT_HTTPS_BASE$repo"
     i=$((i + 1))

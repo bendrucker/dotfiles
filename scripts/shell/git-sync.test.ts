@@ -273,6 +273,19 @@ describe("git_https_env", () => {
     ]);
   });
 
+  test("leaves a rule routing a named repo to an HTTPS mirror alone", () => {
+    must(["git", "config", "--file", global, "url.https://mirror.example/.insteadOf", "https://github.com/"]);
+    const r = runLib(
+      [
+        `git -C ${quote(repo)} remote add origin "$1"`,
+        "git_https_env bendrucker/claude",
+        `git -C ${quote(repo)} ls-remote --get-url origin`,
+      ].join("\n"),
+      { args: ["https://github.com/bendrucker/claude.git"] },
+    );
+    expect(r.stdout.trim()).toBe("https://mirror.example/bendrucker/claude.git");
+  });
+
   // A ~/.zshenv.local can export its own GIT_CONFIG entries. Overwriting index
   // 0 and pinning the count at 2 would silently drop them.
   test("appends to inherited GIT_CONFIG entries", () => {
