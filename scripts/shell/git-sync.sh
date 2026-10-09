@@ -174,7 +174,7 @@ git_https_env() {
   done
 
   # Git applies the longest matching rule, so mapping each repo URL to itself
-    # outranks an org rule that sends https://github.com/ to SSH.
+  # outranks an org rule that sends https://github.com/ to SSH.
   for repo in "$@"; do
     export "GIT_CONFIG_KEY_$i=url.$GIT_HTTPS_BASE$repo.insteadOf"
     export "GIT_CONFIG_VALUE_$i=$GIT_HTTPS_BASE$repo"
