@@ -57,7 +57,8 @@ git_default_branch() {
   echo "${branch:-main}"
 }
 
-GIT_HTTPS_SSH_PREFIXES=("git@github.com:" "ssh://git@github.com/")
+GIT_HTTPS_SSH_BASE="git@github.com:"
+GIT_HTTPS_SSH_PREFIXES=("$GIT_HTTPS_SSH_BASE" "ssh://git@github.com/")
 GIT_HTTPS_BASE="https://github.com/"
 
 # Succeed when a URL is one of the github SSH forms.
@@ -120,8 +121,11 @@ git_https_remote() {
 
   if [[ "$resolved" == "$url" ]]; then
     # A clone that started on HTTPS has no SSH URL to keep, and an HTTPS push
-    # falls through to a credential helper instead of Secretive.
-    git_https_keep_push "$repo_dir" "$remote" "${GIT_HTTPS_SSH_PREFIXES[0]}${url#"$GIT_HTTPS_BASE"}"
+    # falls through to a credential helper instead of Secretive. A pushurl
+    # would also outrank a pushInsteadOf rule, so one of those wins.
+    if [[ "$(git -C "$repo_dir" remote get-url --push "$remote")" == "$url" ]]; then
+      git_https_keep_push "$repo_dir" "$remote" "$GIT_HTTPS_SSH_BASE${url#"$GIT_HTTPS_BASE"}"
+    fi
   else
     git_https_pin "$repo_dir" "$remote" "$url" "$resolved"
   fi
