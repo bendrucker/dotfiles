@@ -5,7 +5,7 @@
 "aqua:BurntSushi/ripgrep" = "15.2.0"
 "aqua:aristocratos/btop" = "1.4.7"
 "aqua:ast-grep/ast-grep" = "0.45.3"
-"aqua:astral-sh/uv" = "0.12.18"
+"aqua:astral-sh/uv" = "0.12.19"
 "aqua:ajeetdsouza/zoxide" = "0.10.0"
 "aqua:cli/cli" = "2.101.0"
 "aqua:dandavison/delta" = "0.19.2"
