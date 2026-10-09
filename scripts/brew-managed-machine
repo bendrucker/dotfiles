@@ -2,7 +2,7 @@
 # Usage: brew-managed-machine [managed-preferences-dir]
 #
 # Exit 0 where another manager owns this machine's applications, which tells
-# scripts/install to set HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS. See the
+# scripts/brew-leave-self-updating to leave self-updating casks alone. See the
 # Externally Managed Casks section of CLAUDE.md.
 
 [ "$(uname -s)" = "Darwin" ] || exit 1

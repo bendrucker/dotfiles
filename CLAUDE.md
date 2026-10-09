@@ -104,11 +104,11 @@ This means `brew bundle` from the repo root installs everything from all topic B
 
 #### Externally Managed Casks
 
-`scripts/brew-managed-machine` exits 0 where another manager owns this machine's applications, and `scripts/install` answers by exporting `HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS` before `brew bundle`. It exits 1 on a machine carrying no MDM configuration profiles, which is what keeps an unmanaged machine's behavior identical. The default path it tests is the one the root Brewfile tests for `corporate`, so a change to either has to move both.
+`scripts/brew-leave-self-updating` exits 0 when the nightly job is running or `scripts/brew-managed-machine` says another manager owns this machine's applications, and `scripts/install` answers by exporting `HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS` before `brew bundle`. The job is recognized by the `DOTFILES_JOB=dotfiles-upgrade` its LaunchAgent sets. A hand-run `scripts/install` or `dotf` on an unmanaged machine keeps Homebrew's default. `scripts/brew-managed-machine` exits 1 on a machine carrying no MDM configuration profiles. The default path it tests is the one the root Brewfile tests for `corporate`, so a change to either has to move both.
 
 Homebrew upgrades a cask by moving the app out of `/Applications` back into the Caskroom before installing the replacement. An MDM installs its apps as root, so that move shells out to sudo, and the 3am job has no terminal to read a password from. The run dies on `sudo: a terminal is required`, leaving a real app directory in the Caskroom where a symlink belongs. Every run after it fails earlier still, on `It seems there is already an App at '<caskroom path>'`. The second shape is the residue of the first, and both clear once nothing attempts the upgrade.
 
-That variable decides whether Homebrew attempts one at all. A cask declaring `auto_updates` ships its own updater, and Homebrew left those alone until `HOMEBREW_UPGRADE_AUTO_UPDATES_CASKS` became the default. It now reads the installed app bundle's own version rather than the version the Caskroom recorded, and upgrades whenever the tap is ahead of that. Chrome's Keystone and VS Code's ShipIt keep their apps current on their own schedule, so the tap leads the bundle only in the window before one of them has run, or for as long as a policy holds the app at a pinned build. Homebrew then tries to do the updater's job, and on a managed machine the attempt is the failure above.
+That variable decides whether Homebrew attempts one at all. A cask declaring `auto_updates` ships its own updater, and Homebrew left those alone until `HOMEBREW_UPGRADE_AUTO_UPDATES_CASKS` became the default. It now reads the installed app bundle's own version rather than the version the Caskroom recorded, and upgrades whenever the tap is ahead of that. Chrome's Keystone and VS Code's ShipIt keep their apps current on their own schedule, so the tap leads the bundle only in the window before one of them has run, or for as long as a policy holds the app at a pinned build. Homebrew then tries to do the updater's job, and on a managed machine the attempt is the failure above. An unmanaged machine can hit the same sudo prompt, as `docker-desktop` and `disk-drill` do, which is why the nightly job sets the variable everywhere.
 
 Turning the default back off leaves those casks to their own updater. Nothing else moves: a cask without the flag upgrades as before, and a first install runs a branch the variable is never read on, so a newly enrolled machine missing an app still gets it. Keying on the flag rather than a list of tokens covers an app the MDM starts pushing the day it happens, and leaves no file naming `google-chrome`.
 
@@ -302,7 +302,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 ### Installation Flow
 
 `scripts/install` is the main entry point:
-1. `brew bundle` — Install Brewfile dependencies, leaving the self-updating casks alone where `scripts/brew-managed-machine` says another manager owns them
+1. `brew bundle` — Install Brewfile dependencies, leaving the self-updating casks alone from the nightly job or where `scripts/brew-managed-machine` says another manager owns them
 2. `mise install` from each topic directory holding a `mise.toml`, which finds the file before its `conf.d` link exists
 3. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
 4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`, including each `mise.toml` into `~/.config/mise/conf.d/`
