@@ -1,6 +1,6 @@
 [vars]
 # renovate: datasource=github-releases depName=astral-sh/uv
-uv_default = "0.12.18"
+uv_default = "0.12.19"
 
 # uv refuses to run under a version that misses a project's
 # `[tool.uv] required-version`, so follow the nearest pyproject.toml that pins
