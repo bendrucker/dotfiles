@@ -10,4 +10,4 @@ Commits are signed with an SSH key held in Secretive, so the private half never 
 
 ## Credentials
 
-SSH through Secretive is the transport for GitHub. When HTTPS needs credentials, `gh auth git-credential` supplies them for `github.com` and `gist.github.com`, and other hosts keep the `osxkeychain` helper. `git-credential-osxkeychain` is re-signed with every Homebrew git upgrade, which drops its keychain grant and brings the access prompt back. `gh` reads the keychain through Apple's signed `security` tool, so its grant holds. The block sits after the `config.local` include so a helper set there cannot follow it.
+SSH through Secretive is the transport for GitHub. When HTTPS needs credentials, `gh auth git-credential` supplies them for `github.com` and `gist.github.com`, and other hosts keep `osxkeychain`. The GitHub Transport section of the repo's `CLAUDE.md` covers why.

@@ -77,13 +77,13 @@ describe("git_https_remote", () => {
   test("rewrites an scp-style github remote", () => {
     const r = rewrite("git@github.com:bendrucker/claude.git");
     expect(r.stdout.trim()).toBe("https://github.com/bendrucker/claude.git");
-    expect(r.stderr).toContain("pushing over SSH");
+    expect(r.stderr).toContain("Pushing origin over SSH");
   });
 
   test("rewrites an ssh:// github remote", () => {
     const r = rewrite("ssh://git@github.com/bendrucker/claude.git");
     expect(r.stdout.trim()).toBe("https://github.com/bendrucker/claude.git");
-    expect(r.stderr).toContain("pushing over SSH");
+    expect(r.stderr).toContain("Pushing origin over SSH");
   });
 
   test("leaves an https github remote alone", () => {
@@ -148,7 +148,7 @@ describe("git_https_remote", () => {
       { args: ["git@github.com:bendrucker/claude.git"] },
     );
     expect(r.stdout.trim()).toBe("https://github.com/bendrucker/claude.git");
-    expect(r.stderr).toContain("pushing over SSH");
+    expect(r.stderr).toContain("Pushing origin over SSH");
   });
 
   // Regression: a remote already stored as HTTPS looks done, and every 3am fetch
