@@ -340,8 +340,11 @@ export function autoInstalledPlugins(): Declaration {
     if (!Array.isArray(records)) {
       return { ok: false, reason: `installed_plugins.json ${id} is not a list of records` };
     }
-    if (records.some((record) => isRecord(record) && record.scope === "user" && record.auto === true)) {
-      ids.add(id);
+    for (const record of records) {
+      if (!isRecord(record) || (record.auto !== undefined && typeof record.auto !== "boolean")) {
+        return { ok: false, reason: `installed_plugins.json ${id} holds a record nothing reads` };
+      }
+      if (record.scope === "user" && record.auto === true) ids.add(id);
     }
   }
   return { ok: true, ids };

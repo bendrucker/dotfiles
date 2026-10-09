@@ -563,13 +563,15 @@ describe("autoInstalledPlugins", () => {
   });
 
   // Read as empty, every dependency it marks would look undeclared and go.
-  test("fails on a record nothing can parse", () => {
-    writeInstalled("not json\n");
-    expect(autoInstalledPlugins().ok).toBe(false);
-  });
-
-  test("fails on a record without a plugins object", () => {
-    writeInstalled({ version: 2, plugins: [] });
+  test.each<{ name: string; installed: unknown }>([
+    { name: "a record nothing can parse", installed: "not json\n" },
+    { name: "a record without a plugins object", installed: { version: 2, plugins: [] } },
+    {
+      name: "an auto flag that is not a boolean",
+      installed: { version: 2, plugins: { "beta@market": [{ scope: "user", auto: "true" }] } },
+    },
+  ])("fails on $name", ({ installed }) => {
+    writeInstalled(installed);
     expect(autoInstalledPlugins().ok).toBe(false);
   });
 });
