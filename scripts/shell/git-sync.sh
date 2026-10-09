@@ -12,7 +12,8 @@
 #   Secretive refuses to sign while the Mac is locked, so a 3am launchd fetch
 #   dies on "agent refused operation". The synced repos are public, so HTTPS
 #   reads need no credentials, while pushes stay on the transport that already
-#   has them. Other hosts and URL forms are left alone.
+#   has them. An HTTPS github remote with no pushurl gets the SSH form as one.
+#   Other hosts and URL forms are left alone.
 #
 # git_https_pin <repo_dir> <remote> <https_url>
 #   Hold the remote on HTTPS when an insteadOf rule would send it back to SSH.
@@ -111,6 +112,13 @@ git_https_remote() {
     git -C "$repo_dir" config --get "remote.$remote.pushurl" >/dev/null 2>&1 ||
       git -C "$repo_dir" remote set-url --push "$remote" "$stored"
     git -C "$repo_dir" remote set-url "$remote" "$url"
+  elif ! git -C "$repo_dir" config --get "remote.$remote.pushurl" >/dev/null 2>&1 &&
+    [[ "$(git -C "$repo_dir" ls-remote --get-url "$remote")" == "$url" ]]; then
+    # A clone that started on HTTPS has no SSH URL to keep, and an HTTPS push
+    # falls through to a credential helper instead of Secretive. A remote some
+    # insteadOf rule reroutes is left to that rule, or to the pin below.
+    gum log --level info "Pushing $remote over SSH"
+    git -C "$repo_dir" remote set-url --push "$remote" "${GIT_HTTPS_SSH_PREFIXES[0]}${url#"$GIT_HTTPS_BASE"}"
   fi
 
   git_https_pin "$repo_dir" "$remote" "$url"

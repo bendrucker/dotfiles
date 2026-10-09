@@ -118,6 +118,22 @@ describe("git_https_remote", () => {
     expect(pushUrl()).toBe("git@github.com:someone/fork.git");
   });
 
+  // Regression: a clone that started on HTTPS had no SSH url to keep, so pushes
+  // went over HTTPS and fell through to the keychain credential helper.
+  test("gives an https remote an SSH pushurl", () => {
+    const r = rewrite("https://github.com/bendrucker/claude.git");
+    expect(r.stdout.trim()).toBe("https://github.com/bendrucker/claude.git");
+    expect(pushUrl()).toBe("git@github.com:bendrucker/claude.git");
+    expect(r.stderr).toContain("Pushing origin over SSH");
+  });
+
+  test("does not clobber the pushurl of an https remote", () => {
+    must(["git", "-C", repo, "remote", "add", "origin", "https://github.com/bendrucker/claude.git"]);
+    must(["git", "-C", repo, "remote", "set-url", "--push", "origin", "https://github.com/bendrucker/claude.git"]);
+    runLib(`git_https_remote ${quote(repo)}`);
+    expect(pushUrl()).toBe("https://github.com/bendrucker/claude.git");
+  });
+
   // Regression: `git remote get-url` resolves insteadOf rules, so reading the
   // remote through it reports HTTPS while .git/config still holds SSH, and the
   // rewrite silently never happens.
