@@ -1,12 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { quote, repoRoot, run, sandbox, type Sandbox } from "#harness";
+import { quote, repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
 
 const installer = join(repoRoot, "herdr", "install.sh");
 const pin = "=url.https://github.com/natori-hrj/herdr-lazy.insteadOf\n";
 
 let box: Sandbox;
-let env: Record<string, string | undefined>;
+let result: Run;
 
 function recorder(name: string): string {
   return [
@@ -16,7 +16,7 @@ function recorder(name: string): string {
   ].join("\n");
 }
 
-beforeEach(() => {
+beforeAll(() => {
   box = sandbox("herdr-install");
   box.mkdir("calls");
   const root = box.mkdir("lazy");
@@ -37,31 +37,34 @@ beforeEach(() => {
   );
   box.stub("lazy/target/release/herdr-lazy", recorder('"$1"'));
 
-  env = {
-    GIT_CONFIG_GLOBAL: global,
-    GIT_CONFIG_SYSTEM: "/dev/null",
-    ZSH: box.path("dotfiles"),
-    ZDOTDIR: box.mkdir("zdotdir"),
-    CI: undefined,
-  };
+  result = run([installer], {
+    path: [box.bin],
+    env: {
+      GIT_CONFIG_GLOBAL: global,
+      GIT_CONFIG_SYSTEM: "/dev/null",
+      ZSH: box.path("dotfiles"),
+      ZDOTDIR: box.mkdir("zdotdir"),
+      CI: undefined,
+    },
+  });
 });
 
-afterEach(() => {
+afterAll(() => {
   box.remove();
 });
 
 describe("herdr/install.sh", () => {
+  test("exits cleanly", () => {
+    expect(result.status).toBe(0);
+  });
+
   test.each(["install", "update", "sync"])("%s clones plugins over HTTPS past a rule forcing SSH", (call) => {
-    const r = run([installer], { path: [box.bin], env });
-    expect(r.status).toBe(0);
     const recorded = box.read(join("calls", call));
     expect(recorded).toContain(pin);
     expect(recorded.trim().split("\n").at(-1)).toBe("https://github.com/natori-hrj/herdr-lazy");
   });
 
   test("leaves the rewrite off commands that clone nothing", () => {
-    const r = run([installer], { path: [box.bin], env });
-    expect(r.status).toBe(0);
     const recorded = box.read(join("calls", "auto-sync"));
     expect(recorded).not.toContain(pin);
     expect(recorded.trim().split("\n").at(-1)).toBe("git@github.com:natori-hrj/herdr-lazy");

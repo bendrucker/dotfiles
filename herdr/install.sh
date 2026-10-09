@@ -41,7 +41,7 @@ source ../scripts/shell/git-sync.sh
 # herdr clones every plugin from https://github.com/<owner>/<repo>, which an
 # org's insteadOf rule can send back to SSH, and SSH cannot sign while the Mac
 # is locked.
-github_repos=(${(f)"$(grep -vE '^[[:space:]]*(#|$)' plugins.list | sed -E 's/@.*//' | cut -d/ -f1,2 | sort -u)"})
+github_repos=(${(f)"$(grep -vE '^[[:space:]]*(#|$)' plugins.list | sed -E 's/^[[:space:]]+//; s/[@[:space:]].*//' | cut -d/ -f1,2 | sort -u)"})
 over_https() {
   (git_https_env "${github_repos[@]}" && "$@")
 }
