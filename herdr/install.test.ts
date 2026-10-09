@@ -8,8 +8,6 @@ const pin = "=url.https://github.com/natori-hrj/herdr-lazy.insteadOf\n";
 let box: Sandbox;
 let env: Record<string, string | undefined>;
 
-// Record the GIT_CONFIG_* env a command ran with, and the URL git would open
-// for a plugin clone under it.
 function recorder(name: string): string {
   return [
     `out=${quote(box.path("calls"))}/${name}`,

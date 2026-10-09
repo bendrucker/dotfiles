@@ -173,9 +173,8 @@ git_https_env() {
     i=$((i + 1))
   done
 
-  # Git applies one rewrite, so a rule sending https://github.com/ to SSH wins
-  # over the rules above for an HTTPS URL, and an identity rule on the same
-  # base loses the tie to it. Only a longer match beats it, as in git_https_pin.
+  # Git applies the longest matching rule, so mapping each repo URL to itself
+    # outranks an org rule that sends https://github.com/ to SSH.
   for repo in "$@"; do
     export "GIT_CONFIG_KEY_$i=url.$GIT_HTTPS_BASE$repo.insteadOf"
     export "GIT_CONFIG_VALUE_$i=$GIT_HTTPS_BASE$repo"
