@@ -1,7 +1,3 @@
-// GitHub native stacked PRs replaced Graphite. That change stopped declaring
-// the formula and its tap, but nothing uninstalls a formula or untaps a tap a
-// Brewfile no longer names, so scripts/brew-drift kept reporting the tap.
-//
 // EXPIRES: 2027-04-08 every machine has run scripts/install since the removal
 
 import { log } from "#jobs/output";
