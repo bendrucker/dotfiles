@@ -252,7 +252,7 @@ function pruneDependencies(out: Output, env: Record<string, string | undefined>)
   });
   out.write(1, pruned.stdout);
 
-  if (pruned.status !== 0 || pruned.stdout.startsWith("Skipped")) {
+  if (pruned.status !== 0 || pruned.stdout.trimStart().startsWith("Skipped")) {
     log(out, "warn", "Pruning unneeded dependencies had issues");
     return false;
   }

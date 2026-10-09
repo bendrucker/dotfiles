@@ -327,9 +327,9 @@ export function autoInstalledPlugins(): Declaration {
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, "utf8").replace(BYTE_ORDER_MARK, ""));
+    parsed = parse(readFileSync(path, "utf8"), "installed_plugins.json");
   } catch (error) {
-    return { ok: false, reason: `installed_plugins.json could not be read: ${describe(error)}` };
+    return { ok: false, reason: describe(error) };
   }
   if (!isRecord(parsed) || !isRecord(parsed.plugins)) {
     return { ok: false, reason: "installed_plugins.json does not hold a plugins object" };
