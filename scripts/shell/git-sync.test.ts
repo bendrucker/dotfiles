@@ -118,8 +118,8 @@ describe("git_https_remote", () => {
     expect(pushUrl()).toBe("git@github.com:someone/fork.git");
   });
 
-  // Regression: a clone that started on HTTPS had no SSH url to keep, so pushes
-  // went over HTTPS and fell through to the keychain credential helper.
+  // Regression: an https remote with no pushurl pushes over HTTPS and falls
+  // through to the keychain credential helper.
   test("gives an https remote an SSH pushurl", () => {
     const r = rewrite("https://github.com/bendrucker/claude.git");
     expect(r.stdout.trim()).toBe("https://github.com/bendrucker/claude.git");
