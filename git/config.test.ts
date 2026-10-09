@@ -8,12 +8,14 @@ const config = join(repoRoot, "git", "config");
 let box: Sandbox;
 let log: string;
 
-// config.local.example writes an unscoped helper, and config.local is included
-// before the github blocks. A stub for each records which one git calls.
+// git/config and config.local.example each add an unscoped helper ahead of the
+// github blocks. A stub for each records which one git calls, and GIT_EXEC_PATH
+// keeps git from reaching the real git-credential-osxkeychain and its keychain.
 beforeEach(() => {
   box = sandbox("git-credential");
   log = box.write("calls", "");
   box.write(".config/git/config.local", "[credential]\n  helper = local\n");
+  box.stub("git-credential-osxkeychain", `echo "osxkeychain $1" >> ${quote(log)}`);
   box.stub("git-credential-local", `echo "local $1" >> ${quote(log)}`);
   box.stub(
     "gh",
@@ -30,7 +32,13 @@ function credential(action: "fill" | "approve", host: string): void {
   shell(`printf 'protocol=https\\nhost=%s\\n${input}\\n' "$1" | git credential ${action}`, {
     args: [host],
     path: [box.bin],
-    env: { HOME: box.dir, GIT_CONFIG_GLOBAL: config, GIT_CONFIG_SYSTEM: "/dev/null", GIT_TERMINAL_PROMPT: "0" },
+    env: {
+      HOME: box.dir,
+      GIT_EXEC_PATH: box.bin,
+      GIT_CONFIG_GLOBAL: config,
+      GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_TERMINAL_PROMPT: "0",
+    },
   });
 }
 
@@ -47,8 +55,8 @@ describe("github credentials", () => {
     expect(calls()).toEqual(["gh get", "gh store"]);
   });
 
-  test("leave other hosts on the machine-local helper", () => {
+  test("leave other hosts on the keychain and machine-local helpers", () => {
     credential("approve", "gitlab.com");
-    expect(calls()).toEqual(["local store"]);
+    expect(calls()).toEqual(["osxkeychain store", "local store"]);
   });
 });
