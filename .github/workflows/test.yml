@@ -173,7 +173,7 @@ jobs:
       if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
       env:
         # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
-        BUN_VERSION: 1.4.2
+        BUN_VERSION: 1.4.3
       run: |
         case "$RUNNER_OS-$RUNNER_ARCH" in
           Linux-X64) target=linux-x64 ;;
