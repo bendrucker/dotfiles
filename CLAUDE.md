@@ -170,7 +170,7 @@ Config and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev
 
 ### Tests
 
-Everything runs under `bun test`. A test sits next to what it covers and is named for it: `scripts/install-trust.test.ts` covers `scripts/install-trust`, `herdr/bin/herdr-flock.test.ts` covers that launcher. Shell scripts and TypeScript modules are tested the same way, so there is one runner and one set of conventions to learn. `bun run test` runs what the `bun` job runs, with each file in its own worker process. `bunfig.toml` has no setting for that, so a bare `bun test` runs the files one after another.
+Everything runs under `bun test`. A test sits next to what it covers and is named for it: `scripts/install-trust.test.ts` covers `scripts/install-trust`, `herdr/bin/herdr-agent-state.test.ts` covers that reporter. Shell scripts and TypeScript modules are tested the same way, so there is one runner and one set of conventions to learn. `bun run test` runs what the `bun` job runs, with each file in its own worker process. `bunfig.toml` has no setting for that, so a bare `bun test` runs the files one after another.
 
 `#harness` holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners that report a script's status alongside both its streams. `shell()` runs a snippet under bash or zsh, which is how a library function gets called directly. Sourcing inside the snippet is what lets a test redefine one of the library's own functions afterwards and have the redefinition win.
 

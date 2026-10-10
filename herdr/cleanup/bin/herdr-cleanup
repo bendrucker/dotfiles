@@ -1,0 +1,176 @@
+#!/usr/bin/env bun
+//
+// The cleanup board: every herdr worktree that needs you or is safe to finish,
+// one key per next step. `board` runs fzf, and fzf calls back into this script
+// for each key, so every action is also a subcommand that works over ssh.
+
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { close, go, prune, spawn, wake } from "../actions";
+import { HEADER_LINES, MACHINE, render } from "../board";
+import { loadRows, type Row } from "../rows";
+
+const REMOTE_SCRIPT = "~/.dotfiles/herdr/cleanup/bin/herdr-cleanup";
+const REMOTE_TIMEOUT_MS = 10_000;
+
+const self = realpathSync(import.meta.path);
+const state = join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "dotfiles");
+const machineFlag = join(state, "herdr-cleanup-machines");
+
+function isRow(value: unknown): value is Row {
+  if (typeof value !== "object" || value === null) return false;
+  const row = value as Record<string, unknown>;
+  return (
+    typeof row.workspaceId === "string" &&
+    typeof row.label === "string" &&
+    typeof row.step === "string" &&
+    typeof row.reason === "string" &&
+    Array.isArray(row.flags)
+  );
+}
+
+function remoteRows(): Row[] | undefined {
+  try {
+    const child = Bun.spawnSync({
+      cmd: ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", MACHINE, `${REMOTE_SCRIPT} rows --json`],
+      stdin: "ignore",
+      stderr: "ignore",
+      timeout: REMOTE_TIMEOUT_MS,
+    });
+    if (child.exitCode !== 0) return undefined;
+    const parsed: unknown = JSON.parse(child.stdout.toString());
+    if (!Array.isArray(parsed)) return undefined;
+    return parsed.filter(isRow).map((row) => ({ ...row, machine: MACHINE }));
+  } catch {
+    return undefined;
+  }
+}
+
+function lines(): void {
+  const showRemote = existsSync(machineFlag);
+  const output = render(loadRows(), showRemote ? remoteRows() : [], showRemote);
+  console.log(output.join("\n"));
+}
+
+
+// A remote row's action runs the same subcommand on that machine, with a
+// terminal so gum can ask there.
+function act(action: string, target: string | undefined): number {
+  if (target === undefined) return usage();
+  const [machine, workspace] = target.includes(":") ? target.split(":", 2) : ["local", target];
+  if (machine !== "local") {
+    const child = Bun.spawnSync({
+      cmd: ["ssh", "-t", machine ?? MACHINE, `${REMOTE_SCRIPT} ${action} ${workspace}`],
+      stdio: ["inherit", "inherit", "inherit"],
+    });
+    return child.exitCode ?? 1;
+  }
+  const rows = loadRows();
+  if (rows === undefined) {
+    console.error("herdr-cleanup: herdr is unreachable");
+    return 1;
+  }
+  const row = rows.find((candidate) => candidate.workspaceId === workspace);
+  if (row === undefined) {
+    console.error(`herdr-cleanup: no worktree workspace ${workspace}`);
+    return 1;
+  }
+  const handlers = { go, prune, close, wake } as const;
+  if (!(action in handlers)) return usage();
+  // Clear what fzf left behind, so a failure is the only message on screen.
+  if (process.stdout.isTTY) process.stdout.write("\x1b[2J\x1b[H");
+  const outcome = handlers[action as keyof typeof handlers](row, spawn);
+  if (outcome === "failed" && process.stdin.isTTY) {
+    // fzf reloads over the screen once this exits, which would erase the reason.
+    // go replaced fzf, so there is no board to go back to.
+    const next = action === "go" ? "close" : "go back";
+    spawn(["gum", "input", `--placeholder=press enter to ${next}`], { terminal: "all" });
+  }
+  return outcome === "failed" ? 1 : 0;
+}
+
+function board(): number {
+  const bin = `${JSON.stringify(process.execPath)} ${JSON.stringify(self)}`;
+  const reload = `reload(${bin} lines)`;
+  const child = Bun.spawnSync({
+    cmd: [
+      "fzf",
+      "--no-input",
+      "--ansi",
+      "--color=header:-1",
+      `--header-lines=${HEADER_LINES}`,
+      "--delimiter=\t",
+      "--with-nth=2..",
+      "--layout=reverse",
+      "--no-sort",
+      "--bind",
+      `start:${reload}`,
+      "--bind",
+      `enter:become(${bin} go {1})`,
+      "--bind",
+      `p:execute(${bin} prune {1})+${reload}`,
+      "--bind",
+      `x:execute(${bin} close {1})+${reload}`,
+      "--bind",
+      `w:execute(${bin} wake {1})+${reload}`,
+      "--bind",
+      `r:${reload}`,
+      "--bind",
+      `m:execute-silent(${bin} toggle-machine)+${reload}`,
+      "--bind",
+      "j:down,k:up,q:abort",
+    ],
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  return child.exitCode === 130 || child.exitCode === 1 ? 0 : (child.exitCode ?? 1);
+}
+
+function usage(): number {
+  console.error("usage: herdr-cleanup open | board | lines | rows [--json] | toggle-machine | go|prune|close|wake <workspace>");
+  return 2;
+}
+
+function main(argv: string[]): number {
+  const [command, arg] = argv;
+  switch (command) {
+    case "open": {
+      const opened = spawn([
+        "herdr", "plugin", "pane", "open",
+        "--plugin", "bendrucker.cleanup", "--entrypoint", "board", "--placement", "overlay", "--focus",
+      ]);
+      if (!opened.ok) process.stderr.write(opened.stderr);
+      return opened.ok ? 0 : 1;
+    }
+    case "board":
+      return board();
+    case "lines":
+      lines();
+      return 0;
+    case "rows": {
+      const rows = loadRows();
+      if (arg === "--json") {
+        // Fail rather than answer with no rows, so the far side shows the machine as unreachable.
+        if (rows === undefined) return 1;
+        console.log(JSON.stringify(rows));
+      } else console.log(render(rows, [], false).join("\n"));
+      return 0;
+    }
+    case "toggle-machine":
+      if (existsSync(machineFlag)) rmSync(machineFlag);
+      else {
+        mkdirSync(state, { recursive: true });
+        writeFileSync(machineFlag, "");
+      }
+      return 0;
+    case "go":
+    case "prune":
+    case "close":
+    case "wake":
+      return act(command, arg);
+    default:
+      return usage();
+  }
+}
+
+if (import.meta.main) process.exit(main(process.argv.slice(2)));

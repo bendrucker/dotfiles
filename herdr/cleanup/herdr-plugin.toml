@@ -1,0 +1,20 @@
+id = "bendrucker.cleanup"
+name = "cleanup"
+version = "0.1.0"
+min_herdr_version = "0.9.3"
+platforms = ["macos", "linux"]
+description = "Drive herdr worktrees to a finished state: go to what needs you, wake stale agents, prune what landed."
+
+# An overlay rather than a popup, because a popup pane gets no pane ids and
+# never appears in `pane list`.
+[[panes]]
+id = "board"
+title = "cleanup"
+placement = "overlay"
+command = ["bin/herdr-cleanup", "board"]
+
+[[actions]]
+id = "open"
+title = "cleanup: open board"
+contexts = ["global", "workspace", "pane"]
+command = ["bin/herdr-cleanup", "open"]
