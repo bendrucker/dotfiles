@@ -41,6 +41,11 @@ setup_gitconfig () {
   git_authorname=$(gum input --header "GitHub author name" --placeholder "Jane Doe")
   git_authoremail=$(gum input --header "GitHub author email" --placeholder "jane@example.com")
 
+  if [ -z "$git_authorname" ] || [ -z "$git_authoremail" ]; then
+    gum log --level warn 'skipping gitconfig setup (no name or email entered)'
+    return
+  fi
+
   sed -e "s/AUTHORNAME/$git_authorname/g" -e "s/AUTHOREMAIL/$git_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$git_credential/g" git/config.local.example > git/config.local
 }
 
