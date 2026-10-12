@@ -76,6 +76,9 @@ matching `requires-python` and installs `giturlparse` and `pygit2` from
 warm). A host that invokes this on a keystroke wants that cache warm, since a
 cold first run otherwise lands in front of the user.
 
+`.python-version` pins the interpreter to 3.14 because pygit2 has no 3.15
+wheel yet.
+
 ## Tests
 
 ```sh
