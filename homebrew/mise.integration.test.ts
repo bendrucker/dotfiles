@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { must, repoRoot, sandbox, type Sandbox } from "#harness";
 
@@ -15,8 +16,9 @@ afterEach(() => {
   box.remove();
 });
 
-function packages(env: Record<string, string>): string[] {
+function packages(env: Record<string, string>, confd = false): string[] {
   const home = box.mkdir("home");
+  if (confd) symlinkSync(repoRoot, join(box.mkdir("home", ".config", "mise"), "conf.d"));
   must(["sh", "-c", "mise trust --yes --quiet mise.toml && mise bootstrap --only packages --yes </dev/null"], {
     cwd: join(repoRoot, "homebrew"),
     path: [box.bin],
@@ -38,8 +40,12 @@ function packages(env: Record<string, string>): string[] {
 }
 
 describe("pre-packages hook", () => {
-  test("runs brew bundle from the dotfiles root once", () => {
-    const bundles = packages({}).filter((line) => line.split("|")[1] === "bundle");
+  // A second install finds the same file through conf.d as well.
+  test.each([
+    { name: "before conf.d is linked", confd: false },
+    { name: "once conf.d is linked", confd: true },
+  ])("runs brew bundle once from the dotfiles root $name", ({ confd }) => {
+    const bundles = packages({}, confd).filter((line) => line.split("|")[1] === "bundle");
     expect(bundles.map((line) => line.split("|")[0])).toEqual([repoRoot]);
   });
 

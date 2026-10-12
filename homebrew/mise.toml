@@ -1,10 +1,13 @@
 # Leave the casks that update themselves to their own updater on a managed
 # machine or from the nightly job. Homebrew cannot move a root-owned app aside
 # without sudo, and 3am has no terminal.
+#
+# scripts/install runs this from homebrew/. {{config_root}} is no help: once
+# conf.d also reaches this file, mise renders it as $HOME.
 [bootstrap.hooks]
 pre-packages = """
 set -e
-cd "{{config_root}}/.."
+cd ..
 . scripts/shell/trace.sh
 
 trace_begin install-trust
