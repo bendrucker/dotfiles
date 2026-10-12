@@ -1,0 +1,3 @@
+[dotfiles]
+"~/.zshenv" = ".zshenv"
+"~/.config/zsh/.zshrc" = ".zshrc"

@@ -1,0 +1,3 @@
+[dotfiles]
+"~/.ssh/config" = "config"
+"~/.ssh/environment" = "environment"

@@ -7,7 +7,7 @@ fi
 # A shell that found no .zshenv has no PATH of its own, only whatever it
 # inherited. zsh reads its per-user .zshenv from $ZDOTDIR and falls back to
 # ~/.zshenv only when ZDOTDIR is unset. .zshenv exports ZDOTDIR and
-# zsh/symlinks.conf installs only .zshrc there, so every zsh below the first one
+# zsh/mise.toml links only .zshrc there, so every zsh below the first one
 # skips .zshenv entirely and keeps whatever PATH its parent froze. A pane under
 # a server that started before a topic existed never sees that topic's bin, no
 # matter how many times the shell restarts.

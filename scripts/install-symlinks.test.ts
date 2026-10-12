@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readlinkSync, symlinkSync } from "node:fs";
+import { readFileSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 
@@ -7,82 +7,83 @@ const installSymlinks = join(repoRoot, "scripts", "install-symlinks");
 
 let box: Sandbox;
 let root: string;
-let otherRoot: string;
 let home: string;
 let xdg: string;
 
 beforeEach(() => {
   box = sandbox("install-symlinks");
-  root = box.path("root");
-  otherRoot = box.path("other-root");
-  home = box.path("home");
-  xdg = join(home, ".config");
-
-  // Declared source for one desired link, under a fake dotfiles root.
-  box.mkdir("root", "topic");
-  box.mkdir("other-root");
-  box.mkdir("home", ".config");
-  box.write("root/topic/kept.conf", "kept\n");
-  box.write("root/topic/symlinks.conf", "kept.conf:~/.kept\n");
-
-  // Stale link directly under HOME: points into root but not declared.
-  box.write("root/stale-source", "stale\n");
-  symlinkSync(join(root, "stale-source"), join(home, ".stale"));
-
-  // Stale link nested under XDG: points into root but not declared.
-  box.mkdir("home", ".config", "nested");
-  symlinkSync(join(root, "stale-source"), join(xdg, "nested", "stale"));
-
-  // Unrelated link under HOME: points outside root, must be left alone.
-  box.write("other-root/unrelated-source", "unrelated\n");
-  symlinkSync(join(otherRoot, "unrelated-source"), join(home, ".unrelated"));
+  root = box.mkdir("root");
+  home = box.mkdir("home");
+  xdg = box.mkdir("home", ".config");
 });
 
 afterEach(() => {
   box.remove();
 });
 
-function runInstall() {
-  return run([installSymlinks, root], { env: { HOME: home, XDG_CONFIG_HOME: xdg } });
+// A mise whose status reports one entry in each state that matters, and which
+// records every apply it is asked for.
+function stubMise(targets: Record<string, string>) {
+  const files = Object.entries(targets).map(([target, state]) => ({ target, state }));
+  box.write("status.json", JSON.stringify({ files }));
+  box.stub(
+    "mise",
+    `[ "$2" = status ] && exec cat "${box.path("status.json")}"\necho "$@" >> "${box.path("applied")}"\n`,
+  );
 }
 
-describe("install-symlinks remove_stale", () => {
-  test("creates declared links, removes stale links into root, and preserves the rest", () => {
-    const r = runInstall();
-    expect(r.status).toBe(0);
-    expect(r.stdout).toContain(`removing stale symlink ${home}/.stale`);
-    expect(r.stdout).toContain(`removing stale symlink ${xdg}/nested/stale`);
-    expect(lstatSync(join(home, ".kept")).isSymbolicLink()).toBe(true);
-    expect(existsSync(join(home, ".stale"))).toBe(false);
-    expect(existsSync(join(xdg, "nested", "stale"))).toBe(false);
-    expect(lstatSync(join(home, ".unrelated")).isSymbolicLink()).toBe(true);
-  });
-});
+function runInstall() {
+  return run([installSymlinks, root], { env: { HOME: home, XDG_CONFIG_HOME: xdg }, path: [box.bin] });
+}
 
-describe("install-symlinks mise conf.d", () => {
-  test("links conf.d to the dotfiles root", () => {
+function applied(): string {
+  try {
+    return readFileSync(box.path("applied"), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+describe("install-symlinks", () => {
+  test("links conf.d to the dotfiles root and applies with force", () => {
+    stubMise({ "~/.kept": "applied", "~/.config/file": "differs" });
+    box.write("home/.config/file", "replaced by the link\n");
+
     expect(runInstall().status).toBe(0);
 
     expect(readlinkSync(join(xdg, "mise", "conf.d"))).toBe(root);
+    expect(applied()).toBe("dot apply --yes --force\n");
   });
 
   test("repoints conf.d at another root", () => {
+    stubMise({});
     box.mkdir("home", ".config", "mise");
-    symlinkSync(otherRoot, join(xdg, "mise", "conf.d"));
+    symlinkSync(box.mkdir("other"), join(xdg, "mise", "conf.d"));
 
     expect(runInstall().status).toBe(0);
 
     expect(readlinkSync(join(xdg, "mise", "conf.d"))).toBe(root);
   });
 
-  test("lays every other link while conf.d is still a directory", () => {
+  test("refuses a real directory at a target", () => {
+    stubMise({ "~/.config/nvim": "differs" });
+    box.write("home/.config/nvim/init.lua", "mine\n");
+
+    const r = runInstall();
+
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`${xdg}/nvim is a directory`);
+    expect(applied()).toBe("");
+  });
+
+  test("applies nothing while conf.d is still a directory", () => {
+    stubMise({});
     box.mkdir("home", ".config", "mise", "conf.d");
 
     const r = runInstall();
 
-    expect(r.status).toBe(0);
-    expect(r.stderr).toContain("left conf.d alone");
-    expect(lstatSync(join(home, ".kept")).isSymbolicLink()).toBe(true);
-    expect(existsSync(join(home, ".stale"))).toBe(false);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("migrate conf.d first");
+    expect(applied()).toBe("");
   });
 });

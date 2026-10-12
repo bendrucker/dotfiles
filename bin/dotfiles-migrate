@@ -27,7 +27,7 @@
 // reason to file a to-do nobody can act on until morning.
 
 import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { streamOutput } from "#jobs/output";
 import { APPLICATIONS, type Platform } from "#migrations/migration";
 import { configHome, dataHome, defaultHome, devRoot, installedRoot, run, versionFile } from "#migrations/runner";
@@ -49,10 +49,15 @@ if (import.meta.main) {
     config: configHome(home),
     data: dataHome(home),
     applications: APPLICATIONS,
-    installed: [...new Set([installedRoot(home), devRoot(home), root].filter((tree) => tree !== undefined))],
+    // The [dotfiles] links point through conf.d rather than into a tree.
+    installed: [...new Set([installedRoot(home), devRoot(home), root, confd(home)].filter((tree) => tree !== undefined))],
     platform: platform(),
     out,
   };
 
   process.exit(await run({ root, version: versionFile(home), context }));
+}
+
+function confd(home: string): string {
+  return join(configHome(home), "mise", "conf.d");
 }

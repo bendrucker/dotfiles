@@ -1,0 +1,4 @@
+[dotfiles]
+"~/.config/git/config" = "config"
+"~/.config/git/delta-catppuccin.gitconfig" = "delta-catppuccin.gitconfig"
+"~/.config/git/ignore" = "ignore"

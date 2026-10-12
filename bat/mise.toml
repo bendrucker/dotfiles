@@ -1,0 +1,6 @@
+[dotfiles]
+"~/.config/bat/config" = "config"
+"~/.config/bat/themes/Catppuccin Frappe.tmTheme" = "catppuccin/themes/Catppuccin Frappe.tmTheme"
+"~/.config/bat/themes/Catppuccin Latte.tmTheme" = "catppuccin/themes/Catppuccin Latte.tmTheme"
+"~/.config/bat/themes/Catppuccin Macchiato.tmTheme" = "catppuccin/themes/Catppuccin Macchiato.tmTheme"
+"~/.config/bat/themes/Catppuccin Mocha.tmTheme" = "catppuccin/themes/Catppuccin Mocha.tmTheme"

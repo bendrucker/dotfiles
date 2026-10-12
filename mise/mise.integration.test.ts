@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, symlinkSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { must, repoRoot, sandbox, type Sandbox } from "#harness";
 
@@ -19,8 +19,12 @@ afterEach(() => {
 });
 
 function mise(...args: string[]): string {
+  return inHome(["mise", ...args]);
+}
+
+function inHome(cmd: string[]): string {
   const home = box.path("home");
-  return must(["mise", ...args], {
+  return must(cmd, {
     cwd: home,
     env: {
       HOME: home,
@@ -63,3 +67,37 @@ describe("mise conf.d linked to the dotfiles root", () => {
     expect(mise("env")).toContain("export DOTFILES_ROOT_PROBE=other");
   });
 });
+
+describe("[dotfiles]", () => {
+  test("lays every declared link through conf.d", () => {
+    inHome([join(repoRoot, "scripts", "install-symlinks"), repoRoot]);
+
+    const home = box.path("home");
+    const declared = statuses(JSON.parse(mise("dot", "status", "--json")));
+
+    expect(declared.length).toBeGreaterThan(0);
+    for (const { target, state } of declared) {
+      const path = join(home, target.replace(/^~\//, ""));
+      expect({ target, state }).toEqual({ target, state: "applied" });
+      expect(readlinkSync(path).startsWith(`${confd}/`)).toBe(true);
+      expect(existsSync(path)).toBe(true);
+    }
+  });
+});
+
+interface Status {
+  target: string;
+  state: string;
+}
+
+// The root package carries no zod, and this reads two string fields.
+function statuses(json: unknown): Status[] {
+  const files = typeof json === "object" && json !== null && "files" in json ? json.files : undefined;
+  if (!Array.isArray(files)) throw new Error("mise dot status --json printed no files array");
+  return files.map((file: unknown) => {
+    if (typeof file !== "object" || file === null) throw new Error(`unexpected entry ${JSON.stringify(file)}`);
+    const { target, state } = file as Record<string, unknown>;
+    if (typeof target !== "string" || typeof state !== "string") throw new Error(`unexpected entry ${JSON.stringify(file)}`);
+    return { target, state };
+  });
+}
