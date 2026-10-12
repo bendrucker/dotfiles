@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, readlinkSync, symlinkSync } from "node:fs";
+import { existsSync, readFileSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
@@ -63,6 +63,34 @@ describe("dotfiles-through-confd", () => {
     up(context());
 
     expect(existsSync(join(config, "retired", "config"))).toBe(false);
+  });
+
+  test("lays a missing conf.d before rerouting through it", () => {
+    rmSync(confd);
+    symlinkSync(join(tree, "zsh", ".zshenv"), join(home, ".zshenv"));
+
+    up({ ...context(), installed: [tree, confd] });
+
+    expect(readlinkSync(confd)).toBe(tree);
+    expect(readFileSync(join(home, ".zshenv"), "utf8")).toBe("zshenv\n");
+  });
+
+  test("leaves links into a tree conf.d does not point at", () => {
+    const other = box.write("other/zsh/.zshenv", "other\n");
+    symlinkSync(other, join(home, ".zshenv"));
+
+    up({ ...context(), installed: [tree, box.path("other")] });
+
+    expect(readlinkSync(join(home, ".zshenv"))).toBe(other);
+  });
+
+  test("replaces a temporary link a killed run left behind", () => {
+    symlinkSync(join(tree, "zsh", ".zshenv"), join(home, ".zshenv"));
+    symlinkSync(join(tree, "zsh", ".zshenv"), join(home, ".zshenv.dotfiles-migrate"));
+
+    up(context());
+
+    expect(readlinkSync(join(home, ".zshenv"))).toBe(join(confd, "zsh", ".zshenv"));
   });
 
   test("leaves links into other trees, and conf.d itself, alone", () => {

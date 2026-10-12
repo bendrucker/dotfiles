@@ -1,7 +1,7 @@
 # shellcheck shell=sh
-# The repo's symlink primitive: create idempotent links and prune stale ones.
-# POSIX sh so both the sh install-symlinks and the bash claude/install.sh can
-# source it. Sourcing has no side effects.
+# Create idempotent links and prune stale ones, for the links mise's [dotfiles]
+# does not lay: conf.d itself and claude/install.sh's. POSIX sh so both the sh
+# install-symlinks and the bash claude/install.sh can source it. Sourcing has no side effects.
 
 # symlink_create <src> <dst>
 #   Create dst as a symlink to src, making parent directories as needed.

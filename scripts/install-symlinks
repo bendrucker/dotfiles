@@ -23,13 +23,18 @@ cd /
 # --force replaces a file or a foreign link at a target, as `ln -sfn` did. It
 # would also delete a real directory and everything in it, so that is left for
 # a person to move into the repo.
-mise dot status --json | jq -r '.files[] | select(.state == "differs") | .target' |
-  while IFS= read -r target; do
-    path="$HOME${target#"~"}"
-    if [ -d "$path" ] && [ ! -L "$path" ]; then
-      echo "install-symlinks: $path is a directory; move its contents into the repo and remove it" >&2
-      exit 1
-    fi
-  done
+# Captured first, since sh has no pipefail and a failed status must not read as
+# nothing to guard.
+differs=$(mise dot status --json | jq -r '.files[] | select(.state == "differs") | .target')
+for target in $differs; do
+  case $target in
+    "~"*) path="$HOME${target#"~"}" ;;
+    *) path=$target ;;
+  esac
+  if [ -d "$path" ] && [ ! -L "$path" ]; then
+    echo "install-symlinks: $path is a directory; move its contents into the repo and remove it" >&2
+    exit 1
+  fi
+done
 
 mise dot apply --yes --force

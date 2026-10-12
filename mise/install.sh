@@ -16,7 +16,7 @@ cd "$(dirname "$0")"/..
 echo "› mise install"
 for file in */mise.toml */mise.*.toml(N); do
   mise trust "$file" --yes 2>/dev/null
-  [[ $file == */mise.toml ]] && grep -q '^\[tools\]' "$file" || continue
+  [[ $file == */mise.toml ]] && grep -q '^\[tools' "$file" || continue
   (cd "${file:h}" && mise install)
 done
 

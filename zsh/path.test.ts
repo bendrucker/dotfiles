@@ -55,7 +55,7 @@ function missingFrom(built: string[]): string[] {
 }
 
 describe("PATH", () => {
-  // zsh/symlinks.conf installs only .zshrc under $ZDOTDIR, and .zshenv exports
+  // zsh/mise.toml links only .zshrc under $ZDOTDIR, and .zshenv exports
   // ZDOTDIR, so this is every zsh below the first one: a pane, or anything a
   // long-lived server spawns. Such a shell used to keep whatever PATH its
   // parent froze, which for a server started before a topic existed never held
