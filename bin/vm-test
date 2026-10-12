@@ -1,0 +1,8 @@
+#!/usr/bin/env bun
+//
+// Installs a commit of these dotfiles into a throwaway macOS VM or Linux
+// container and checks the result. See vm/vm-test.ts for what it does.
+
+import { main } from "../vm/vm-test.ts";
+
+process.exit(await main(Bun.argv.slice(2)));

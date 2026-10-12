@@ -1,0 +1,10 @@
+# tart runs the macOS VMs bin/vm-test installs into. Homebrew's only source is
+# the cirruslabs/cli tap, whose formula no longer loads on current Homebrew.
+[tools]
+"aqua:cirruslabs/tart" = { version = "2.32.1", os = ["macos"] }
+
+[tasks.vm-test]
+description = "Install a commit into a throwaway macOS VM or Linux container"
+# The checkout it runs in, rather than the installed copy that bin/ on PATH
+# names, so a worktree tests its own commits.
+run = '"$(git rev-parse --show-toplevel)/bin/vm-test"'
