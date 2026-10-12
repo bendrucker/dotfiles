@@ -2,7 +2,8 @@
 # Usage: brew-leave-self-updating [managed-preferences-dir]
 #
 # Exit 0 where Homebrew should leave the casks that update themselves alone,
-# which tells scripts/install to set HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS. See
+# which tells the brew hook in homebrew/mise.toml to set
+# HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS. See
 # the Externally Managed Casks section of CLAUDE.md.
 
 # The nightly job has no terminal for the sudo an upgrade can need, managed or
