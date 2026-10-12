@@ -5,6 +5,8 @@
 # This installs some of the common dependencies needed (or at least desired)
 # using Homebrew.
 
+. "$(dirname "$0")/shell/brew-path.sh"
+
 # Check for Homebrew
 if test ! "$(command -v brew)"
 then
@@ -17,6 +19,7 @@ then
   fi
 
 fi
+brew_path
 
 # install gum early so dotfiles-bootstrap helpers can use it before scripts/install runs brew bundle
 if test ! "$(command -v gum)"
