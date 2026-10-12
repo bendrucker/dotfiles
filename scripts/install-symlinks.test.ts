@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 
@@ -59,25 +59,19 @@ describe("install-symlinks remove_stale", () => {
   });
 });
 
-describe("install-symlinks mise fragments", () => {
-  test.each<{ name: string; source: string; fragment: string }>([
-    { name: "base config", source: "mise.toml", fragment: "topic.toml" },
-    { name: "env module", source: "mise.tailgate.toml", fragment: "topic.tailgate.toml" },
-  ])("links a topic's $name into conf.d", ({ source, fragment }) => {
-    box.write(`root/topic/${source}`, "");
-
+describe("install-symlinks mise conf.d", () => {
+  test("links conf.d to the dotfiles root", () => {
     expect(runInstall().status).toBe(0);
 
-    expect(lstatSync(join(xdg, "mise", "conf.d", fragment)).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(xdg, "mise", "conf.d"))).toBe(root);
   });
 
-  test("prunes the fragment of a module the topic no longer has", () => {
-    box.mkdir("home", ".config", "mise", "conf.d");
-    const fragment = join(xdg, "mise", "conf.d", "topic.retired.toml");
-    symlinkSync(join(root, "topic", "mise.retired.toml"), fragment);
+  test("repoints conf.d at another root", () => {
+    box.mkdir("home", ".config", "mise");
+    symlinkSync(otherRoot, join(xdg, "mise", "conf.d"));
 
     expect(runInstall().status).toBe(0);
 
-    expect(() => lstatSync(fragment)).toThrow();
+    expect(readlinkSync(join(xdg, "mise", "conf.d"))).toBe(root);
   });
 });

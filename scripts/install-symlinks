@@ -34,15 +34,10 @@ for conf in "$DOTFILES_ROOT"/*/symlinks.conf; do
   done < "$conf"
 done
 
-# A topic's mise.toml becomes the conf.d fragment <topic>.toml, and each
-# mise.<env>.toml becomes <topic>.<env>.toml, which mise loads only while <env>
-# is selected. mise/miserc.toml.tera is what selects them.
-for config in "$DOTFILES_ROOT"/*/mise.toml "$DOTFILES_ROOT"/*/mise.*.toml; do
-  [ -f "$config" ] || continue
-  topic="$(basename "$(dirname "$config")")"
-  name="$(basename "$config")"
-  link "$config" "$XDG_CONFIG_HOME/mise/conf.d/$topic${name#mise}"
-done
+# conf.d is the whole tree, so each topic directory is a mise config root that
+# loads its mise.toml, and each mise.<env>.toml while mise/miserc.toml.tera
+# selects <env>. Pointing it at another root repoints every topic at once.
+link "$DOTFILES_ROOT" "$XDG_CONFIG_HOME/mise/conf.d"
 
 # Remove stale symlinks pointing into DOTFILES_ROOT that are no longer declared.
 # Scan directories that could contain managed symlinks. The HOME glob enumerates
