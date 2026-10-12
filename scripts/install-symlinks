@@ -11,7 +11,7 @@ DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 desired_targets=""
 
 link() {
-  symlink_create "$1" "$2"
+  symlink_create "$1" "$2" || return
   if [ -z "$desired_targets" ]; then
     desired_targets="$2"
   else
@@ -36,8 +36,11 @@ done
 
 # conf.d is the whole tree, so each topic directory is a mise config root that
 # loads its mise.toml, and each mise.<env>.toml while mise/miserc.toml.tera
-# selects <env>. Pointing it at another root repoints every topic at once.
-link "$DOTFILES_ROOT" "$XDG_CONFIG_HOME/mise/conf.d"
+# selects <env>. Pointing it at another root repoints every topic at once. A
+# dev switch can run before the migration that clears a real conf.d, and the
+# other links still belong in place then.
+link "$DOTFILES_ROOT" "$XDG_CONFIG_HOME/mise/conf.d" ||
+  echo "install-symlinks: left conf.d alone until scripts/install migrates it" >&2
 
 # Remove stale symlinks pointing into DOTFILES_ROOT that are no longer declared.
 # Scan directories that could contain managed symlinks. The HOME glob enumerates

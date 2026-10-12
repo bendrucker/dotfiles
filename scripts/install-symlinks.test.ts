@@ -74,4 +74,15 @@ describe("install-symlinks mise conf.d", () => {
 
     expect(readlinkSync(join(xdg, "mise", "conf.d"))).toBe(root);
   });
+
+  test("lays every other link while conf.d is still a directory", () => {
+    box.mkdir("home", ".config", "mise", "conf.d");
+
+    const r = runInstall();
+
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain("left conf.d alone");
+    expect(lstatSync(join(home, ".kept")).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(home, ".stale"))).toBe(false);
+  });
 });

@@ -61,6 +61,17 @@ describe("mise-confd-link", () => {
     expect(logged).toContain(".pre-link");
   });
 
+  test("keeps an earlier backup", () => {
+    box.write("home/.config/mise/conf.d/work.toml", "");
+    box.write("home/.config/mise/conf.d.pre-link/earlier.toml", "");
+
+    up(context());
+
+    expect(readdirSync(`${confd}.pre-link`)).toEqual(["earlier.toml"]);
+    const moved = readdirSync(box.path("home", ".config", "mise")).filter((name) => name.startsWith("conf.d.pre-link-"));
+    expect(moved.map((name) => readdirSync(box.path("home", ".config", "mise", name)))).toEqual([["work.toml"]]);
+  });
+
   test("leaves conf.d alone once it is a link", () => {
     box.remove();
     box = sandbox("mise-confd-link");

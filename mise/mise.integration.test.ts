@@ -44,6 +44,15 @@ describe("mise conf.d linked to the dotfiles root", () => {
     expect(loaded).toEqual(expect.arrayContaining(topics.map((topic) => `${topic}/mise.toml`)));
   });
 
+  test("loads a topic's mise.<env>.toml only while <env> is selected", () => {
+    box.write("other/probe/mise.probe.toml", '[env]\nDOTFILES_MODULE_PROBE = "on"\n');
+    unlinkSync(confd);
+    symlinkSync(box.path("other"), confd);
+
+    expect(mise("env")).not.toContain("DOTFILES_MODULE_PROBE");
+    expect(mise("--env", "probe", "env")).toContain("export DOTFILES_MODULE_PROBE=on");
+  });
+
   test("follows the link to another root with no reapply", () => {
     box.write("other/probe/mise.toml", '[env]\nDOTFILES_ROOT_PROBE = "other"\n');
     expect(mise("env")).not.toContain("DOTFILES_ROOT_PROBE");

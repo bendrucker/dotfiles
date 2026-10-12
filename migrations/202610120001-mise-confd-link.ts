@@ -24,8 +24,9 @@ export function up(context: Context): void {
     return;
   }
 
-  const aside = `${confd}.pre-link`;
-  rmSync(aside, { recursive: true, force: true });
+  // An earlier move's backup is never overwritten.
+  let aside = `${confd}.pre-link`;
+  if (exists(aside)) aside = `${aside}-${Date.now()}`;
   renameSync(confd, aside);
   log(context.out, "warn", `moved ${confd} to ${aside}; it held config this repo did not link`);
 }
