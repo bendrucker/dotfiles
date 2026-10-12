@@ -2,3 +2,7 @@
 "~/.config/git/config" = "config"
 "~/.config/git/delta-catppuccin.gitconfig" = "delta-catppuccin.gitconfig"
 "~/.config/git/ignore" = "ignore"
+
+[tasks."git:install"]
+run = "./git/install.sh"
+dir = "{{config_root}}/.."

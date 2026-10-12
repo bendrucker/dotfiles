@@ -41,3 +41,7 @@ keep_alive = true
 stdout_path = "/tmp/theme-sync.log"
 stderr_path = "/tmp/theme-sync.log"
 environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
+
+[tasks."macos:install"]
+run = "./macos/install.sh"
+dir = "{{config_root}}/.."

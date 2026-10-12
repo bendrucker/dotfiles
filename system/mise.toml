@@ -20,3 +20,7 @@
 "~/.config/btop/themes/catppuccin_latte.theme" = "btop-catppuccin/themes/catppuccin_latte.theme"
 "~/.config/btop/themes/catppuccin_macchiato.theme" = "btop-catppuccin/themes/catppuccin_macchiato.theme"
 "~/.config/btop/themes/catppuccin_mocha.theme" = "btop-catppuccin/themes/catppuccin_mocha.theme"
+
+[tasks."system:install"]
+run = "./system/install.sh"
+dir = "{{config_root}}/.."

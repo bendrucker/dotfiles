@@ -34,6 +34,8 @@ function inHome(cmd: string[]): string {
       XDG_CACHE_HOME: join(home, ".cache"),
       MISE_GLOBAL_CONFIG_FILE: undefined,
       MISE_ENV: undefined,
+      // The fixture has no tools installed, and listing tasks would fetch them.
+      MISE_OFFLINE: "1",
     },
   });
 }
@@ -82,6 +84,22 @@ describe("[dotfiles]", () => {
       expect(readlinkSync(path).startsWith(`${confd}/`)).toBe(true);
       expect(existsSync(path)).toBe(true);
     }
+  });
+});
+
+describe("topic tasks", () => {
+  test("mise lists an install or reload task for every topic script", () => {
+    const listed: unknown = JSON.parse(mise("tasks", "ls", "--json"));
+    const names = (Array.isArray(listed) ? listed : []).flatMap((task: unknown) =>
+      typeof task === "object" && task !== null && "name" in task && typeof task.name === "string" ? [task.name] : [],
+    );
+    const scripts = must(["git", "ls-files", "*/install.sh", "*/reload.sh"], { cwd: repoRoot })
+      .split("\n")
+      .filter((script) => script !== "" && script !== "mise/install.sh");
+
+    expect(names.filter((name) => /:(install|reload)$/.test(name)).sort()).toEqual(
+      scripts.map((script) => script.replace(/\/(install|reload)\.sh$/, ":$1")).sort(),
+    );
   });
 });
 

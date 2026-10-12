@@ -33,7 +33,7 @@ A file's name determines how and when it loads:
 | `completion.zsh` | Sourced lazily after the first prompt (see [startup budget](#startup-budget)). |
 | `Brewfile` | Homebrew packages for the topic. |
 | `mise.toml` | Pinned tool versions and the `[dotfiles]` config links, merged into mise's config. |
-| `install.sh` | Non-symlink setup: plugin managers, system config. Run by `scripts/install`. |
+| `install.sh` | Non-symlink setup: plugin managers, system config. Run by its `<topic>:install` task. |
 | `reload.sh` | Tells an already-running program to re-read its config (see [config reloads](#config-reloads)). |
 | `*.test.ts` | A [test](#tests) sitting next to whatever it covers. |
 
@@ -164,7 +164,7 @@ A launchd agent declared in [`macos/mise.dotfiles-upgrade.toml`](macos/mise.dotf
 
 Most tools read their config once per invocation, so a sync is enough. A few hold it in memory for weeks: a herdr server, an open Ghostty. Those would sit on the config they started with until something restarted them.
 
-A sync that moved the tree, an install, and a dev-mode toggle all end by calling [`bin/dotfiles-reload`](bin/dotfiles-reload). It runs every `<topic>/reload.sh`:
+A sync that moved the tree, an install, and a dev-mode toggle all end by calling [`bin/dotfiles-reload`](bin/dotfiles-reload). It runs every `<topic>:reload` task, each with a 60s timeout:
 
 | Topic | Reload |
 | --- | --- |

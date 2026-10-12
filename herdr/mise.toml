@@ -1,3 +1,12 @@
 [dotfiles]
 "~/.config/herdr/config.toml" = "config.toml"
 "~/.config/herdr/plugins/config" = "plugins/config"
+
+[tasks."herdr:install"]
+run = "./herdr/install.sh"
+dir = "{{config_root}}/.."
+
+[tasks."herdr:reload"]
+run = "./herdr/reload.sh"
+dir = "{{config_root}}/.."
+timeout = "60s"

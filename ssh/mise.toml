@@ -1,3 +1,7 @@
 [dotfiles]
 "~/.ssh/config" = "config"
 "~/.ssh/environment" = "environment"
+
+[tasks."ssh:install"]
+run = "./ssh/install.sh"
+dir = "{{config_root}}/.."

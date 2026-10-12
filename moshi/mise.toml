@@ -1,2 +1,7 @@
 [dotfiles]
 "~/.config/moshi/config.toml" = "config.toml"
+
+[tasks."moshi:reload"]
+run = "./moshi/reload.sh"
+dir = "{{config_root}}/.."
+timeout = "60s"

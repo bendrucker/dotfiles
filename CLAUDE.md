@@ -70,8 +70,8 @@ Nothing here finds an unused export across the `#`-specifier modules. oxlint 1.8
 2. Add configuration files as needed:
    - `<topic>/<tool>.zsh` for shell configuration
    - Add a `[dotfiles]` table to `<topic>/mise.toml` for config files targeting `~/.config/<tool>/`
-   - `<topic>/install.sh` only if non-symlink setup is needed (plugin managers, system config). `scripts/install-topics` globs one level, so an installer nested any deeper never runs
-   - `<topic>/reload.sh` only if the tool holds its config in memory and can re-read it without restarting (see [Config Reloads](#config-reloads))
+   - `<topic>/install.sh` only if non-symlink setup is needed (plugin managers, system config), with a `[tasks."<topic>:install"]` in `<topic>/mise.toml` that runs it. `mise/tasks.test.ts` fails on an installer without one
+   - `<topic>/reload.sh` only if the tool holds its config in memory and can re-read it without restarting, with a `[tasks."<topic>:reload"]` that runs it under a 60s `timeout` (see [Config Reloads](#config-reloads))
    - `<topic>/Brewfile` for dependencies
 3. Run `scripts/install` to install links and run topic installers
 
@@ -314,8 +314,8 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 2. `mise install` from each topic directory holding a `mise.toml`, which finds the file before the `conf.d` link exists
 3. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
 4. `scripts/install-symlinks` — Link `~/.config/mise/conf.d` to the dotfiles root, then lay each topic's `[dotfiles]` with `mise dot apply`
-5. Run `scripts/install-topics`, which runs each `<topic>/install.sh`, including `credentials/install.sh`, which chmods credential files to `0600`
-6. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
+5. `mise run --raw --jobs 1 bootstrap`, which depends on every `<topic>:install` task and runs them in name order, including `credentials/install.sh`, which chmods credential files to `0600`
+6. `mise run theme:sync` to reconcile theme-managed configs to the active flavor
 7. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
 
 ### Bootstrap Tracing
@@ -357,15 +357,15 @@ The `EXPIRES:` marker and the runner compose rather than overlap. The runner mak
 
 ### Config Reloads
 
-`bin/dotfiles-reload` runs every `<topic>/reload.sh`, so a config change reaches a program that has been running for weeks instead of waiting for a restart. `scripts/install` and `dotfiles dev enable|disable` call it directly. `bin/dotfiles-sync` calls it only when the pull moved the tree, and its `--bootstrap` path reaches it through `scripts/install` instead. `herdr/`, `terminal/`, and `moshi/` are the topics that have one.
+`bin/dotfiles-reload` runs every `<topic>:reload` task, each running `<topic>/reload.sh`, so a config change reaches a program that has been running for weeks instead of waiting for a restart. `scripts/install` and `dotfiles dev enable|disable` call it directly. `bin/dotfiles-sync` calls it only when the pull moved the tree, and its `--bootstrap` path reaches it through `scripts/install` instead. `herdr/`, `terminal/`, and `moshi/` are the topics that have one.
 
 Every reload is in place. The program re-reads its config and keeps its state, sessions, and child processes. Nothing here may restart a server, kill a session, or drop in-flight work. This runs unattended from the 3am job, where a restart takes live work down with it, so a tool whose only path to new config is a restart gets no `reload.sh` and picks the change up on its next start.
 
 `moshi/reload.sh` is the one exception: it restarts moshi-hook when its config changed, since an unapplied change is worse than the unlikely approval a 3am restart drops.
 
-A `reload.sh` self-gates. Exit 0 without work when the tool isn't installed or isn't running, since a fresh machine and CI hit both cases. Assume roughly a minute of runtime: the dispatcher caps each script there so a wedged peer can't hang the nightly job.
+A `reload.sh` self-gates. Exit 0 without work when the tool isn't installed or isn't running, since a fresh machine and CI hit both cases. Assume roughly a minute of runtime: each task's `timeout = "60s"` caps it there so a wedged peer can't hang the nightly job.
 
-A failing `reload.sh` is contained on purpose. The dispatcher logs it and carries on to the rest, and both callers downgrade its exit status to a warning, so a broken reload never fails an install or the nightly job. Leave that alone. The install it follows has already succeeded, and stale in-memory config resolves itself the next time the program starts.
+A failing `reload.sh` is contained on purpose. `mise run --continue-on-error` reports it and carries on to the rest, and both callers downgrade its exit status to a warning, so a broken reload never fails an install or the nightly job. Leave that alone. The install it follows has already succeeded, and stale in-memory config resolves itself the next time the program starts.
 
 ## Stacked PRs
 
