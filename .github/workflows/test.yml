@@ -349,7 +349,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       # The skill under test queries shell history through duckdb, and builds
       # its own fixture database the same way.
-      - uses: jdx/mise-action@v5.1.1
+      - uses: jdx/mise-action@v5.1.2
         with:
           install_args: aqua:duckdb/duckdb
       # A leading ./ is what makes bun read this as a path. Bare, it is a filter
@@ -368,7 +368,7 @@ jobs:
           # The secret scan below reads history, which a shallow checkout omits.
           fetch-depth: 0
       - name: Install lint dependencies
-        uses: jdx/mise-action@v5.1.1
+        uses: jdx/mise-action@v5.1.2
         with:
           install_args: aqua:ast-grep/ast-grep aqua:duckdb/duckdb aqua:gitleaks/gitleaks aqua:j178/prek
       # Homebrew's libxml2 is keg-only, so apt is what puts xmllint on PATH.
