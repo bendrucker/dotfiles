@@ -18,6 +18,12 @@
 # nothing reported, and the rest still run past a failure.
 set -euo pipefail
 
+# The tasks reach mise through conf.d, which a fresh machine has not linked yet.
+command -v mise >/dev/null || exit 0
+[[ -d ${XDG_CONFIG_HOME:-$HOME/.config}/mise/conf.d ]] || exit 0
+
 # From / so no project config in the working directory adds tasks of its own.
+# A sync that bumped a tool pin would otherwise have mise install it first,
+# outside every task's timeout. No reload needs a mise tool.
 cd /
-exec mise run --continue-on-error '*:reload'
+MISE_TASK_RUN_AUTO_INSTALL=0 exec mise run --continue-on-error '*:reload'

@@ -5,8 +5,8 @@ import { quote, repoRoot, run, sandbox, type RunOptions, type Sandbox } from "#h
 
 const lib = join(repoRoot, "scripts", "shell", "trace.sh");
 
-// scripts/bootstrap is bash, bin/dotf and scripts/install-topics are sh (dash
-// on Ubuntu), and scripts/install is zsh, so every case runs under each.
+// scripts/bootstrap is bash, bin/dotf is sh (dash on Ubuntu), and
+// scripts/install is zsh, so every case runs under each.
 const shells = ["sh", "bash", "zsh"].map((name) => [name, Bun.which(name) ?? name] as const);
 
 let box: Sandbox;
