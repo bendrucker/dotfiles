@@ -1,7 +1,7 @@
 {
   "name": "vm",
   "dependencies": {
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   },
   "private": true
 }
