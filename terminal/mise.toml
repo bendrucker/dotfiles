@@ -1,5 +1,5 @@
 [tools]
-"github:RivoLink/leaf" = "1.28.2"
+"github:RivoLink/leaf" = "1.28.3"
 
 # iTerm2 expands ~ in this path itself.
 [bootstrap.macos.defaults."com.googlecode.iterm2"]
