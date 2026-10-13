@@ -15,6 +15,22 @@ beforeEach(() => {
 
 afterEach(() => box.remove());
 
+// Claude Code's Bash sandbox lets a session write under $TMPDIR but refuses
+// binding a socket there, and its allowUnixSockets entries are literal paths
+// that cannot follow a per-uid $TMPDIR. CI must still bind, so only a local
+// refusal skips.
+function canBindSocket() {
+  const probe = sandbox("git-ssh-sign-probe");
+  try {
+    Bun.listen({ unix: probe.path("s"), socket: { data() {} } }).stop(true);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    probe.remove();
+  }
+}
+
 function sign() {
   return run([script, "-Y", "sign", "-n", "git"], {
     path: [box.bin],
@@ -23,7 +39,7 @@ function sign() {
 }
 
 describe("git-ssh-sign", () => {
-  test("signs through Secretive when its socket exists", () => {
+  test.skipIf(!process.env.CI && !canBindSocket())("signs through Secretive when its socket exists", () => {
     // A socket path is capped near 104 bytes, so the container path links to
     // a short one.
     const listener = Bun.listen({ unix: box.path("s"), socket: { data() {} } });
