@@ -482,8 +482,10 @@ describe("commands", () => {
     VM_POLL_MS: "50",
   });
   // A synchronous spawn would block the fake APIs, which answer in this process.
+  // The shebang's bun can be a mise shim, which fails without the real
+  // XDG_STATE_HOME's trust records, so the child runs on this bun.
   const perf = async (...args: string[]): Promise<Run> => {
-    const child = Bun.spawn([vmBin, ...args], { env: env(), stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn([process.execPath, vmBin, ...args], { env: env(), stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, status] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     return { status, stdout, stderr };
   };
@@ -530,7 +532,7 @@ describe("commands", () => {
     run(["rm", box.path("bin", "session-manager-plugin")]);
     box.stub("mise/shims/session-manager-plugin", "exit 1");
     box.stub("mise", `echo "mise $*" >> ${box.path("calls.log")}; echo /opt/mise/installs/smp/bin/session-manager-plugin`);
-    const child = Bun.spawn([vmBin, "launch", "--name", "t1"], {
+    const child = Bun.spawn([process.execPath, vmBin, "launch", "--name", "t1"], {
       env: { ...env(), PATH: `${box.bin}:${box.path("mise", "shims")}:${process.env.PATH}` },
       stdout: "pipe",
       stderr: "pipe",
