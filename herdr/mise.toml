@@ -1,0 +1,3 @@
+[dotfiles]
+"~/.config/herdr/config.toml" = "config.toml"
+"~/.config/herdr/plugins/config" = "plugins/config"

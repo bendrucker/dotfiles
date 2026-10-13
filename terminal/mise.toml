@@ -5,3 +5,8 @@
 [bootstrap.macos.defaults."com.googlecode.iterm2"]
 PrefsCustomFolder = "~/.dotfiles/terminal"
 LoadPrefsFromCustomFolder = true
+
+[dotfiles]
+"~/.config/ghostty/config" = "ghostty.config"
+"~/.config/yazi/theme.toml" = "yazi-theme.toml"
+"~/.config/yazi/package.toml" = "yazi-package.toml"

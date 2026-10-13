@@ -1,0 +1,2 @@
+[dotfiles]
+"~/.config/mise/miserc.toml" = "miserc.toml.tera"

@@ -6,7 +6,7 @@ import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 
 const support = join(repoRoot, "neovim", "support");
 
-// Where neovim/symlinks.conf puts the config, and so where nvim reads
+// Where neovim/mise.toml puts the config, and so where nvim reads
 // stdpath('config') from. Resolved through the link, because the checkout that
 // has to stay clean is the one the link points into rather than whichever tree
 // this test was started from.

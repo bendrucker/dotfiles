@@ -31,9 +31,8 @@ A file's name determines how and when it loads:
 | `path.zsh` | Sourced first, from `.zshenv`, to set up `$PATH`. |
 | `*.zsh` | Sourced at interactive shell startup. Aliases, functions, options. |
 | `completion.zsh` | Sourced lazily after the first prompt (see [startup budget](#startup-budget)). |
-| `symlinks.conf` | Declares config files to symlink into `$HOME` or `~/.config`. |
 | `Brewfile` | Homebrew packages for the topic. |
-| `mise.toml` | Pinned language/tool versions, merged into mise's config. |
+| `mise.toml` | Pinned tool versions and the `[dotfiles]` config links, merged into mise's config. |
 | `install.sh` | Non-symlink setup: plugin managers, system config. Run by `scripts/install`. |
 | `reload.sh` | Tells an already-running program to re-read its config (see [config reloads](#config-reloads)). |
 | `*.test.ts` | A [test](#tests) sitting next to whatever it covers. |
@@ -63,7 +62,7 @@ zsh startup is a glob-driven loader split across two files, following zsh's own 
    done
    ```
 
-`.zshenv` runs on every shell only from the top of a process tree. zsh reads its per-user `.zshenv` from `$ZDOTDIR` and falls back to `~/.zshenv` only when `ZDOTDIR` is unset, and `.zshenv` exports `ZDOTDIR` while `zsh/symlinks.conf` installs just `.zshrc` there. Every zsh below the first one therefore finds no `.zshenv`, skips the `path.zsh` loop, and keeps whatever `$PATH` its parent froze. `.zshrc` sources `.zshenv` itself when a marker shows it has not run, so an interactive shell under a server started weeks ago still sees a topic added since. Non-interactive nested shells stay on the inherited `$PATH`, which is what keeps a `#!/usr/bin/env zsh` script at ~6ms rather than ~110ms.
+`.zshenv` runs on every shell only from the top of a process tree. zsh reads its per-user `.zshenv` from `$ZDOTDIR` and falls back to `~/.zshenv` only when `ZDOTDIR` is unset, and `.zshenv` exports `ZDOTDIR` while `zsh/mise.toml` links just `.zshrc` there. Every zsh below the first one therefore finds no `.zshenv`, skips the `path.zsh` loop, and keeps whatever `$PATH` its parent froze. `.zshrc` sources `.zshenv` itself when a marker shows it has not run, so an interactive shell under a server started weeks ago still sees a topic added since. Non-interactive nested shells stay on the inherited `$PATH`, which is what keeps a `#!/usr/bin/env zsh` script at ~6ms rather than ~110ms.
 
 Completions are the expensive part of startup. They don't run before the first prompt. `.zshrc` registers a one-shot `precmd` hook that sources every `completion.zsh` after the prompt is already interactive, then removes itself:
 
@@ -94,16 +93,17 @@ The same job dumps a per-file [`zprof`](https://zsh.sourceforge.io/Doc/Release/Z
 
 ### Declarative Symlinks
 
-Config files are linked into place from per-topic [`symlinks.conf`](git/symlinks.conf) files in `source:target` format, one per line. Targets expand `~` and `$XDG_CONFIG_HOME`:
+Config files are declared in each topic's [`mise.toml`](git/mise.toml) under [`[dotfiles]`](https://mise.jdx.dev/dotfiles/), keyed by target, with the source relative to the topic:
 
-```ini
-# git/symlinks.conf
-config:$XDG_CONFIG_HOME/git/config
-delta-catppuccin.gitconfig:$XDG_CONFIG_HOME/git/delta-catppuccin.gitconfig
-ignore:$XDG_CONFIG_HOME/git/ignore
+```toml
+# git/mise.toml
+[dotfiles]
+"~/.config/git/config" = "config"
+"~/.config/git/delta-catppuccin.gitconfig" = "delta-catppuccin.gitconfig"
+"~/.config/git/ignore" = "ignore"
 ```
 
-[`scripts/install-symlinks`](scripts/install-symlinks) globs every `symlinks.conf`, creates the links, and validates each source exists. It also **prunes**: a symlink that points into the dotfiles repo but is no longer declared gets removed. Dropping a line from `symlinks.conf` is enough to unlink the file it used to manage.
+[`scripts/install-symlinks`](scripts/install-symlinks) links `conf.d` and runs `mise dot apply`, which fails on a missing source. Each link points through `~/.config/mise/conf.d`, so switching that one link moves them all. A real directory at a target stops the install rather than being replaced. Dropping a line leaves its link in place, so a removal ships a [migration](#migrations) that deletes it.
 
 ### Homebrew Aggregation
 

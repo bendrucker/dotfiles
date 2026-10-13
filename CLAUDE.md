@@ -12,7 +12,6 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
   - `install.sh`: Topic installer for non-symlink setup (e.g., plugin managers, system config)
   - `reload.sh`: Tells an already-running program to re-read its config (see [Config Reloads](#config-reloads))
   - `Brewfile`: Homebrew packages for the topic
-- **`*/symlinks.conf`**: Per-topic declarative symlink maps (`source:target`) discovered and processed by `scripts/install-symlinks`
 - **scripts/**: Bootstrap and setup scripts
 - **packages/**: Shared TypeScript, imported by specifier rather than by relative path
 - **scripts/shell/**: The POSIX shell libraries that run before bun exists
@@ -70,7 +69,7 @@ Nothing here finds an unused export across the `#`-specifier modules. oxlint 1.8
 1. Create directory: `mkdir <topic>/`
 2. Add configuration files as needed:
    - `<topic>/<tool>.zsh` for shell configuration
-   - Add a `symlinks.conf` in the topic directory for config files targeting `~/.config/<tool>/`
+   - Add a `[dotfiles]` table to `<topic>/mise.toml` for config files targeting `~/.config/<tool>/`
    - `<topic>/install.sh` only if non-symlink setup is needed (plugin managers, system config). `scripts/install-topics` globs one level, so an installer nested any deeper never runs
    - `<topic>/reload.sh` only if the tool holds its config in memory and can re-read it without restarting (see [Config Reloads](#config-reloads))
    - `<topic>/Brewfile` for dependencies
@@ -118,7 +117,7 @@ The root Brewfile additionally evaluates `~/Brewfile.local` when present. Use it
 
 #### mise Aggregation
 
-Topic directories can contain `mise.toml` files for tool versions and `[bootstrap]` config. `~/.config/mise/conf.d` is one link to the dotfiles root, which `scripts/install-symlinks` lays, so each topic directory is a config root of its own and mise merges them alphabetically. Nothing goes in `symlinks.conf` for them. Dev mode repoints that one link, and every topic follows.
+Topic directories can contain `mise.toml` files for tool versions and `[bootstrap]` config. `~/.config/mise/conf.d` is one link to the dotfiles root, which `scripts/install-symlinks` lays, so each topic directory is a config root of its own and mise merges them alphabetically. Dev mode repoints that one link, and every topic follows.
 
 mise also loads any non-dot `*.toml` at the root as global config, so a pre-commit hook rejects one there. Invalid TOML at the root would break every mise command on the machine.
 
@@ -151,9 +150,11 @@ atuin is the store that syncs. Its `secrets_filter` is on by default and matches
 
 ### Config File Installation
 
-Most tool configs live under `~/.config/<tool>/` (XDG Base Directory). Symlinks are declared in per-topic `symlinks.conf` files and installed by `scripts/install-symlinks`. Topics with non-symlink setup logic (plugin managers, system config) use `install.sh`.
+Most tool configs live under `~/.config/<tool>/` (XDG Base Directory). Symlinks are declared in each topic's `mise.toml` under `[dotfiles]`, keyed by target with the source relative to the topic, and `scripts/install-symlinks` lays them with `mise dot apply --force`. Topics with non-symlink setup logic (plugin managers, system config) use `install.sh`.
 
-- Symlinks point to `~/.dotfiles` (the installed copy), **not** the development working tree. Edits in a dev checkout won't take effect until synced unless dev mode is enabled.
+- Symlinks point through `~/.config/mise/conf.d`, which points to `~/.dotfiles` (the installed copy), **not** the development working tree. Edits in a dev checkout won't take effect until synced unless dev mode is enabled.
+- Targets are written `~/.config/...` rather than through `$XDG_CONFIG_HOME`. `zsh/.zshenv` sets that to `~/.config` on every machine.
+- `--force` replaces a file or foreign link at a target, as `ln -sfn` did. Removing a declaration leaves its link behind, so the commit carries a migration that removes it. `ownedLink` counts a link into `conf.d` as this repo's.
 - A `source` may be a directory, linking the whole tree in one entry. This is what to use when a tool owns a directory of same-shaped files and you want a new file to go live without another install run. The catch is a tool that writes its own state in there, which lands in the repo too. A `.gitignore` inside the tree narrows what gets tracked. `herdr/plugins/config` mirrors `$XDG_CONFIG_HOME/herdr/plugins/config`, tracks each plugin's `config.toml`, and ignores the rest.
 - A real directory sitting at a link target aborts the install with the path named. Move its contents into the repo, remove it, re-run.
 
@@ -312,7 +313,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 1. `brew bundle` — Install Brewfile dependencies, leaving the self-updating casks alone from the nightly job or where `scripts/brew-managed-machine` says another manager owns them
 2. `mise install` from each topic directory holding a `mise.toml`, which finds the file before the `conf.d` link exists
 3. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
-4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`, and link `~/.config/mise/conf.d` to the dotfiles root
+4. `scripts/install-symlinks` — Link `~/.config/mise/conf.d` to the dotfiles root, then lay each topic's `[dotfiles]` with `mise dot apply`
 5. Run `scripts/install-topics`, which runs each `<topic>/install.sh`, including `credentials/install.sh`, which chmods credential files to `0600`
 6. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
 7. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
