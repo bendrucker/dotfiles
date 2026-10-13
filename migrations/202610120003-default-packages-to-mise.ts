@@ -37,8 +37,7 @@ function generated(path: string): boolean {
 }
 
 // What `npm uninstall -g` would remove, done directly so it doesn't depend on
-// that version's node still running. Only the bin links npm made into a
-// package go. Anything else in bin is someone's own.
+// that version's node still running. Other entries in bin are someone's own.
 function removePackages(context: Context, install: string): void {
   const modules = join(install, "lib", "node_modules");
   const pkgs = PACKAGES.map((name) => join(modules, name));
