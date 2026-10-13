@@ -7,32 +7,17 @@
 //
 // EXPIRES: 2027-03-27 every machine has run scripts/install since the removal
 
-import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "#jobs/output";
-import { type Context, contains, exists, isEmpty, linkTarget, missing, removeTree } from "#migrations/migration";
+import { type Context, contains, exists, isEmpty, linkTarget, nodeInstalls, removeTree } from "#migrations/migration";
 
 // The cask is macOS-only. On Linux an npm install may be the only `claude`.
 export const platform = "darwin";
 
 export function up(context: Context): void {
   const mise = join(context.data, "mise");
-  for (const install of nodeInstalls(mise)) removePackage(context, install);
+  for (const install of nodeInstalls(context)) removePackage(context, install);
   reshim(context, mise);
-}
-
-// Real directories only. mise also keeps aliases like `20` and `lts-iron` as
-// symlinks to them, and walking those would visit each install twice.
-function nodeInstalls(mise: string): string[] {
-  const root = join(mise, "installs", "node");
-  try {
-    return readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join(root, entry.name));
-  } catch (error) {
-    if (missing(error)) return [];
-    throw error;
-  }
 }
 
 // What `npm uninstall -g` would remove, done directly so it doesn't depend on
