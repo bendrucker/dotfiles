@@ -8,6 +8,22 @@ set -e
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
 
+# A [dotfiles] source inside a submodule that was never checked out reaches
+# mise as a missing file, so name the submodule before mise sees it.
+if [ -f "$DOTFILES_ROOT/.gitmodules" ]; then
+  unchecked=
+  for path in $(git config -f "$DOTFILES_ROOT/.gitmodules" --get-regexp '\.path$' | cut -d' ' -f2); do
+    if [ ! -e "$DOTFILES_ROOT/$path/.git" ]; then
+      echo "install-symlinks: submodule $path is not checked out" >&2
+      unchecked=1
+    fi
+  done
+  if [ -n "$unchecked" ]; then
+    echo "install-symlinks: run git -C $DOTFILES_ROOT submodule update --init --recursive" >&2
+    exit 1
+  fi
+fi
+
 # conf.d is the whole tree, so each topic directory is a mise config root that
 # loads its mise.toml, and each mise.<env>.toml while mise/miserc.toml.tera
 # selects <env>. Every [dotfiles] link routes through it, so pointing it at
