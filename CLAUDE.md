@@ -103,7 +103,7 @@ This means `brew bundle` from the repo root installs everything from all topic B
 
 #### Externally Managed Casks
 
-`scripts/brew-leave-self-updating` exits 0 when the nightly job is running or `scripts/brew-managed-machine` says another manager owns this machine's applications, and `scripts/install` answers by exporting `HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS` before `brew bundle`. The job is recognized by the `DOTFILES_JOB=dotfiles-upgrade` its LaunchAgent sets. A hand-run `scripts/install` or `dotf` on an unmanaged machine keeps Homebrew's default. `scripts/brew-managed-machine` exits 1 on a machine carrying no MDM configuration profiles. The default path it tests is the one the root Brewfile tests for `corporate`, so a change to either has to move both.
+`scripts/brew-leave-self-updating` exits 0 when the nightly job is running or `scripts/brew-managed-machine` says another manager owns this machine's applications, and the `pre-packages` hook in `homebrew/mise.toml` answers by exporting `HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS` before `brew bundle`. The job is recognized by the `DOTFILES_JOB=dotfiles-upgrade` its LaunchAgent sets. A hand-run `scripts/install` or `dotf` on an unmanaged machine keeps Homebrew's default. `scripts/install` runs the hook from inside `homebrew/`, so mise finds it as project config before `install-symlinks` has linked `conf.d`. That makes mise part of the floor, which `scripts/homebrew.sh` installs alongside gum. `scripts/brew-managed-machine` exits 1 on a machine carrying no MDM configuration profiles. The default path it tests is the one the root Brewfile tests for `corporate`, so a change to either has to move both.
 
 Homebrew upgrades a cask by moving the app out of `/Applications` back into the Caskroom before installing the replacement. An MDM installs its apps as root, so that move shells out to sudo, and the 3am job has no terminal to read a password from. The run dies on `sudo: a terminal is required`, leaving a real app directory in the Caskroom where a symlink belongs. Every run after it fails earlier still, on `It seems there is already an App at '<caskroom path>'`. The second shape is the residue of the first, and both clear once nothing attempts the upgrade.
 
@@ -310,7 +310,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 ### Installation Flow
 
 `scripts/install` is the main entry point:
-1. `brew bundle` — Install Brewfile dependencies, leaving the self-updating casks alone from the nightly job or where `scripts/brew-managed-machine` says another manager owns them
+1. `mise bootstrap --only packages`, whose `pre-packages` hook in `homebrew/mise.toml` trusts the taps, retires cask variants, and runs `brew bundle`, leaving the self-updating casks alone from the nightly job or where `scripts/brew-managed-machine` says another manager owns them
 2. `mise install` from each topic directory holding a `mise.toml`, which finds the file before the `conf.d` link exists
 3. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
 4. `scripts/install-symlinks` — Link `~/.config/mise/conf.d` to the dotfiles root, then lay each topic's `[dotfiles]` with `mise dot apply`

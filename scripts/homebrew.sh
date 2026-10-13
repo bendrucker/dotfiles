@@ -21,10 +21,11 @@ then
 fi
 brew_path
 
-# install gum early so dotfiles-bootstrap helpers can use it before scripts/install runs brew bundle
-if test ! "$(command -v gum)"
-then
-  brew install gum
-fi
+# install gum early so dotfiles-bootstrap helpers can use it before scripts/install runs brew bundle,
+# and mise, which runs brew bundle
+for tool in gum mise
+do
+  command -v "$tool" >/dev/null || brew install "$tool"
+done
 
 exit 0
