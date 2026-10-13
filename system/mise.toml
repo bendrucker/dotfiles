@@ -25,3 +25,43 @@
 [tasks."system:install"]
 run = "./system/install.sh"
 dir = "{{config_root}}/.."
+
+# Each lint task checks the checkout it runs from, so `mise run lint` at the
+# root of a worktree lints that worktree rather than the installed copy.
+[task_config]
+dir = "{{cwd}}"
+
+[tasks.lint]
+depends = ["lint:*"]
+
+[tasks."lint:completion-naming"]
+run = "if find . -name completions.zsh -not -path './.git/*' | grep .; then echo 'rename to completion.zsh, the only name the deferred completion filter matches' >&2; exit 1; fi"
+
+[tasks."lint:glyphs"]
+run = "bin/glyph-scan"
+
+[tasks."lint:expired"]
+run = "scripts/lint-expired"
+
+[tasks."lint:spinners"]
+run = "scripts/lint-spinners"
+
+# A bare `bunx oxlint` resolves the latest release and ignores the pin, so the
+# install is what makes the version in package.json the one that runs.
+[tasks."lint:ts"]
+run = [
+  "bun install --frozen-lockfile",
+  "bun test scripts/lint-ts.test.ts",
+  "scripts/lint-ts --deny-warnings ${GITHUB_ACTIONS:+--format=github}",
+]
+
+# The gitleaks pre-commit hook scans the staged diff, so a push that skipped it
+# is caught only by scanning what was pushed. The tree scan covers merge commits
+# and content git treats as binary. The history scan covers a secret added and
+# deleted again, which a public repo still hands out. --log-opts HEAD keeps it
+# to this branch rather than every ref a full fetch brings.
+[tasks."lint:secrets"]
+run = [
+  "gitleaks dir --redact --no-banner --no-color --max-target-megabytes 5 .",
+  "gitleaks git --redact --no-banner --no-color --log-opts HEAD .",
+]

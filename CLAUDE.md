@@ -174,7 +174,7 @@ Config and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev
 
 ### Tests
 
-Everything runs under `bun test`. A test sits next to what it covers and is named for it: `scripts/install-trust.test.ts` covers `scripts/install-trust`, `herdr/bin/herdr-flock.test.ts` covers that launcher. Shell scripts and TypeScript modules are tested the same way, so there is one runner and one set of conventions to learn. `bun run test` runs what the `bun` job runs, with each file in its own worker process. `bunfig.toml` has no setting for that, so a bare `bun test` runs the files one after another.
+Everything runs under `bun test`. A test sits next to what it covers and is named for it: `scripts/install-trust.test.ts` covers `scripts/install-trust`, `herdr/bin/herdr-flock.test.ts` covers that launcher. Shell scripts and TypeScript modules are tested the same way, so there is one runner and one set of conventions to learn. `bun run test` runs what the `bun` job runs, with each file in its own worker process. `bunfig.toml` has no setting for that, so a bare `bun test` runs the files one after another. `mise run lint` runs the `lint` job's checks, each a `lint:*` task in `system/mise.toml`.
 
 `#harness` holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners that report a script's status alongside both its streams. `shell()` runs a snippet under bash or zsh, which is how a library function gets called directly. Sourcing inside the snippet is what lets a test redefine one of the library's own functions afterwards and have the redefinition win.
 
@@ -184,7 +184,7 @@ A test's name and where it sits decide which CI job runs it:
 - `*.integration.test.ts` run in the `bootstrap` job on Linux and macOS, after symlinks are installed and `brew bundle` has run. They read the installed config through its symlinks, which is state only bootstrap produces.
   On a PR the job also runs an upgrade pass: main's tree installed first, the PR head linked over it and installed, then a third install whose links, packages and tools must match the second's.
 - Tests under `.claude/skills/` run in the `skill-tests` job, whichever suffix they carry, because they need that skill's own dependencies. bun's discovery skips dot directories, so the job names the path with a leading `./` to have it read as a path rather than a filter.
-- `scripts/lint-ts.test.ts` runs in the `lint` job, which installs oxlint, and the `bun` job ignores it by path. Its cases spawn the pinned binary. Keeping the `bun` job a bare checkout is what fails a runtime dependency added to a `#`-specifier module, so an install there would cost more than the split does.
+- `scripts/lint-ts.test.ts` runs in `lint:ts`, which installs oxlint, and the `bun` job ignores it by path. Its cases spawn the pinned binary. Keeping the `bun` job a bare checkout is what fails a runtime dependency added to a `#`-specifier module, so an install there would cost more than the split does.
 
 An integration test carries no guard that would let it pass on an unbootstrapped machine. Failing there is correct, and the CI job is what decides when it runs. A skip guard is for a genuinely optional dependency, like the font cask that `bin/glyph-scan.integration.test.ts` needs to check a glyph renders.
 
