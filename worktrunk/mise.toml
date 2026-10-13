@@ -1,6 +1,10 @@
+# worktrunk-sync provides `wt-sync` and the `wt sync` external subcommand for
+# stack rebases. scripts/install runs `mise install` one topic at a time, so the
+# cargo backend finds cargo only when rust is declared beside it. Renovate moves
+# this pin together with rust/mise.toml's.
+[tools]
+rust = "1.98.1"
+"cargo:worktrunk-sync" = "0.2.0"
+
 [dotfiles]
 "~/.config/worktrunk/config.toml" = "config.toml"
-
-[tasks."worktrunk:install"]
-run = "./worktrunk/install.sh"
-dir = "{{config_root}}/.."

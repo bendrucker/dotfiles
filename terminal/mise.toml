@@ -15,7 +15,8 @@ LoadPrefsFromCustomFolder = true
 run = "./terminal/install.sh"
 dir = "{{config_root}}/.."
 
+# SIGUSR2 reloads Ghostty's config like its reload_config keybind. pkill exits 1
+# when Ghostty isn't running, as on CI.
 [tasks."terminal:reload"]
-run = "./terminal/reload.sh"
-dir = "{{config_root}}/.."
+run = "pkill -USR2 -x ghostty 2>/dev/null || true"
 timeout = "60s"

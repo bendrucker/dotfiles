@@ -101,21 +101,6 @@ jobs:
       run: |
         sudo mv /opt/homebrew /opt/homebrew.image
         sudo mv /opt/homebrew-cached /opt/homebrew
-    - name: Restore cargo-installed binaries
-      id: cargo
-      if: ${{ github.event_name != 'schedule' }}
-      uses: actions/cache/restore@v6
-      with:
-        # No repo file hashes to the crate version, so key on run_id: the
-        # exact key never pre-exists, the cache (a few MB) re-saves every
-        # saving run, and restore-keys pull the most recent prior save.
-        key: cargo-install-${{ runner.os }}-${{ github.run_id }}
-        restore-keys: |
-          cargo-install-${{ runner.os }}-
-        path: |
-          ~/.cargo/bin
-          ~/.cargo/.crates.toml
-          ~/.cargo/.crates2.json
     # herdr reads which plugins are installed from plugins.json, so the plugin
     # trees alone restore as missing and every one is installed again.
     - name: Restore herdr plugins
@@ -314,15 +299,6 @@ jobs:
         path: |
           ~/.config/herdr/plugins/github
           ~/.config/herdr/plugins.json
-    - name: Save cargo-installed binaries
-      if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-      uses: actions/cache/save@v6
-      with:
-        key: ${{ steps.cargo.outputs.cache-primary-key }}
-        path: |
-          ~/.cargo/bin
-          ~/.cargo/.crates.toml
-          ~/.cargo/.crates2.json
   links:
     name: link schemes
     runs-on: ubuntu-latest

@@ -1,3 +1,7 @@
+# Update gcloud's own components, which brew upgrade never touches.
+#
+# A failure here must not abort the rest of scripts/install. The bootstrap
+# task stops at the first installer that fails, in name order, and gcloud sorts
+# ahead of most other topics.
 [tasks."gcloud:install"]
-run = "./gcloud/install.sh"
-dir = "{{config_root}}/.."
+run = "if command -v gcloud >/dev/null; then gcloud components update --quiet || echo 'gcloud components update failed; will retry next run' >&2; fi"

@@ -71,17 +71,17 @@ describe("mise conf.d linked to the dotfiles root", () => {
 });
 
 describe("[dotfiles]", () => {
-  test("lays every declared link through conf.d", () => {
+  test("lays every declared file, linking through conf.d", () => {
     inHome([join(repoRoot, "scripts", "install-symlinks"), repoRoot]);
 
     const home = box.path("home");
     const declared = statuses(JSON.parse(mise("dot", "status", "--json")));
 
     expect(declared.length).toBeGreaterThan(0);
-    for (const { target, state } of declared) {
+    for (const { target, state, mode } of declared) {
       const path = join(home, target.replace(/^~\//, ""));
       expect({ target, state }).toEqual({ target, state: "applied" });
-      expect(readlinkSync(path).startsWith(`${confd}/`)).toBe(true);
+      if (mode === "symlink") expect(readlinkSync(path).startsWith(`${confd}/`)).toBe(true);
       expect(existsSync(path)).toBe(true);
     }
   });
@@ -97,25 +97,24 @@ describe("topic tasks", () => {
       .split("\n")
       .filter((script) => script !== "" && script !== "mise/install.sh");
 
-    expect(names.filter((name) => /:(install|reload)$/.test(name)).sort()).toEqual(
-      scripts.map((script) => script.replace(/\/(install|reload)\.sh$/, ":$1")).sort(),
-    );
+    expect(names).toEqual(expect.arrayContaining(scripts.map((script) => script.replace(/\/(install|reload)\.sh$/, ":$1"))));
   });
 });
 
 interface Status {
   target: string;
   state: string;
+  mode: string;
 }
 
-// The root package carries no zod, and this reads two string fields.
+// The root package carries no zod, and this reads three string fields.
 function statuses(json: unknown): Status[] {
   const files = typeof json === "object" && json !== null && "files" in json ? json.files : undefined;
   if (!Array.isArray(files)) throw new Error("mise dot status --json printed no files array");
   return files.map((file: unknown) => {
     if (typeof file !== "object" || file === null) throw new Error(`unexpected entry ${JSON.stringify(file)}`);
-    const { target, state } = file as Record<string, unknown>;
-    if (typeof target !== "string" || typeof state !== "string") throw new Error(`unexpected entry ${JSON.stringify(file)}`);
-    return { target, state };
+    const { target, state, mode } = file as Record<string, unknown>;
+    if (typeof target !== "string" || typeof state !== "string" || typeof mode !== "string") throw new Error(`unexpected entry ${JSON.stringify(file)}`);
+    return { target, state, mode };
   });
 }
