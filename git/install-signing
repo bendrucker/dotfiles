@@ -22,6 +22,11 @@ function output(cmd: string[], env: Record<string, string> = {}): string | undef
   return r.exitCode === 0 ? r.stdout.toString().trim() : undefined;
 }
 
+if (!Bun.which("ssh-add")) {
+  console.error("ssh-add not found; skipping signing setup");
+  process.exit(0);
+}
+
 // Secretive names a key's comment after the key, with spaces as hyphens.
 const comment = `${values.name.replaceAll(" ", "-")}@`;
 const line = output(["ssh-add", "-L"], { SSH_AUTH_SOCK: socket })

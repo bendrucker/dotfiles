@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { rmSync, symlinkSync } from "node:fs";
+import { existsSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 
@@ -26,6 +26,18 @@ function install(env: Record<string, string> = {}, args: string[] = []) {
   return run([script, ...args], {
     path: [box.bin],
     env: { HOME: box.dir, XDG_CONFIG_HOME: box.path("config"), GIT_CONFIG_GLOBAL: box.path("gitconfig"), ...env },
+  });
+}
+
+// Runs with only the stubs, git, and bun on PATH, so a removed stub is truly absent.
+function installWithout(command: string) {
+  rmSync(join(box.bin, command));
+  const tools = box.mkdir("tools");
+  symlinkSync(Bun.which("git") ?? "git", join(tools, "git"));
+  symlinkSync(process.execPath, join(tools, "bun"));
+  return run([script], {
+    onlyPath: [box.bin, tools],
+    env: { HOME: box.dir, XDG_CONFIG_HOME: box.path("config"), GIT_CONFIG_GLOBAL: box.path("gitconfig") },
   });
 }
 
@@ -65,16 +77,17 @@ describe("install-signing", () => {
   });
 
   test("prints the commands to run without gh", () => {
-    rmSync(join(box.bin, "gh"));
-    const tools = box.mkdir("tools");
-    symlinkSync(Bun.which("git") ?? "git", join(tools, "git"));
-    symlinkSync(process.execPath, join(tools, "bun"));
-    const r = run([script], {
-      onlyPath: [box.bin, tools],
-      env: { HOME: box.dir, XDG_CONFIG_HOME: box.path("config"), GIT_CONFIG_GLOBAL: box.path("gitconfig") },
-    });
+    const r = installWithout("gh");
     expect(r.status).toBe(0);
     expect(r.stderr).toContain(`echo '${key}' | gh ssh-key add`);
+  });
+
+  test("skips without ssh-add", () => {
+    const r = installWithout("ssh-add");
+    expect(r.status).toBe(0);
+    expect(r.stderr.trim()).toBe("ssh-add not found; skipping signing setup");
+    expect(existsSync(box.path("config/git"))).toBe(false);
+    expect(box.read("gh.log")).toBe("");
   });
 
   test("starts a new line after a signer file missing its final newline", () => {
