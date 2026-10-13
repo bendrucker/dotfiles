@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, symlinkSync } from "node:fs";
 import { sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
-import { up } from "./202610120003-claude-repo-symlink";
+import { up } from "./202610120004-claude-repo-symlink";
 
 let box: Sandbox;
 let repo: string;
