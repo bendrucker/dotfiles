@@ -86,4 +86,32 @@ describe("install-symlinks", () => {
     expect(r.stderr).toContain("migrate conf.d first");
     expect(applied()).toBe("");
   });
+
+  test("names a submodule that is not checked out", () => {
+    stubMise({});
+    box.write(
+      "root/.gitmodules",
+      [
+        '[submodule "bat/themes"]',
+        "\tpath = bat/themes",
+        '[submodule "btop/themes"]',
+        "\tpath = btop/themes",
+        "",
+      ].join("\n"),
+    );
+    box.write("root/bat/themes/.git", "gitdir: elsewhere\n");
+    box.mkdir("root", "btop", "themes");
+
+    const r = runInstall();
+
+    expect(r.status).toBe(1);
+    expect(r.stderr).toBe(
+      [
+        "install-symlinks: submodule btop/themes is not checked out",
+        `install-symlinks: run git -C ${root} submodule update --init --recursive`,
+        "",
+      ].join("\n"),
+    );
+    expect(applied()).toBe("");
+  });
 });

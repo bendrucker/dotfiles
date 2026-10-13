@@ -1,0 +1,5 @@
+# git worktree add leaves submodule directories empty, and [dotfiles] entries link into
+# them, so scripts/install-symlinks fails in a worktree that skips this.
+# pre-start rather than post-start so the first command in the worktree sees them.
+[pre-start]
+submodules = "git submodule update --init --recursive"
