@@ -36,8 +36,6 @@ docker run $flags $name zsh -ec '
   cd ~/.dotfiles
   source mise/install.sh
   scripts/install-symlinks
-  # mise.integration.test.ts empties XDG_DATA_HOME, leaving shims nothing to resolve.
-  eval "$(mise env --shell zsh)"
   if (( $# )); then exec "$@"; fi
   bun test ./mise/
 ' docker-test "$@"

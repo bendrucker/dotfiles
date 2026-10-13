@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readlinkSync, symlinkSync, unlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { must, repoRoot, sandbox, type Sandbox } from "#harness";
 
@@ -32,6 +33,8 @@ function inHome(cmd: string[]): string {
       XDG_DATA_HOME: join(home, ".local", "share"),
       XDG_STATE_HOME: join(home, ".local", "state"),
       XDG_CACHE_HOME: join(home, ".cache"),
+      // Installed tools stay where they are, or a shim like jq resolves nothing.
+      MISE_DATA_DIR: process.env.MISE_DATA_DIR ?? join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "mise"),
       MISE_GLOBAL_CONFIG_FILE: undefined,
       MISE_ENV: undefined,
       // The fixture has no tools installed, and listing tasks would fetch them.
