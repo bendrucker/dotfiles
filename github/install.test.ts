@@ -157,6 +157,7 @@ describe("github/install.sh", () => {
     expect(r.status).toBe(0);
     expect(calls()).toEqual([
       `git-sync https-remote ${dir}`,
+      `git -C ${dir} describe --tags --exact-match`,
       "gh extension install --force --pin v4.25.2 dlvhdr/gh-dash",
       `git -C ${dir} fetch --tags --quiet origin`,
       `git -C ${dir} -c advice.detachedHead=false checkout --quiet refs/tags/v4.25.2`,
@@ -170,6 +171,28 @@ describe("github/install.sh", () => {
     const r = runScript();
     expect(r.status).toBe(0);
     expect(calls()).toEqual(["gh extension install --force --pin v4.25.2 dlvhdr/gh-dash"]);
+  });
+
+  // gh's --force reinstalls even at the same tag, and every install would
+  // otherwise download each extension again.
+  test("skips a binary extension already at its pinned tag", () => {
+    declared("dlvhdr/gh-dash v4.25.2", "chmouel/gh-news v0.18.0");
+    box.write("data/gh/extensions/gh-dash/manifest.yml", "owner: dlvhdr\nname: gh-dash\ntag: v4.25.2\n");
+    box.write("data/gh/extensions/gh-news/manifest.yml", "owner: chmouel\nname: gh-news\ntag: v0.17.0\n");
+
+    const r = runScript();
+    expect(r.status).toBe(0);
+    expect(attempted()).toEqual(["chmouel/gh-news"]);
+  });
+
+  test("skips a script extension checked out at its pinned tag", () => {
+    declared("einride/gh-dependabot v0.14.1");
+    const dir = checkedOut("gh-dependabot");
+    box.stub("git", 'echo "git $*" >> "$FIXTURES/calls"\n[ "$3" = describe ] && echo v0.14.1\nexit 0');
+
+    const r = runScript();
+    expect(r.status).toBe(0);
+    expect(calls()).toEqual([`git-sync https-remote ${dir}`, `git -C ${dir} describe --tags --exact-match`]);
   });
 
   // Installing over a remote that could not be corrected is the failure this

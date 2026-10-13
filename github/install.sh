@@ -36,6 +36,15 @@ done < extensions.conf
 # the tagged release asset) but silently no-ops the pin for script
 # extensions, leaving them on origin/HEAD. Detect script extensions by the
 # presence of .git under the extension dir and force the pinned tag via git.
+installed_tag() {
+  local dir=$1
+  if [[ -f "$dir/manifest.yml" ]]; then
+    sed -n 's/^tag: //p' "$dir/manifest.yml"
+  elif [[ -d "$dir/.git" ]]; then
+    git -C "$dir" describe --tags --exact-match 2>/dev/null
+  fi
+}
+
 install_extension() {
   local repo=$1 tag=$2 data_home dir
   data_home=${XDG_DATA_HOME:-$HOME/.local/share}
@@ -51,6 +60,8 @@ install_extension() {
   if [[ -d "$dir/.git" ]]; then
     "$git_sync_bin" https-remote "$dir" || return 1
   fi
+
+  [[ "$(installed_tag "$dir")" == "$tag" ]] && return 0
 
   gh extension install --force --pin "$tag" "$repo" || return 1
 
