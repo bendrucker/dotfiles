@@ -15,6 +15,9 @@ env_conf_d = true
 {% set tailgate_bin = [env.HOME, "src", "go", "bin", "tailgate"] | join_path %}
 
 env = [
+  # [bootstrap.repos] has no os filter.
+  {% if os() == "macos" %}"macos",{% endif %}
+
   # launchctl bootstrap fails outright on a missing Program, which fails the
   # whole apply. tailgate comes from an install that runs earlier in
   # scripts/install but can be absent.

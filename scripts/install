@@ -58,9 +58,10 @@ trace_end
 # task, which runs each topic's install task. Packages, links, and tools ran
 # above, ahead of the migrations that depend on them. One job keeps the
 # installers in name order, and raw hands them the terminal, which
-# github/install.sh prompts on.
+# github/install.sh prompts on. A repo with local changes is skipped rather than
+# failing the run, since ~/.claude-repo routinely carries some.
 trace_begin mise-bootstrap
-MISE_JOBS=1 MISE_RAW=1 mise bootstrap --yes --skip packages,dotfiles,tools
+MISE_JOBS=1 MISE_RAW=1 mise bootstrap --yes --skip-dirty --skip packages,dotfiles,tools
 trace_end
 
 # Reconcile theme-managed configs to the active flavor. Runs after every

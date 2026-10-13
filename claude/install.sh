@@ -4,23 +4,7 @@ set -e
 # shellcheck source=../scripts/shell/symlinks.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/shell/symlinks.sh"
 
-CLAUDE_REPO_URL="https://github.com/bendrucker/claude.git"
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
-
-setup_claude_repo() {
-  if [[ -d "$CLAUDE_REPO_HOME/.git" ]]; then
-    return 0
-  fi
-
-  if [[ -L "$CLAUDE_REPO_HOME" ]]; then
-    echo "  Removing symlink at $CLAUDE_REPO_HOME..."
-    rm "$CLAUDE_REPO_HOME"
-  fi
-
-  echo "  Cloning Claude config repo..."
-  git clone "$CLAUDE_REPO_URL" "$CLAUDE_REPO_HOME"
-  git -C "$CLAUDE_REPO_HOME" remote set-head origin --auto 2>/dev/null || true
-}
 
 # Also sourced by claude/settings-link.ts to relink after installers replace
 # ~/.claude/settings.json.
@@ -63,7 +47,6 @@ install_claude_symlinks() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   # The config setup first, so a failed download doesn't hold it back.
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    setup_claude_repo
     install_claude_symlinks
   fi
   "$(dirname "${BASH_SOURCE[0]}")/install-native"
