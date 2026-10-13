@@ -45,7 +45,10 @@ function inHome(cmd: string[]): string {
 
 describe("mise conf.d linked to the dotfiles root", () => {
   test("loads every topic's mise.toml", () => {
-    const topics = readdirSync(repoRoot).filter((topic) => existsSync(join(repoRoot, topic, "mise.toml")));
+    // conf.d skips dot directories, which is what keeps .github/mise.toml CI-only.
+    const topics = readdirSync(repoRoot).filter(
+      (topic) => !topic.startsWith(".") && existsSync(join(repoRoot, topic, "mise.toml")),
+    );
     const loaded = mise("config", "ls", "--no-header")
       .split("\n")
       .map((line) => line.split(/\s+/)[0]?.split("/conf.d/")[1]);

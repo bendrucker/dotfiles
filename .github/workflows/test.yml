@@ -15,6 +15,9 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# The bun pin, kept out of every config a machine loads.
+env:
+  MISE_SYSTEM_CONFIG_FILE: ${{ github.workspace }}/.github/mise.toml
 jobs:
   bootstrap:
     strategy:
@@ -177,28 +180,12 @@ jobs:
         snapshot > "$RUNNER_TEMP/after"
         diff -u "$RUNNER_TEMP/before" "$RUNNER_TEMP/after"
       env: *bootstrap-env
-    # A bun of the report's own: bootstrap may have failed before installing
-    # one, and setup-bun would put an unpinned bun ahead of the mise shims.
-    - name: Install trace report runtime
-      if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
-      env:
-        # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
-        BUN_VERSION: 1.4.3
-      run: |
-        case "$RUNNER_OS-$RUNNER_ARCH" in
-          Linux-X64) target=linux-x64 ;;
-          macOS-ARM64) target=darwin-aarch64 ;;
-          *) echo "no bun build for $RUNNER_OS-$RUNNER_ARCH" >&2; exit 1 ;;
-        esac
-        curl --fail --silent --show-error --location --output "$RUNNER_TEMP/bun.zip" \
-          "https://github.com/oven-sh/bun/releases/download/bun-v$BUN_VERSION/bun-$target.zip"
-        unzip -q -j "$RUNNER_TEMP/bun.zip" -d "$RUNNER_TEMP/bun"
     - name: Report bootstrap trace
       if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
       env:
         TRACE: ${{ runner.temp }}/trace
       run: |
-        "$RUNNER_TEMP/bun/bun" scripts/trace-report "$TRACE" --summary "$TRACE/summary.md" --otlp "$TRACE/otlp.json"
+        mise x bun -- bun scripts/trace-report "$TRACE" --summary "$TRACE/summary.md" --otlp "$TRACE/otlp.json"
         cat "$TRACE/summary.md" >> "$GITHUB_STEP_SUMMARY"
     - name: Upload bootstrap trace
       if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
@@ -304,7 +291,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: jdx/mise-action@v5.1.2
       # The tests that drive shell scripts stub what those scripts call, but
       # the interpreters and the tools a script legitimately uses are real.
       # zsh is the one the image does not already carry.
@@ -344,12 +331,11 @@ jobs:
       MISE_GLOBAL_CONFIG_FILE: ${{ github.workspace }}/system/mise.toml
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
       # The skill under test queries shell history through duckdb, and builds
       # its own fixture database the same way.
       - uses: jdx/mise-action@v5.1.2
         with:
-          install_args: aqua:duckdb/duckdb
+          install_args: bun aqua:duckdb/duckdb
       # A leading ./ is what makes bun read this as a path. Bare, it is a filter
       # matched against discovered files, and discovery skips dot directories.
       - name: Run tests
@@ -368,12 +354,10 @@ jobs:
       - name: Install lint dependencies
         uses: jdx/mise-action@v5.1.2
         with:
-          install_args: aqua:ast-grep/ast-grep aqua:duckdb/duckdb aqua:gitleaks/gitleaks aqua:j178/prek
+          install_args: bun aqua:ast-grep/ast-grep aqua:duckdb/duckdb aqua:gitleaks/gitleaks aqua:j178/prek
       # Homebrew's libxml2 is keg-only, so apt is what puts xmllint on PATH.
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y libxml2-utils
-      # scripts/lint-expired runs on bun, which nothing else in this job brings.
-      - uses: oven-sh/setup-bun@v2
       # herdr is not installed here and its formula has no Linux bottle, so the
       # config check runs in bootstrap instead, where brew bundle put it.
       # The prek pinned in system/mise.toml rather than prek-action's own, so a
