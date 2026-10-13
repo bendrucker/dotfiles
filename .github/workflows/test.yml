@@ -238,11 +238,12 @@ jobs:
         "
     # The agents bootstrap loads keep writing under ~/.local/share/mise, and tar
     # aborts the post-job cache save on a file that changed while it read it.
-    # Labels come from the repo's own plists, never the runner's.
+    # Labels come from the repo's own plists and the dev.mise.* ones mise
+    # writes from [bootstrap.macos.launchd.agents], never the runner's.
     - name: Stop the launchd agents bootstrap loaded
       if: ${{ always() && runner.os == 'macOS' }}
       run: |
-        for plist in */*.plist; do
+        for plist in */*.plist ~/Library/LaunchAgents/dev.mise.*.plist; do
           label=$(plutil -extract Label raw "$plist" 2>/dev/null) || continue
           launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
         done
