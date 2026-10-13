@@ -70,7 +70,7 @@ Nothing here finds an unused export across the `#`-specifier modules. oxlint 1.8
 2. Add configuration files as needed:
    - `<topic>/<tool>.zsh` for shell configuration
    - Add a `[dotfiles]` table to `<topic>/mise.toml` for config files targeting `~/.config/<tool>/`
-   - `<topic>/install.sh` only if non-symlink setup is needed (plugin managers, system config), with a `[tasks."<topic>:install"]` in `<topic>/mise.toml` that runs it. `mise/tasks.test.ts` fails on an installer without one
+   - `<topic>/install.sh` only if non-symlink setup is needed (plugin managers, system config), with a `[tasks."<topic>:install"]` in `<topic>/mise.toml` that runs it. `mise/tasks.test.ts` fails on an installer without one. A one-liner goes in the task's `run` with no script
    - `<topic>/reload.sh` only if the tool holds its config in memory and can re-read it without restarting, with a `[tasks."<topic>:reload"]` that runs it under a 60s `timeout` (see [Config Reloads](#config-reloads))
    - `<topic>/Brewfile` for dependencies
 3. Run `scripts/install` to install links and run topic installers
@@ -243,7 +243,7 @@ Coding agents run as this user and read whatever the shell reads, so a mode bit 
 
 `credentials/bin/credential-audit` is what keeps that true of the ones it watches. Its `CREDENTIALS` table covers npm, AWS, `gh`, `glab`, Docker, and the keys under `~/.ssh`. A finding is one line carrying the subject, a verdict, and the remedy that clears it. The verdicts reach past a literal secret to a key held under a passphrase, a mode readable beyond the owner, and a file this run could not open. A credential reached through a symlink is read and reported like any other, and its mode is left to whatever repo owns the target. Silence means every credential in the table delegates. Terraform and Linear delegate as well and sit in no table: a tool absent from it is not thereby safe. It is unexamined, so the entry covering a tool belongs in the same change that installs it.
 
-The audit reports and never removes, for the same reason `scripts/brew-drift` does. A credential in plaintext is either a leftover or the only thing keeping a login alive, and at 3am those are indistinguishable. `--enforce` is the exception, because chmod to `0600` loses nothing. `credentials/install.sh` runs it, so every install tightens what it can. The nightly report afterward carries only what a mode cannot fix. `bin/dotfiles-upgrade` files those through `reportFindings`, latched one credential at a time so a leftover key nobody has dealt with stays quiet while the rest of the set churns around it.
+The audit reports and never removes, for the same reason `scripts/brew-drift` does. A credential in plaintext is either a leftover or the only thing keeping a login alive, and at 3am those are indistinguishable. `--enforce` is the exception, because chmod to `0600` loses nothing. The `credentials:install` task runs it, so every install tightens what it can. The nightly report afterward carries only what a mode cannot fix. `bin/dotfiles-upgrade` files those through `reportFindings`, latched one credential at a time so a leftover key nobody has dealt with stays quiet while the rest of the set churns around it.
 
 ## Sync and Upgrade System
 
@@ -281,7 +281,7 @@ It reports the four kinds this repo's Brewfiles declare: formulae, casks, taps, 
 
 The cause keys on the sorted package set rather than on the fact of a finding, passed as the `fingerprint` in [Failure Reporting](#failure-reporting). A to-do left unactioned stays quiet while the same packages are undeclared. A newly installed one reopens it under its own to-do. Sorting matters because Homebrew orders the listing by a dependency sort taken over every installed package, so installing something unrelated and declared can reshuffle the undeclared names without changing the set.
 
-A failing drift check is contained the way a failing `reload.sh` is. The install it follows has already succeeded, and a package that is merely undeclared breaks nothing overnight.
+A failing drift check is contained the way a failing reload is. The install it follows has already succeeded, and a package that is merely undeclared breaks nothing overnight.
 
 ### GitHub Transport
 
@@ -314,7 +314,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 2. `mise install` from each topic directory holding a `mise.toml`, which finds the file before the `conf.d` link exists
 3. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
 4. `scripts/install-symlinks` — Link `~/.config/mise/conf.d` to the dotfiles root, then lay each topic's `[dotfiles]` with `mise dot apply`
-5. `mise bootstrap --yes`, skipping the packages, links, and tools already handled above. It applies the macOS defaults and LaunchAgents, then runs the `bootstrap` task, which depends on every `<topic>:install` task. `MISE_JOBS=1` and `MISE_RAW=1` run those in name order with the terminal attached, which covers the installers, including `credentials/install.sh`, which chmods credential files to `0600`
+5. `mise bootstrap --yes`, skipping the packages, links, and tools already handled above. It applies the macOS defaults and LaunchAgents, then runs the `bootstrap` task, which depends on every `<topic>:install` task. `MISE_JOBS=1` and `MISE_RAW=1` run those in name order with the terminal attached, which covers the installers, including `credentials:install`, which chmods credential files to `0600`
 6. `mise run theme:sync` to reconcile theme-managed configs to the active flavor
 7. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
 
@@ -357,15 +357,15 @@ The `EXPIRES:` marker and the runner compose rather than overlap. The runner mak
 
 ### Config Reloads
 
-`bin/dotfiles-reload` runs every `<topic>:reload` task, each running `<topic>/reload.sh`, so a config change reaches a program that has been running for weeks instead of waiting for a restart. `scripts/install` and `dotfiles dev enable|disable` call it directly. `bin/dotfiles-sync` calls it only when the pull moved the tree, and its `--bootstrap` path reaches it through `scripts/install` instead. `herdr/`, `terminal/`, and `moshi/` are the topics that have one.
+`bin/dotfiles-reload` runs every `<topic>:reload` task, each running `<topic>/reload.sh` or a one-line command inline, so a config change reaches a program that has been running for weeks instead of waiting for a restart. `scripts/install` and `dotfiles dev enable|disable` call it directly. `bin/dotfiles-sync` calls it only when the pull moved the tree, and its `--bootstrap` path reaches it through `scripts/install` instead. `herdr/`, `terminal/`, and `moshi/` are the topics that have one.
 
 Every reload is in place. The program re-reads its config and keeps its state, sessions, and child processes. Nothing here may restart a server, kill a session, or drop in-flight work. This runs unattended from the 3am job, where a restart takes live work down with it, so a tool whose only path to new config is a restart gets no `reload.sh` and picks the change up on its next start.
 
-`moshi/reload.sh` is the one exception: it restarts moshi-hook when its config changed, since an unapplied change is worse than the unlikely approval a 3am restart drops.
+`moshi:reload` is the one exception: it restarts moshi-hook when its config changed, since an unapplied change is worse than the unlikely approval a 3am restart drops.
 
-A `reload.sh` self-gates. Exit 0 without work when the tool isn't installed or isn't running, since a fresh machine and CI hit both cases. Assume roughly a minute of runtime: each task's `timeout = "60s"` caps it there so a wedged peer can't hang the nightly job.
+A reload self-gates. Exit 0 without work when the tool isn't installed or isn't running, since a fresh machine and CI hit both cases. Assume roughly a minute of runtime: each task's `timeout = "60s"` caps it there so a wedged peer can't hang the nightly job.
 
-A failing `reload.sh` is contained on purpose. `mise run --continue-on-error` reports it and carries on to the rest, and both callers downgrade its exit status to a warning, so a broken reload never fails an install or the nightly job. Leave that alone. The install it follows has already succeeded, and stale in-memory config resolves itself the next time the program starts.
+A failing reload is contained on purpose. `mise run --continue-on-error` reports it and carries on to the rest, and both callers downgrade its exit status to a warning, so a broken reload never fails an install or the nightly job. Leave that alone. The install it follows has already succeeded, and stale in-memory config resolves itself the next time the program starts.
 
 ## Stacked PRs
 

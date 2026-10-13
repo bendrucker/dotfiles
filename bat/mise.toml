@@ -5,6 +5,6 @@
 "~/.config/bat/themes/Catppuccin Macchiato.tmTheme" = "catppuccin/themes/Catppuccin Macchiato.tmTheme"
 "~/.config/bat/themes/Catppuccin Mocha.tmTheme" = "catppuccin/themes/Catppuccin Mocha.tmTheme"
 
+# Rebuild the theme cache so bat recognizes the catppuccin .tmTheme files.
 [tasks."bat:install"]
-run = "./bat/install.sh"
-dir = "{{config_root}}/.."
+run = "bat cache --build >/dev/null"

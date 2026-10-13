@@ -16,6 +16,7 @@
 "aqua:sharkdp/hyperfine" = "2.0.0"
 
 [dotfiles]
+"~/.hushlogin" = { content = "" }
 "~/.config/btop/themes/catppuccin_frappe.theme" = "btop-catppuccin/themes/catppuccin_frappe.theme"
 "~/.config/btop/themes/catppuccin_latte.theme" = "btop-catppuccin/themes/catppuccin_latte.theme"
 "~/.config/btop/themes/catppuccin_macchiato.theme" = "btop-catppuccin/themes/catppuccin_macchiato.theme"

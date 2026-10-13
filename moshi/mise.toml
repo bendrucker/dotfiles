@@ -2,6 +2,6 @@
 "~/.config/moshi/config.toml" = "config.toml"
 
 [tasks."moshi:reload"]
-run = "./moshi/reload.sh"
+run = "if command -v bun >/dev/null; then bun moshi/reload.ts; fi"
 dir = "{{config_root}}/.."
 timeout = "60s"

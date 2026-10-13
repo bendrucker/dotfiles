@@ -1,4 +1,4 @@
-# reload.sh restarts the daemon when this changes. `moshi-hook set` writes
+# moshi:reload restarts the daemon when this changes. `moshi-hook set` writes
 # through the symlink, so a CLI change shows up as a diff here.
 
 [gateway]

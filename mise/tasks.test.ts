@@ -45,12 +45,23 @@ describe("topic tasks", () => {
     const [topic, file] = script.split("/");
     const task = declared.get(`${topic}:${file?.replace(/\.sh$/, "")}`);
     expect(task).toMatchObject({ run: `./${script}`, dir: "{{config_root}}/.." });
-    if (file === "reload.sh") expect(task).toMatchObject({ timeout: "60s" });
   });
 
-  const local = [...declared].filter(([, task]) => typeof task.run === "string" && task.run.startsWith("./"));
+  // An inline reload has no script for the check above to find, and the 3am job
+  // needs the cap on every one.
+  const reloads = [...declared].filter(([name]) => name.endsWith(":reload"));
 
-  test.each(local)("%s runs a script that exists", (_, task) => {
-    expect(existsSync(join(repoRoot, String(task.run)))).toBe(true);
+  test.each(reloads)("%s is capped at a minute", (_, task) => {
+    expect(task).toMatchObject({ timeout: "60s" });
+  });
+
+  const local = [...declared].flatMap(([name, task]) => {
+    const command = typeof task.run === "string" ? task.run.split(" ")[0] : undefined;
+    return command?.startsWith("./") ? [[name, command, task] as const] : [];
+  });
+
+  test.each(local)("%s runs %s, an executable in the repo", (_, command, task) => {
+    expect(task).toMatchObject({ dir: "{{config_root}}/.." });
+    expect(statSync(join(repoRoot, command)).mode & 0o100).toBe(0o100);
   });
 });

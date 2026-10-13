@@ -33,8 +33,8 @@ A file's name determines how and when it loads:
 | `completion.zsh` | Sourced lazily after the first prompt (see [startup budget](#startup-budget)). |
 | `Brewfile` | Homebrew packages for the topic. |
 | `mise.toml` | Pinned tool versions and the `[dotfiles]` config links, merged into mise's config. |
-| `install.sh` | Non-symlink setup: plugin managers, system config. Run by its `<topic>:install` task. |
-| `reload.sh` | Tells an already-running program to re-read its config (see [config reloads](#config-reloads)). |
+| `install.sh` | Non-symlink setup: plugin managers, system config. Run by its `<topic>:install` task, or inline in that task when it is one line. |
+| `reload.sh` | Tells an already-running program to re-read its config (see [config reloads](#config-reloads)). Inline in its task when it is one line. |
 | `*.test.ts` | A [test](#tests) sitting next to whatever it covers. |
 
 The repo-root [`bin/`](bin/) holds executables that go on `$PATH`, like `dotfiles-upgrade` and `bench-startup`.
@@ -169,11 +169,11 @@ A sync that moved the tree, an install, and a dev-mode toggle all end by calling
 | Topic | Reload |
 | --- | --- |
 | [`herdr`](herdr/reload.sh) | `herdr server reload-config` over its socket API, for `config.toml` only |
-| [`terminal`](terminal/reload.sh) | `SIGUSR2` to Ghostty, the same path as its `reload_config` action |
+| [`terminal`](terminal/mise.toml) | `SIGUSR2` to Ghostty, the same path as its `reload_config` action |
 
 Every one is in place. The program re-reads its config and keeps its state, sessions, and child processes, and nothing restarts. This runs unattended at 3am, where a restart would take live work down with it. So a tool whose only path to new config is a restart gets no `reload.sh`, and picks the change up whenever it next starts.
 
-Each script self-gates, exiting 0 without work when its tool isn't installed or isn't running, so a fresh machine and CI both do nothing. The dispatcher logs a failing script and carries on to the rest. It caps each at a minute, since a wedged socket would otherwise hang the nightly job past the point where it could report anything.
+Each reload self-gates, exiting 0 without work when its tool isn't installed or isn't running, so a fresh machine and CI both do nothing. The dispatcher logs a failing reload and carries on to the rest. It caps each at a minute, since a wedged socket would otherwise hang the nightly job past the point where it could report anything.
 
 ### Tests
 

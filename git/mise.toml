@@ -2,7 +2,10 @@
 "~/.config/git/config" = "config"
 "~/.config/git/delta-catppuccin.gitconfig" = "delta-catppuccin.gitconfig"
 "~/.config/git/ignore" = "ignore"
+# A copy rather than a link: theme-sync-delta rewrites its `features` line on
+# light/dark switches, which would dirty the tracked file through a link.
+"~/.config/git/delta-flavor.conf" = { source = "delta-flavor.conf", mode = "copy" }
 
 [tasks."git:install"]
-run = "./git/install.sh"
+run = "if command -v bun >/dev/null; then ./git/install-signing; fi"
 dir = "{{config_root}}/.."
