@@ -124,9 +124,9 @@ A `~/Brewfile.local` is evaluated last, if present, for machine-specific package
 
 ### Language Versions with mise
 
-Each language topic pins its versions in a `mise.toml`. `scripts/install-symlinks` links every topic's `mise.toml` into [mise](https://mise.jdx.dev/)'s drop-in config directory, namespaced by topic, so `go/mise.toml` becomes `conf.d/go.toml`.
+Each language topic pins its versions in a `mise.toml`. `scripts/install-symlinks` links [mise](https://mise.jdx.dev/)'s drop-in config directory, `~/.config/mise/conf.d`, to the repo root, so every topic directory holding a `mise.toml` is one of its config roots.
 
-mise merges everything in `conf.d/` automatically. Each topic owns its runtime versions without a shared config file. Versions are pinned exactly (never `latest`) so [Renovate](https://github.com/renovatebot/renovate) can track and bump them.
+mise merges every topic's config automatically. Each topic owns its runtime versions without a shared config file. Versions are pinned exactly (never `latest`) so [Renovate](https://github.com/renovatebot/renovate) can track and bump them.
 
 #### Choosing mise or Homebrew for a Tool
 

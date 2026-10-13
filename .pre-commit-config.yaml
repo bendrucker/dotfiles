@@ -79,3 +79,11 @@ repos:
         # mirrors and a prefix here would be a second answer to that.
         files: (\.ts$|^\.oxlintrc\.json$|(^|/)[^./]+$)
         pass_filenames: false
+      # ~/.config/mise/conf.d links to the repo root, and mise loads every
+      # non-dot *.toml there as global config, so a stray one would change, or
+      # with invalid TOML break, every mise command on the machine.
+      - id: root-toml
+        name: no toml at the repo root
+        language: fail
+        entry: mise loads a root *.toml as global config. Move it into a topic.
+        files: ^[^./][^/]*\.toml$

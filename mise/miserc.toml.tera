@@ -1,8 +1,8 @@
 # Selects which of this repo's mise modules load on this machine. A module is a
-# conf.d fragment named <topic>.<env>.toml, which loads only while <env> is in
-# the list below. Each module declares a LaunchAgent that must not be applied
-# here, either because its program is missing or because applying it would kill
-# the run doing the applying.
+# topic's mise.<env>.toml, which loads only while <env> is in the list below.
+# Each module declares a LaunchAgent that must not be applied here, either
+# because its program is missing or because applying it would kill the run
+# doing the applying.
 #
 # A template error falls back to the raw text, which is not valid TOML and stops
 # every mise command, so each filter that can throw sits behind a test.

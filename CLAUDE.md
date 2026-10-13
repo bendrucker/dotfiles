@@ -118,9 +118,11 @@ The root Brewfile additionally evaluates `~/Brewfile.local` when present. Use it
 
 #### mise Aggregation
 
-Topic directories can contain `mise.toml` files for tool versions and `[bootstrap]` config. `scripts/install-symlinks` links each one to `~/.config/mise/conf.d/<topic>.toml`, where mise merges them alphabetically. Nothing goes in `symlinks.conf` for them.
+Topic directories can contain `mise.toml` files for tool versions and `[bootstrap]` config. `~/.config/mise/conf.d` is one link to the dotfiles root, which `scripts/install-symlinks` lays, so each topic directory is a config root of its own and mise merges them alphabetically. Nothing goes in `symlinks.conf` for them. Dev mode repoints that one link, and every topic follows.
 
-A topic's `mise.<env>.toml` is a module, linked to `conf.d/<topic>.<env>.toml` and loaded only while `<env>` is selected. `mise/miserc.toml.tera` selects them per machine from file tests and the environment. LaunchAgents use this: `[bootstrap.macos.launchd.agents]` entries whose program may be missing, or which the nightly job must not reload under itself, sit in modules that the template leaves out. A gate that stops matching leaves its agent loaded, so a commit removing an agent's program ships a migration that removes the agent.
+mise also loads any non-dot `*.toml` at the root as global config, so a pre-commit hook rejects one there. Invalid TOML at the root would break every mise command on the machine.
+
+A topic's `mise.<env>.toml` is a module, loaded only while `<env>` is selected. `mise/miserc.toml.tera` selects them per machine from file tests and the environment. LaunchAgents use this: `[bootstrap.macos.launchd.agents]` entries whose program may be missing, or which the nightly job must not reload under itself, sit in modules that the template leaves out. A gate that stops matching leaves its agent loaded, so a commit removing an agent's program ships a migration that removes the agent.
 
 Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`). Renovate tracks `mise.toml` files and auto-merges non-major updates after a 2-week release age delay. Using `"latest"` prevents Renovate from detecting new versions. For tools not available in the mise registry, use the `github:` backend (e.g., `"github:owner/repo" = "1.2.3"`) to install pre-built release binaries. A tool whose version is a template, like `uv` in `python/mise.toml` following a project's `required-version`, keeps its default in `[vars]` under a `# renovate:` comment, which a regex manager in `.github/renovate.json` tracks. Disable the mise manager for that tool in the same file, or it reads the template as the current version and opens a PR replacing it with a literal.
 
@@ -308,9 +310,9 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 
 `scripts/install` is the main entry point:
 1. `brew bundle` — Install Brewfile dependencies, leaving the self-updating casks alone from the nightly job or where `scripts/brew-managed-machine` says another manager owns them
-2. `mise install` from each topic directory holding a `mise.toml`, which finds the file before its `conf.d` link exists
+2. `mise install` from each topic directory holding a `mise.toml`, which finds the file before the `conf.d` link exists
 3. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
-4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`, including each `mise.toml` into `~/.config/mise/conf.d/`
+4. `scripts/install-symlinks` — Install declarative symlinks from `symlinks.conf`, and link `~/.config/mise/conf.d` to the dotfiles root
 5. Run `scripts/install-topics`, which runs each `<topic>/install.sh`, including `credentials/install.sh`, which chmods credential files to `0600`
 6. Run `theme/bin/theme-sync` to reconcile theme-managed configs to the active flavor
 7. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
