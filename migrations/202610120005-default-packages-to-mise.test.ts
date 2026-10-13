@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
-import { up } from "./202610120003-default-packages-to-mise";
+import { up } from "./202610120005-default-packages-to-mise";
 
 let box: Sandbox;
 let home: string;
