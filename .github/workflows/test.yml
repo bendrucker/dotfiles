@@ -226,6 +226,20 @@ jobs:
     # The suffix is what separates these from the tests the bun job runs on a
     # bare checkout: they read the installed symlinks and the packages brew
     # bundle put on this runner, so bootstrap is what makes them meaningful.
+    # The first nvim start clones every plugin and compiles every treesitter
+    # parser. Restored after Bootstrap, so the key sees the nvim it installed,
+    # and matched exactly, so any change to these rebuilds from scratch.
+    - name: Key neovim plugins and parsers
+      id: nvim-key
+      if: ${{ github.event_name != 'schedule' }}
+      run: echo "key=nvim-$RUNNER_OS-$RUNNER_ARCH-$(nvim --version | head -1 | tr ' ' '-')-${{ hashFiles('neovim/config/nvim-pack-lock.json', 'neovim/config/lua/config/treesitter.lua') }}" >> "$GITHUB_OUTPUT"
+    - name: Restore neovim plugins and parsers
+      id: nvim
+      if: ${{ github.event_name != 'schedule' }}
+      uses: actions/cache/restore@v6
+      with:
+        key: ${{ steps.nvim-key.outputs.key }}
+        path: ~/.local/share/nvim
     - name: Run topic integration tests
       run: bun test integration.test.ts
     - name: Benchmark shell startup
@@ -299,6 +313,12 @@ jobs:
         path: |
           /opt/homebrew-cached
           /home/linuxbrew/.linuxbrew
+    - name: Save neovim plugins and parsers
+      if: ${{ matrix.pass == 'fresh' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.nvim.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        key: ${{ steps.nvim-key.outputs.key }}
+        path: ~/.local/share/nvim
     - name: Save herdr plugins
       if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.herdr.outputs.cache-hit != 'true' }}
       uses: actions/cache/save@v6
