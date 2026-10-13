@@ -62,20 +62,10 @@
       "rebaseWhen": "conflicted"
     },
     {
-      "matchDepNames": ["go:github.com/go-delve/delve/cmd/dlv"],
-      "overridePackageName": "github.com/go-delve/delve"
-    },
-    {
-      "matchDepNames": ["go:github.com/golang/mock/mockgen"],
-      "overridePackageName": "github.com/golang/mock"
-    },
-    {
-      "matchDepNames": ["go:github.com/traefik/yaegi/cmd/yaegi"],
-      "overridePackageName": "github.com/traefik/yaegi"
-    },
-    {
-      "matchDepNames": ["go:github.com/x-motemen/gore/cmd/gore"],
-      "overridePackageName": "github.com/x-motemen/gore"
+      "description": "mise names a go: tool by its install path, which finds nothing on the Go proxy for a tool below its module root, like .../cmd/dlv. Look up the GitHub module root instead.",
+      "matchManagers": ["mise"],
+      "matchDatasources": ["go"],
+      "overridePackageName": "{{{replace '^(github\\.com/[^/]+/[^/]+(/v\\d+)?)/.+$' '$1' packageName}}}"
     },
     {
       "matchManagers": ["mise"],

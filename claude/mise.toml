@@ -1,7 +1,4 @@
 [tools]
-# pino 9.14.0 is a 9.x backport its maintainer published by hand, so it lacks
-# the provenance 10.0.0 has and trips aube's no-downgrade trust policy.
-"npm:@modelcontextprotocol/inspector" = { version = "2.10.1", trust_policy_excludes = ["pino@9.14.0"] }
 "npm:ccusage" = "20.0.30"
 
 [tasks."claude:install"]
