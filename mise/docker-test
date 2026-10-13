@@ -1,23 +1,19 @@
 #!/usr/bin/env zsh
 #
-# Run this checkout's mise setup in a clean Linux home: every [tools] install,
-# the [dotfiles] links, then the mise tests. Nothing on this machine changes.
+# Run this checkout's mise setup (tool installs, [dotfiles] links, the mise
+# tests) in a clean Linux home, touching nothing on this machine.
 #
 # Usage: mise/docker-test [--fresh] [command...]
 #
-# The checkout is mounted, so an edit is picked up with no rebuild. Installed
-# tools persist in a volume, so a run after a pin change installs that one tool.
-# --fresh drops the volume to start from nothing. A command runs after setup in
-# place of the tests, so `mise/docker-test zsh` leaves you a shell. Set
-# DOCKER_DEFAULT_PLATFORM=linux/amd64 to match the CI runner.
+# Installed tools persist in a volume that --fresh drops. A command runs after
+# setup in place of the tests, so `mise/docker-test zsh` leaves a shell.
 
 set -e
 
 root=${0:A:h:h}
 common=$(git -C $root rev-parse --path-format=absolute --git-common-dir)
-platform=${DOCKER_DEFAULT_PLATFORM:-native}
-image=dotfiles-mise:${platform//\//-}
-volume=dotfiles-mise-${platform//\//-}
+image=dotfiles-mise
+volume=dotfiles-mise
 
 if [[ $1 == --fresh ]]; then
   docker volume rm --force $volume >/dev/null
@@ -29,10 +25,11 @@ docker build --quiet --tag $image - <$root/mise/Dockerfile >/dev/null
 # aqua and github backends hit the GitHub API, which rate-limits anonymous use.
 token=${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}
 
-flags=(--rm --interactive --env DOTFILES_SRC=$root)
-[[ -n $token ]] && export GITHUB_TOKEN=$token && flags+=(--env GITHUB_TOKEN)
-[[ -t 0 && -t 1 ]] && flags+=(--tty)
+flags=(--rm --env DOTFILES_SRC=$root)
 flags+=(--volume ${root}:${root}:ro --volume $volume:/home/dotfiles/.local/share/mise)
+[[ -n $token ]] && export GITHUB_TOKEN=$token && flags+=(--env GITHUB_TOKEN)
+[[ -t 0 && -t 1 ]] && flags+=(--interactive --tty)
+# A worktree's git directory lives outside it.
 [[ $common == $root/* ]] || flags+=(--volume ${common}:${common}:ro)
 
 docker run $flags $image zsh -ec '
