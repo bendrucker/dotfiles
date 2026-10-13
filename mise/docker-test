@@ -1,0 +1,45 @@
+#!/usr/bin/env zsh
+#
+# Run this checkout's mise setup in a clean Linux home: every [tools] install,
+# the [dotfiles] links, then the mise tests. Nothing on this machine changes.
+#
+# Usage: mise/docker-test [--fresh] [command...]
+#
+# The checkout is mounted, so an edit is picked up with no rebuild. Installed
+# tools persist in a volume, so a run after a pin change installs that one tool.
+# --fresh drops the volume to start from nothing. A command runs after setup in
+# place of the tests, so `mise/docker-test zsh` leaves you a shell. Set
+# DOCKER_DEFAULT_PLATFORM=linux/amd64 to match the CI runner.
+
+set -e
+
+root=${0:A:h:h}
+common=$(git -C $root rev-parse --path-format=absolute --git-common-dir)
+platform=${DOCKER_DEFAULT_PLATFORM:-native}
+image=dotfiles-mise:${platform//\//-}
+volume=dotfiles-mise-${platform//\//-}
+
+if [[ $1 == --fresh ]]; then
+  docker volume rm --force $volume >/dev/null
+  shift
+fi
+
+docker build --quiet --tag $image - <$root/mise/Dockerfile >/dev/null
+
+# aqua and github backends hit the GitHub API, which rate-limits anonymous use.
+export GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}
+
+flags=(--rm --interactive --env GITHUB_TOKEN --env DOTFILES_SRC=$root)
+[[ -t 0 && -t 1 ]] && flags+=(--tty)
+flags+=(--volume $root:$root --volume $volume:/home/dotfiles/.local/share/mise)
+[[ $common == $root/* ]] || flags+=(--volume $common:$common)
+
+docker run $flags $image zsh -ec '
+  ln -s "$DOTFILES_SRC" ~/.dotfiles
+  cd ~/.dotfiles
+  source mise/install.sh
+  scripts/install-symlinks
+  eval "$(mise env --shell zsh)"
+  if (( $# )); then exec "$@"; fi
+  bun test ./mise/
+' docker-test "$@"

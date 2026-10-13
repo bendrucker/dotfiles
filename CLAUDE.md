@@ -169,6 +169,7 @@ Config and `.zsh` files are loaded from `~/.dotfiles` by default. Edits in a dev
 - **`dotfiles test`** — replaces the current shell with one using the dev working tree (temporary, session-only)
 - **`dotfiles dev enable`** — persistently repoints all symlinks (home and XDG) to the dev working tree and sets a flag so new shells load dev `.zsh` files. Undo with `dotfiles dev disable`.
 - **Point the tool at the worktree file** — for a config the tool can reload at runtime, name the worktree path explicitly. A reload that names the installed path follows the symlink to `~/.dotfiles` and picks up the wrong copy.
+- **`mise/docker-test`**: runs the checkout's mise setup (tool installs, `[dotfiles]` links, the `mise/` tests) in a throwaway Linux container, touching nothing on this machine. Installed tools persist in a Docker volume, so a rerun after an edit takes seconds. It covers no Homebrew step and no topic install task.
 - Test dependencies: `bin/dotf` installs/updates packages
 
 ### Tests
