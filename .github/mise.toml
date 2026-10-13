@@ -1,0 +1,5 @@
+# The bun CI runs. Machines keep Homebrew's, which the 3am jobs find without
+# mise on their PATH. conf.d skips dot directories, so only a run that names
+# this file as MISE_SYSTEM_CONFIG_FILE loads it.
+[tools]
+bun = "1.4.3"

@@ -15,6 +15,9 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# The bun pin, kept out of every config a machine loads.
+env:
+  MISE_SYSTEM_CONFIG_FILE: ${{ github.workspace }}/.github/mise.toml
 jobs:
   bootstrap:
     strategy:
@@ -155,17 +158,6 @@ jobs:
         # build dir to an unmapped supplementary gid and EINVAL is not rescued.
         # Drop once the Landlock backend (opt-in as of 6.0.13) is the default.
         HOMEBREW_NO_SANDBOX_LINUX: '1'
-        # skip deps installed without homebrew in https://github.com/actions/virtual-environments/blob/main/images/macos/macos-10.15-Readme.md
-        HOMEBREW_BUNDLE_BREW_SKIP: >
-          awscli
-          go
-          golangci-lint
-          kubernetes-cli
-          kubectx
-          minikube
-          python
-          python@3.11
-          python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: Bootstrap
       id: bootstrap
@@ -188,28 +180,12 @@ jobs:
         snapshot > "$RUNNER_TEMP/after"
         diff -u "$RUNNER_TEMP/before" "$RUNNER_TEMP/after"
       env: *bootstrap-env
-    # A bun of the report's own: bootstrap may have failed before installing
-    # one, and setup-bun would put an unpinned bun ahead of the mise shims.
-    - name: Install trace report runtime
-      if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
-      env:
-        # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
-        BUN_VERSION: 1.4.3
-      run: |
-        case "$RUNNER_OS-$RUNNER_ARCH" in
-          Linux-X64) target=linux-x64 ;;
-          macOS-ARM64) target=darwin-aarch64 ;;
-          *) echo "no bun build for $RUNNER_OS-$RUNNER_ARCH" >&2; exit 1 ;;
-        esac
-        curl --fail --silent --show-error --location --output "$RUNNER_TEMP/bun.zip" \
-          "https://github.com/oven-sh/bun/releases/download/bun-v$BUN_VERSION/bun-$target.zip"
-        unzip -q -j "$RUNNER_TEMP/bun.zip" -d "$RUNNER_TEMP/bun"
     - name: Report bootstrap trace
       if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
       env:
         TRACE: ${{ runner.temp }}/trace
       run: |
-        "$RUNNER_TEMP/bun/bun" scripts/trace-report "$TRACE" --summary "$TRACE/summary.md" --otlp "$TRACE/otlp.json"
+        mise x bun -- bun scripts/trace-report "$TRACE" --summary "$TRACE/summary.md" --otlp "$TRACE/otlp.json"
         cat "$TRACE/summary.md" >> "$GITHUB_STEP_SUMMARY"
     - name: Upload bootstrap trace
       if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
@@ -262,11 +238,12 @@ jobs:
         "
     # The agents bootstrap loads keep writing under ~/.local/share/mise, and tar
     # aborts the post-job cache save on a file that changed while it read it.
-    # Labels come from the repo's own plists, never the runner's.
+    # Labels come from the repo's own plists and the dev.mise.* ones mise
+    # writes from [bootstrap.macos.launchd.agents], never the runner's.
     - name: Stop the launchd agents bootstrap loaded
       if: ${{ always() && runner.os == 'macOS' }}
       run: |
-        for plist in */*.plist; do
+        for plist in */*.plist ~/Library/LaunchAgents/dev.mise.*.plist; do
           label=$(plutil -extract Label raw "$plist" 2>/dev/null) || continue
           launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
         done
@@ -315,7 +292,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: jdx/mise-action@v5.1.2
       # The tests that drive shell scripts stub what those scripts call, but
       # the interpreters and the tools a script legitimately uses are real.
       # zsh is the one the image does not already carry.
@@ -355,12 +332,11 @@ jobs:
       MISE_GLOBAL_CONFIG_FILE: ${{ github.workspace }}/system/mise.toml
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
       # The skill under test queries shell history through duckdb, and builds
       # its own fixture database the same way.
       - uses: jdx/mise-action@v5.1.2
         with:
-          install_args: aqua:duckdb/duckdb
+          install_args: bun aqua:duckdb/duckdb
       # A leading ./ is what makes bun read this as a path. Bare, it is a filter
       # matched against discovered files, and discovery skips dot directories.
       - name: Run tests
@@ -374,17 +350,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # The secret scan below reads history, which a shallow checkout omits.
+          # lint:secrets reads history, which a shallow checkout omits.
           fetch-depth: 0
       - name: Install lint dependencies
         uses: jdx/mise-action@v5.1.2
-        with:
-          install_args: aqua:ast-grep/ast-grep aqua:duckdb/duckdb aqua:gitleaks/gitleaks aqua:j178/prek
       # Homebrew's libxml2 is keg-only, so apt is what puts xmllint on PATH.
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y libxml2-utils
-      # scripts/lint-expired runs on bun, which nothing else in this job brings.
-      - uses: oven-sh/setup-bun@v2
       # herdr is not installed here and its formula has no Linux bottle, so the
       # config check runs in bootstrap instead, where brew bundle put it.
       # The prek pinned in system/mise.toml rather than prek-action's own, so a
@@ -398,55 +370,8 @@ jobs:
         run: prek run --all-files --show-diff-on-failure --color=always
         env:
           SKIP: herdr-config
-      # prek runs the gitleaks hook above, but that hook scans the staged diff,
-      # and nothing is staged on a runner. Its whole job is blocking a commit
-      # before it exists, so the push that skipped the hook is the one CI has to
-      # catch, and catching it means scanning here rather than a diff.
-      #
-      # Two scans because neither covers the other. A secret added in one commit
-      # and deleted in the next is absent from the tree and still fetchable from
-      # history, and history is what a public repo hands out. The tree scan
-      # covers what a patch scan skips: merge commits, and content git treats as
-      # binary. Full history is a second on this repo.
-      #
-      # --log-opts HEAD is what keeps the check about this branch. fetch-depth 0
-      # fetches every branch, and gitleaks defaults to scanning all refs, so
-      # without it an unrelated open branch fails this job.
-      - name: Scan for secrets
-        run: |
-          gitleaks dir --redact --no-banner --no-color --max-target-megabytes 5 .
-          gitleaks git --redact --no-banner --no-color --log-opts HEAD .
-      - name: Check completion file naming convention
-        run: |
-          bad=$(find . -name 'completions.zsh' -not -path './.git/*')
-          if [[ -n "$bad" ]]; then
-            echo "ERROR: Files named 'completions.zsh' bypass the zshrc completion filter."
-            echo "Rename to 'completion.zsh' (singular):"
-            echo "$bad"
-            exit 1
-          fi
-      - name: Check private-use glyphs are declared
-        run: bin/glyph-scan
-
-      # oxlint is the one devDependency, so this installs it and nothing the
-      # scripts import. A bare `bunx oxlint` with no install resolves the
-      # latest release and ignores the pin, so the install is what makes the
-      # version in package.json the one that runs.
-      - name: Install oxlint
-        run: bun install --frozen-lockfile
-
-      # Here rather than the bun job, which runs against a bare checkout:
-      # these cases spawn the pinned oxlint the step above installed.
-      - name: Test the TypeScript linter
-        run: bun test scripts/lint-ts.test.ts
-
-      # scripts/lint-ts wraps oxlint so the bin/ executables are linted too.
-      # oxlint discovers by extension and they carry none.
-      - name: Lint TypeScript
-        run: scripts/lint-ts --deny-warnings --format=github
-
-      - name: Check for expired migrations
-        run: scripts/lint-expired
-
-      - name: Check spinners degrade without a terminal
-        run: scripts/lint-spinners
+      # Every check reports, rather than the first failure hiding the rest.
+      # Interleaved output keeps lint-ts's annotations at the start of a line,
+      # where GitHub reads them.
+      - name: Lint
+        run: mise run --continue-on-error --output interleave lint
