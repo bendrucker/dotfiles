@@ -1,0 +1,3 @@
+[tasks."gcloud:install"]
+run = "./gcloud/install.sh"
+dir = "{{config_root}}/.."

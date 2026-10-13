@@ -1,0 +1,3 @@
+[tasks."claude:install"]
+run = "./claude/install.sh"
+dir = "{{config_root}}/.."

@@ -10,3 +10,12 @@ LoadPrefsFromCustomFolder = true
 "~/.config/ghostty/config" = "ghostty.config"
 "~/.config/yazi/theme.toml" = "yazi-theme.toml"
 "~/.config/yazi/package.toml" = "yazi-package.toml"
+
+[tasks."terminal:install"]
+run = "./terminal/install.sh"
+dir = "{{config_root}}/.."
+
+[tasks."terminal:reload"]
+run = "./terminal/reload.sh"
+dir = "{{config_root}}/.."
+timeout = "60s"

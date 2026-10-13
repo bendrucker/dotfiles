@@ -4,3 +4,7 @@
 "~/.config/bat/themes/Catppuccin Latte.tmTheme" = "catppuccin/themes/Catppuccin Latte.tmTheme"
 "~/.config/bat/themes/Catppuccin Macchiato.tmTheme" = "catppuccin/themes/Catppuccin Macchiato.tmTheme"
 "~/.config/bat/themes/Catppuccin Mocha.tmTheme" = "catppuccin/themes/Catppuccin Mocha.tmTheme"
+
+[tasks."bat:install"]
+run = "./bat/install.sh"
+dir = "{{config_root}}/.."

@@ -11,8 +11,8 @@ cd "$(dirname "$0")/.."
 shopt -s nullglob
 
 # A topic's package list is <topic>/default-<type>-packages and never anything
-# deeper, the same bound scripts/install-topics puts on topic installers. The
-# recursive walk this replaces descended into the git worktrees under
+# deeper, the same depth as a topic's install.sh. The recursive walk this
+# replaces descended into the git worktrees under
 # .worktrees/, so every branch checked out there appended its own copy, and a
 # package dropped on main kept being installed from a stale one.
 types=$(for file in */default-*-packages; do

@@ -1,2 +1,8 @@
 [dotfiles]
 "~/.config/mise/miserc.toml" = "miserc.toml.tera"
+
+# Every topic installer, in name order, stopping at the first that fails.
+# mise/install.sh is sourced by scripts/install instead, ahead of the rest,
+# so the tools it installs are on $PATH for each of them.
+[tasks.bootstrap]
+depends = ["*:install"]

@@ -75,15 +75,17 @@ trace_begin install-symlinks
 ./scripts/install-symlinks
 trace_end
 
+# Each topic's install task, in name order. --raw hands an installer the
+# terminal, which github/install.sh prompts on.
 trace_begin install-topics
-./scripts/install-topics
+mise run --raw --jobs 1 bootstrap
 trace_end
 
 # Reconcile theme-managed configs to the active flavor. Runs after every
 # installer so each config exists; failures here shouldn't abort an otherwise
 # successful install.
 trace_begin theme-sync
-./theme/bin/theme-sync || gum log --level warn "theme-sync had issues"
+mise run theme:sync || gum log --level warn "theme-sync had issues"
 trace_end
 
 # Hand the new config to whatever is already running with the old one, after

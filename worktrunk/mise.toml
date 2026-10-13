@@ -1,2 +1,6 @@
 [dotfiles]
 "~/.config/worktrunk/config.toml" = "config.toml"
+
+[tasks."worktrunk:install"]
+run = "./worktrunk/install.sh"
+dir = "{{config_root}}/.."

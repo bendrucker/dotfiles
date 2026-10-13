@@ -1,0 +1,3 @@
+[tasks."github:install"]
+run = "./github/install.sh"
+dir = "{{config_root}}/.."

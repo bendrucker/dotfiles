@@ -2,3 +2,7 @@
 # would fail on every new release. aqua fetches the same AWS binary unprivileged.
 [tools]
 "aqua:aws/session-manager-plugin" = { version = "1.2.835.0", os = ["macos"] }
+
+[tasks."aws:install"]
+run = "./aws/install.sh"
+dir = "{{config_root}}/.."

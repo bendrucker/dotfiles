@@ -1,0 +1,3 @@
+[tasks."theme:sync"]
+run = "./theme/bin/theme-sync"
+dir = "{{config_root}}/.."
