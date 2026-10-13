@@ -69,9 +69,11 @@ jobs:
       if: ${{ github.event_name != 'schedule' }}
       uses: actions/cache/restore@v6
       with:
-        key: mise-${{ runner.os }}-${{ hashFiles('**/mise.toml') }}
+        # The installs are native binaries, so a runner of another architecture
+        # under the same OS label must not restore them.
+        key: mise-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/mise.toml') }}
         restore-keys: |
-          mise-${{ runner.os }}-
+          mise-${{ runner.os }}-${{ runner.arch }}-
         path: |
           ~/.local/share/mise
     # The cache holds the whole prefix, staged at /opt/homebrew-cached so the
