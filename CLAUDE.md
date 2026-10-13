@@ -89,6 +89,8 @@ Homebrew is the default for a new tool. It links into `$HOMEBREW_PREFIX/bin`, a 
 
 A tool this repo's own scripts, tests, or CI call is the exception. Those are pinned in `system/mise.toml` and declared in no Brewfile, so a breaking release arrives as a Renovate PR that the `bootstrap` job judges before any machine runs it. Renovate batches that file into one weekly PR and automerges it, majors included, so the only update that needs attention is one CI fails. `gum` stays on Homebrew despite its callers, because `scripts/homebrew.sh` installs it before mise exists.
 
+Mark a formula `ci: :extra` when nothing in this repo configures it, calls it, or loads it at shell startup, like `brew 'pulumi', ci: :extra`. PR and main runs of the `bootstrap` job skip those so the cached prefix stays small, unless the PR edits a Brewfile. They still check that every skipped name resolves, and the nightly uncached run installs everything. A formula that gains a config file or a caller loses the marker in the same change.
+
 #### Brewfile Aggregation
 
 The root `Brewfile` recursively loads all topic Brewfiles using:

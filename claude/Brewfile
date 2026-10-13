@@ -5,8 +5,8 @@ tap 'steipete/tap'
 cask 'claude'
 cask 'claude-devtools'
 cask 'commander'
-brew 'agent-browser'
-brew 'lightpanda-io/browser/lightpanda'
+brew 'agent-browser', ci: :extra
+brew 'lightpanda-io/browser/lightpanda', ci: :extra
 brew 'rjyo/moshi/moshi-hook', restart_service: :changed
 if OS.mac?
   brew 'steipete/tap/peekaboo'

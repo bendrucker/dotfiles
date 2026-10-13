@@ -1,4 +1,4 @@
 brew 'mosh'
 brew 'trzsz-ssh'
-brew 'tsshd'
+brew 'tsshd', ci: :extra
 cask 'secretive'

@@ -4,11 +4,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  # A weekly run with every cache skipped installs today's bottles, mise
+  # A nightly run with every cache skipped installs today's bottles, mise
   # tools, and plugin heads from scratch, catching the upstream breakage that
-  # a cached prefix hides from PRs.
+  # a cached prefix hides from PRs, and every `ci: :extra` formula PRs skip.
   schedule:
-    - cron: '0 9 * * 1'
+    - cron: '0 9 * * *'
 # A push to a PR supersedes the run still testing its previous commit, and
 # macOS runners are scarce enough that the stale run delays the new one.
 # main keeps every run, since each one saves the caches PRs restore.
@@ -42,6 +42,18 @@ jobs:
     - uses: actions/checkout@v7
       with:
         submodules: true
+        # The merge commit's first parent, for the Brewfile diff below.
+        fetch-depth: 2
+    # A PR that edits a Brewfile installs every formula, so a change to an
+    # extra is proven where it is made.
+    - name: Skip extra formulae
+      if: ${{ github.event_name != 'schedule' }}
+      run: |
+        if [ "$GITHUB_EVENT_NAME" = pull_request ] && git diff --name-only HEAD^1 HEAD | grep -qE '(^|/)Brewfile$'; then
+          echo "A Brewfile changed, so every formula installs."
+        else
+          echo HOMEBREW_DOTFILES_CORE_ONLY=1 >> "$GITHUB_ENV"
+        fi
     - name: Link to home
       run: ln -s "$PWD" "$HOME/.dotfiles"
     - name: Add brew bin/ to Linux $PATH
@@ -63,7 +75,7 @@ jobs:
         rm -rf ~/Library/Caches/Homebrew/Backup
         brew link --overwrite openssl@3 || true
     # Caches are restored here and saved at the end of the job, and only by
-    # pushes and dispatches, never by a PR or the uncached weekly run. Branch
+    # pushes and dispatches, never by a PR or the uncached nightly run. Branch
     # caches are invisible to other PRs, so a PR's save holds GBs no other run
     # can read, and pushing the repo past its 10 GB cap evicts the main caches
     # every PR restores from.
@@ -166,6 +178,12 @@ jobs:
       # No terminal, as under the nightly LaunchAgent.
       run: ./scripts/bootstrap </dev/null
       env: *bootstrap-env
+    - name: Check that skipped formulae still resolve
+      if: ${{ matrix.pass == 'fresh' && env.HOMEBREW_DOTFILES_CORE_ONLY }}
+      run: |
+        comm -13 <(brew bundle list --formula --file=Brewfile | sort) \
+          <(env -u HOMEBREW_DOTFILES_CORE_ONLY brew bundle list --formula --file=Brewfile | sort) |
+          xargs brew info --formula >/dev/null
     - name: Install again and expect no changes
       if: ${{ matrix.pass == 'upgrade' }}
       run: |

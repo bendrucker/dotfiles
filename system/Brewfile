@@ -2,12 +2,12 @@ brew 'bash'
 brew 'btop'
 brew 'coreutils'
 brew 'eza'
-brew 'findutils'
+brew 'findutils', ci: :extra
 brew 'fzf'
-brew 'gnu-sed'
+brew 'gnu-sed', ci: :extra
 brew 'gnu-tar'
 brew 'gum'
-brew 'nmap'
-brew 'samply'
+brew 'nmap', ci: :extra
+brew 'samply', ci: :extra
 
 cask 'tailscale-app'

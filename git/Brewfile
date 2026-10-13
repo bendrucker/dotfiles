@@ -1,7 +1,7 @@
-brew 'act'
+brew 'act', ci: :extra
 brew 'git'
 brew 'git-delta'
 brew 'glab'
 brew 'lazygit'
-brew 'sem-cli'
+brew 'sem-cli', ci: :extra
 brew 'worktrunk'

@@ -1,5 +1,5 @@
 tap 'wagoodman/dive'
-brew 'dive'
+brew 'dive', ci: :extra
 brew 'lazydocker'
 
 cask 'docker-desktop'
