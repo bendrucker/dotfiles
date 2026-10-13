@@ -178,6 +178,7 @@ A test's name and where it sits decide which CI job runs it:
 
 - `*.test.ts` run in the `bun` job against a bare checkout. They stub whatever the script under test calls, so nothing they assert depends on the machine.
 - `*.integration.test.ts` run in the `bootstrap` job on Linux and macOS, after symlinks are installed and `brew bundle` has run. They read the installed config through its symlinks, which is state only bootstrap produces.
+  On a PR the job also runs an upgrade pass: main's tree installed first, the PR head linked over it and installed, then a third install whose links, packages and tools must match the second's.
 - Tests under `.claude/skills/` run in the `skill-tests` job, whichever suffix they carry, because they need that skill's own dependencies. bun's discovery skips dot directories, so the job names the path with a leading `./` to have it read as a path rather than a filter.
 - `scripts/lint-ts.test.ts` runs in the `lint` job, which installs oxlint, and the `bun` job ignores it by path. Its cases spawn the pinned binary. Keeping the `bun` job a bare checkout is what fails a runtime dependency added to a `#`-specifier module, so an install there would cost more than the split does.
 
@@ -316,7 +317,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 
 ### Bootstrap Tracing
 
-Setting `DOTFILES_TRACE_DIR` makes the bootstrap path record a span per step. Unset, `scripts/shell/trace.sh` does nothing, so the nightly job never pays for it. The shell side only appends timestamped `B`/`E`/`X` lines to `events.tsv`, because it runs before bun is installed. `scripts/trace-report` (on `#trace/*`) pairs them into a tree, nests each tool's own records under it from `packages/trace/sources/<tool>.ts`, and writes an OTLP/JSON export and a markdown summary. CI runs it after `Bootstrap` on a pinned bun and uploads the whole directory as the `bootstrap-trace-<os>` artifact.
+Setting `DOTFILES_TRACE_DIR` makes the bootstrap path record a span per step. Unset, `scripts/shell/trace.sh` does nothing, so the nightly job never pays for it. The shell side only appends timestamped `B`/`E`/`X` lines to `events.tsv`, because it runs before bun is installed. `scripts/trace-report` (on `#trace/*`) pairs them into a tree, nests each tool's own records under it from `packages/trace/sources/<tool>.ts`, and writes an OTLP/JSON export and a markdown summary. CI runs it after `Bootstrap` on a pinned bun and uploads the whole directory as the `bootstrap-trace-<os>-<pass>` artifact.
 
 ### Migrations
 

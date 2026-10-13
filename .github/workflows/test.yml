@@ -20,6 +20,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        name: [linux, macos]
+        # A PR also takes the upgrade path a machine takes: main installed
+        # first, this head over it, then a second run that must change nothing.
+        pass: ${{ fromJSON(github.event_name == 'pull_request' && '["fresh", "upgrade"]' || '["fresh"]') }}
         include:
           - name: linux
             # Not 22.04: its glibc predates Homebrew's minimum, so brew builds
@@ -28,7 +32,7 @@ jobs:
             os: ubuntu-latest
           - name: macos
             os: macos-15
-    name: bootstrap (${{ matrix.name }})
+    name: bootstrap (${{ matrix.name }}${{ matrix.pass == 'upgrade' && ', upgrade' || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -133,10 +137,19 @@ jobs:
       run: brew update
     - name: Print Homebrew configuration
       run: brew config
-    - name: Bootstrap
-      id: bootstrap
-      run: ./scripts/bootstrap
-      env:
+    # A worktree outside the checkout, so the integration tests and topic
+    # globs below never see main's copy. Relinking ~/.dotfiles afterwards is
+    # what a sync does to a machine: every installed link follows it.
+    - name: Install main
+      if: ${{ matrix.pass == 'upgrade' }}
+      run: |
+        git fetch --no-tags --depth=1 origin main
+        git worktree add --detach "$RUNNER_TEMP/main" FETCH_HEAD
+        ln -sfn "$RUNNER_TEMP/main" "$HOME/.dotfiles"
+        unset DOTFILES_TRACE_DIR
+        "$RUNNER_TEMP/main/scripts/bootstrap"
+        ln -sfn "$GITHUB_WORKSPACE" "$HOME/.dotfiles"
+      env: &bootstrap-env
         # scripts/shell/trace.sh records a span per step here, for the report
         # and artifact below.
         DOTFILES_TRACE_DIR: ${{ runner.temp }}/trace
@@ -167,6 +180,26 @@ jobs:
           python@3.11
           python@3.12
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Bootstrap
+      id: bootstrap
+      run: ./scripts/bootstrap
+      env: *bootstrap-env
+    - name: Install again and expect no changes
+      if: ${{ matrix.pass == 'upgrade' }}
+      run: |
+        snapshot() {
+          { find "$HOME" -maxdepth 1 -type l; find "$HOME/.config" -type l; } |
+            sort | while read -r link; do echo "$link -> $(readlink "$link")"; done
+          brew list --versions
+          mise ls --installed
+          git -C "$HOME/.dotfiles/" status --porcelain
+        }
+        snapshot > "$RUNNER_TEMP/before"
+        unset DOTFILES_TRACE_DIR
+        ./scripts/bootstrap
+        snapshot > "$RUNNER_TEMP/after"
+        diff -u "$RUNNER_TEMP/before" "$RUNNER_TEMP/after"
+      env: *bootstrap-env
     # A bun of the report's own: bootstrap may have failed before installing
     # one, and setup-bun would put an unpinned bun ahead of the mise shims.
     - name: Install trace report runtime
@@ -194,7 +227,7 @@ jobs:
       if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
       uses: actions/upload-artifact@v7
       with:
-        name: bootstrap-trace-${{ matrix.name }}
+        name: bootstrap-trace-${{ matrix.name }}-${{ matrix.pass }}
         path: ${{ runner.temp }}/trace
         if-no-files-found: warn
     # scripts/install puts the mise shims on PATH for its own children only.
