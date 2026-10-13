@@ -12,31 +12,31 @@ set -e
 
 root=${0:A:h:h}
 common=$(git -C $root rev-parse --path-format=absolute --git-common-dir)
-image=dotfiles-mise
-volume=dotfiles-mise
+name=dotfiles-mise
 
 if [[ $1 == --fresh ]]; then
-  docker volume rm --force $volume >/dev/null
+  docker volume rm --force $name >/dev/null
   shift
 fi
 
-docker build --quiet --tag $image - <$root/mise/Dockerfile >/dev/null
+docker build --quiet --tag $name - <$root/mise/Dockerfile >/dev/null
 
 # aqua and github backends hit the GitHub API, which rate-limits anonymous use.
 token=${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}
 
 flags=(--rm --env DOTFILES_SRC=$root)
-flags+=(--volume ${root}:${root}:ro --volume $volume:/home/dotfiles/.local/share/mise)
+flags+=(--volume ${root}:${root}:ro --volume $name:/home/dotfiles/.local/share/mise)
 [[ -n $token ]] && export GITHUB_TOKEN=$token && flags+=(--env GITHUB_TOKEN)
 [[ -t 0 && -t 1 ]] && flags+=(--interactive --tty)
 # A worktree's git directory lives outside it.
 [[ $common == $root/* ]] || flags+=(--volume ${common}:${common}:ro)
 
-docker run $flags $image zsh -ec '
+docker run $flags $name zsh -ec '
   ln -s "$DOTFILES_SRC" ~/.dotfiles
   cd ~/.dotfiles
   source mise/install.sh
   scripts/install-symlinks
+  # mise.integration.test.ts empties XDG_DATA_HOME, leaving shims nothing to resolve.
   eval "$(mise env --shell zsh)"
   if (( $# )); then exec "$@"; fi
   bun test ./mise/
