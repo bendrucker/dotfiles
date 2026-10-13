@@ -27,12 +27,13 @@ fi
 docker build --quiet --tag $image - <$root/mise/Dockerfile >/dev/null
 
 # aqua and github backends hit the GitHub API, which rate-limits anonymous use.
-export GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}
+token=${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}
 
-flags=(--rm --interactive --env GITHUB_TOKEN --env DOTFILES_SRC=$root)
+flags=(--rm --interactive --env DOTFILES_SRC=$root)
+[[ -n $token ]] && export GITHUB_TOKEN=$token && flags+=(--env GITHUB_TOKEN)
 [[ -t 0 && -t 1 ]] && flags+=(--tty)
-flags+=(--volume $root:$root --volume $volume:/home/dotfiles/.local/share/mise)
-[[ $common == $root/* ]] || flags+=(--volume $common:$common)
+flags+=(--volume ${root}:${root}:ro --volume $volume:/home/dotfiles/.local/share/mise)
+[[ $common == $root/* ]] || flags+=(--volume ${common}:${common}:ro)
 
 docker run $flags $image zsh -ec '
   ln -s "$DOTFILES_SRC" ~/.dotfiles
