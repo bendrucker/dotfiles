@@ -1,5 +1,6 @@
 [tools]
 go = "1.27.1"
+"aqua:golangci/golangci-lint" = "2.14.0"
 "go:github.com/bendrucker/tailgate" = "0.0.0-20260906025411-965ed03ff102"
 "go:github.com/go-delve/delve/cmd/dlv" = "1.27.2"
 "go:github.com/golang/mock/mockgen" = "1.6.0"
