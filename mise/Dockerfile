@@ -1,5 +1,4 @@
-# A clean Linux home for mise/docker-test. Tools install to a volume at run
-# time, so this image changes only when a pin below does.
+# Toolchain for mise/docker-test. Tools install to a volume at run time.
 FROM debian:13-slim
 
 COPY --from=ghcr.io/jdx/mise:2026.10.8 /usr/local/bin/mise /usr/local/bin/mise
@@ -12,5 +11,5 @@ RUN apt-get update \
 RUN useradd --create-home --shell /bin/zsh dotfiles
 USER dotfiles
 
-# Otherwise mounting the volume creates ~/.local as root.
+# Owned by this user, or the volume mount creates it as root.
 RUN mkdir -p /home/dotfiles/.local/share/mise

@@ -33,7 +33,7 @@ function inHome(cmd: string[]): string {
       XDG_DATA_HOME: join(home, ".local", "share"),
       XDG_STATE_HOME: join(home, ".local", "state"),
       XDG_CACHE_HOME: join(home, ".cache"),
-      // Installed tools stay where they are, or a shim like jq resolves nothing.
+      // The real installs, which shims like jq resolve to.
       MISE_DATA_DIR: process.env.MISE_DATA_DIR ?? join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "mise"),
       MISE_GLOBAL_CONFIG_FILE: undefined,
       MISE_ENV: undefined,

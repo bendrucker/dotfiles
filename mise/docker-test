@@ -1,12 +1,10 @@
 #!/usr/bin/env zsh
 #
-# Run this checkout's mise setup (tool installs, [dotfiles] links, the mise
-# tests) in a clean Linux home, touching nothing on this machine.
+# Run this checkout's mise setup and tests in a clean Linux home.
 #
 # Usage: mise/docker-test [--fresh] [command...]
 #
-# Installed tools persist in a volume that --fresh drops. A command runs after
-# setup in place of the tests, so `mise/docker-test zsh` leaves a shell.
+# --fresh drops the tools volume. A command replaces the tests.
 
 set -e
 
@@ -21,14 +19,14 @@ fi
 
 docker build --quiet --tag $name - <$root/mise/Dockerfile >/dev/null
 
-# aqua and github backends hit the GitHub API, which rate-limits anonymous use.
+# For the GitHub API's anonymous rate limit.
 token=${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}
 
+# At its real path, which submodules reach the git dir through.
 flags=(--rm --env DOTFILES_SRC=$root)
 flags+=(--volume ${root}:${root}:ro --volume $name:/home/dotfiles/.local/share/mise)
 [[ -n $token ]] && export GITHUB_TOKEN=$token && flags+=(--env GITHUB_TOKEN)
 [[ -t 0 && -t 1 ]] && flags+=(--interactive --tty)
-# A worktree's git directory lives outside it.
 [[ $common == $root/* ]] || flags+=(--volume ${common}:${common}:ro)
 
 docker run $flags $name zsh -ec '
