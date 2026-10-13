@@ -10,7 +10,7 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["^github/extensions\\.conf$"],
+      "managerFilePatterns": ["/^github/extensions\\.conf$/"],
       "matchStrings": [
         "(?m)^(?<depName>[^\\s#/]+/[^\\s#]+)\\s+(?<currentValue>\\S+)"
       ],
@@ -18,14 +18,14 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["(^|/)mise\\.toml$"],
+      "managerFilePatterns": ["/(^|/)mise\\.toml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[^=\\n]+=\\s*\"(?<currentValue>[^\"]+)\""
       ]
     },
     {
       "customType": "regex",
-      "fileMatch": ["^\\.github/workflows/[^/]+\\.ya?ml$"],
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) extractVersion=(?<extractVersion>\\S+)\\n\\s*[A-Z_]+:\\s*(?<currentValue>\\S+)"
       ]
@@ -52,6 +52,13 @@
       "schedule": ["* 0-5 * * 1"],
       "separateMajorMinor": false,
       "automerge": true,
+      "rebaseWhen": "conflicted"
+    },
+    {
+      "matchManagers": ["mise"],
+      "matchFileNames": ["aws/vm/guest/mise.toml"],
+      "groupName": "VM guest tools",
+      "schedule": ["* 0-5 * * 1"],
       "rebaseWhen": "conflicted"
     },
     {

@@ -1,6 +1,7 @@
 # The command line tools every VM installs through mise, as its global config.
 # A kind adds to these with its own tools table. Explicit aqua backends download
-# prebuilt binaries, which Amazon Linux's glibc cannot get from Homebrew.
+# prebuilt binaries, which Amazon Linux's glibc cannot get from Homebrew. No CI
+# job installs these, so Renovate batches them into one weekly PR.
 [tools]
 "aqua:BurntSushi/ripgrep" = "15.2.0"
 "aqua:aristocratos/btop" = "1.4.7"
