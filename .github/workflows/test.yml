@@ -95,7 +95,9 @@ jobs:
       with:
         # runner.os does not distinguish Ubuntu releases, and the cached prefix
         # holds brew itself, so a v3 cache would restore 22.04's brew and glibc.
-        key: homebrew-v6-${{ runner.os }}-${{ hashFiles('**/Brewfile') }}
+        # Matches by prefix only, so every run restores the newest prefix main
+        # saved. The save keys on what that prefix holds.
+        key: homebrew-v6-${{ runner.os }}-
         restore-keys: |
           homebrew-v6-${{ runner.os }}-
         path: |
@@ -254,19 +256,28 @@ jobs:
         key: ${{ steps.mise.outputs.cache-primary-key }}
         path: |
           ~/.local/share/mise
+    # brew bundle upgrades whatever the API has moved past, so a prefix keyed
+    # on the Brewfile alone would go stale and every run would redo the same
+    # upgrades. Keying on the installed versions saves whenever they move.
+    - name: Key Homebrew by its installed versions
+      id: homebrew-versions
+      if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+      run: |
+        hash=$(brew list --formula --versions | shasum -a 256 | cut -c1-64)
+        echo "key=homebrew-v6-$RUNNER_OS-$hash" >> "$GITHUB_OUTPUT"
     # The save reads the prefix from where the restore writes it, and the
     # link keeps the zstd it compresses with resolving its libraries.
     - name: Stage Homebrew for saving
-      if: ${{ runner.os == 'macOS' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.homebrew.outputs.cache-hit != 'true' }}
+      if: ${{ runner.os == 'macOS' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.homebrew.outputs.cache-matched-key != steps.homebrew-versions.outputs.key }}
       run: |
         sudo rm -rf /opt/homebrew-cached
         sudo mv /opt/homebrew /opt/homebrew-cached
         sudo ln -s /opt/homebrew-cached /opt/homebrew
     - name: Save Homebrew packages
-      if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.homebrew.outputs.cache-hit != 'true' }}
+      if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.homebrew.outputs.cache-matched-key != steps.homebrew-versions.outputs.key }}
       uses: actions/cache/save@v6
       with:
-        key: ${{ steps.homebrew.outputs.cache-primary-key }}
+        key: ${{ steps.homebrew-versions.outputs.key }}
         path: |
           /opt/homebrew-cached
           /home/linuxbrew/.linuxbrew
