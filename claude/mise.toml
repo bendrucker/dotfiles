@@ -1,3 +1,6 @@
+[tools]
+"npm:ccusage" = "20.0.30"
+
 [tasks."claude:install"]
 run = "./claude/install.sh"
 dir = "{{config_root}}/.."

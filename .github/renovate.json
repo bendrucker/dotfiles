@@ -62,6 +62,12 @@
       "rebaseWhen": "conflicted"
     },
     {
+      "description": "mise names a go: tool by its install path, which finds nothing on the Go proxy for a tool below its module root, like .../cmd/dlv. Look up the GitHub module root instead.",
+      "matchManagers": ["mise"],
+      "matchDatasources": ["go"],
+      "overridePackageName": "{{{replace '^(github\\.com/[^/]+/[^/]+(/v\\d+)?)/.+$' '$1' packageName}}}"
+    },
+    {
       "matchManagers": ["mise"],
       "matchFileNames": ["python/mise.toml"],
       "matchDepNames": ["uv"],

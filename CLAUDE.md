@@ -83,7 +83,7 @@ Give a tool its own directory when it has something to put there: config files t
 
 - **Homebrew packages**: Add to topic-specific `Brewfile` or main `Brewfile`
 - **Language versions**: Add `mise.toml` to the relevant topic directory (e.g., `go/mise.toml`)
-- **Build packages**: Use `bin/build-default-packages` script
+- **npm and Go CLI packages**: Add `"npm:<pkg>"` or `"go:<module>"` to the owning topic's `mise.toml` `[tools]`. A Go tool installed from a path below its module root, like `.../cmd/dlv`, is looked up by its GitHub module root through one rule in `.github/renovate.json`. A module hosted anywhere else needs that rule widened, or Renovate's lookup fails with only a warning
 
 Homebrew is the default for a new tool. It links into `$HOMEBREW_PREFIX/bin`, a path that survives upgrades and is visible to every process rather than only shells that ran `mise activate`, and `brew bundle` tracks the current release. Use `mise.toml` when the version has to vary by directory, which is what mise resolves per-project: language runtimes and project-pinned tools like `terraform`. Declaring a tool in both is fine. mise's install directories come first on `$PATH`. A mise pin wins where one applies and the Homebrew copy covers everywhere else.
 

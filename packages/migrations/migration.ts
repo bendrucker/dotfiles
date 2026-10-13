@@ -12,7 +12,7 @@
 // filename, so there is no constant to disagree with where the file sorts.
 
 import { lstatSync, readdirSync, readlinkSync, rmSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Output } from "#jobs/output";
 import { log } from "#jobs/output";
 
@@ -164,4 +164,19 @@ export function exists(path: string): boolean {
 // read. Only the first is safe to treat as empty.
 export function missing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+// Each node version mise installed, as real directories only. mise also keeps
+// aliases like `24` and `latest` as symlinks to them, and walking those would
+// visit each install twice.
+export function nodeInstalls(context: Context): string[] {
+  const root = join(context.data, "mise", "installs", "node");
+  try {
+    return readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(root, entry.name));
+  } catch (error) {
+    if (missing(error)) return [];
+    throw error;
+  }
 }

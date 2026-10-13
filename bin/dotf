@@ -17,11 +17,6 @@ else
   trace_end
 fi
 
-echo "› building default packages"
-trace_begin build-default-packages
-"$ZSH/bin/build-default-packages"
-trace_end
-
 echo "› $ZSH/scripts/install"
 trace_begin install
 "$ZSH/scripts/install"
