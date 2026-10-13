@@ -314,7 +314,7 @@ Only the stored URL decides whether a remote is a github remote. A rule can send
 2. `mise install` from each topic directory holding a `mise.toml`, which finds the file before the `conf.d` link exists
 3. Run `bin/dotfiles-migrate` for the one-time cleanups this machine hasn't run
 4. `scripts/install-symlinks` — Link `~/.config/mise/conf.d` to the dotfiles root, then lay each topic's `[dotfiles]` with `mise dot apply`
-5. `mise run --raw --jobs 1 bootstrap`, which depends on every `<topic>:install` task and runs them in name order, including `credentials/install.sh`, which chmods credential files to `0600`
+5. `mise bootstrap --yes`, skipping the packages, links, and tools already handled above. It applies the macOS defaults and LaunchAgents, then runs the `bootstrap` task, which depends on every `<topic>:install` task. `MISE_JOBS=1` and `MISE_RAW=1` run those in name order with the terminal attached, which covers the installers, including `credentials/install.sh`, which chmods credential files to `0600`
 6. `mise run theme:sync` to reconcile theme-managed configs to the active flavor
 7. Run `bin/dotfiles-reload` to hand the new config to whatever is already running
 

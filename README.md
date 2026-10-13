@@ -186,7 +186,7 @@ A test's name and where it sits decide where it runs. Most tests stub whatever t
 Two entry points split one-time setup from the repeatable reconcile step:
 
 * [`scripts/bootstrap`](scripts/bootstrap) is the **one-time** fresh-machine path: install Homebrew, prompt for git identity, init submodules, then hand off to `dotf`, which runs install.
-* [`scripts/install`](scripts/install) is the **idempotent** core, safe to rerun nightly: `brew bundle` → install mise runtimes → install symlinks → run each topic's `install.sh` → sync the theme → [reload](#config-reloads) whatever is running.
+* [`scripts/install`](scripts/install) is the **idempotent** core, safe to rerun nightly: `brew bundle` → install mise runtimes → install symlinks → `mise bootstrap` for macOS defaults, LaunchAgents, and each topic's `install.sh` → sync the theme → [reload](#config-reloads) whatever is running.
 
 The nightly upgrade and the dev-mode relink both call `install`.
 

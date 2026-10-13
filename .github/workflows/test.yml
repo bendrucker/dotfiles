@@ -182,7 +182,8 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: Bootstrap
       id: bootstrap
-      run: ./scripts/bootstrap
+      # No terminal, as under the nightly LaunchAgent.
+      run: ./scripts/bootstrap </dev/null
       env: *bootstrap-env
     - name: Install again and expect no changes
       if: ${{ matrix.pass == 'upgrade' }}
