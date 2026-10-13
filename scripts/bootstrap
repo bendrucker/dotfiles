@@ -9,6 +9,8 @@ DOTFILES_ROOT=$(pwd -P)
 
 # shellcheck source=scripts/shell/trace.sh
 . "$DOTFILES_ROOT/scripts/shell/trace.sh"
+# shellcheck source=scripts/shell/brew-path.sh
+. "$DOTFILES_ROOT/scripts/shell/brew-path.sh"
 trace_begin bootstrap
 
 NO_PROMPT=false
@@ -21,6 +23,7 @@ done
 # Install Homebrew and gum up front; setup_gitconfig prompts via gum.
 trace_begin homebrew.sh
 "$DOTFILES_ROOT/scripts/homebrew.sh"
+brew_path
 trace_end
 
 setup_gitconfig () {
