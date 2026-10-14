@@ -184,6 +184,7 @@ const claudeStub = [
   "  install) printf 'install %s\\n' \"$3\" >>\"$CLAUDE_PLUGIN_LOG\" ;;",
   // The name follows the verb, so a remove is `plugin marketplace remove <name>`.
   "  marketplace)",
+  '    [ "$3" = "update" ] && printf \'update %s\\n\' "$4" >>"$HOME/refresh.log"',
   '    [ "$3" = "update" ] && [ -n "$CLAUDE_REFRESH_FAILS" ] && exit 1',
   '    [ "$3" = "remove" ] || exit 0',
   "    printf 'marketplace remove %s\\n' \"$4\" >>\"$CLAUDE_PLUGIN_LOG\"",
@@ -856,6 +857,38 @@ describe("updateMarketplaces", () => {
     writeScript(join(stubs, "claude"), "exit 1");
     expect(updateMarketplaces(out, process.env)).toBe(false);
     expect(out.captured()).toContain("marketplace update had issues, continuing");
+  });
+
+  // A clone checked out at a tag, the way Claude Code leaves a pinned
+  // marketplace.
+  function cloneAtTag(name: string, tag: string): void {
+    const clone = join(sandbox, ".claude", "plugins", "marketplaces", name);
+    mkdirSync(clone, { recursive: true });
+    run(["git", "init", "-q", clone]);
+    run(["git", "-C", clone, "-c", "user.email=spec@example.test", "-c", "user.name=Spec",
+      "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "release"]);
+    run(["git", "-C", clone, "tag", tag]);
+  }
+
+  test.each<{ name: string; declared: string; refreshed: string }>([
+    { name: "skips a marketplace already on its pinned tag", declared: "v1", refreshed: "update first\n" },
+    { name: "refreshes everything once a pin moves past the clone", declared: "v2", refreshed: "update \n" },
+  ])("$name", ({ declared, refreshed }) => {
+    cloneAtTag("pinned", "v1");
+    writeKnownMarketplaces(["first", "pinned"]);
+    writeSettings({}, { first: {}, pinned: { source: { source: "github", ref: declared } } });
+
+    expect(updateMarketplaces(out, process.env)).toBe(true);
+    expect(readLog("refresh.log")).toBe(refreshed);
+  });
+
+  test("fails when one of the named refreshes fails", () => {
+    cloneAtTag("pinned", "v1");
+    writeKnownMarketplaces(["first", "pinned"]);
+    writeSettings({}, { first: {}, pinned: { source: { source: "github", ref: "v1" } } });
+    process.env.CLAUDE_REFRESH_FAILS = "1";
+
+    expect(updateMarketplaces(out, process.env)).toBe(false);
   });
 });
 

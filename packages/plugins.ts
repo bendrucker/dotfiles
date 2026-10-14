@@ -244,6 +244,26 @@ export function declaredMarketplaces(): Declaration {
   return readDeclaration("extraKnownMarketplaces", "marketplaces");
 }
 
+// The ref each declared marketplace pins its source to. A declaration that
+// cannot be read yields an empty map, which leaves every marketplace to be
+// refreshed.
+export function declaredMarketplacePins(): Map<string, string> {
+  let named: Record<string, unknown> | undefined;
+  try {
+    named = settingsMap("extraKnownMarketplaces");
+  } catch {
+    return new Map();
+  }
+
+  const pins = new Map<string, string>();
+  for (const [name, entry] of Object.entries(named ?? {})) {
+    const source = isRecord(entry) ? entry.source : undefined;
+    const ref = isRecord(source) ? source.ref : undefined;
+    if (typeof ref === "string" && ref !== "") pins.set(name, ref);
+  }
+  return pins;
+}
+
 // What `claude plugin marketplace update` walks. A bare `marketplace add` lands
 // here too, so it holds more than settings.json names.
 export function knownMarketplaces(): Registry {
