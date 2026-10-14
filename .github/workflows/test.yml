@@ -86,8 +86,7 @@ jobs:
       with:
         # The installs are native binaries, so a runner of another architecture
         # under the same OS label must not restore them. Matches by prefix only,
-        # since the save keys on what bootstrap left installed, and an install
-        # an older mise wrote is repaired by mise/install.sh.
+        # since the save keys on what bootstrap left installed.
         key: mise-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/mise.toml') }}-
         restore-keys: |
           mise-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/mise.toml') }}-
