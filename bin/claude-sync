@@ -128,11 +128,14 @@ export function updateMarketplaces(out: Output, env: Record<string, string | und
   log(out, "info", "Updating marketplaces...");
 
   const refresh = marketplacesOffPin();
-  const failed =
-    refresh === undefined
-      ? claude(out, ["plugin", "marketplace", "update"], env) !== 0
-      : refresh.filter((name) => claude(out, ["plugin", "marketplace", "update", name], env) !== 0)
-          .length > 0;
+  let failed = false;
+  if (refresh === undefined) {
+    failed = claude(out, ["plugin", "marketplace", "update"], env) !== 0;
+  } else {
+    for (const name of refresh) {
+      if (claude(out, ["plugin", "marketplace", "update", name], env) !== 0) failed = true;
+    }
+  }
 
   if (failed) {
     log(out, "warn", "marketplace update had issues, continuing");
@@ -400,7 +403,7 @@ function dependenciesInstalled(payload: string): boolean {
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(manifest, "utf8"));
+    parsed = JSON.parse(readFileSync(manifest, "utf8").replace(/^\uFEFF/, ""));
   } catch {
     return false;
   }
