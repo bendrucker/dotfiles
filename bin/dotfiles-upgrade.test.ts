@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  closeSync,
+  constants as fsConstants,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -673,9 +676,10 @@ describe("cask upgrades that need sudo", () => {
   });
 });
 
-describe("overlapping runs", () => {
+describe.skipIf(process.platform !== "darwin")("overlapping runs", () => {
   const lock = () => join(state, "dotfiles", "dotfiles-upgrade.pid");
   const synced = () => join(sandbox, "synced");
+  const exclusive = () => openSync(lock(), fsConstants.O_CREAT | fsConstants.O_RDWR | fsConstants.O_NONBLOCK | 0x20);
 
   beforeEach(() => {
     syncStub(`#!/bin/sh\n: > '${synced()}'\n`);
@@ -685,33 +689,29 @@ describe("overlapping runs", () => {
   // Two `brew bundle` runs at once fail on each other's keg locks and
   // half-poured bottles.
   test("leaves a live upgrade to finish", () => {
-    writeFileSync(lock(), `${process.pid}\n`);
-    stub("ps", "#!/bin/sh\necho 'bun /Users/me/.dotfiles/bin/dotfiles-upgrade'\n");
+    writeFileSync(lock(), "4242\n");
+    const held = exclusive();
+    try {
+      const run = runUpgrade();
+      expect(run.status).toBe(0);
+      expect(run.stderr).toContain("Another upgrade is already running (pid 4242)");
+      expect(existsSync(synced())).toBe(false);
+    } finally {
+      closeSync(held);
+    }
+  });
+
+  test("runs past a lock file nothing holds", () => {
+    writeFileSync(lock(), "4242\n");
 
     const run = runUpgrade();
     expect(run.status).toBe(0);
-    expect(run.stderr).toContain(`Another upgrade is already running (pid ${process.pid})`);
-    expect(existsSync(synced())).toBe(false);
-    expect(readFileSync(lock(), "utf8")).toBe(`${process.pid}\n`);
-  });
-
-  test.each<{ name: string; pid: () => number; ps: string; takes: boolean }>([
-    { name: "takes over a lock left by a process that has exited", pid: () => Bun.spawnSync(["true"]).pid, ps: "echo dotfiles-upgrade", takes: true },
-    { name: "takes over a lock whose pid now belongs to something else", pid: () => process.pid, ps: "echo vim", takes: true },
-    { name: "keeps a live holder whose command cannot be read", pid: () => process.pid, ps: "exit 1", takes: false },
-  ])("$name", ({ pid, ps, takes }) => {
-    writeFileSync(lock(), `${pid()}\n`);
-    stub("ps", `#!/bin/sh\n${ps}\n`);
-
-    const run = runUpgrade();
-    expect(run.status).toBe(0);
-    expect(existsSync(synced())).toBe(takes);
-  });
-
-  test("releases the lock when it finishes", () => {
-    runUpgrade();
     expect(existsSync(synced())).toBe(true);
-    expect(existsSync(lock())).toBe(false);
+  });
+
+  test("lets go of the lock when it exits", () => {
+    runUpgrade();
+    closeSync(exclusive());
   });
 });
 

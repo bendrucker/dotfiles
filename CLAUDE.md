@@ -257,7 +257,7 @@ The audit reports and never removes, for the same reason `scripts/brew-drift` do
 - The `dotfiles-upgrade` LaunchAgent in `macos/mise.dotfiles-upgrade.toml` runs `bin/dotfiles-upgrade` daily at 3am
 - Syncs dotfiles, runs `scripts/install`, runs `brew cleanup`, reports undeclared packages
 - Files a Things to-do on failure, one per cause per machine (see [Failure Reporting](#failure-reporting))
-- Holds a pidfile lock in the state directory, so a second run that starts while one is live exits rather than racing its `brew bundle`. A run under the retired `com.user.dotfiles-upgrade` label boots itself out instead, since launchd kept that job loaded after its plist was deleted
+- Holds an `O_EXLOCK` lock on a file in the state directory, so a second run that starts while one is live exits rather than racing its `brew bundle`. The kernel drops it when the holder dies, so no leftover file can hold a night back. A run under the retired `com.user.dotfiles-upgrade` label boots itself out instead, since launchd kept that job loaded after its plist was deleted
 
 ### Failure Reporting
 
