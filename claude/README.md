@@ -82,7 +82,7 @@ A plugin no longer offered by its marketplace is left alone. Nothing can update 
 
 A key set to `false` still declares the plugin. That is a plugin installed and turned off, and its payload stays.
 
-Dependencies are the exception a declaration cannot express. Claude Code installs a plugin named in another plugin's `dependencies` without writing a key for it, so the prune reads the manifest of every declared payload and keeps what it names. A bare name resolves against the marketplace the depending plugin came from.
+Dependencies are the exception a declaration cannot express. Claude Code installs a plugin named in another plugin's `dependencies` without writing a key for it, and marks its record in `installed_plugins.json` with `auto: true`. The uninstall pass skips those, and `claude plugin prune` then removes the ones no remaining plugin depends on. A dependency installed before Claude Code recorded the flag carries none, so it is uninstalled unless `settings.json` names it.
 
 An unreadable `settings.json` fails the run rather than pruning against an empty declaration, which would take every plugin on the machine. Uninstalling touches only ids the file does not name, so the pass writes nothing back and cannot dirty the tracked config and stall the next night at the sync gate.
 

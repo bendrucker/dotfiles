@@ -3,12 +3,12 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  autoInstalledPlugins,
   claudePluginsDir,
   declaredMarketplaces,
   declaredPlugins,
   installedPlugins,
   knownMarketplaces,
-  pluginDependencies,
   pluginInventory,
   pluginMarketplaces,
   pluginSource,
@@ -107,13 +107,10 @@ function ids(): string[] {
   return read.plugins.map((plugin) => plugin.id);
 }
 
-// The manifest Claude Code reads out of an installed payload, which is where a
-// plugin's dependencies are written down.
-function writePayloadManifest(path: string, manifest: unknown): void {
-  mkdirSync(join(path, ".claude-plugin"), { recursive: true });
+function writeInstalled(installed: unknown): void {
   writeFileSync(
-    join(path, ".claude-plugin", "plugin.json"),
-    typeof manifest === "string" ? manifest : JSON.stringify(manifest),
+    join(plugins, "installed_plugins.json"),
+    typeof installed === "string" ? installed : JSON.stringify(installed),
   );
 }
 
@@ -535,62 +532,54 @@ describe("pluginMarketplaces", () => {
   });
 });
 
-describe("pluginDependencies", () => {
-  function names(id: string, path: string): string[] {
-    const read = pluginDependencies(id, path);
-    if (!read.ok) throw new Error(`dependencies failed: ${read.reason}`);
-    return read.ids;
+describe("autoInstalledPlugins", () => {
+  function auto(): string[] {
+    const read = autoInstalledPlugins();
+    if (!read.ok) throw new Error(`auto failed: ${read.reason}`);
+    return [...read.ids].sort();
   }
 
-  test("resolves a bare name against the depending plugin's marketplace", () => {
-    const path = payload("market", "alpha", "1.0.0");
-    writePayloadManifest(path, { name: "alpha", dependencies: ["beta"] });
-    expect(names("alpha@market", path)).toEqual(["beta@market"]);
+  test("reads the older array form of the record", () => {
+    writeInstalled([
+      { key: "plugins", value: { "beta@market": [{ scope: "user", installPath: "/b", auto: true }] } },
+    ]);
+    expect(auto()).toEqual(["beta@market"]);
   });
 
-  test("leaves a dependency that names its own marketplace alone", () => {
-    const path = payload("market", "alpha", "1.0.0");
-    writePayloadManifest(path, { name: "alpha", dependencies: ["beta@other"] });
-    expect(names("alpha@market", path)).toEqual(["beta@other"]);
+  test("names a plugin the CLI installed as a dependency at user scope", () => {
+    writeInstalled({
+      version: 2,
+      plugins: {
+        "alpha@market": [{ scope: "user", installPath: "/a" }],
+        "beta@market": [{ scope: "user", installPath: "/b", auto: true }],
+      },
+    });
+    expect(auto()).toEqual(["beta@market"]);
   });
 
-  // A plugin that ships no manifest is ordinary, so it names no dependencies
-  // rather than stopping the prune that reads it.
-  test("names nothing for a payload with no manifest", () => {
-    expect(names("alpha@market", payload("market", "alpha", "1.0.0"))).toEqual([]);
+  test("ignores a dependency installed for a project", () => {
+    writeInstalled({
+      version: 2,
+      plugins: { "beta@market": [{ scope: "local", projectPath: "/p", auto: true }] },
+    });
+    expect(auto()).toEqual([]);
   });
 
-  test("names nothing for a plugin with no payload", () => {
-    expect(names("alpha@market", "")).toEqual([]);
+  test("names nothing on a machine with no install record", () => {
+    expect(auto()).toEqual([]);
   });
 
-  test("names nothing for a manifest that declares no dependencies", () => {
-    const path = payload("market", "alpha", "1.0.0");
-    writePayloadManifest(path, { name: "alpha" });
-    expect(names("alpha@market", path)).toEqual([]);
-  });
-
-  // A manifest that is there and cannot be read may name a dependency, and the
-  // caller would uninstall that dependency on the strength of a file nothing
-  // parsed.
-  test("fails on a manifest nothing can parse", () => {
-    const path = payload("market", "broken", "1.0.0");
-    writePayloadManifest(path, "not json\n");
-    expect(pluginDependencies("broken@market", path).ok).toBe(false);
-  });
-
-  test("fails on a manifest whose dependencies are not a list", () => {
-    const path = payload("market", "wrong", "1.0.0");
-    writePayloadManifest(path, { name: "wrong", dependencies: "beta" });
-    expect(pluginDependencies("wrong@market", path).ok).toBe(false);
-  });
-
-  // An entry in a shape nothing reads leaves the rest of the list unaccounted
-  // for, and the plugin it meant to name would be uninstalled.
-  test("fails on an entry that is not a name", () => {
-    const path = payload("market", "alpha", "1.0.0");
-    writePayloadManifest(path, { name: "alpha", dependencies: ["beta", 7] });
-    expect(pluginDependencies("alpha@market", path).ok).toBe(false);
+  // Read as empty, every dependency it marks would look undeclared and go.
+  test.each<{ name: string; installed: unknown }>([
+    { name: "a record nothing can parse", installed: "not json\n" },
+    { name: "a record without a plugins object", installed: { version: 2, plugins: [] } },
+    {
+      name: "an auto flag that is not a boolean",
+      installed: { version: 2, plugins: { "beta@market": [{ scope: "user", auto: "true" }] } },
+    },
+  ])("fails on $name", ({ installed }) => {
+    writeInstalled(installed);
+    expect(autoInstalledPlugins().ok).toBe(false);
   });
 });
 

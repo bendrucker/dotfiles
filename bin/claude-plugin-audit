@@ -23,6 +23,7 @@ import {
   claudePluginsDir,
   comparePayload,
   inTreeSource,
+  installedRecords,
   pluginInventory,
   pluginSource,
   splitPluginId,
@@ -201,7 +202,7 @@ function declaredVersion(dir: string): string {
 // nothing under the field answers for none of them: the value comes from the
 // first record that has one.
 function installedField(payload: string, field: string): string {
-  const held = installedRecords();
+  const held = installedRecords(readJson(join(claudePluginsDir(), "installed_plugins.json")));
   if (!isRecord(held)) return "";
 
   for (const records of Object.values(held)) {
@@ -214,17 +215,6 @@ function installedField(payload: string, field: string): string {
     }
   }
   return "";
-}
-
-// The array form is an older shape of installed_plugins.json that is still in
-// the wild.
-function installedRecords(): unknown {
-  const parsed = readJson(join(claudePluginsDir(), "installed_plugins.json"));
-  if (Array.isArray(parsed)) {
-    const entry = parsed.find((item) => isRecord(item) && item.key === "plugins");
-    return isRecord(entry) ? entry.value : undefined;
-  }
-  return isRecord(parsed) ? parsed.plugins : undefined;
 }
 
 // Compare a plugin's installed payload against the source its marketplace
