@@ -1,4 +1,4 @@
-brew 'ffmpeg'
+brew 'ffmpeg', ci: :extra
 
 cask 'plex'
 cask 'transmission' unless corporate

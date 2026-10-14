@@ -1,4 +1,4 @@
 tap 'greptileai/tap'
-brew 'greptileai/tap/greptile'
+brew 'greptileai/tap/greptile', ci: :extra
 
 cask 'coderabbit'

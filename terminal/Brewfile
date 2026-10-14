@@ -1,5 +1,5 @@
 cask 'iterm2'
 cask 'font-monaspice-nerd-font'
-brew 'glow'
+brew 'glow', ci: :extra
 brew 'yazi'
 brew 'zoxide'

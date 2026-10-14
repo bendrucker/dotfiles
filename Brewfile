@@ -13,7 +13,9 @@ def assert_unique_package(type, name)
 end
 
 # In CI, avoid installing Casks and Mac App Store apps which are slow and depended upon by dotfiles,
-# and skip service management since runners lack a user launchd/systemd session
+# and skip service management since runners lack a user launchd/systemd session.
+# `ci: :extra` marks a formula nothing here configures or runs. CI's fast path
+# sets HOMEBREW_DOTFILES_CORE_ONLY to skip those, and a nightly run installs them.
 if ENV['CI']
   def cask(*args)
     assert_unique_package('cask', args.first)
@@ -22,12 +24,14 @@ if ENV['CI']
 
   def brew(name, options = {})
     assert_unique_package('brew', name)
-    super(name, options.except(:restart_service, :start_service))
+    return if options[:ci] == :extra && ENV['HOMEBREW_DOTFILES_CORE_ONLY']
+
+    super(name, options.except(:restart_service, :start_service, :ci))
   end
 else
   def brew(name, options = {})
     assert_unique_package('brew', name)
-    super
+    super(name, options.except(:ci))
   end
 
   def cask(name, *args)
@@ -47,11 +51,11 @@ cask_args appdir: '/Applications'
 tap 'schpet/tap'
 tap 'teamookla/speedtest'
 
-brew 'cloc'
-brew 'jnv'
+brew 'cloc', ci: :extra
+brew 'jnv', ci: :extra
 brew 'openssl'
 brew 'schpet/tap/linear'
-brew 'teamookla/speedtest/speedtest'
+brew 'teamookla/speedtest/speedtest', ci: :extra
 brew 'watch'
 
 cask '1password'
