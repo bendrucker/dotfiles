@@ -859,8 +859,6 @@ describe("updateMarketplaces", () => {
     expect(out.captured()).toContain("marketplace update had issues, continuing");
   });
 
-  // A clone checked out at a tag, the way Claude Code leaves a pinned
-  // marketplace.
   function cloneAtTag(name: string, tag: string): void {
     const clone = join(sandbox, ".claude", "plugins", "marketplaces", name);
     mkdirSync(clone, { recursive: true });

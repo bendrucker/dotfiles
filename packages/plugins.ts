@@ -417,9 +417,8 @@ const PAYLOAD_NOISE = [".in_use", ".orphaned_at", "node_modules", ".git", ".gcs-
 export interface Comparison {
   same: boolean;
   differences: string[];
-  // Kept apart from the message, because a comparison can fail without diff
-  // saying anything. Reading the message alone reported a payload as differing
-  // at no paths at all, which is a finding no update can clear.
+  // A comparison can fail without diff saying anything, so failure is tracked
+  // apart from the message.
   failed: boolean;
   error: string;
 }
@@ -429,7 +428,7 @@ export function comparePayload(payload: string, sourceDir: string): Comparison {
 
   // Claude Code synthesizes .claude-plugin/plugin.json for a plugin that ships
   // none, so on those the directory exists only on the payload side and is not
-  // drift. A plugin that does ship one stays covered.
+  // drift.
   if (!isDirectory(join(sourceDir, ".claude-plugin"))) excludes.push("--exclude=.claude-plugin");
 
   let run;
@@ -446,12 +445,8 @@ export function comparePayload(payload: string, sourceDir: string): Comparison {
   // Both signals are needed. diff exits 2 on a path it could not read, but on
   // macOS a dangling symlink gets it an error on stderr and exit 0, so a status
   // check alone would call the payload current over a file nothing compared.
-  // What it could not read is kept off the differences either way: folding the
-  // two together made an unreadable file report as drift, which no update can
-  // clear.
   const said = run.stderr.toString();
-  // A signalled diff reports no status of its own, and it compared no more of
-  // the tree than one that exited over a failure it could name.
+  // A diff killed by a signal has no exit code, so count it as a failure.
   const status = run.exitCode ?? 2;
   if (status > 1 || said !== "") {
     return { same: false, differences: [], failed: true, error: firstLine(said) };
