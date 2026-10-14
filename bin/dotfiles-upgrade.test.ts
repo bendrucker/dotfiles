@@ -634,7 +634,6 @@ describe("cask upgrades that need sudo", () => {
     installStub(`#!/bin/sh\nprintf '%s' "$HOMEBREW_BUNDLE_CASK_SKIP" > '${skipped()}'\n`);
   });
 
-  // `sudo: a terminal is required` failed the whole install for one cask.
   test("holds them back from brew bundle and files them without failing the run", () => {
     rootCasksStub(`#!/bin/sh\necho '${CHARLES}'\necho 'tailscale-app  installs a pkg'\n`);
 

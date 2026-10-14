@@ -5,7 +5,6 @@ import { type Probe, rootReason } from "./brew-root-casks";
 
 const script = join(repoRoot, "scripts", "brew-root-casks");
 
-// A machine where the given paths exist and only the home directory is writable.
 function probe(...paths: string[]): Probe {
   return {
     exists: (path) => paths.includes(path),
