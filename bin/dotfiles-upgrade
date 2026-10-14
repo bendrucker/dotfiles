@@ -364,20 +364,25 @@ function lockFile(): string {
 }
 
 // A pid outlives its process, and launchd's SIGTERM skips the release, so the
-// holder has to still be an upgrade for the lock to stand.
+// holder has to still be an upgrade for the lock to stand. A live pid whose
+// command cannot be read counts as one.
 function isUpgrade(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  try {
     const ps = Bun.spawnSync({
       cmd: ["ps", "-o", "command=", "-p", String(pid)],
       stdin: "ignore",
       stdout: "pipe",
       stderr: "ignore",
     });
-    return ps.stdout.toString().includes("dotfiles-upgrade");
+    return ps.exitCode !== 0 || ps.stdout.toString().includes("dotfiles-upgrade");
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -394,7 +399,13 @@ function acquireLock(): number | null {
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) return null;
     }
-    const holder = Number.parseInt(readFileSync(path, "utf8"), 10);
+    let holder: number;
+    try {
+      holder = Number.parseInt(readFileSync(path, "utf8"), 10);
+    } catch {
+      // Released between the create and this read.
+      continue;
+    }
     if (isUpgrade(holder)) return holder;
     rmSync(path, { force: true });
   }

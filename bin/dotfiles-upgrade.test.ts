@@ -695,16 +695,17 @@ describe("overlapping runs", () => {
     expect(readFileSync(lock(), "utf8")).toBe(`${process.pid}\n`);
   });
 
-  test.each<{ name: string; ps: string }>([
-    { name: "a process that has exited", ps: "exit 1" },
-    { name: "a pid since taken by something else", ps: "echo vim" },
-  ])("takes over a lock left by $name", ({ ps }) => {
-    writeFileSync(lock(), `${process.pid}\n`);
+  test.each<{ name: string; pid: () => number; ps: string; takes: boolean }>([
+    { name: "takes over a lock left by a process that has exited", pid: () => Bun.spawnSync(["true"]).pid, ps: "echo dotfiles-upgrade", takes: true },
+    { name: "takes over a lock whose pid now belongs to something else", pid: () => process.pid, ps: "echo vim", takes: true },
+    { name: "keeps a live holder whose command cannot be read", pid: () => process.pid, ps: "exit 1", takes: false },
+  ])("$name", ({ pid, ps, takes }) => {
+    writeFileSync(lock(), `${pid()}\n`);
     stub("ps", `#!/bin/sh\n${ps}\n`);
 
     const run = runUpgrade();
     expect(run.status).toBe(0);
-    expect(existsSync(synced())).toBe(true);
+    expect(existsSync(synced())).toBe(takes);
   });
 
   test("releases the lock when it finishes", () => {
