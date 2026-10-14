@@ -822,7 +822,7 @@ describe("updatePlugins", () => {
 
     // A failed npm install leaves the tree matching with no node_modules, and
     // only another update retries the install.
-    test("updates a payload whose dependencies never installed", () => {
+    test("updates a payload whose dependencies are missing or partial", () => {
       const files = {
         "package.json": JSON.stringify({ dependencies: { zod: "^4.0.0" } }),
         "package-lock.json": "{}",
@@ -834,6 +834,11 @@ describe("updatePlugins", () => {
       expect(readLog("plugin.log")).toContain("update alpha@first");
 
       mkdirSync(join(alphaPayload(), "node_modules"));
+      writeFileSync(join(sandbox, "plugin.log"), "");
+      expect(updatePlugins(out, process.env)).toBe(true);
+      expect(readLog("plugin.log")).toContain("update alpha@first");
+
+      writeTree(join(alphaPayload(), "node_modules"), { "zod/package.json": "{}" });
       writeFileSync(join(sandbox, "plugin.log"), "");
       expect(updatePlugins(out, process.env)).toBe(true);
       expect(readLog("plugin.log")).not.toContain("update alpha@first");

@@ -391,6 +391,8 @@ function payloadCurrent(plugin: InstalledPlugin, source: unknown): boolean {
 
 // Claude Code installs a plugin's dependencies with `npm ci`, which needs a
 // lockfile, so a payload shipping none was never meant to have node_modules.
+// An interrupted install can leave node_modules partial, so each declared
+// package has to be there.
 function dependenciesInstalled(payload: string): boolean {
   const manifest = join(payload, "package.json");
   const locked = NPM_LOCKFILES.some((name) => isFile(join(payload, name)));
@@ -407,9 +409,8 @@ function dependenciesInstalled(payload: string): boolean {
     typeof parsed === "object" && parsed !== null && "dependencies" in parsed
       ? parsed.dependencies
       : undefined;
-  const declared =
-    typeof dependencies === "object" && dependencies !== null && Object.keys(dependencies).length > 0;
-  return !declared || isDirectory(join(payload, "node_modules"));
+  const declared = typeof dependencies === "object" && dependencies !== null ? Object.keys(dependencies) : [];
+  return declared.every((name) => isFile(join(payload, "node_modules", name, "package.json")));
 }
 
 const UPDATE_ATTEMPTS = 2;
