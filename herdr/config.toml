@@ -163,6 +163,13 @@ type = "plugin_action"
 command = "zenbu-labs.terminal-browser.open-split"
 description = "terminal-browser (right split)"
 
+# Ghostty sends Cmd+K as ctrl+alt+k (terminal/ghostty.config).
+[[keys.command]]
+key = ["prefix+k", "ctrl+alt+k"]
+type = "plugin_action"
+command = "herdr-bar.open"
+description = "command bar"
+
 # herdr-annotate works off what herdr copies to the system clipboard, so it
 # annotates any pane's scrollback. herdr-nvim above covers the buffers it has
 # open.
