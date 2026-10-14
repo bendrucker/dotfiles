@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  closeSync,
+  constants as fsConstants,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -163,6 +166,10 @@ function driftStub(body: string): void {
   writeExecutable(join(home, "scripts", "brew-drift"), body);
 }
 
+function rootCasksStub(body: string): void {
+  writeExecutable(join(home, "scripts", "brew-root-casks"), body);
+}
+
 const MACHINE = "Testbox";
 
 interface Run {
@@ -171,7 +178,7 @@ interface Run {
   stderr: string;
 }
 
-function runUpgrade(options: { path?: string; args?: string[] } = {}) {
+function runUpgrade(options: { path?: string; args?: string[]; env?: Record<string, string> } = {}) {
   const result = Bun.spawnSync({
     cmd: [process.execPath, SCRIPT, ...(options.args ?? [])],
     env: {
@@ -180,6 +187,7 @@ function runUpgrade(options: { path?: string; args?: string[] } = {}) {
       DOTFILES_HOME: home,
       XDG_STATE_HOME: state,
       THINGS_DATABASE: join(sandbox, "things.sqlite"),
+      ...options.env,
     },
     stdin: "ignore",
     stdout: "pipe",
@@ -245,6 +253,7 @@ beforeEach(() => {
   syncStub("#!/bin/sh\nexit 0\n");
   installStub("#!/bin/sh\nexit 0\n");
   driftStub("#!/bin/sh\nexit 0\n");
+  rootCasksStub("#!/bin/sh\nexit 0\n");
 });
 
 afterEach(() => {
@@ -617,6 +626,105 @@ describe("the drift check", () => {
 
     runUpgrade();
     expect(latch("dotfiles-upgrade")).toBe("ok\n");
+  });
+});
+
+describe("cask upgrades that need sudo", () => {
+  const CHARLES = "charles  removes /Library/PrivilegedHelperTools/com.xk72.Charles.ProxyHelper";
+  const skipped = () => join(sandbox, "skipped");
+
+  beforeEach(() => {
+    installStub(`#!/bin/sh\nprintf '%s' "$HOMEBREW_BUNDLE_CASK_SKIP" > '${skipped()}'\n`);
+  });
+
+  test("holds them back from brew bundle and files them without failing the run", () => {
+    rootCasksStub(`#!/bin/sh\necho '${CHARLES}'\necho 'acme/tap/widget  installs a pkg'\n`);
+
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(readFileSync(skipped(), "utf8")).toBe("charles acme/tap/widget widget");
+    const [todo] = filedTodos();
+    expect(field(todo, "title")).toContain("Cask upgrades need sudo");
+    expect(field(todo, "notes")).toContain("brew upgrade --cask charles acme/tap/widget");
+    expect(field(todo, "notes")).toContain(CHARLES);
+    expect(latch("dotfiles-upgrade")).toBe("ok\n");
+  });
+
+  test("stays quiet while the same casks wait", () => {
+    rootCasksStub(`#!/bin/sh\necho '${CHARLES}'\n`);
+
+    runUpgrade();
+    runUpgrade();
+    expect(filedTodos().length).toBe(1);
+  });
+
+  test("skips nothing and clears the latch when none need sudo", () => {
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(readFileSync(skipped(), "utf8")).toBe("");
+    expect(latch("brew-root-casks")).toBe("ok\n");
+  });
+
+  test("installs everything when the check cannot run", () => {
+    rootCasksStub("#!/bin/sh\necho 'charles  installs a pkg'\nexit 1\n");
+
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("could not check which cask upgrades need sudo");
+    expect(readFileSync(skipped(), "utf8")).toBe("");
+    expect(filedTodos().length).toBe(0);
+  });
+});
+
+describe.skipIf(process.platform !== "darwin")("overlapping runs", () => {
+  const lock = () => join(state, "dotfiles", "dotfiles-upgrade.pid");
+  const synced = () => join(sandbox, "synced");
+  const exclusive = () => openSync(lock(), fsConstants.O_CREAT | fsConstants.O_RDWR | fsConstants.O_NONBLOCK | 0x20);
+
+  beforeEach(() => {
+    syncStub(`#!/bin/sh\n: > '${synced()}'\n`);
+    mkdirSync(dirname(lock()), { recursive: true });
+  });
+
+  // Two `brew bundle` runs at once fail on each other's keg locks and
+  // half-poured bottles.
+  test("leaves a live upgrade to finish", () => {
+    writeFileSync(lock(), "4242\n");
+    const held = exclusive();
+    try {
+      const run = runUpgrade();
+      expect(run.status).toBe(0);
+      expect(run.stderr).toContain("Another upgrade is already running (pid 4242)");
+      expect(existsSync(synced())).toBe(false);
+    } finally {
+      closeSync(held);
+    }
+  });
+
+  test("runs past a lock file nothing holds", () => {
+    writeFileSync(lock(), "4242\n");
+
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(existsSync(synced())).toBe(true);
+  });
+
+  test("lets go of the lock when it exits", () => {
+    runUpgrade();
+    closeSync(exclusive());
+  });
+});
+
+describe("the retired job", () => {
+  test("boots itself out before doing anything else", () => {
+    const calls = join(sandbox, "launchctl");
+    stub("launchctl", `#!/bin/sh\nprintf '%s\\n' "$*" > '${calls}'\n`);
+    syncStub(`#!/bin/sh\n: > '${join(sandbox, "synced")}'\n`);
+
+    const run = runUpgrade({ env: { XPC_SERVICE_NAME: "com.user.dotfiles-upgrade" } });
+    expect(run.status).toBe(0);
+    expect(readFileSync(calls, "utf8")).toBe(`bootout gui/${process.getuid?.()}/com.user.dotfiles-upgrade\n`);
+    expect(existsSync(join(sandbox, "synced"))).toBe(false);
   });
 });
 

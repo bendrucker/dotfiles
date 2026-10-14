@@ -11,12 +11,21 @@
 // comes from this file's own directory instead, so a run out of a dev worktree
 // uses that worktree's helpers while operating on the installed tree.
 
-import { realpathSync, writeSync } from "node:fs";
+import {
+  constants as fsConstants,
+  ftruncateSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  writeSync,
+} from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SKIP_ESCALATION } from "#jobs/sync-gate";
 import { logExcerpt, stripCsi } from "#jobs/excerpt";
 import { type Finding, reportFailure, reportFindings, reportSuccess } from "#jobs/report";
+import { stateDir } from "#jobs/state";
 import { UNREADABLE, VERDICTS } from "../credentials/bin/credential-audit";
 
 const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
@@ -25,6 +34,13 @@ const JOB = "dotfiles-upgrade";
 const SYNC_JOB = "dotfiles-sync";
 const DRIFT_JOB = "brew-drift";
 const CREDENTIALS_JOB = "credential-audit";
+const ROOT_CASKS_JOB = "brew-root-casks";
+
+// launchd keeps a loaded job firing after its plist is deleted and its label
+// disabled, so the job this one replaced kept running beside it and the two
+// `brew bundle` runs raced each other.
+// EXPIRES: 2027-04-08 every machine has run the nightly job since the move
+const RETIRED_LABEL = "com.user.dotfiles-upgrade";
 
 // A failure ends at the end of its log, and Things caps a note at 10,000
 // characters, so the tail is the part worth keeping.
@@ -321,9 +337,87 @@ function reportCredentials(home: string, listing: string): number {
   });
 }
 
-export async function run(): Promise<number> {
-  const home = process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles");
+// Holding back the upgrades that need sudo, since 3am has no terminal to read a
+// password from. The latch keys on the cask set, as drift's does.
+function holdBackRootCasks(home: string): number {
+  const check = runCapturingStdout([join(home, "scripts", "brew-root-casks")]);
+  if (check.status !== 0) {
+    log("warn", "could not check which cask upgrades need sudo");
+    return 0;
+  }
+  if (check.output === "") {
+    reportSuccess(ROOT_CASKS_JOB);
+    return 0;
+  }
 
+  const tokens = check.output.split("\n").map((line) => line.trim().split(/\s+/)[0]).filter(Boolean);
+  // A Brewfile may name a tap's cask either way, and bundle matches it as written.
+  const names = tokens.flatMap((token) => [token, token.split("/").at(-1)]);
+  process.env.HOMEBREW_BUNDLE_CASK_SKIP = [process.env.HOMEBREW_BUNDLE_CASK_SKIP, ...new Set(names)]
+    .filter(Boolean)
+    .join(" ");
+  log("warn", `Holding back cask upgrades that need sudo: ${tokens.join(" ")}`);
+  return reportFailure({
+    job: ROOT_CASKS_JOB,
+    title: "Cask upgrades need sudo",
+    command: `brew upgrade --cask ${tokens.join(" ")}`,
+    output: check.output,
+    revision: currentRevision(home),
+    extraMeta: "",
+    outputHeading: "Held Back",
+    fingerprint: driftFingerprint(tokens.join("\n")),
+  });
+}
+
+function lockFile(): string {
+  return join(stateDir(), `${JOB}.pid`);
+}
+
+// darwin's open(2) flag for an exclusive flock taken with the open.
+const O_EXLOCK = 0x20;
+
+// The pid of a live upgrade holding the lock, or null once this run holds it.
+// The kernel drops the lock when its holder exits, however it exits, so a
+// leftover file holds nothing. A lock that cannot be taken lets the run go
+// ahead, since missing a night costs more than the rare overlap.
+function acquireLock(): string | null {
+  if (process.platform !== "darwin") return null;
+  const path = lockFile();
+  let fd: number;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    fd = openSync(path, fsConstants.O_CREAT | fsConstants.O_RDWR | fsConstants.O_NONBLOCK | O_EXLOCK, 0o644);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EAGAIN")) return null;
+    try {
+      return readFileSync(path, "utf8").trim() || "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+  ftruncateSync(fd);
+  writeSync(fd, `${process.pid}\n`);
+  return null;
+}
+
+// Booting itself out ends this process, so nothing else may run first.
+function retire(): number {
+  log("warn", `Retiring ${RETIRED_LABEL}, which dev.mise.dotfiles-upgrade replaced`);
+  return runInherited(["launchctl", "bootout", `gui/${process.getuid?.() ?? 0}/${RETIRED_LABEL}`]);
+}
+
+export async function run(): Promise<number> {
+  if (process.env.XPC_SERVICE_NAME === RETIRED_LABEL) return retire();
+
+  const holder = acquireLock();
+  if (holder !== null) {
+    log("warn", `Another upgrade is already running (pid ${holder})`);
+    return 0;
+  }
+  return upgrade(process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles"));
+}
+
+async function upgrade(home: string): Promise<number> {
   const sync = await runTeed([
     SPIN,
     "--show-output",
@@ -359,6 +453,8 @@ export async function run(): Promise<number> {
   } else {
     reportSuccess(SYNC_JOB);
   }
+
+  const heldBack = holdBackRootCasks(home);
 
   log("info", "Running install");
   const installer = join(home, "scripts", "install");
@@ -421,6 +517,8 @@ export async function run(): Promise<number> {
   } else {
     reportSuccess(CREDENTIALS_JOB);
   }
+
+  if (heldBack !== 0) return heldBack;
 
   reportSuccess(JOB);
   if (syncFailure !== 0) {
