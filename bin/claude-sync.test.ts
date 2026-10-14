@@ -785,6 +785,56 @@ describe("updatePlugins", () => {
     expect(updatePlugins(out, process.env)).toBe(true);
     expect(readLog("plugin.log")).toContain("install gamma@first");
   });
+
+  describe("payload already matching its in-tree source", () => {
+    function writeTree(dir: string, files: Record<string, string>): void {
+      for (const [name, body] of Object.entries(files)) {
+        mkdirSync(join(dir, name, ".."), { recursive: true });
+        writeFileSync(join(dir, name), body);
+      }
+    }
+
+    function alphaSource(): string {
+      return join(sandbox, ".claude", "plugins", "marketplaces", "first", "plugins", "alpha");
+    }
+
+    function alphaPayload(): string {
+      return join(sandbox, ".claude", "plugins", "cache", "first", "alpha", "1.0.0");
+    }
+
+    test("skips the update", () => {
+      writeTree(alphaSource(), { "skills/a/SKILL.md": "one\n" });
+      writeTree(alphaPayload(), { "skills/a/SKILL.md": "one\n", ".in_use": "" });
+
+      expect(updatePlugins(out, process.env)).toBe(true);
+      expect(readLog("plugin.log")).not.toContain("update alpha@first");
+      expect(readLog("plugin.log")).toContain("update gamma@first");
+    });
+
+    test("updates a payload that differs", () => {
+      writeTree(alphaSource(), { "skills/a/SKILL.md": "two\n" });
+      writeTree(alphaPayload(), { "skills/a/SKILL.md": "one\n" });
+
+      expect(updatePlugins(out, process.env)).toBe(true);
+      expect(readLog("plugin.log")).toContain("update alpha@first");
+    });
+
+    // A failed npm install leaves the tree matching with no node_modules, and
+    // only another update retries the install.
+    test("updates a payload whose dependencies never installed", () => {
+      const manifest = JSON.stringify({ dependencies: { zod: "^4.0.0" } });
+      writeTree(alphaSource(), { "package.json": manifest });
+      writeTree(alphaPayload(), { "package.json": manifest });
+
+      expect(updatePlugins(out, process.env)).toBe(true);
+      expect(readLog("plugin.log")).toContain("update alpha@first");
+
+      mkdirSync(join(alphaPayload(), "node_modules"));
+      writeFileSync(join(sandbox, "plugin.log"), "");
+      expect(updatePlugins(out, process.env)).toBe(true);
+      expect(readLog("plugin.log")).not.toContain("update alpha@first");
+    });
+  });
 });
 
 describe("updateMarketplaces", () => {

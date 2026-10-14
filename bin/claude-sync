@@ -8,8 +8,9 @@
 // hooks, then brings the installed plugins to what the synced settings.json
 // declares: uninstall what it no longer names, refresh
 // every marketplace, and update every plugin installed at user scope, disabled
-// ones included. `claude plugin enable` does not update, so a plugin skipped
-// while disabled would come back stale months later.
+// ones included, unless its payload already matches its marketplace's tree.
+// `claude plugin enable` does not update, so a plugin skipped while disabled
+// would come back stale months later.
 //
 // The whole run is captured as it happens: a failure files a Things to-do built
 // from that log, on a latch keyed by which steps warned. The audit's own
@@ -22,8 +23,10 @@ import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  comparePayload,
   declaredMarketplaces,
   declaredPlugins,
+  inTreeSource,
   type InstalledPlugin,
   installedPlugins,
   knownMarketplaces,
@@ -31,6 +34,7 @@ import {
   pluginInventory,
   pluginMarketplaces,
   pluginSource,
+  splitPluginId,
 } from "#plugins";
 import {
   httpsEnv,
@@ -284,6 +288,7 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
   }
 
   let failed = 0;
+  let current = 0;
   for (const plugin of inventory.plugins) {
     if (plugin.id === "") continue;
 
@@ -306,6 +311,11 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
       continue;
     }
 
+    if (source.ok && payloadCurrent(plugin, source.source)) {
+      current += 1;
+      continue;
+    }
+
     log(out, "info", `Updating ${plugin.id}...`);
     if (!updatePlugin(out, plugin.id, env)) {
       log(out, "warn", `Failed to update ${plugin.id}`);
@@ -313,11 +323,47 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
     }
   }
 
+  if (current > 0) log(out, "info", `${current} plugin(s) already match their marketplace`);
   if (failed > 0) {
     log(out, "warn", `${failed} plugin(s) failed to update`);
     return false;
   }
   return true;
+}
+
+// A plugin its marketplace carries in-tree records the marketplace commit as its
+// version, so every commit bumps all of them and `claude plugin update` re-copies
+// payloads that did not change, at a second or more apiece. A payload matching
+// its source is what claude-plugin-audit calls current, so it skips the CLI. One
+// whose npm install never landed still goes through, since updating retries it.
+function payloadCurrent(plugin: InstalledPlugin, source: unknown): boolean {
+  if (typeof source !== "string") return false;
+
+  const sourceDir = inTreeSource(splitPluginId(plugin.id).marketplace, source);
+  if (!isDirectory(sourceDir)) return false;
+
+  const comparison = comparePayload(plugin.installPath, sourceDir);
+  return comparison.same && !comparison.failed && dependenciesInstalled(plugin.installPath);
+}
+
+function dependenciesInstalled(payload: string): boolean {
+  const manifest = join(payload, "package.json");
+  if (!isFile(manifest)) return true;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(manifest, "utf8"));
+  } catch {
+    return false;
+  }
+
+  const dependencies =
+    typeof parsed === "object" && parsed !== null && "dependencies" in parsed
+      ? parsed.dependencies
+      : undefined;
+  const declared =
+    typeof dependencies === "object" && dependencies !== null && Object.keys(dependencies).length > 0;
+  return !declared || isDirectory(join(payload, "node_modules"));
 }
 
 const UPDATE_ATTEMPTS = 2;

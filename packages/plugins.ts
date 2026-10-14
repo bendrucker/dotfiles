@@ -388,6 +388,70 @@ export function pluginSource(id: string): SourceLookup {
   return { ok: true, source };
 }
 
+// Neither side of the comparison owns these. .in_use and .orphaned_at are
+// runtime markers Claude Code writes into a payload, node_modules is an
+// install-time artifact, and .git and .gcs-sha are the provenance markers of a
+// marketplace whose whole tree is the plugin.
+const PAYLOAD_NOISE = [".in_use", ".orphaned_at", "node_modules", ".git", ".gcs-sha"];
+
+export interface Comparison {
+  same: boolean;
+  differences: string[];
+  // Kept apart from the message, because a comparison can fail without diff
+  // saying anything. Reading the message alone reported a payload as differing
+  // at no paths at all, which is a finding no update can clear.
+  failed: boolean;
+  error: string;
+}
+
+export function comparePayload(payload: string, sourceDir: string): Comparison {
+  const excludes = PAYLOAD_NOISE.map((marker) => `--exclude=${marker}`);
+
+  // Claude Code synthesizes .claude-plugin/plugin.json for a plugin that ships
+  // none, so on those the directory exists only on the payload side and is not
+  // drift. A plugin that does ship one stays covered.
+  if (!isDirectory(join(sourceDir, ".claude-plugin"))) excludes.push("--exclude=.claude-plugin");
+
+  let run;
+  try {
+    run = Bun.spawnSync({
+      cmd: ["diff", "-rq", ...excludes, payload, sourceDir],
+      env: process.env,
+      stdin: "ignore",
+    });
+  } catch (error) {
+    return { same: false, differences: [], failed: true, error: describe(error) };
+  }
+
+  // Both signals are needed. diff exits 2 on a path it could not read, but on
+  // macOS a dangling symlink gets it an error on stderr and exit 0, so a status
+  // check alone would call the payload current over a file nothing compared.
+  // What it could not read is kept off the differences either way: folding the
+  // two together made an unreadable file report as drift, which no update can
+  // clear.
+  const said = run.stderr.toString();
+  // A signalled diff reports no status of its own, and it compared no more of
+  // the tree than one that exited over a failure it could name.
+  const status = run.exitCode ?? 2;
+  if (status > 1 || said !== "") {
+    return { same: false, differences: [], failed: true, error: firstLine(said) };
+  }
+
+  return {
+    same: status === 0,
+    differences: run.stdout.toString().split("\n").filter((line) => line !== ""),
+    failed: false,
+    error: "",
+  };
+}
+
+// Where a marketplace that carries a plugin in its own tree keeps it. A
+// single-plugin marketplace whose whole tree is the plugin declares `.`, which
+// carries no `./` to strip and so resolves to the marketplace root.
+export function inTreeSource(marketplace: string, relative: string): string {
+  return join(claudePluginsDir(), "marketplaces", marketplace, relative.replace(/^\.\//, ""));
+}
+
 function parse(captured: string, what: string): unknown {
   try {
     return JSON.parse(captured.replace(BYTE_ORDER_MARK, ""));
@@ -426,6 +490,10 @@ function isDirectory(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function firstLine(text: string): string {
+  return text.split("\n")[0] ?? "";
 }
 
 function describe(error: unknown): string {
