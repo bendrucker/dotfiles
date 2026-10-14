@@ -1,0 +1,127 @@
+#!/usr/bin/env bun
+//
+// Usage: brew-root-casks
+//
+// Print each outdated cask whose upgrade needs root, as its token and the reason.
+// Silence means every pending cask upgrade can run without a password.
+//
+// An upgrade uninstalls the old version first, and Homebrew shells out to sudo
+// for whatever that stanza reaches outside the user's own files. The nightly job
+// has no terminal to read a password from, so bin/dotfiles-upgrade holds these
+// back from `brew bundle` and files them for a hand run. Self-updating casks are
+// left out, because the nightly job never upgrades them.
+
+import { accessSync, constants, existsSync, writeSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
+export interface Probe {
+  exists(path: string): boolean;
+  writable(path: string): boolean;
+}
+
+const filesystem: Probe = {
+  exists: existsSync,
+  writable(path) {
+    try {
+      accessSync(path, constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+};
+
+const REMOVED_PATHS = ["delete", "rmdir", "trash"];
+const SCRIPTS = ["early_script", "script"];
+
+function strings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.filter((item) => typeof item === "string");
+  return [];
+}
+
+function records(value: unknown): Record<string, unknown>[] {
+  return (Array.isArray(value) ? value : [value]).filter(
+    (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
+  );
+}
+
+function expandHome(path: string, home: string): string {
+  return path.startsWith("~/") ? join(home, path.slice(2)) : path;
+}
+
+function uninstallReason(stanza: Record<string, unknown>, probe: Probe, home: string): string | null {
+  const receipt = strings(stanza.pkgutil)[0];
+  if (receipt) return `forgets the pkg receipt ${receipt}`;
+  if (strings(stanza.kext).length > 0) return "unloads a kernel extension";
+
+  for (const key of SCRIPTS) {
+    if (records(stanza[key]).some((script) => script.sudo === true)) return `runs its ${key} as root`;
+  }
+
+  for (const label of strings(stanza.launchctl)) {
+    if (probe.exists(`/Library/LaunchDaemons/${label}.plist`)) return `removes the system service ${label}`;
+  }
+
+  for (const key of REMOVED_PATHS) {
+    for (const path of strings(stanza[key])) {
+      // A glob doesn't name a single path to test, and Homebrew expands it itself.
+      if (path.includes("*")) continue;
+      const target = expandHome(path, home);
+      if (probe.exists(target) && !probe.writable(dirname(target))) return `removes ${target}`;
+    }
+  }
+  return null;
+}
+
+// The first reason the cask's upgrade cannot run without sudo, or null.
+export function rootReason(artifacts: unknown, probe: Probe = filesystem, home = homedir()): string | null {
+  for (const artifact of records(artifacts)) {
+    if ("pkg" in artifact) return "installs a pkg";
+    for (const stanza of records(artifact.uninstall)) {
+      const reason = uninstallReason(stanza, probe, home);
+      if (reason !== null) return reason;
+    }
+  }
+  return null;
+}
+
+function brewJson(args: string[]): unknown {
+  const child = Bun.spawnSync({
+    cmd: ["brew", ...args],
+    // What the nightly job's `brew bundle` would upgrade, which leaves the
+    // self-updating casks to their own updater.
+    env: { ...process.env, HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS: "1" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  if (child.exitCode !== 0) throw new Error(`brew ${args[0]} exited ${child.exitCode}`);
+  return JSON.parse(child.stdout.toString());
+}
+
+function casks(json: unknown): Record<string, unknown>[] {
+  return typeof json === "object" && json !== null && "casks" in json ? records(json.casks) : [];
+}
+
+export function main(): number {
+  let outdated: string[];
+  try {
+    outdated = casks(brewJson(["outdated", "--cask", "--json=v2"])).flatMap((cask) => strings(cask.name));
+    if (outdated.length === 0) return 0;
+
+    const lines = casks(brewJson(["info", "--cask", "--json=v2", ...outdated])).flatMap((cask) => {
+      const reason = rootReason(cask.artifacts);
+      const token = strings(cask.token)[0];
+      return reason !== null && token ? [`${token}  ${reason}`] : [];
+    });
+    if (lines.length > 0) writeSync(1, `${lines.join("\n")}\n`);
+    return 0;
+  } catch (error) {
+    writeSync(2, `brew-root-casks: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+if (import.meta.main) process.exit(main());

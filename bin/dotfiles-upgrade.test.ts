@@ -163,6 +163,10 @@ function driftStub(body: string): void {
   writeExecutable(join(home, "scripts", "brew-drift"), body);
 }
 
+function rootCasksStub(body: string): void {
+  writeExecutable(join(home, "scripts", "brew-root-casks"), body);
+}
+
 const MACHINE = "Testbox";
 
 interface Run {
@@ -171,7 +175,7 @@ interface Run {
   stderr: string;
 }
 
-function runUpgrade(options: { path?: string; args?: string[] } = {}) {
+function runUpgrade(options: { path?: string; args?: string[]; env?: Record<string, string> } = {}) {
   const result = Bun.spawnSync({
     cmd: [process.execPath, SCRIPT, ...(options.args ?? [])],
     env: {
@@ -180,6 +184,7 @@ function runUpgrade(options: { path?: string; args?: string[] } = {}) {
       DOTFILES_HOME: home,
       XDG_STATE_HOME: state,
       THINGS_DATABASE: join(sandbox, "things.sqlite"),
+      ...options.env,
     },
     stdin: "ignore",
     stdout: "pipe",
@@ -245,6 +250,7 @@ beforeEach(() => {
   syncStub("#!/bin/sh\nexit 0\n");
   installStub("#!/bin/sh\nexit 0\n");
   driftStub("#!/bin/sh\nexit 0\n");
+  rootCasksStub("#!/bin/sh\nexit 0\n");
 });
 
 afterEach(() => {
@@ -617,6 +623,108 @@ describe("the drift check", () => {
 
     runUpgrade();
     expect(latch("dotfiles-upgrade")).toBe("ok\n");
+  });
+});
+
+describe("cask upgrades that need sudo", () => {
+  const CHARLES = "charles  removes /Library/PrivilegedHelperTools/com.xk72.Charles.ProxyHelper";
+  const skipped = () => join(sandbox, "skipped");
+
+  beforeEach(() => {
+    installStub(`#!/bin/sh\nprintf '%s' "$HOMEBREW_BUNDLE_CASK_SKIP" > '${skipped()}'\n`);
+  });
+
+  // `sudo: a terminal is required` failed the whole install for one cask.
+  test("holds them back from brew bundle and files them without failing the run", () => {
+    rootCasksStub(`#!/bin/sh\necho '${CHARLES}'\necho 'tailscale-app  installs a pkg'\n`);
+
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(readFileSync(skipped(), "utf8")).toBe("charles tailscale-app");
+    const [todo] = filedTodos();
+    expect(field(todo, "title")).toContain("Cask upgrades need sudo");
+    expect(field(todo, "notes")).toContain("brew upgrade --cask charles tailscale-app");
+    expect(field(todo, "notes")).toContain(CHARLES);
+    expect(latch("dotfiles-upgrade")).toBe("ok\n");
+  });
+
+  test("stays quiet while the same casks wait", () => {
+    rootCasksStub(`#!/bin/sh\necho '${CHARLES}'\n`);
+
+    runUpgrade();
+    runUpgrade();
+    expect(filedTodos().length).toBe(1);
+  });
+
+  test("skips nothing and clears the latch when none need sudo", () => {
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(readFileSync(skipped(), "utf8")).toBe("");
+    expect(latch("brew-root-casks")).toBe("ok\n");
+  });
+
+  test("installs everything when the check cannot run", () => {
+    rootCasksStub("#!/bin/sh\necho 'charles  installs a pkg'\nexit 1\n");
+
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("could not check which cask upgrades need sudo");
+    expect(readFileSync(skipped(), "utf8")).toBe("");
+    expect(filedTodos().length).toBe(0);
+  });
+});
+
+describe("overlapping runs", () => {
+  const lock = () => join(state, "dotfiles", "dotfiles-upgrade.pid");
+  const synced = () => join(sandbox, "synced");
+
+  beforeEach(() => {
+    syncStub(`#!/bin/sh\n: > '${synced()}'\n`);
+    mkdirSync(dirname(lock()), { recursive: true });
+  });
+
+  // Two `brew bundle` runs at once fail on each other's keg locks and
+  // half-poured bottles.
+  test("leaves a live upgrade to finish", () => {
+    writeFileSync(lock(), `${process.pid}\n`);
+    stub("ps", "#!/bin/sh\necho 'bun /Users/me/.dotfiles/bin/dotfiles-upgrade'\n");
+
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain(`Another upgrade is already running (pid ${process.pid})`);
+    expect(existsSync(synced())).toBe(false);
+    expect(readFileSync(lock(), "utf8")).toBe(`${process.pid}\n`);
+  });
+
+  test.each<{ name: string; ps: string }>([
+    { name: "a process that has exited", ps: "exit 1" },
+    { name: "a pid since taken by something else", ps: "echo vim" },
+  ])("takes over a lock left by $name", ({ ps }) => {
+    writeFileSync(lock(), `${process.pid}\n`);
+    stub("ps", `#!/bin/sh\n${ps}\n`);
+
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(existsSync(synced())).toBe(true);
+  });
+
+  test("releases the lock when it finishes", () => {
+    runUpgrade();
+    expect(existsSync(synced())).toBe(true);
+    expect(existsSync(lock())).toBe(false);
+  });
+});
+
+describe("the retired job", () => {
+  test("boots itself out before doing anything else", () => {
+    const calls = join(sandbox, "launchctl");
+    stub("launchctl", `#!/bin/sh\nprintf '%s\\n' "$*" > '${calls}'\n`);
+    syncStub(`#!/bin/sh\n: > '${join(sandbox, "synced")}'\n`);
+
+    const run = runUpgrade({ env: { XPC_SERVICE_NAME: "com.user.dotfiles-upgrade" } });
+    expect(run.status).toBe(0);
+    expect(readFileSync(calls, "utf8")).toBe(`bootout gui/${process.getuid?.()}/com.user.dotfiles-upgrade\n`);
+    expect(existsSync(join(sandbox, "synced"))).toBe(false);
   });
 });
 

@@ -113,6 +113,8 @@ That variable decides whether Homebrew attempts one at all. A cask declaring `au
 
 Turning the default back off leaves those casks to their own updater. Nothing else moves: a cask without the flag upgrades as before, and a first install runs a branch the variable is never read on, so a newly enrolled machine missing an app still gets it. Keying on the flag rather than a list of tokens covers an app the MDM starts pushing the day it happens, and leaves no file naming `google-chrome`.
 
+A cask without `auto_updates` can still need root to upgrade, because the upgrade runs the old version's `uninstall` stanza first. Charles deletes its privileged helper from `/Library/PrivilegedHelperTools`, and a pkg cask forgets its receipt. Before the install, `bin/dotfiles-upgrade` runs `scripts/brew-root-casks`, which names each outdated cask whose upgrade would reach a root-owned path, a pkg receipt, a system launch daemon, or a script run as root. Those tokens go into `HOMEBREW_BUNDLE_CASK_SKIP`, and a Things to-do names the `brew upgrade --cask` to run by hand, latched on the cask set the way drift is. The check reads the machine as it stands: a helper the cask has not installed yet is not one its upgrade has to remove.
+
 `--adopt` does not reach this. `brew bundle` already passes it on every cask it installs, so asking for it in a Brewfile changes nothing, and `brew upgrade` has no such switch: the upgrade branch runs `brew upgrade --cask <token>` with no arguments at all and drops whatever `args:` asked for. Adoption answers for the first install and nothing after it. `HOMEBREW_CASK_OPTS` carries only the `--*dir` options, `--language`, `--require-sha` and `--no-binaries`.
 
 The root Brewfile additionally evaluates `~/Brewfile.local` when present. Use it for machine-specific packages (e.g. corporate-mandated tools) so they're managed by `brew bundle` without being flagged by `brew bundle cleanup`. See [Machine-Local Configuration](#machine-local-configuration) for the other `.local` include points.
@@ -255,6 +257,7 @@ The audit reports and never removes, for the same reason `scripts/brew-drift` do
 - The `dotfiles-upgrade` LaunchAgent in `macos/mise.dotfiles-upgrade.toml` runs `bin/dotfiles-upgrade` daily at 3am
 - Syncs dotfiles, runs `scripts/install`, runs `brew cleanup`, reports undeclared packages
 - Files a Things to-do on failure, one per cause per machine (see [Failure Reporting](#failure-reporting))
+- Holds a pidfile lock in the state directory, so a second run that starts while one is live exits rather than racing its `brew bundle`. A run under the retired `com.user.dotfiles-upgrade` label boots itself out instead, since launchd kept that job loaded after its plist was deleted
 
 ### Failure Reporting
 
