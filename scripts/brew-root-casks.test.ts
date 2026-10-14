@@ -118,11 +118,12 @@ describe("brew-root-casks", () => {
 
   test("names each outdated cask that needs root and why", () => {
     brew(
-      { formulae: [], casks: [{ name: "charles" }, { name: "raycast" }] },
+      { formulae: [], casks: [{ name: "charles" }, { name: "raycast" }, { name: "widget" }] },
       {
         casks: [
-          { token: "charles", artifacts: [{ pkg: ["Charles.pkg"] }] },
-          { token: "raycast", artifacts: [{ app: ["Raycast.app"] }] },
+          { token: "charles", full_token: "charles", artifacts: [{ pkg: ["Charles.pkg"] }] },
+          { token: "raycast", full_token: "raycast", artifacts: [{ app: ["Raycast.app"] }] },
+          { token: "widget", full_token: "acme/tap/widget", artifacts: [{ pkg: ["Widget.pkg"] }] },
         ],
       },
     );
@@ -130,8 +131,8 @@ describe("brew-root-casks", () => {
     const result = run([script], { path: [box.bin] });
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("charles  installs a pkg\n");
-    expect(box.read("calls")).toBe("outdated --cask --json=v2\ninfo --cask --json=v2 charles raycast\n");
+    expect(result.stdout).toBe("charles  installs a pkg\nacme/tap/widget  installs a pkg\n");
+    expect(box.read("calls")).toBe("outdated --cask --json=v2\ninfo --cask --json=v2 charles raycast widget\n");
   });
 
   test("prints nothing and skips the lookup when no cask is outdated", () => {

@@ -11,7 +11,7 @@
 // comes from this file's own directory instead, so a run out of a dev worktree
 // uses that worktree's helpers while operating on the installed tree.
 
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SKIP_ESCALATION } from "#jobs/sync-gate";
@@ -343,7 +343,9 @@ function holdBackRootCasks(home: string): number {
   }
 
   const tokens = check.output.split("\n").map((line) => line.trim().split(/\s+/)[0]).filter(Boolean);
-  process.env.HOMEBREW_BUNDLE_CASK_SKIP = [process.env.HOMEBREW_BUNDLE_CASK_SKIP, ...tokens]
+  // A Brewfile may name a tap's cask either way, and bundle matches it as written.
+  const names = tokens.flatMap((token) => [token, token.split("/").at(-1)]);
+  process.env.HOMEBREW_BUNDLE_CASK_SKIP = [process.env.HOMEBREW_BUNDLE_CASK_SKIP, ...new Set(names)]
     .filter(Boolean)
     .join(" ");
   log("warn", `Holding back cask upgrades that need sudo: ${tokens.join(" ")}`);
@@ -367,7 +369,7 @@ function lockFile(): string {
 // holder has to still be an upgrade for the lock to stand. A live pid whose
 // command cannot be read counts as one.
 function isUpgrade(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false;
   try {
     process.kill(pid, 0);
   } catch {
@@ -391,10 +393,25 @@ function isUpgrade(pid: number): boolean {
 // more than the rare overlap.
 function acquireLock(): number | null {
   const path = lockFile();
+  // Linking a written file into place keeps a racing run from reading it empty.
+  const staged = `${path}.${process.pid}`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(staged, `${process.pid}\n`);
+  } catch {
+    return null;
+  }
+  try {
+    return contendLock(path, staged);
+  } finally {
+    rmSync(staged, { force: true });
+  }
+}
+
+function contendLock(path: string, staged: string): number | null {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, `${process.pid}\n`, { flag: "wx" });
+      linkSync(staged, path);
       return null;
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) return null;

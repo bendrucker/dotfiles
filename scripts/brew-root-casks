@@ -106,14 +106,13 @@ function casks(json: unknown): Record<string, unknown>[] {
 }
 
 export function main(): number {
-  let outdated: string[];
   try {
-    outdated = casks(brewJson(["outdated", "--cask", "--json=v2"])).flatMap((cask) => strings(cask.name));
+    const outdated = casks(brewJson(["outdated", "--cask", "--json=v2"])).flatMap((cask) => strings(cask.name));
     if (outdated.length === 0) return 0;
 
     const lines = casks(brewJson(["info", "--cask", "--json=v2", ...outdated])).flatMap((cask) => {
       const reason = rootReason(cask.artifacts);
-      const token = strings(cask.token)[0];
+      const token = strings(cask.full_token)[0] ?? strings(cask.token)[0];
       return reason !== null && token ? [`${token}  ${reason}`] : [];
     });
     if (lines.length > 0) writeSync(1, `${lines.join("\n")}\n`);

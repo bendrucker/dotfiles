@@ -635,14 +635,14 @@ describe("cask upgrades that need sudo", () => {
   });
 
   test("holds them back from brew bundle and files them without failing the run", () => {
-    rootCasksStub(`#!/bin/sh\necho '${CHARLES}'\necho 'tailscale-app  installs a pkg'\n`);
+    rootCasksStub(`#!/bin/sh\necho '${CHARLES}'\necho 'acme/tap/widget  installs a pkg'\n`);
 
     const run = runUpgrade();
     expect(run.status).toBe(0);
-    expect(readFileSync(skipped(), "utf8")).toBe("charles tailscale-app");
+    expect(readFileSync(skipped(), "utf8")).toBe("charles acme/tap/widget widget");
     const [todo] = filedTodos();
     expect(field(todo, "title")).toContain("Cask upgrades need sudo");
-    expect(field(todo, "notes")).toContain("brew upgrade --cask charles tailscale-app");
+    expect(field(todo, "notes")).toContain("brew upgrade --cask charles acme/tap/widget");
     expect(field(todo, "notes")).toContain(CHARLES);
     expect(latch("dotfiles-upgrade")).toBe("ok\n");
   });
