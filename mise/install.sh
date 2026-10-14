@@ -14,10 +14,20 @@ cd "$(dirname "$0")"/..
 # project config without a prompt. Most declare only [dotfiles] or [bootstrap]
 # and have nothing to install.
 echo "› mise install"
+typeset -A repair_checked
 for file in */mise.toml */mise.*.toml(N); do
   mise trust "$file" --yes 2>/dev/null
   [[ $file == */mise.toml ]] && grep -q '^\[tools' "$file" || continue
   (cd "${file:h}" && mise install)
+  # mise finds an install's executables through the registry metadata built
+  # into it, and an upgrade can move where that metadata looks. `mise install`
+  # still counts the old install as present, so no shim is made for it.
+  mise --cd "${file:h}" ls --current --installed --no-header | while read -r tool version _; do
+    [[ -n ${repair_checked[$tool@$version]} ]] && continue
+    repair_checked[$tool@$version]=1
+    [[ -n $(mise --cd "${file:h}" bin-paths "$tool@$version" 2>/dev/null) ]] ||
+      mise --cd "${file:h}" install --force "$tool@$version"
+  done
 done
 
 # Activate mise shims so that installers can use any shell

@@ -79,24 +79,18 @@ jobs:
     # caches are invisible to other PRs, so a PR's save holds GBs no other run
     # can read, and pushing the repo past its 10 GB cap evicts the main caches
     # every PR restores from.
-    # mise reads each install through the registry metadata bundled with the
-    # binary, and an install that metadata no longer describes isn't shimmed
-    # while `mise install` still calls it installed. Bootstrap pours the mise
-    # Homebrew offers now, so that version keys what this run may restore.
-    - name: Key mise installs
-      id: mise-key
-      if: ${{ github.event_name != 'schedule' }}
-      run: echo "prefix=mise-$RUNNER_OS-$RUNNER_ARCH-$(brew info --json=v2 --formula mise | jq -r '.formulae[0].versions.stable')-" >> "$GITHUB_OUTPUT"
     - name: Restore mise installs
       id: mise
       if: ${{ github.event_name != 'schedule' }}
       uses: actions/cache/restore@v6
       with:
         # The installs are native binaries, so a runner of another architecture
-        # under the same OS label must not restore them.
-        key: ${{ steps.mise-key.outputs.prefix }}${{ hashFiles('**/mise.toml') }}
+        # under the same OS label must not restore them. Matches by prefix only,
+        # since the save keys on what bootstrap left installed.
+        key: mise-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/mise.toml') }}-
         restore-keys: |
-          ${{ steps.mise-key.outputs.prefix }}
+          mise-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/mise.toml') }}-
+          mise-${{ runner.os }}-${{ runner.arch }}-
         path: |
           ~/.local/share/mise
     # The cache holds the whole prefix, staged at /opt/homebrew-cached so the
@@ -289,12 +283,14 @@ jobs:
           label=$(plutil -extract Label raw "$plist" 2>/dev/null) || continue
           launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
         done
-    # Keyed on the mise that wrote the installs, which is what the next
-    # restore's version has to match.
-    - name: Key mise installs by the installed mise
+    # A repaired install moves its executables, so keying on their paths saves
+    # once per repair rather than once per mise release.
+    - name: Key mise installs by their executables
       id: mise-installed
       if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-      run: echo "key=mise-$RUNNER_OS-$RUNNER_ARCH-$(mise --version | cut -d' ' -f1)-${{ hashFiles('**/mise.toml') }}" >> "$GITHUB_OUTPUT"
+      run: |
+        hash=$(mise bin-paths | shasum -a 256 | cut -c1-64)
+        echo "key=mise-$RUNNER_OS-$RUNNER_ARCH-${{ hashFiles('**/mise.toml') }}-$hash" >> "$GITHUB_OUTPUT"
     - name: Save mise installs
       if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.mise.outputs.cache-matched-key != steps.mise-installed.outputs.key }}
       uses: actions/cache/save@v6
