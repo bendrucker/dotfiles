@@ -336,6 +336,8 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
 // payloads that did not change, at a second or more apiece. A payload matching
 // its source is what claude-plugin-audit calls current, so it skips the CLI. One
 // whose npm install never landed still goes through, since updating retries it.
+const NPM_LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json"];
+
 function payloadCurrent(plugin: InstalledPlugin, source: unknown): boolean {
   if (typeof source !== "string") return false;
 
@@ -346,9 +348,12 @@ function payloadCurrent(plugin: InstalledPlugin, source: unknown): boolean {
   return comparison.same && !comparison.failed && dependenciesInstalled(plugin.installPath);
 }
 
+// Claude Code installs a plugin's dependencies with `npm ci`, which needs a
+// lockfile, so a payload shipping none was never meant to have node_modules.
 function dependenciesInstalled(payload: string): boolean {
   const manifest = join(payload, "package.json");
-  if (!isFile(manifest)) return true;
+  const locked = NPM_LOCKFILES.some((name) => isFile(join(payload, name)));
+  if (!isFile(manifest) || !locked) return true;
 
   let parsed: unknown;
   try {

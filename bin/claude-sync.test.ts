@@ -822,15 +822,29 @@ describe("updatePlugins", () => {
     // A failed npm install leaves the tree matching with no node_modules, and
     // only another update retries the install.
     test("updates a payload whose dependencies never installed", () => {
-      const manifest = JSON.stringify({ dependencies: { zod: "^4.0.0" } });
-      writeTree(alphaSource(), { "package.json": manifest });
-      writeTree(alphaPayload(), { "package.json": manifest });
+      const files = {
+        "package.json": JSON.stringify({ dependencies: { zod: "^4.0.0" } }),
+        "package-lock.json": "{}",
+      };
+      writeTree(alphaSource(), files);
+      writeTree(alphaPayload(), files);
 
       expect(updatePlugins(out, process.env)).toBe(true);
       expect(readLog("plugin.log")).toContain("update alpha@first");
 
       mkdirSync(join(alphaPayload(), "node_modules"));
       writeFileSync(join(sandbox, "plugin.log"), "");
+      expect(updatePlugins(out, process.env)).toBe(true);
+      expect(readLog("plugin.log")).not.toContain("update alpha@first");
+    });
+
+    // With no lockfile Claude Code never runs `npm ci`, so no node_modules ever
+    // arrives and waiting for one would send the plugin to the CLI every run.
+    test("skips a payload declaring dependencies without a lockfile", () => {
+      const manifest = JSON.stringify({ dependencies: { zod: "^4.0.0" } });
+      writeTree(alphaSource(), { "package.json": manifest });
+      writeTree(alphaPayload(), { "package.json": manifest });
+
       expect(updatePlugins(out, process.env)).toBe(true);
       expect(readLog("plugin.log")).not.toContain("update alpha@first");
     });
