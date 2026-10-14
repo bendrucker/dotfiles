@@ -19,7 +19,14 @@
 
 import { readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { claudePluginsDir, pluginInventory, pluginSource, splitPluginId } from "#plugins";
+import {
+  claudePluginsDir,
+  comparePayload,
+  inTreeSource,
+  pluginInventory,
+  pluginSource,
+  splitPluginId,
+} from "#plugins";
 
 const USAGE = [
   "Usage: claude-plugin-audit",
@@ -50,12 +57,6 @@ export interface Outcome {
 
 const CURRENT: Check = { verdict: "current", detail: "" };
 
-// Neither side of the comparison owns these. .in_use and .orphaned_at are
-// runtime markers Claude Code writes into a payload, node_modules is an
-// install-time artifact, and .git and .gcs-sha are the provenance markers of a
-// marketplace whose whole tree is the plugin.
-const PAYLOAD_NOISE = [".in_use", ".orphaned_at", "node_modules", ".git", ".gcs-sha"];
-
 // Both shapes are matched without regard to case, because a commit that arrived
 // spelled any other way is the same commit, and every one of them is lowercased
 // at the boundary so the comparisons downstream never straddle two spellings.
@@ -65,57 +66,6 @@ const ABBREVIATED_COMMIT = /^[0-9a-f]{7,40}$/i;
 // Long enough for a raw-content GET on a working connection, short enough that a
 // host that has gone away cannot hold up the nightly job behind it.
 const MANIFEST_TIMEOUT_MS = 5000;
-
-interface Comparison {
-  same: boolean;
-  differences: string[];
-  // Kept apart from the message, because a comparison can fail without diff
-  // saying anything. Reading the message alone reported a payload as differing
-  // at no paths at all, which is a finding no update can clear.
-  failed: boolean;
-  error: string;
-}
-
-function comparePayload(payload: string, sourceDir: string): Comparison {
-  const excludes = PAYLOAD_NOISE.map((marker) => `--exclude=${marker}`);
-
-  // Claude Code synthesizes .claude-plugin/plugin.json for a plugin that ships
-  // none, so on those the directory exists only on the payload side and is not
-  // drift. A plugin that does ship one stays covered.
-  if (!isDirectory(join(sourceDir, ".claude-plugin"))) excludes.push("--exclude=.claude-plugin");
-
-  let run;
-  try {
-    run = Bun.spawnSync({
-      cmd: ["diff", "-rq", ...excludes, payload, sourceDir],
-      env: process.env,
-      stdin: "ignore",
-    });
-  } catch (error) {
-    return { same: false, differences: [], failed: true, error: describe(error) };
-  }
-
-  // Both signals are needed. diff exits 2 on a path it could not read, but on
-  // macOS a dangling symlink gets it an error on stderr and exit 0, so a status
-  // check alone would call the payload current over a file nothing compared.
-  // What it could not read is kept off the differences either way: folding the
-  // two together made an unreadable file report as drift, which no update can
-  // clear.
-  const said = run.stderr.toString();
-  // A signalled diff reports no status of its own, and it compared no more of
-  // the tree than one that exited over a failure it could name.
-  const status = run.exitCode ?? 2;
-  if (status > 1 || said !== "") {
-    return { same: false, differences: [], failed: true, error: firstLine(said) };
-  }
-
-  return {
-    same: status === 0,
-    differences: run.stdout.toString().split("\n").filter((line) => line !== ""),
-    failed: false,
-    error: "",
-  };
-}
 
 // Reduce diff -rq's output to the paths it names, relative to the payload. The
 // absolute pair diff prints is noise beside the plugin id the row already
@@ -300,14 +250,7 @@ export async function auditPlugin(id: string, payload: string): Promise<Check> {
 }
 
 function auditRelativePlugin(marketplace: string, relative: string, payload: string): Check {
-  // A single-plugin marketplace whose whole tree is the plugin declares `.`,
-  // which carries no `./` to strip and so resolves to the marketplace root.
-  const sourceDir = join(
-    claudePluginsDir(),
-    "marketplaces",
-    marketplace,
-    relative.replace(/^\.\//, ""),
-  );
+  const sourceDir = inTreeSource(marketplace, relative);
 
   if (!isDirectory(sourceDir)) {
     return { verdict: "unknown", detail: `marketplace source ${relative} is missing` };
@@ -715,10 +658,6 @@ function readText(path: string): string {
   }
 }
 
-function firstLine(text: string): string {
-  return text.split("\n")[0] ?? "";
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -737,10 +676,6 @@ function isFile(path: string): boolean {
   } catch {
     return false;
   }
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 // bin/claude-sync reads the report over a pipe, where a write can only take

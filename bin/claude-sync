@@ -8,8 +8,9 @@
 // hooks, then brings the installed plugins to what the synced settings.json
 // declares: uninstall what it no longer names, refresh
 // every marketplace, and update every plugin installed at user scope, disabled
-// ones included. `claude plugin enable` does not update, so a plugin skipped
-// while disabled would come back stale months later.
+// ones included, unless its payload already matches its marketplace's tree.
+// `claude plugin enable` does not update, so a plugin skipped while disabled
+// would come back stale months later.
 //
 // The whole run is captured as it happens: a failure files a Things to-do built
 // from that log, on a latch keyed by which steps warned. The audit's own
@@ -22,8 +23,12 @@ import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  claudePluginsDir,
+  comparePayload,
+  declaredMarketplacePins,
   declaredMarketplaces,
   declaredPlugins,
+  inTreeSource,
   type InstalledPlugin,
   installedPlugins,
   knownMarketplaces,
@@ -31,6 +36,7 @@ import {
   pluginInventory,
   pluginMarketplaces,
   pluginSource,
+  splitPluginId,
 } from "#plugins";
 import {
   httpsEnv,
@@ -120,11 +126,53 @@ export function syncRepo(out: Output, repoDir: string): boolean {
 // whether the failure fails the run.
 export function updateMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
   log(out, "info", "Updating marketplaces...");
-  if (claude(out, ["plugin", "marketplace", "update"], env) !== 0) {
+
+  const refresh = marketplacesOffPin();
+  let failed = false;
+  if (refresh === undefined) {
+    failed = claude(out, ["plugin", "marketplace", "update"], env) !== 0;
+  } else {
+    for (const name of refresh) {
+      if (claude(out, ["plugin", "marketplace", "update", name], env) !== 0) failed = true;
+    }
+  }
+
+  if (failed) {
     log(out, "warn", "marketplace update had issues, continuing");
     return false;
   }
   return true;
+}
+
+// A marketplace pinned to a tag or a commit never moves, so a clone already on
+// its pin has nothing to fetch, and each refresh costs a few seconds of network.
+// Undefined when none can be skipped, which keeps the CLI's own refresh of
+// everything, the built-in directory included.
+function marketplacesOffPin(): string[] | undefined {
+  const known = knownMarketplaces();
+  if (!known.ok) return undefined;
+
+  const pins = declaredMarketplacePins();
+  const refresh = known.names.filter((name) => !onPin(name, pins.get(name)));
+  return refresh.length === known.names.length ? undefined : refresh;
+}
+
+// Only a tag or a full commit counts, since a branch pin moves upstream. A
+// declaration bumped to a new tag doesn't resolve in the clone yet.
+function onPin(name: string, ref: string | undefined): boolean {
+  if (ref === undefined) return false;
+
+  const clone = join(claudePluginsDir(), "marketplaces", name);
+  const pinned = /^[0-9a-f]{40}$/i.test(ref) ? ref : `refs/tags/${ref}`;
+  const head = gitQuiet(["rev-parse", "HEAD"], clone);
+  const target = gitQuiet(["rev-parse", "--verify", "--quiet", `${pinned}^{commit}`], clone);
+
+  return (
+    head.status === 0 &&
+    target.status === 0 &&
+    head.stdout.trim() !== "" &&
+    head.stdout.trim() === target.stdout.trim()
+  );
 }
 
 // The ids a prune must leave installed, or why the set could not be settled.
@@ -284,6 +332,7 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
   }
 
   let failed = 0;
+  let current = 0;
   for (const plugin of inventory.plugins) {
     if (plugin.id === "") continue;
 
@@ -306,6 +355,11 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
       continue;
     }
 
+    if (source.ok && payloadCurrent(plugin, source.source)) {
+      current += 1;
+      continue;
+    }
+
     log(out, "info", `Updating ${plugin.id}...`);
     if (!updatePlugin(out, plugin.id, env)) {
       log(out, "warn", `Failed to update ${plugin.id}`);
@@ -313,11 +367,53 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
     }
   }
 
+  if (current > 0) log(out, "info", `${current} plugin(s) already match their marketplace`);
   if (failed > 0) {
     log(out, "warn", `${failed} plugin(s) failed to update`);
     return false;
   }
   return true;
+}
+
+// A plugin its marketplace carries in-tree records the marketplace commit as its
+// version, so every commit bumps all of them and `claude plugin update` re-copies
+// payloads that did not change, at a second or more apiece. A payload matching
+// its source is what claude-plugin-audit calls current, so it skips the CLI. One
+// whose npm install never landed still goes through, since updating retries it.
+const NPM_LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json"];
+
+function payloadCurrent(plugin: InstalledPlugin, source: unknown): boolean {
+  if (typeof source !== "string") return false;
+
+  const sourceDir = inTreeSource(splitPluginId(plugin.id).marketplace, source);
+  if (!isDirectory(sourceDir)) return false;
+
+  const comparison = comparePayload(plugin.installPath, sourceDir);
+  return comparison.same && !comparison.failed && dependenciesInstalled(plugin.installPath);
+}
+
+// Claude Code installs a plugin's dependencies with `npm ci`, which needs a
+// lockfile, so a payload shipping none was never meant to have node_modules.
+// An interrupted install can leave node_modules partial, so each declared
+// package has to be there.
+function dependenciesInstalled(payload: string): boolean {
+  const manifest = join(payload, "package.json");
+  const locked = NPM_LOCKFILES.some((name) => isFile(join(payload, name)));
+  if (!isFile(manifest) || !locked) return true;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(manifest, "utf8").replace(/^\uFEFF/, ""));
+  } catch {
+    return false;
+  }
+
+  const dependencies =
+    typeof parsed === "object" && parsed !== null && "dependencies" in parsed
+      ? parsed.dependencies
+      : undefined;
+  const declared = typeof dependencies === "object" && dependencies !== null ? Object.keys(dependencies) : [];
+  return declared.every((name) => isFile(join(payload, "node_modules", name, "package.json")));
 }
 
 const UPDATE_ATTEMPTS = 2;
