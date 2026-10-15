@@ -9,20 +9,19 @@
 # under `env -i`, so the pin has to live in each clone's own config rather than
 # the environment.
 #
-# A clone that cannot be pinned is a warning, never a failure: `brew bundle`
-# runs next under `set -e`, and a stale tap is no reason to skip it.
+# Always exits 0: `brew bundle` runs next under `set -e`, and a stale tap is no
+# reason to skip it. git_https_pin warns when a pin does not take.
 
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=scripts/shell/git-sync.sh
 . scripts/shell/git-sync.sh
 
-repository=$(brew --repository) || exit 1
+repository=$(brew --repository) || exit 0
 
 for dir in "$repository" "$repository"/Library/Taps/*/*; do
   url=$(git -C "$dir" config --get remote.origin.url 2>/dev/null) || continue
   [[ "$url" == "$GIT_HTTPS_BASE"* ]] || continue
-  git_https_pin "$dir" origin "$url" "$(git -C "$dir" ls-remote --get-url origin)" ||
-    gum log --level warn "Could not pin $dir to HTTPS"
+  git_https_pin "$dir" origin "$url" "$(git -C "$dir" ls-remote --get-url origin)"
 done
 
 exit 0
