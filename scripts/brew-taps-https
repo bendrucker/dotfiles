@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Usage: brew-taps-https
+#
+# Hold Homebrew's own clone and every tap clone on anonymous HTTPS. `brew
+# update` fetches them with plain git, so an org `insteadOf` rule sending
+# https://github.com/ to SSH puts the 3am fetch on a key Secretive will not sign
+# while the Mac is locked. The fetch fails with only a warning, and `brew
+# bundle` carries on against formulae that stopped moving. Homebrew runs git
+# under `env -i`, so the pin has to live in each clone's own config rather than
+# the environment.
+
+cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=scripts/shell/git-sync.sh
+. scripts/shell/git-sync.sh
+
+repository=$(brew --repository) || exit 1
+
+for dir in "$repository" "$repository"/Library/Taps/*/*; do
+  [[ -d "$dir/.git" ]] || continue
+  git_https_remote "$dir"
+done
