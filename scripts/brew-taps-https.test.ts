@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { must, repoRoot, run, sandbox, stubGum, type Sandbox } from "#harness";
 
@@ -43,6 +44,16 @@ test("pins Homebrew and every tap past an SSH insteadOf rule", () => {
   expect(r.status).toBe(0);
   expect(fetchUrl(brew)).toBe("https://github.com/Homebrew/brew");
   expect(fetchUrl(tap)).toBe("https://github.com/rjyo/homebrew-moshi");
+});
+
+test("writes nothing without an SSH insteadOf rule", () => {
+  clone(box.path("brew"), "https://github.com/Homebrew/brew");
+  const before = readFileSync(box.path("brew", ".git", "config"), "utf8");
+
+  const r = run([script], { path: [box.bin], env: { ...env, GIT_CONFIG_GLOBAL: "/dev/null" } });
+
+  expect(r.status).toBe(0);
+  expect(readFileSync(box.path("brew", ".git", "config"), "utf8")).toBe(before);
 });
 
 test("skips a tap directory that is not a clone", () => {
