@@ -3,7 +3,7 @@
 #
 # Exit 0 where another manager owns this machine's applications, which tells
 # scripts/brew-leave-self-updating to leave self-updating casks alone. See the
-# Externally Managed Casks section of CLAUDE.md.
+# homebrew/CLAUDE.md.
 
 [ "$(uname -s)" = "Darwin" ] || exit 1
 

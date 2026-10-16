@@ -141,7 +141,7 @@ describe("findings", () => {
     const matches = [
       "scripts/lint-expired:11:#   EXPIRES: 2020-01-01 an example",
       "scripts/lint-expired.test.ts:1:# EXPIRES: 2020-01-01 a fixture",
-      "CLAUDE.md:270:Give it an `EXPIRES:` marker.",
+      "migrations/CLAUDE.md:6:Add an `EXPIRES: <date>` comment.",
     ];
     expect(findings(matches, TODAY)).toEqual([]);
   });

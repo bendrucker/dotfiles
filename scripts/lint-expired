@@ -34,10 +34,10 @@ const USAGE = [
 export const MARKER = "EXPIRES:";
 
 // The files that document the marker rather than carry one, which would
-// otherwise match themselves. CLAUDE.md is here for the same reason as this
-// script: it explains the marker to a reader, and prose describing a rule is
-// not a cleanup with a date to keep.
-const SKIPPED = new Set(["scripts/lint-expired", "scripts/lint-expired.test.ts", "CLAUDE.md"]);
+// otherwise match themselves. migrations/CLAUDE.md is here for the same reason
+// as this script: it explains the marker to a reader, and prose describing a
+// rule is not a cleanup with a date to keep.
+const SKIPPED = new Set(["scripts/lint-expired", "scripts/lint-expired.test.ts", "migrations/CLAUDE.md"]);
 
 const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
