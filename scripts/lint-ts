@@ -15,16 +15,18 @@
 // the output back to the real ones. The mirror entries are symlinks, so the
 // content and every line number are the file's own.
 
-import { mkdirSync, rmdirSync, rmSync, statSync, symlinkSync } from "node:fs";
-import { dirname, extname, join, resolve } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
 const USAGE = [
-  "usage: lint-ts [--root=<path>] [oxlint-args...]",
+  "usage: lint-ts [--root=<path>] [oxlint-args...] [-- <path>...]",
   "",
   "Lint the repo with oxlint, including the extensionless bun executables",
   "that oxlint's own file discovery cannot see. Arguments are passed through.",
   "",
   "  --root=<path>  lint this tree instead of the one this script sits in",
+  "  -- <path>...   lint only these, skipping any that are not TypeScript or",
+  "                 that git ignores. Naming .oxlintrc.json lints the whole tree",
 ].join("\n");
 
 const ROOT_FLAG = "--root=";
@@ -62,6 +64,82 @@ export function isBunScript(name: string, firstLine: string): boolean {
   return extname(name) === "" && SHEBANG.test(firstLine);
 }
 
+async function readsAsBunScript(root: string, path: string): Promise<boolean> {
+  // A submodule is listed by its gitlink path, which stats as a directory,
+  // and a symlink whose target is gone stats as nothing at all.
+  if (!statSync(join(root, path), { throwIfNoEntry: false })?.isFile()) return false;
+  const head = await Bun.file(join(root, path)).slice(0, 200).text();
+  return isBunScript(path, head.split("\n")[0] ?? "");
+}
+
+// The extensions oxlint discovers on its own. Naming only paths outside them
+// makes oxlint exit 1 with "No files found to lint".
+const LINTABLE = /\.[cm]?[jt]sx?$/;
+
+// The config reaches every file, so a change to it is a change to all of them.
+const CONFIG = ".oxlintrc.json";
+
+// What a run limited to named paths lints, split the way the two passes take it.
+export interface Selection {
+  files: string[];
+  scripts: string[];
+}
+
+// The directory is resolved rather than the path, so a tracked symlink keeps
+// its own name, and both sides agree when the tree sits under a symlinked
+// /tmp. A path whose directory is gone resolves to nothing.
+function within(root: string, path: string): string | undefined {
+  try {
+    const absolute = resolve(path);
+    return relative(realpathSync(root), join(realpathSync(dirname(absolute)), basename(absolute)));
+  } catch {
+    return undefined;
+  }
+}
+
+// oxlint lints a path it is handed by name even where its own discovery would
+// skip it, so a named path goes through only when git lists it as tracked or as
+// untracked and not ignored. Outside a checkout there is nothing to filter by.
+function listed(root: string, paths: string[]): Set<string> {
+  if (paths.length === 0) return new Set();
+  const run = Bun.spawnSync({
+    cmd: ["git", "--literal-pathspecs", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", ...paths],
+    cwd: root,
+    env: process.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (run.exitCode !== 0) return new Set(paths);
+  return new Set(run.stdout.toString().split("\0").filter(Boolean));
+}
+
+function outside(named: string): boolean {
+  return named === ".." || named.startsWith("../");
+}
+
+// Paths resolve against the working directory and come back relative to root.
+// Undefined means the whole tree.
+export async function select(root: string, paths: string[]): Promise<Selection | undefined> {
+  const named: string[] = [];
+  for (const path of paths) {
+    const relative = within(root, path);
+    if (relative === undefined || outside(relative)) continue;
+    if (relative === CONFIG) return undefined;
+    if (LINTABLE.test(relative) || extname(relative) === "") named.push(relative);
+  }
+
+  const visible = listed(root, named);
+  const selection: Selection = { files: [], scripts: [] };
+  for (const path of named.filter((path) => visible.has(path))) {
+    // git still lists a tracked file that was deleted, and oxlint fails on it.
+    if (LINTABLE.test(path)) {
+      if (statSync(join(root, path), { throwIfNoEntry: false })?.isFile()) selection.files.push(path);
+    } else if (await readsAsBunScript(root, path)) selection.scripts.push(path);
+  }
+  return selection;
+}
+
 export async function bunScripts(root: string): Promise<string[]> {
   const listed = Bun.spawnSync({
     cmd: ["git", "ls-files", "-z"],
@@ -76,12 +154,7 @@ export async function bunScripts(root: string): Promise<string[]> {
   const paths = listed.stdout.toString().split("\0").filter(Boolean);
   const found: string[] = [];
   for (const path of paths) {
-    if (extname(path) !== "") continue;
-    // A submodule is listed by its gitlink path, which stats as a directory,
-    // and a symlink whose target is gone stats as nothing at all.
-    if (!statSync(join(root, path), { throwIfNoEntry: false })?.isFile()) continue;
-    const head = await Bun.file(join(root, path)).slice(0, 200).text();
-    if (isBunScript(path, head.split("\n")[0] ?? "")) found.push(path);
+    if (extname(path) === "" && (await readsAsBunScript(root, path))) found.push(path);
   }
   return found.sort();
 }
@@ -143,7 +216,15 @@ function oxlintBin(root: string): string {
   return path;
 }
 
-function oxlint(bin: string, root: string, args: string[], mirror?: Mirror): number {
+// Where a run's output goes. The command line passes the process streams, and
+// the Claude Code hooks collect it to hand back to the session.
+export type Write = (stream: "stdout" | "stderr", text: string) => void;
+
+export interface LintOptions {
+  install?: boolean;
+}
+
+function oxlint(bin: string, root: string, args: string[], write: Write, mirror?: Mirror): number {
   const run = Bun.spawnSync({
     cmd: [bin, ...args],
     cwd: root,
@@ -152,9 +233,68 @@ function oxlint(bin: string, root: string, args: string[], mirror?: Mirror): num
     stdout: "pipe",
     stderr: "pipe",
   });
-  process.stdout.write(rewrite(run.stdout.toString(), mirror));
-  process.stderr.write(rewrite(run.stderr.toString(), mirror));
+  write("stdout", rewrite(run.stdout.toString(), mirror));
+  write("stderr", rewrite(run.stderr.toString(), mirror));
   return run.exitCode;
+}
+
+function pinned(root: string): boolean {
+  try {
+    const installed = JSON.parse(readFileSync(join(root, "node_modules/oxlint/package.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    return installed.version === manifest.devDependencies?.oxlint;
+  } catch {
+    return false;
+  }
+}
+
+// bun install checks the registry on every call, at up to a second and a half,
+// so it runs only when the installed oxlint is not the pinned one.
+function install(root: string, write: Write): boolean {
+  if (pinned(root)) return true;
+  const run = Bun.spawnSync({
+    cmd: [process.execPath, "install", "--frozen-lockfile"],
+    cwd: root,
+    env: process.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (run.exitCode === 0) return true;
+  write("stderr", `bun install failed\n${run.stdout}${run.stderr}`);
+  return false;
+}
+
+export async function lint(root: string, flags: string[], write: Write, options: LintOptions = {}): Promise<number> {
+  const separator = flags.indexOf("--");
+  const rest = separator === -1 ? flags : flags.slice(0, separator);
+  const selection = separator === -1 ? undefined : await select(root, flags.slice(separator + 1));
+  if (selection?.files.length === 0 && selection.scripts.length === 0) return 0;
+  if (options.install && !install(root, write)) return 1;
+
+  const bin = oxlintBin(root);
+  const scripts = selection?.scripts ?? (await bunScripts(root));
+  const dir = mirrorDir();
+
+  // The ignore covers every mirror, this run's and any a killed run left
+  // behind, so neither pass depends on the other having finished.
+  // Both passes run whatever the first one reports, so a single invocation
+  // names every violation rather than one pass worth at a time.
+  const repo =
+    selection === undefined
+      ? oxlint(bin, root, [...rest, `--ignore-pattern=${MIRROR}/**`], write)
+      : selection.files.length === 0
+        ? 0
+        : oxlint(bin, root, [...rest, ...selection.files], write);
+  if (scripts.length === 0) return repo === 0 ? 0 : 1;
+
+  try {
+    link(root, dir, scripts);
+    const bins = oxlint(bin, root, [...rest, dir], write, { dir, scripts });
+    return repo === 0 && bins === 0 ? 0 : 1;
+  } finally {
+    clean(root, dir);
+  }
 }
 
 async function main(args: string[]): Promise<number> {
@@ -165,26 +305,8 @@ async function main(args: string[]): Promise<number> {
 
   const named = args.find((arg) => arg.startsWith(ROOT_FLAG))?.slice(ROOT_FLAG.length);
   const root = resolve(named ?? join(import.meta.dir, ".."));
-  const rest = args.filter((arg) => !arg.startsWith(ROOT_FLAG));
-
-  const bin = oxlintBin(root);
-  const scripts = await bunScripts(root);
-  const dir = mirrorDir();
-
-  // The ignore covers every mirror, this run's and any a killed run left
-  // behind, so neither pass depends on the other having finished.
-  // Both passes run whatever the first one reports, so a single invocation
-  // names every violation rather than one pass worth at a time.
-  const repo = oxlint(bin, root, [...rest, `--ignore-pattern=${MIRROR}/**`]);
-  if (scripts.length === 0) return repo === 0 ? 0 : 1;
-
-  try {
-    link(root, dir, scripts);
-    const bins = oxlint(bin, root, [...rest, dir], { dir, scripts });
-    return repo === 0 && bins === 0 ? 0 : 1;
-  } finally {
-    clean(root, dir);
-  }
+  const flags = args.filter((arg) => !arg.startsWith(ROOT_FLAG));
+  return lint(root, flags, (stream, text) => process[stream].write(text));
 }
 
 if (import.meta.main) process.exit(await main(process.argv.slice(2)));

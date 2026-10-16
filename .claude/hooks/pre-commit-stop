@@ -1,44 +1,81 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env bun
 
-hook_dir="$(cd "$(dirname "$0")" && pwd)"
-source "$hook_dir/pre-commit"
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { at, cacheRoot, check, field, payload, type Runner, runner } from "./pre-commit.ts";
 
-input=$(cat)
-transcript_path=$(jq -r '.transcript_path // empty' <<< "$input" 2>/dev/null) || transcript_path=""
-cwd=$(jq -r '.cwd // empty' <<< "$input" 2>/dev/null) || cwd=""
+const EDITORS = new Set(["Edit", "Write", "MultiEdit"]);
 
-if [[ -z "$transcript_path" || ! -f "$transcript_path" ]]; then
-  exit 0
-fi
+function edits(line: string): string[] {
+  let entry: unknown;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return [];
+  }
+  const content = at(entry, "message", "content");
+  if (field(entry, "type") !== "assistant" || !Array.isArray(content)) return [];
+  return content.flatMap((block: unknown) => {
+    const path = field(block, "input", "file_path");
+    const name = field(block, "name");
+    return field(block, "type") === "tool_use" && name !== undefined && EDITORS.has(name) && path !== undefined ? [path] : [];
+  });
+}
 
-# Collect file_path inputs from Edit/Write/MultiEdit tool calls, keeping only
-# files that still exist and live under the project directory.
-existing_files=()
-while IFS= read -r f; do
-  [[ -n "$f" && -f "$f" ]] || continue
-  [[ -n "$cwd" && "$f" != "$cwd"/* ]] && continue
-  existing_files+=("$f")
-done < <(
-  jq -Rr '
-    try fromjson catch empty
-    | select(.type == "assistant") | .message.content[]?
-    | select(.type == "tool_use" and (.name == "Edit" or .name == "Write" or .name == "MultiEdit"))
-    | .input.file_path // empty
-  ' "$transcript_path" 2>/dev/null | sort -u
-)
+function modified(path: string): bigint | undefined {
+  const stat = statSync(path, { bigint: true, throwIfNoEntry: false });
+  return stat?.isFile() ? stat.mtimeNs : undefined;
+}
 
-if [[ ${#existing_files[@]} -eq 0 ]]; then
-  exit 0
-fi
+// Every file the session edited that still exists under the project directory
+// and changed since the stamp.
+function candidates(transcript: string, cwd: string | undefined, stamp: string | undefined): string[] {
+  const since = stamp === undefined ? undefined : modified(stamp);
+  const paths = new Set(readFileSync(transcript, "utf8").split("\n").flatMap(edits));
+  return [...paths].sort().filter((path) => {
+    const changed = modified(path);
+    if (changed === undefined) return false;
+    if (cwd !== undefined && !path.startsWith(`${cwd}/`)) return false;
+    return since === undefined || changed > since;
+  });
+}
 
-# First pass: let fixers (trailing-whitespace, end-of-file-fixer, etc.) auto-fix.
-$runner run --files "${existing_files[@]}" > /dev/null 2>&1 || true
+// The transcript names every file the session has edited, so without a stamp a
+// late Stop in a long session rechecks files an earlier one already passed. It
+// is touched before the check and kept only when the check passes, so an edit
+// made after that point is newer and a blocked Stop leaves its files to recheck.
+function begin(session: string | undefined): string | undefined {
+  if (session === undefined || !/^[A-Za-z0-9_-]+$/.test(session)) return undefined;
+  const dir = join(cacheRoot, "pre-commit-stop");
+  mkdirSync(dir, { recursive: true });
+  const stamp = join(dir, session);
+  writeFileSync(`${stamp}.next`, "");
+  return stamp;
+}
 
-# Second pass: check for remaining issues after auto-fix.
-output=$($runner run --files "${existing_files[@]}" 2>&1) && exit 0
+// A fixer that rewrites a file fails the run, so a first pass that succeeds
+// left every file as it was and a second would only repeat it.
+async function blocked(run: Runner, paths: string[]): Promise<string | undefined> {
+  if ((await check(run, paths)).passed) return undefined;
+  const result = await check(run, paths);
+  return result.passed ? undefined : result.output;
+}
 
-jq -n --arg reason "$runner found issues that could not be auto-fixed:
+async function main(): Promise<void> {
+  const input = await payload();
+  const run = runner();
+  const transcript = field(input, "transcript_path");
+  if (run === undefined || transcript === undefined || modified(transcript) === undefined) return;
 
-$output" \
-  '{decision: "block", reason: $reason}'
+  const stamp = begin(field(input, "session_id"));
+  const paths = candidates(transcript, field(input, "cwd"), stamp);
+  const output = paths.length === 0 ? undefined : await blocked(run, paths);
+  if (output === undefined) {
+    if (stamp !== undefined) renameSync(`${stamp}.next`, stamp);
+    return;
+  }
+  const reason = `${run.name} found issues that could not be auto-fixed:\n\n${output.trimEnd()}`;
+  console.log(JSON.stringify({ decision: "block", reason }));
+}
+
+await main();

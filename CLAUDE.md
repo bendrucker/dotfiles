@@ -86,7 +86,7 @@ The test's name and location pick its CI job:
 
 - `*.test.ts` run in the `bun` job on a bare checkout. Stub everything the script under test calls.
 - `*.integration.test.ts` run in the `bootstrap` job on Linux and macOS after a full install, and read installed config through its links. Add no guard that lets one pass on an unbootstrapped machine. Skip only for a genuinely optional dependency, as `bin/glyph-scan.integration.test.ts` does.
-- Tests under `.claude/skills/` run in the `skill-tests` job, whatever their suffix.
+- Tests under `.claude/skills/` and `.claude/hooks/` run in the `skill-tests` job, whatever their suffix.
 - `scripts/lint-ts.test.ts` runs in `lint:ts`, and the `bun` job ignores it by path.
 
 On a PR, `bootstrap` installs main, installs the PR head over it, then installs again. The last two installs must leave identical links, packages, and tools, so every install step must converge.
