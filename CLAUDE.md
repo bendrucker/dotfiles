@@ -36,7 +36,7 @@ Bun resolves `imports` from the root `package.json` alone, so a specifier resolv
 
 ### Linting TypeScript
 
-oxlint is the repo's one devDependency, pinned in `package.json` and tracked by Renovate's bun manager like any other. The `lint` job and the pre-commit hook both run `bun install --frozen-lockfile` before `scripts/lint-ts --deny-warnings`.
+oxlint is the repo's one devDependency, pinned in `package.json` and tracked by Renovate's bun manager like any other. The `lint` job and the pre-commit hook both run `bun install --frozen-lockfile` before `scripts/lint-ts --deny-warnings`. The Claude Code hooks in `.claude/hooks/` skip that hook and pass only the edited paths, as `scripts/lint-ts -- <path>...`, installing only when the installed oxlint is not the pin.
 
 That install is what makes the pin real. `scripts/lint-ts` spawns `node_modules/.bin/oxlint` and stops with the path it wanted when nothing is there. A bare `bunx oxlint` instead fetches the latest release and ignores the version in `package.json` without saying so, which is a silent wrong-version run rather than a failure, and it spends a few hundred milliseconds re-resolving the package on every call.
 
