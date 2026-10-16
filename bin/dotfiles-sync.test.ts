@@ -14,6 +14,18 @@ let origin: string;
 
 const parentPath = process.env.PATH;
 
+// The user's global git config can sign commits through an agent a sandboxed
+// run can't reach, so every git here, the script's included, ignores it.
+const env = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "Spec",
+  GIT_AUTHOR_EMAIL: "spec@example.test",
+  GIT_COMMITTER_NAME: "Spec",
+  GIT_COMMITTER_EMAIL: "spec@example.test",
+};
+
 interface Run {
   status: number;
   stdout: string;
@@ -24,7 +36,7 @@ function sync(...args: string[]): Run {
   const spawned = Bun.spawnSync({
     cmd: [script, ...args],
     env: {
-      ...process.env,
+      ...env,
       PATH: `${stubs}:${parentPath}`,
       DOTFILES_HOME: repo,
       RELOAD_LOG: join(sandbox, "reload.log"),
@@ -66,7 +78,7 @@ function readLog(name: string): string {
 }
 
 function run(cmd: string[]): void {
-  const result = Bun.spawnSync({ cmd, env: process.env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const result = Bun.spawnSync({ cmd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   if (result.exitCode !== 0) {
     throw new Error(`${cmd.join(" ")} exited ${result.exitCode}: ${result.stderr.toString()}`);
   }
@@ -78,9 +90,6 @@ function pushCommit(rule?: string): void {
   const upstream = join(sandbox, "upstream");
   rmSync(upstream, { recursive: true, force: true });
   run(["git", "clone", "-q", origin, upstream]);
-  run(["git", "-C", upstream, "config", "user.email", "spec@example.test"]);
-  run(["git", "-C", upstream, "config", "user.name", "Spec"]);
-  run(["git", "-C", upstream, "config", "commit.gpgsign", "false"]);
   if (rule !== undefined) writeFileSync(join(upstream, ".gitignore"), `${rule}\n`);
   writeFileSync(join(upstream, "landed.txt"), "landed\n");
   run(["git", "-C", upstream, "add", "-A"]);
@@ -93,7 +102,7 @@ function pushCommit(rule?: string): void {
 function addSubmodule({ initialized }: { initialized: boolean }): void {
   const sub = join(sandbox, "sub");
   run(["git", "init", "-q", "-b", "main", sub]);
-  run(["git", "-C", sub, "-c", "user.email=spec@example.test", "-c", "user.name=Spec", "commit", "-q", "--allow-empty", "-m", "sub"]);
+  run(["git", "-C", sub, "commit", "-q", "--allow-empty", "-m", "sub"]);
   run(["git", "-C", repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub"]);
   run(["git", "-C", repo, "commit", "-q", "-m", "submodule"]);
   run(["git", "-C", repo, "push", "-q", "origin", "main"]);
@@ -138,9 +147,6 @@ beforeEach(() => {
 
   run(["git", "init", "-q", "--bare", "-b", "main", origin]);
   run(["git", "init", "-q", "-b", "main", repo]);
-  run(["git", "-C", repo, "config", "user.email", "spec@example.test"]);
-  run(["git", "-C", repo, "config", "user.name", "Spec"]);
-  run(["git", "-C", repo, "config", "commit.gpgsign", "false"]);
   // So an example can take the executable bit off a tracked script without the
   // gate seeing a modified file.
   run(["git", "-C", repo, "config", "core.fileMode", "false"]);
@@ -270,7 +276,7 @@ test("exits 1 and notifies when the sync itself fails", () => {
 
   const result = Bun.spawnSync({
     cmd: [script],
-    env: { ...process.env, PATH: `${stubs}:${parentPath}`, DOTFILES_HOME: notARepo },
+    env: { ...env, PATH: `${stubs}:${parentPath}`, DOTFILES_HOME: notARepo },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -298,7 +304,7 @@ test("downgrades a failing reload to a warning", () => {
   const result = Bun.spawnSync({
     cmd: [script],
     env: {
-      ...process.env,
+      ...env,
       PATH: `${stubs}:${parentPath}`,
       DOTFILES_HOME: repo,
       RELOAD_LOG: join(sandbox, "reload.log"),
