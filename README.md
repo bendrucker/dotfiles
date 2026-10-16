@@ -177,7 +177,7 @@ Each reload self-gates, exiting 0 without work when its tool isn't installed or 
 
 ### Tests
 
-Everything runs under `bun test`, shell scripts and TypeScript alike. A test sits next to what it covers and is named for it, so [`scripts/install-trust.test.ts`](scripts/install-trust.test.ts) covers `scripts/install-trust`. [`#harness`](packages/harness/index.ts) holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners reporting a script's status alongside both its streams.
+Everything runs under `bun test`, shell scripts and TypeScript alike. A test sits next to what it covers and is named for it, so [`scripts/install-taps.test.ts`](scripts/install-taps.test.ts) covers `scripts/install-taps`. [`#harness`](packages/harness/index.ts) holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners reporting a script's status alongside both its streams.
 
 A test's name and where it sits decide where it runs. Most tests stub whatever the script under test calls and run on a bare checkout. The `*.integration.test.ts` files instead read the config this repo installed, through its symlinks, so [CI runs those](.github/workflows/test.yml) on Linux and macOS after bootstrap. [`git/config.integration.test.ts`](git/config.integration.test.ts) is one: it asks the installed global config what `pull.rebase` is set to.
 

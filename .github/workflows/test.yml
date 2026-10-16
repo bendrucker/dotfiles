@@ -154,6 +154,9 @@ jobs:
         ln -sfn "$RUNNER_TEMP/main" "$HOME/.dotfiles"
         unset DOTFILES_TRACE_DIR
         "$RUNNER_TEMP/main/scripts/bootstrap"
+        # install-symlinks resolved ~/.dotfiles to main's worktree. A machine's
+        # conf.d names ~/.dotfiles itself, so its mise hooks follow a sync.
+        ln -sfn "$HOME/.dotfiles" "$HOME/.config/mise/conf.d"
         ln -sfn "$GITHUB_WORKSPACE" "$HOME/.dotfiles"
       env: &bootstrap-env
         # scripts/shell/trace.sh records a span per step here, for the report
@@ -202,6 +205,13 @@ jobs:
         snapshot > "$RUNNER_TEMP/after"
         diff -u "$RUNNER_TEMP/before" "$RUNNER_TEMP/after"
       env: *bootstrap-env
+    # A tap line missing `trusted: true` goes untrusted, and a formula named on
+    # the command line loads regardless, so only a load of one nobody named,
+    # like a `conflicts_with` target, would otherwise notice.
+    - name: Check that Brewfile taps stay trusted
+      run: |
+        brew tap-info --json $(brew bundle list --tap --file=Brewfile) |
+          jq -r '[.[] | select(.trusted | not) | .name] | if length > 0 then "untrusted: \(join(" "))\n" | halt_error(1) else empty end'
     - name: Report bootstrap trace
       if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
       env:

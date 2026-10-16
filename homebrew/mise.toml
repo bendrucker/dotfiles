@@ -10,8 +10,8 @@ set -e
 cd ..
 . scripts/shell/trace.sh
 
-trace_begin install-trust
-./scripts/install-trust
+trace_begin install-taps
+./scripts/install-taps
 trace_end
 
 trace_begin install-cask-variants
