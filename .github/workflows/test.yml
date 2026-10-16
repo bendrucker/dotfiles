@@ -182,7 +182,12 @@ jobs:
       env: *bootstrap-env
     - name: Check that skipped formulae still resolve
       if: ${{ matrix.pass == 'fresh' && env.HOMEBREW_DOTFILES_CORE_ONLY }}
+      # brew reads tap trust from $XDG_CONFIG_HOME/homebrew, where
+      # scripts/install-trust wrote it, and from ~/.homebrew when that is unset.
+      # A formula whose conflicts_with names another formula in its tap loads
+      # that one too, which needs the trust.
       run: |
+        export XDG_CONFIG_HOME="$HOME/.config"
         comm -13 <(brew bundle list --formula --file=Brewfile | sort) \
           <(env -u HOMEBREW_DOTFILES_CORE_ONLY brew bundle list --formula --file=Brewfile | sort) |
           xargs brew info --formula >/dev/null
