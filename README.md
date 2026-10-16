@@ -92,7 +92,7 @@ The same job dumps a per-file [`zprof`](https://zsh.sourceforge.io/Doc/Release/Z
 
 * **No subshell forks during startup.** Each `$(...)` costs ~15-50ms. `brew --prefix` is banned in favor of the already-exported `$HOMEBREW_PREFIX`.
 * **`compinit -C`** skips the completion security audit on every startup. The full audit runs during the nightly upgrade instead.
-* **Completions defer** via the `zle-line-init` hook above. Because the deferral filter matches `completion.zsh` exactly, a file named `completions.zsh` (plural) would load eagerly and bypass it. CI [greps for that mistake](.github/workflows/test.yml) and fails.
+* **Completions defer** via the `zle-line-init` hook above. Because the deferral filter matches `completion.zsh` exactly, a file named `completions.zsh` (plural) would load eagerly and bypass it. CI's `lint` job [greps for that mistake](system/mise.toml) and fails, along with any `.zsh` file outside a topic directory, which the one-level globs would skip.
 
 `bin/bench-startup` measures the current worktree, or compares two.
 
