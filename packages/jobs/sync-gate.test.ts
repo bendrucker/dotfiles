@@ -27,7 +27,7 @@ import {
   stripNewlines,
   syncNotify,
 } from "#jobs/sync-gate";
-import { repoRoot, writeStub as writeLauncher } from "#harness";
+import { repoRoot, writeStub } from "#harness";
 import { fixture } from "#harness/fixture";
 import { landCommit } from "#harness/git";
 import type { Capture, SpawnOptions } from "#jobs/output";
@@ -117,8 +117,8 @@ function recording(): Capture {
   };
 }
 
-function writeStub(name: string, body: string): void {
-  writeLauncher(join(stubs, name), body);
+function stub(name: string, body: string): void {
+  writeStub(join(stubs, name), body);
 }
 
 function git(...args: string[]): { status: number; stdout: string } {
@@ -187,23 +187,12 @@ beforeEach(() => {
   mkdirSync(stubs);
   process.env.XDG_STATE_HOME = join(sandbox, "state");
 
-  // The spin branch runs the command after the separator, and log echoes the
-  // message to stderr, where the real gum writes it. choose answers with
-  // whatever the example wants picked, standing in for the keypress.
-  writeStub(
+  // choose answers with whatever the example wants picked, standing in for the
+  // keypress.
+  stub(
     "gum",
     [
       'case "$1" in',
-      "  spin)",
-      "    shift",
-      '    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done',
-      '    [ "$1" = "--" ] && shift',
-      '    exec "$@"',
-      "    ;;",
-      "  log)",
-      '    for last; do :; done',
-      '    printf "%s\\n" "$last" >&2',
-      "    ;;",
       "  choose)",
       "    shift",
       "    # An option gum was never offered cannot be chosen. Without this the",
@@ -223,7 +212,7 @@ beforeEach(() => {
     ].join("\n"),
   );
 
-  writeStub(
+  stub(
     "gh",
     [
       `printf '%s\\n' "$*" >>"${join(sandbox, "gh.log")}"`,
@@ -233,7 +222,7 @@ beforeEach(() => {
 
   // `hostname -s` and `hostname` differ on a real machine, and the guard has to
   // cover both.
-  writeStub(
+  stub(
     "hostname",
     ['[ "$1" = "-s" ] && { printf "spechost\\n"; exit 0; }', 'printf "spechost.example.test\\n"'].join(
       "\n",
@@ -243,7 +232,7 @@ beforeEach(() => {
   // macOS keeps the Cocoa-facing name separately, and a user can set it to
   // something the POSIX hostname does not contain. HostName is commonly unset,
   // which scutil reports as a failure with nothing on stdout.
-  writeStub(
+  stub(
     "scutil",
     [
       'case "$2" in',
@@ -254,8 +243,8 @@ beforeEach(() => {
     ].join("\n"),
   );
 
-  writeStub("osascript", `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
-  writeStub("open", `printf 'todo\\n' >>"${join(sandbox, "todos")}"`);
+  stub("osascript", `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
+  stub("open", `printf 'todo\\n' >>"${join(sandbox, "todos")}"`);
 
   process.env.PATH = `${stubs}:${environment.PATH}`;
   delete process.env.GUM_CHOICE;
@@ -348,7 +337,7 @@ test("openPr refuses a change that arrives once the tree is staged", () => {
 
   const realGit = Bun.which("git", { PATH: environment.PATH });
   if (realGit === null) throw new Error("git is not on PATH");
-  writeStub(
+  stub(
     "git",
     [
       'for a in "$@"; do',

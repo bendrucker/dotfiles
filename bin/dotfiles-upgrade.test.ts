@@ -246,8 +246,8 @@ beforeEach(() => {
   for (const utility of UTILITIES) symlinkSync(utility, join(stubs, basename(utility)));
 
   stub("gum", GUM_STUB);
-  // The only stub naming its sandbox, so the only one whose content is new to
-  // the exec check every time. The launcher keeps that content constant.
+  // The only shared stub naming its sandbox, so the only one whose content is
+  // new to the exec check every time. The launcher keeps that content constant.
   writeStub(join(stubs, "open"), `printf '%s\\n' "$2" >> '${opened}'`);
   stub("osascript", "#!/bin/sh\nexit 0\n");
   // Unstubbed, a `brew cleanup` here runs against this machine's Homebrew cache.
