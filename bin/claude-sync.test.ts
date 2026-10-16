@@ -84,6 +84,12 @@ function recording(): Capture {
       keep(text);
     },
     run(cmd, options) {
+      // Answered as the gum stub answers it, the message alone on stderr. The
+      // job logs a few lines per step, and a spawn for each is most of a test.
+      if (cmd[0] === "gum" && cmd[1] === "log") {
+        keep(`${cmd.at(-1)}\n`);
+        return 0;
+      }
       const result = spawn(cmd, options);
       keep(result.stdout);
       keep(result.stderr);
