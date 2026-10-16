@@ -8,7 +8,7 @@ This is a personal dotfiles repository for macOS with Linux compatibility. The r
 - **topic/**: Each topic is a directory (e.g., `git/`, `zsh/`, `docker/`)
   - `*.zsh`: Shell configuration files loaded by zsh
   - `path.zsh`: Loaded first for `$PATH` setup
-  - `completion.zsh`: Deferred until after first prompt renders (via `precmd` hook)
+  - `completion.zsh`: Deferred until after the first prompt draws (via a one-shot `zle-line-init` hook)
   - `install.sh`: Topic installer for non-symlink setup (e.g., plugin managers, system config)
   - `reload.sh`: Tells an already-running program to re-read its config (see [Config Reloads](#config-reloads))
   - `Brewfile`: Homebrew packages for the topic
@@ -395,13 +395,13 @@ Shell startup time is CI-gated (<1s). Follow these rules to avoid regressions:
 
 - **Never call `brew --prefix`** in `.zsh` files — use `$HOMEBREW_PREFIX` (already exported by `brew shellenv` in `zshenv`)
 - **Never call `$(command ...)` or `` `command` `` during startup** unless guarded — subshell forks are ~15-50ms each
-- **All completions are deferred** — `completion.zsh` files are sourced via a one-shot `precmd` hook after the first prompt, not during startup. Put completion registrations (e.g., `eval "$(tool completion)"`, `compdef`) in `completion.zsh`, never in regular `.zsh` files.
+- **All completions are deferred.** `completion.zsh` files are sourced by a one-shot `zle-line-init` hook, which runs after zle draws the first prompt and before it reads a key, so a Tab typed ahead still completes. `precmd` would not defer anything, since it runs before the prompt draws. A shell with no terminal (`$TTY` empty) never starts zle and falls back to `precmd`. Put completion registrations (e.g., `eval "$(tool completion)"`, `compdef`) in `completion.zsh`, never in regular `.zsh` files.
 - **Use `compinit -C`** — skips the security audit on every startup (directory permission check). The full audit runs during `dotfiles-upgrade`.
 - **`path.zsh` is sourced only in `zshenv`** — `.zshrc` sources `.zshenv` when `DOTFILES_ZSHENV_RAN` is unset, and nothing else re-sources a path file. zsh reads its per-user `.zshenv` from `$ZDOTDIR`, `.zshenv` exports `ZDOTDIR`, and only `.zshrc` is installed there, so every zsh below the first one skips `.zshenv` and inherits a frozen `$PATH` that can predate a topic. Keep the marker unexported, or a child shell reads its parent's startup as its own. Installing a second `.zshenv` under `$ZDOTDIR` would fix the same thing by charging every `#!/usr/bin/env zsh` script ~110ms against the ~6ms a nested zsh costs now
 - **Topic `.zsh` files sit one level down.** The loaders glob `$ZSH/*/`, not `$ZSH/**/`, because a recursive glob walks every file in the tree (`node_modules`, `tmp/`) on each startup. A `.zsh` file in a nested directory is never sourced
 - **File naming matters** — the zshrc filter matches `completion.zsh` (singular). Files named `completions.zsh` (plural) will be sourced eagerly in the main loop, bypassing deferral. CI enforces this in the `lint` job's completion-naming check.
-- **Defer everything interactive** — anything not needed before the first prompt (completions, key bindings that shell out, etc.) should run in the `precmd` deferred hook, not during startup
-- **Benchmarking**: `bench-startup` measures the current worktree; `bench-startup /path/to/other` compares two worktrees. Uses `ZDOTDIR` + `DOTFILES_USE_DEV` to isolate each worktree's rc files without modifying symlinks. Use `ZPROF=1 zsh -i -c exit` for per-file breakdown.
+- **Defer everything interactive.** Anything not needed before the first prompt (completions, key bindings that shell out, etc.) belongs in a `completion.zsh`, which the deferred hook sources, not in a regular `.zsh` file
+- **Benchmarking**: `bench-startup` measures the current worktree; `bench-startup /path/to/other` compares two worktrees. Uses `ZDOTDIR` + `DOTFILES_USE_DEV` to isolate each worktree's rc files without modifying symlinks. Use `ZPROF=1 zsh -i -c exit` for per-file breakdown. Its shells have no terminal, so they load completions through the `precmd` fallback and its numbers include them.
 
 ## Development Notes
 

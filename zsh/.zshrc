@@ -58,15 +58,26 @@ bashcompinit
 
 unset config_files
 
-# defer all completions until after first prompt
-autoload -Uz add-zsh-hook
+# Load completions once the first prompt is on screen. precmd runs before zle
+# draws the prompt, so it would only move the cost. zle-line-init runs after the
+# draw and before zle reads a key, so a Tab typed ahead still completes.
+#
+# zle reads input only when the shell opened a terminal, which is what $TTY
+# names, whatever stdin is. Without one, line-init never runs, so precmd loads
+# them and the shell still gets atuin's history hooks.
+autoload -Uz add-zsh-hook add-zle-hook-widget
 _load_deferred_completions() {
   add-zsh-hook -d precmd _load_deferred_completions
+  add-zle-hook-widget -d line-init _load_deferred_completions
   for file in $ZSH/*/completion.zsh; do
     source $file
   done
 }
-add-zsh-hook precmd _load_deferred_completions
+if [[ -n $TTY ]]; then
+  add-zle-hook-widget line-init _load_deferred_completions
+else
+  add-zsh-hook precmd _load_deferred_completions
+fi
 
 if [[ -n "$ZPROF" ]]; then
   zprof
