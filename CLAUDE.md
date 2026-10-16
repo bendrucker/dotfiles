@@ -127,6 +127,8 @@ mise also loads any non-dot `*.toml` at the root as global config, so a pre-comm
 
 A topic's `mise.<env>.toml` is a module, loaded only while `<env>` is selected. `mise/miserc.toml.tera` selects them per machine from file tests and the environment. LaunchAgents use this: `[bootstrap.macos.launchd.agents]` entries whose program may be missing, or which the nightly job must not reload under itself, sit in modules that the template leaves out. A gate that stops matching leaves its agent loaded, so a commit removing an agent's program ships a migration that removes the agent.
 
+`mise activate` puts its shims directory ahead of `$HOMEBREW_PREFIX/bin`. A tool installed for one project still gets a shim there, and outside that project the shim doesn't find an active version and falls through to the copy behind it after loading mise's config, about 125ms of CPU per spawn. `scripts/mise-shim-shadows` prints each shim that does this, and the nightly job files a to-do from it. Clear one with `mise uninstall <tool> --all && mise reshim`, or add the command to `shims.exclude` in the topic declaring the Homebrew copy, as `nodejs/mise.toml` does for `bun`.
+
 Always pin mise tool versions to exact values (e.g., `"0.9.6"`, not `"latest"`). Renovate tracks `mise.toml` files and auto-merges non-major updates after a 2-week release age delay. Using `"latest"` prevents Renovate from detecting new versions. For tools not available in the mise registry, use the `github:` backend (e.g., `"github:owner/repo" = "1.2.3"`) to install pre-built release binaries. A tool whose version is a template, like `uv` in `python/mise.toml` following a project's `required-version`, keeps its default in `[vars]` under a `# renovate:` comment, which a regex manager in `.github/renovate.json` tracks. Disable the mise manager for that tool in the same file, or it reads the template as the current version and opens a PR replacing it with a literal.
 
 #### Neovim Plugins
@@ -255,7 +257,7 @@ The audit reports and never removes, for the same reason `scripts/brew-drift` do
 ### Automated Nightly Upgrades (macOS)
 
 - The `dotfiles-upgrade` LaunchAgent in `macos/mise.dotfiles-upgrade.toml` runs `bin/dotfiles-upgrade` daily at 3am
-- Syncs dotfiles, runs `scripts/install`, runs `brew cleanup`, reports undeclared packages
+- Syncs dotfiles, runs `scripts/install`, runs `brew cleanup`, reports undeclared packages and mise shims that shadow another command
 - Files a Things to-do on failure, one per cause per machine (see [Failure Reporting](#failure-reporting))
 - Holds an `O_EXLOCK` lock on a file in the state directory, so a second run that starts while one is live exits rather than racing its `brew bundle`. The kernel drops it when the holder dies, so no leftover file can hold a night back. A run under the retired `com.user.dotfiles-upgrade` label boots itself out instead, since launchd kept that job loaded after its plist was deleted
 

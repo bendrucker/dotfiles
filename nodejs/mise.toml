@@ -2,3 +2,9 @@
 node = "24.21.0"
 "npm:typescript" = "7.0.2"
 "npm:typescript-language-server" = "6.0.2"
+
+# Homebrew's bun serves every hook and script outside a project. A project that
+# pins bun still gets its version from `mise activate`, but its shim would sit
+# ahead of Homebrew's everywhere else and cost mise's startup on every spawn.
+[settings]
+shims.exclude = ["bun", "bunx"]
