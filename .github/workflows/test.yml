@@ -54,8 +54,13 @@ jobs:
         else
           echo HOMEBREW_DOTFILES_CORE_ONLY=1 >> "$GITHUB_ENV"
         fi
+    # zsh/.zshenv exports XDG_CONFIG_HOME on every machine, and Homebrew keys
+    # its trust file on it. Steps outside a zsh script would otherwise read a
+    # different trust file on macOS, whose runner leaves it unset.
     - name: Link to home
-      run: ln -s "$PWD" "$HOME/.dotfiles"
+      run: |
+        ln -s "$PWD" "$HOME/.dotfiles"
+        echo "XDG_CONFIG_HOME=$HOME/.config" >> "$GITHUB_ENV"
     - name: Add brew bin/ to Linux $PATH
       if: ${{ runner.os == 'Linux' }}
       run: |
