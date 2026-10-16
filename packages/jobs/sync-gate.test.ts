@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -27,7 +27,9 @@ import {
   stripNewlines,
   syncNotify,
 } from "#jobs/sync-gate";
+import { repoRoot, writeStub as writeLauncher } from "#harness";
 import { fixture } from "#harness/fixture";
+import { landCommit } from "#harness/git";
 import type { Capture, SpawnOptions } from "#jobs/output";
 
 let sandbox: string;
@@ -35,6 +37,9 @@ let stubs: string;
 let repo: string;
 let origin: string;
 let out: Capture;
+
+// The path the gate spawns spin by, which it resolves through any symlink.
+const SPIN = join(realpathSync(repoRoot), "bin", "spin");
 
 const environment = {
   PATH: process.env.PATH,
@@ -63,6 +68,17 @@ function recording(): Capture {
     cmd: string[],
     options?: SpawnOptions,
   ): { status: number; stdout: string; stderr: string } => {
+    // Log lines and the spin wrapper are most of what a gate run spawns, and
+    // neither is under test here. Each is answered the way its stub chain would
+    // answer off a terminal: gum log prints its message, and spin logs its title
+    // and runs the command.
+    if (cmd[0] === "gum" && cmd[1] === "log") return { status: 0, stdout: "", stderr: `${cmd.at(-1)}\n` };
+    if (cmd[0] === SPIN) {
+      const separator = cmd.indexOf("--");
+      const title = cmd[cmd.indexOf("--title") + 1];
+      const inner = spawn(cmd.slice(separator + 1), options);
+      return { ...inner, stderr: `${title}\n${inner.stderr}` };
+    }
     try {
       const run = Bun.spawnSync({
         cmd,
@@ -104,8 +120,7 @@ function recording(): Capture {
 }
 
 function writeStub(name: string, body: string): void {
-  writeFileSync(join(stubs, name), `#!/usr/bin/env bash\n${body}\n`);
-  chmodSync(join(stubs, name), 0o755);
+  writeLauncher(join(stubs, name), body);
 }
 
 function git(...args: string[]): { status: number; stdout: string } {
@@ -138,18 +153,7 @@ function ghLog(): string {
 // Land a commit on origin the clone has not pulled, so origin/<branch> carries a
 // rule this checkout has no way to know about yet.
 function pushIgnoreRule(rule: string): void {
-  const upstream = join(sandbox, "upstream");
-  rmSync(upstream, { recursive: true, force: true });
-  run(["git", "clone", "-q", origin, upstream]);
-  // Its own identity and signing setting: the clone inherits neither from the
-  // fixture repo, and a runner with no global gitconfig cannot commit at all.
-  run(["git", "-C", upstream, "config", "user.email", "spec@example.test"]);
-  run(["git", "-C", upstream, "config", "user.name", "Spec"]);
-  run(["git", "-C", upstream, "config", "commit.gpgsign", "false"]);
-  writeFileSync(join(upstream, ".gitignore"), `${rule}\n`);
-  run(["git", "-C", upstream, "add", ".gitignore"]);
-  run(["git", "-C", upstream, "commit", "-q", "-m", `ignore ${rule}`]);
-  run(["git", "-C", upstream, "push", "-q", "origin", "main"]);
+  landCommit(origin, { ".gitignore": `${rule}\n` }, `ignore ${rule}`);
 }
 
 function run(cmd: string[]): void {
@@ -199,7 +203,8 @@ beforeEach(() => {
       '    exec "$@"',
       "    ;;",
       "  log)",
-      '    printf "%s\\n" "${@: -1}" >&2',
+      '    for last; do :; done',
+      '    printf "%s\\n" "$last" >&2',
       "    ;;",
       "  choose)",
       "    shift",
@@ -640,7 +645,9 @@ describe("reviewDirty", () => {
     };
 
     expect(Array.from({ length: 8 }, skip)).toEqual(["", "2", "2", "4", "4", "4", "4", "8"]);
-  });
+    // Eight real gate passes, a dozen git and shell children each, is several
+    // times any other case here and crosses the default under a loaded machine.
+  }, 15_000);
 
   test("forgets the skips once the gate lets a sync through", () => {
     writeFileSync(join(repo, "stray.txt"), "stray\n");
