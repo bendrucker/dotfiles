@@ -41,7 +41,7 @@ done
 
 # all of our zsh files
 typeset -U config_files
-config_files=($ZSH/**/*.zsh)
+config_files=($ZSH/*/*.zsh)
 
 FPATH="$HOMEBREW_PREFIX/share/zsh/site-functions:${FPATH}"
 
@@ -58,15 +58,21 @@ bashcompinit
 
 unset config_files
 
-# defer all completions until after first prompt
-autoload -Uz add-zsh-hook
+# Load completions after the first prompt draws. Without a terminal zle never
+# runs line-init, so precmd loads them instead.
+autoload -Uz add-zsh-hook add-zle-hook-widget
 _load_deferred_completions() {
   add-zsh-hook -d precmd _load_deferred_completions
-  for file in $ZSH/**/completion.zsh; do
+  add-zle-hook-widget -d line-init _load_deferred_completions
+  for file in $ZSH/*/completion.zsh; do
     source $file
   done
 }
-add-zsh-hook precmd _load_deferred_completions
+if [[ -n $TTY ]]; then
+  add-zle-hook-widget line-init _load_deferred_completions
+else
+  add-zsh-hook precmd _load_deferred_completions
+fi
 
 if [[ -n "$ZPROF" ]]; then
   zprof

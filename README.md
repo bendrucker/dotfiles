@@ -48,7 +48,7 @@ zsh startup is a glob-driven loader split across two files, following zsh's own 
 1. [`zsh/.zshenv`](zsh/.zshenv) (symlinked to `~/.zshenv`) runs on **every** shell, interactive or not. It resolves which dotfiles root is active (see [dev mode](#dev-mode-and-testing)), runs `brew shellenv`, sources every `path.zsh`, then forces the repo's own `bin/` to the front of `$PATH`:
 
    ```zsh
-   for file in $ZSH/**/path.zsh; do source $file; done
+   for file in $ZSH/*/path.zsh; do source $file; done
    typeset -gU path
    path=("$ZSH/bin" "$HOME/.local/bin" $path)
    ```
@@ -56,7 +56,7 @@ zsh startup is a glob-driven loader split across two files, following zsh's own 
 2. [`zsh/.zshrc`](zsh/.zshrc) (symlinked into `$ZDOTDIR`) runs on interactive shells. It globs every topic's `.zsh` files and sources all of them **except** the path and completion files, which are handled separately:
 
    ```zsh
-   config_files=($ZSH/**/*.zsh)
+   config_files=($ZSH/*/*.zsh)
    for file in ${${config_files:#*/path.zsh}:#*/completion.zsh}; do
      source $file
    done
@@ -64,22 +64,14 @@ zsh startup is a glob-driven loader split across two files, following zsh's own 
 
 `.zshenv` runs on every shell only from the top of a process tree. zsh reads its per-user `.zshenv` from `$ZDOTDIR` and falls back to `~/.zshenv` only when `ZDOTDIR` is unset, and `.zshenv` exports `ZDOTDIR` while `zsh/mise.toml` links just `.zshrc` there. Every zsh below the first one therefore finds no `.zshenv`, skips the `path.zsh` loop, and keeps whatever `$PATH` its parent froze. `.zshrc` sources `.zshenv` itself when a marker shows it has not run, so an interactive shell under a server started weeks ago still sees a topic added since. Non-interactive nested shells stay on the inherited `$PATH`, which is what keeps a `#!/usr/bin/env zsh` script at ~6ms rather than ~110ms.
 
-Completions are the expensive part of startup. They don't run before the first prompt. `.zshrc` registers a one-shot `precmd` hook that sources every `completion.zsh` after the prompt is already interactive, then removes itself:
-
-```zsh
-_load_deferred_completions() {
-  add-zsh-hook -d precmd _load_deferred_completions
-  for file in $ZSH/**/completion.zsh; do source $file; done
-}
-add-zsh-hook precmd _load_deferred_completions
-```
+Completions are the expensive part of startup. `.zshrc` sources every `completion.zsh` from a one-shot `zle-line-init` hook, which runs after the first prompt draws and before zle reads a key. A shell with no terminal loads them from `precmd` instead.
 
 ### Startup Budget
 
-[CI benchmarks startup](.github/workflows/test.yml) with [hyperfine](https://github.com/sharkdp/hyperfine) and **fails the build if median startup exceeds one second**:
+[CI benchmarks startup](.github/workflows/test.yml) with [hyperfine](https://github.com/sharkdp/hyperfine) and **fails the build if the median time to first prompt exceeds one second**:
 
 ```sh
-hyperfine --warmup 3 --runs 10 --shell=none 'zsh -i -c exit'
+hyperfine --warmup 3 --runs 10 --shell=none --input null 'zsh -i'
 # median > 1.0s → exit 1
 ```
 
@@ -87,7 +79,7 @@ The same job dumps a per-file [`zprof`](https://zsh.sourceforge.io/Doc/Release/Z
 
 * **No subshell forks during startup.** Each `$(...)` costs ~15-50ms. `brew --prefix` is banned in favor of the already-exported `$HOMEBREW_PREFIX`.
 * **`compinit -C`** skips the completion security audit on every startup. The full audit runs during the nightly upgrade instead.
-* **Completions defer** via the `precmd` hook above. Because the deferral filter matches `completion.zsh` exactly, a file named `completions.zsh` (plural) would load eagerly and bypass it. CI [greps for that mistake](.github/workflows/test.yml) and fails.
+* **Completions defer** via the `zle-line-init` hook above. Because the deferral filter matches `completion.zsh` exactly, a file named `completions.zsh` (plural) would load eagerly and bypass it. CI [greps for that mistake](system/mise.toml) and fails.
 
 `bin/bench-startup` measures the current worktree, or compares two.
 
@@ -177,7 +169,7 @@ Each reload self-gates, exiting 0 without work when its tool isn't installed or 
 
 ### Tests
 
-Everything runs under `bun test`, shell scripts and TypeScript alike. A test sits next to what it covers and is named for it, so [`scripts/install-trust.test.ts`](scripts/install-trust.test.ts) covers `scripts/install-trust`. [`#harness`](packages/harness/index.ts) holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners reporting a script's status alongside both its streams.
+Everything runs under `bun test`, shell scripts and TypeScript alike. A test sits next to what it covers and is named for it, so [`scripts/install-taps.test.ts`](scripts/install-taps.test.ts) covers `scripts/install-taps`. [`#harness`](packages/harness/index.ts) holds what a test driving a shell script needs: a sandbox to build a fake tree in, executable stubs that shadow a real command while their directory leads `$PATH`, and runners reporting a script's status alongside both its streams.
 
 A test's name and where it sits decide where it runs. Most tests stub whatever the script under test calls and run on a bare checkout. The `*.integration.test.ts` files instead read the config this repo installed, through its symlinks, so [CI runs those](.github/workflows/test.yml) on Linux and macOS after bootstrap. [`git/config.integration.test.ts`](git/config.integration.test.ts) is one: it asks the installed global config what `pull.rebase` is set to.
 

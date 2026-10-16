@@ -88,6 +88,18 @@ function pushCommit(rule?: string): void {
   run(["git", "-C", upstream, "push", "-q", "origin", "main"]);
 }
 
+// An uninitialized submodule is what a failed update, or one newly added
+// upstream, leaves behind.
+function addSubmodule({ initialized }: { initialized: boolean }): void {
+  const sub = join(sandbox, "sub");
+  run(["git", "init", "-q", "-b", "main", sub]);
+  run(["git", "-C", sub, "-c", "user.email=spec@example.test", "-c", "user.name=Spec", "commit", "-q", "--allow-empty", "-m", "sub"]);
+  run(["git", "-C", repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub"]);
+  run(["git", "-C", repo, "commit", "-q", "-m", "submodule"]);
+  run(["git", "-C", repo, "push", "-q", "origin", "main"]);
+  if (!initialized) run(["git", "-C", repo, "submodule", "deinit", "-q", "-f", "sub"]);
+}
+
 beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), "dotfiles-sync-"));
   stubs = join(sandbox, "stub");
@@ -166,12 +178,22 @@ test("exits 0 when the repo is already up to date", () => {
 // failed once leaves the superproject reading as current on every run after it,
 // so a sync that returned early here would strand them at the wrong revision.
 test("updates the submodules when the repo is already up to date", () => {
-  stubGit(`printf 'update\\n' >>"${join(sandbox, "submodule.log")}"`);
+  addSubmodule({ initialized: false });
+  stubGit(`printf 'update\\n' >>"${join(sandbox, "submodule.log")}"; exit 0`);
 
   const result = sync();
   expect(result.status).toBe(0);
   expect(result.stderr).toContain("Already up to date");
   expect(readLog("submodule.log")).toBe("update\n");
+});
+
+test("leaves the submodules alone when each is at its pinned revision", () => {
+  addSubmodule({ initialized: true });
+  stubGit(`printf 'update\\n' >>"${join(sandbox, "submodule.log")}"`);
+
+  const result = sync();
+  expect(result.status).toBe(0);
+  expect(readLog("submodule.log")).toBe("");
 });
 
 // A dirty working tree is caught before the sync. Without a terminal it renders
@@ -291,6 +313,7 @@ test("downgrades a failing reload to a warning", () => {
 });
 
 test("exits 1 and notifies when the submodule update fails", () => {
+  addSubmodule({ initialized: false });
   pushCommit();
   stubGit("exit 1");
 

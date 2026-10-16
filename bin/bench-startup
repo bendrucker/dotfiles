@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# Benchmark zsh interactive startup time.
+# Benchmark zsh time to first prompt. Each run is an interactive shell reading
+# EOF from /dev/null, so it draws the first prompt, running every precmd hook,
+# before it exits. `zsh -i -c exit` skips precmd and undercounts.
 #
 # Usage:
 #   bench-startup                  # benchmark current worktree
@@ -57,13 +59,13 @@ if [[ $# -ge 1 ]]; then
   current_label="${current##*/}"
   other_label="${other##*/}"
 
-  hyperfine --warmup 3 --runs 10 --shell=none \
+  hyperfine --warmup 3 --runs 10 --shell=none --input null \
     --command-name "$other_label" \
-      "/usr/bin/env ZDOTDIR=$other_zdotdir DOTFILES_USE_DEV=$other /bin/zsh -i -c exit" \
+      "/usr/bin/env ZDOTDIR=$other_zdotdir DOTFILES_USE_DEV=$other /bin/zsh -i" \
     --command-name "$current_label" \
-      "/usr/bin/env ZDOTDIR=$current_zdotdir DOTFILES_USE_DEV=$current /bin/zsh -i -c exit"
+      "/usr/bin/env ZDOTDIR=$current_zdotdir DOTFILES_USE_DEV=$current /bin/zsh -i"
 else
-  hyperfine --warmup 3 --runs 10 --shell=none \
+  hyperfine --warmup 3 --runs 10 --shell=none --input null \
     --command-name "zsh startup" \
-      "/usr/bin/env ZDOTDIR=$current_zdotdir DOTFILES_USE_DEV=$current /bin/zsh -i -c exit"
+      "/usr/bin/env ZDOTDIR=$current_zdotdir DOTFILES_USE_DEV=$current /bin/zsh -i"
 fi

@@ -166,6 +166,10 @@ function driftStub(body: string): void {
   writeExecutable(join(home, "scripts", "brew-drift"), body);
 }
 
+function shimShadowsStub(body: string): void {
+  writeExecutable(join(home, "scripts", "mise-shim-shadows"), body);
+}
+
 function rootCasksStub(body: string): void {
   writeExecutable(join(home, "scripts", "brew-root-casks"), body);
 }
@@ -626,6 +630,49 @@ describe("the drift check", () => {
 
     runUpgrade();
     expect(latch("dotfiles-upgrade")).toBe("ok\n");
+  });
+});
+
+describe("the mise shim check", () => {
+  function listing(text: string): void {
+    shimShadowsStub(`#!/bin/sh\ncat <<'LISTING'\n${text}\nLISTING\n`);
+  }
+
+  test("files a to-do naming each shim and the command it shadows", () => {
+    listing("bun  /opt/homebrew/bin/bun");
+
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("mise shims shadow other commands");
+    const notes = field(filedTodos()[0], "notes");
+    expect(notes).toContain("bun  /opt/homebrew/bin/bun");
+    expect(notes).toContain("shims.exclude");
+  });
+
+  test("stays quiet while the same shims stand in another order", () => {
+    listing("bun  /opt/homebrew/bin/bun\ngh  /opt/homebrew/bin/gh");
+    runUpgrade();
+
+    listing("gh  /opt/homebrew/bin/gh\nbun  /opt/homebrew/bin/bun");
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(filedTodos().length).toBe(1);
+  });
+
+  test("clears the latch once no shim shadows anything", () => {
+    listing("bun  /opt/homebrew/bin/bun");
+    runUpgrade();
+
+    shimShadowsStub("#!/bin/sh\nexit 0\n");
+    expect(runUpgrade().status).toBe(0);
+    expect(latch("mise-shim-shadows")).toBe("ok\n");
+  });
+
+  test("completes the run when the check cannot run", () => {
+    const run = runUpgrade();
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("mise shim check could not run");
+    expect(filedTodos().length).toBe(0);
   });
 });
 

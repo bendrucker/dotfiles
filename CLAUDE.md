@@ -49,6 +49,8 @@ Never add employer-specific tooling to a topic directory. When shell history sho
 
 Pin every mise tool to an exact version, never `"latest"`, so Renovate can track it. When a version is a template, like `uv` in `python/mise.toml`, keep its default in `[vars]` under a `# renovate:` comment. Disable the mise manager for that tool in `.github/renovate.json`, or Renovate replaces the template with a literal.
 
+A tool mise installs for one project still gets a shim ahead of `$HOMEBREW_PREFIX/bin`, which costs ~125ms per spawn everywhere else. When `scripts/mise-shim-shadows` names one, clear it with `mise uninstall <tool> --all && mise reshim`, or add the command to `shims.exclude` in the topic that declares the Homebrew copy, as `nodejs/mise.toml` does for `bun`.
+
 A topic's `mise.<env>.toml` loads only while `mise/miserc.toml.tera` selects `<env>` for the machine. Put a `[bootstrap.macos.launchd.agents]` entry there when its program may be missing or the nightly job must not reload it under itself. Deselecting a module leaves its agent loaded, so pair that change with a migration that removes the agent.
 
 ## Config Files
@@ -76,7 +78,7 @@ Exit 0 without doing anything when the tool is not installed or not running.
 
 ## Tests
 
-Put a test beside what it covers, named after it: `scripts/install-trust.test.ts` covers `scripts/install-trust`. Test shell scripts from TypeScript with `#harness`. Run `bun run test` to match the `bun` job, since bare `bun test` runs files serially. Run `mise run lint` to match the `lint` job.
+Put a test beside what it covers, named after it: `scripts/install-taps.test.ts` covers `scripts/install-taps`. Test shell scripts from TypeScript with `#harness`. Run `bun run test` to match the `bun` job, since bare `bun test` runs files serially. Run `mise run lint` to match the `lint` job.
 
 To call a shell library function directly, source the library inside a `shell()` snippet. Functions redefined after the `source` line override the library's.
 
@@ -115,6 +117,7 @@ CI fails a change whose median interactive zsh startup exceeds 1s.
 
 - In `.zsh` files, use `$HOMEBREW_PREFIX`. Never call `brew --prefix`.
 - Guard every `$(...)` or backtick that runs at startup. Each fork costs 15-50ms.
-- Put completion registration (`compdef`, `eval "$(tool completion zsh)"`) in `<topic>/completion.zsh`, singular. `.zshrc` defers only that filename to the first `precmd`, and `lint:completion-naming` rejects `completions.zsh`. Defer other interactive-only setup to a `precmd` hook too.
+- Put completion registration (`compdef`, `eval "$(tool completion zsh)"`) in `<topic>/completion.zsh`, singular. `.zshrc` defers only that filename to a one-shot `zle-line-init` hook, and `lint:completion-naming` rejects `completions.zsh`. Put other interactive-only setup there too. A `precmd` hook doesn't defer anything, since it runs before the prompt draws.
+- Put topic `.zsh` files directly in the topic directory. The loaders glob `$ZSH/*/` only, so a nested `.zsh` file is never sourced, and the `lint` job's zsh-depth check fails on one.
 - Put `$PATH` changes in `<topic>/path.zsh`, which only `.zshenv` sources. Keep `DOTFILES_ZSHENV_RAN` unexported. Do not install a second `.zshenv` under `$ZDOTDIR`, since every `#!/usr/bin/env zsh` script would pay ~110ms for it.
 - Measure a change with `bench-startup [other-worktree]`.

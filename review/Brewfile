@@ -1,4 +1,4 @@
-tap 'greptileai/tap'
+tap 'greptileai/tap', trusted: true
 brew 'greptileai/tap/greptile', ci: :extra
 
 cask 'coderabbit'

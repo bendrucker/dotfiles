@@ -1,0 +1,111 @@
+#!/usr/bin/env bun
+//
+// Usage: mise-shim-shadows
+//
+// Print each mise shim that stands in front of another copy of the same command
+// while no version of its tool is active outside a project, followed by the
+// copy it shadows. Silence means every shim either runs a globally active tool
+// or has nothing behind it.
+//
+// `mise activate` puts the shims directory ahead of $HOMEBREW_PREFIX/bin, so a
+// process that never runs mise's hook still reaches mise's tools. A tool
+// installed for one project gets a shim too. Everywhere else that shim doesn't find
+// an active version and falls through to the next copy on $PATH, after mise has
+// loaded its whole config: about 125ms of CPU on every spawn, paid silently by
+// every hook and script that calls the command.
+//
+// Clear a finding by uninstalling the leftover (`mise uninstall <tool> --all &&
+// mise reshim`), or, for a command the project keeps reinstalling, by adding it
+// to `shims.exclude` in the topic that declares the Homebrew copy. The project
+// still gets its version from `mise activate`, which puts install directories
+// ahead of the shims.
+
+import { accessSync, constants, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { delimiter, join, resolve } from "node:path";
+
+export type Shadow = { name: string; target: string };
+
+export function miseDataDir(env: NodeJS.ProcessEnv): string {
+  return env.MISE_DATA_DIR ?? join(env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "mise");
+}
+
+function isExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function entries(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+export type SearchPath = { ahead: string[]; behind: string[] };
+
+// $PATH split at the shims directory, without mise's own directories. An
+// install directory is on it only where mise's hook put it for the current
+// project, which is not the context this check judges. With no shims directory
+// on $PATH, everything counts as behind it.
+export function searchPath(path: string, data: string): SearchPath {
+  const root = resolve(data);
+  const dirs = path.split(delimiter).filter(Boolean).map((dir) => resolve(dir));
+  const shims = dirs.indexOf(join(root, "shims"));
+  const outside = (dir: string) => dir !== root && !dir.startsWith(`${root}/`);
+  return {
+    ahead: dirs.slice(0, Math.max(shims, 0)).filter(outside),
+    behind: dirs.slice(shims + 1).filter(outside),
+  };
+}
+
+function locate(dirs: string[], name: string): string | undefined {
+  return dirs.find((dir) => isExecutable(join(dir, name)));
+}
+
+// A copy ahead of the shims directory wins before the shim is ever reached.
+export function findShadows(shims: string[], active: Set<string>, path: SearchPath): Shadow[] {
+  return shims
+    .filter((name) => !active.has(name) && locate(path.ahead, name) === undefined)
+    .sort()
+    .flatMap((name) => {
+      const dir = locate(path.behind, name);
+      return dir === undefined ? [] : [{ name, target: join(dir, name) }];
+    });
+}
+
+// The commands a shim runs from the home directory, which is what a process
+// outside any project sees.
+function activeCommands(env: NodeJS.ProcessEnv): Set<string> | null {
+  const home = env.HOME ?? homedir();
+  const result = Bun.spawnSync({
+    cmd: ["mise", "--cd", home, "bin-paths"],
+    env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  if (result.exitCode !== 0) return null;
+  const dirs = result.stdout.toString().split("\n").filter(Boolean);
+  return new Set(dirs.flatMap(entries));
+}
+
+function main(): number {
+  const env = process.env;
+  const data = miseDataDir(env);
+  const active = activeCommands(env);
+  if (active === null) {
+    console.error("mise-shim-shadows: mise bin-paths failed, so shadowing shims would go unnoticed.");
+    return 1;
+  }
+  const shadows = findShadows(entries(join(data, "shims")), active, searchPath(env.PATH ?? "", data));
+  for (const { name, target } of shadows) console.log(`${name}  ${target}`);
+  return 0;
+}
+
+if (import.meta.main) process.exit(main());

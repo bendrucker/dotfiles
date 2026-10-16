@@ -42,8 +42,10 @@ export function run(args: string[], out: Output): number {
   // A fetch with nothing to pull says nothing about whether they reached the
   // revisions this checkout pins: an update that failed once leaves them behind,
   // and the superproject reads as current on every run after that. Returning
-  // early there would strand them at the wrong revision for good.
-  const submodules = out.run([
+  // early there would strand them at the wrong revision for good. The update
+  // itself costs a shell wrapper and a handful of git processes, so it runs only
+  // when some submodule is missing or off its pinned revision.
+  const submodules = submodulesPinned(out, home) ? 0 : out.run([
     SPIN,
     "--show-error",
     "--title",
@@ -79,6 +81,24 @@ export function run(args: string[], out: Output): number {
     log(out, "warn", "some config reloads had issues");
   }
   return 0;
+}
+
+// Index entries for submodules: mode 160000, the pinned commit, stage 0.
+const GITLINK = /^160000 ([0-9a-f]+) 0\t(.+)$/;
+
+// True when every submodule the index pins has that commit checked out. An
+// uninitialized submodule is an empty directory, where rev-parse answers with
+// the superproject's HEAD, which never matches a pin.
+function submodulesPinned(out: Output, home: string): boolean {
+  const staged = out.read(["git", "-C", home, "ls-files", "--stage", "-z"]);
+  if (staged.status !== 0) return false;
+
+  return staged.stdout.split("\0").every((entry) => {
+    const gitlink = GITLINK.exec(entry);
+    if (gitlink === null) return true;
+    const head = out.read(["git", "-C", join(home, gitlink[2] ?? ""), "rev-parse", "HEAD"]);
+    return head.status === 0 && head.stdout.trim() === gitlink[1];
+  });
 }
 
 // The shell fell through to the reload when the bootstrap script was not

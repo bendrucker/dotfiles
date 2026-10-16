@@ -1,4 +1,4 @@
-tap 'wagoodman/dive'
+tap 'wagoodman/dive', trusted: true
 brew 'dive', ci: :extra
 brew 'lazydocker'
 

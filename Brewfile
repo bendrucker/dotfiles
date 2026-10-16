@@ -48,8 +48,8 @@ corporate = Dir.exist?('/Library/Managed Preferences') && !Dir.empty?('/Library/
 
 cask_args appdir: '/Applications'
 
-tap 'schpet/tap'
-tap 'teamookla/speedtest'
+tap 'schpet/tap', trusted: true
+tap 'teamookla/speedtest', trusted: true
 
 brew 'cloc', ci: :extra
 brew 'jnv', ci: :extra

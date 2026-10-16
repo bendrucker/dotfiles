@@ -3,19 +3,16 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 
-const script = join(repoRoot, "scripts", "install-trust");
+const script = join(repoRoot, "scripts", "install-taps");
 
 let box: Sandbox;
-let trustJson: string;
 // The fallback case empties this to exercise the brew --repository path.
 let repository: string;
 
 beforeEach(() => {
-  box = sandbox("install-trust");
+  box = sandbox("install-taps");
   box.mkdir("repo", "Library", "Taps");
-  box.mkdir("config", "homebrew");
   box.write("declared", "");
-  trustJson = box.path("config", "homebrew", "trust.json");
   repository = box.path("repo");
   box.write("repository", `${box.path("repo")}\n`);
 
@@ -37,7 +34,7 @@ beforeEach(() => {
       '    if grep -qx "$2" "$FIXTURES/tap-fails" 2>/dev/null; then exit 128; fi',
       '    ;;',
       '  trust) shift; echo "$*" >> "$FIXTURES/trusted"',
-      '    if [ -f "$FIXTURES/trust-fails" ]; then exit 1; fi',
+      '    [ ! -f "$FIXTURES/trust-fails" ] || exit 1',
       '    ;;',
       "esac",
     ].join("\n"),
@@ -73,20 +70,8 @@ function tapFails(...taps: string[]) {
   box.write("tap-fails", `${taps.join("\n")}\n`);
 }
 
-function trustFails() {
-  box.write("trust-fails", "");
-}
-
-function staleTrust() {
-  box.write("config/homebrew/trust.json", '{"trustedtaps":["gone/away"]}\n');
-}
-
 function tapped(): string {
   return box.read("tapped").trim();
-}
-
-function trusted(): string {
-  return box.read("trusted").trim();
 }
 
 function gitConfig(): string[] {
@@ -101,7 +86,6 @@ function runScript(env: Record<string, string> = {}) {
     path: [box.bin],
     env: {
       HOMEBREW_REPOSITORY: repository,
-      XDG_CONFIG_HOME: box.path("config"),
       FIXTURES: box.dir,
       GIT_CONFIG_COUNT: "0",
       ...env,
@@ -109,7 +93,7 @@ function runScript(env: Record<string, string> = {}) {
   });
 }
 
-describe("install-trust", () => {
+describe("install-taps", () => {
   test("does not tap a repository that is already on disk", () => {
     declared("oven-sh/bun", "schpet/tap");
     installed("oven-sh/bun", "schpet/tap");
@@ -135,36 +119,6 @@ describe("install-trust", () => {
     const r = runScript();
     expect(r.status).toBe(0);
     expect(tapped()).toBe("");
-  });
-
-  test("trusts every declared tap in a single call", () => {
-    declared("oven-sh/bun", "schpet/tap", "pulumi/tap");
-    installed("oven-sh/bun", "schpet/tap", "pulumi/tap");
-
-    const r = runScript();
-    expect(r.status).toBe(0);
-    expect(trusted()).toBe("--tap oven-sh/bun schpet/tap pulumi/tap");
-  });
-
-  test("rebuilds the trust file from scratch so a dropped tap drops out", () => {
-    staleTrust();
-    declared("oven-sh/bun");
-    installed("oven-sh/bun");
-
-    const r = runScript();
-    expect(r.status).toBe(0);
-    expect(existsSync(trustJson)).toBe(false);
-    expect(trusted()).toBe("--tap oven-sh/bun");
-  });
-
-  // `brew trust` with no targets prints the trusted list instead of writing it.
-  test("clears the trust file without calling trust when nothing is declared", () => {
-    staleTrust();
-
-    const r = runScript();
-    expect(r.status).toBe(0);
-    expect(existsSync(trustJson)).toBe(false);
-    expect(trusted()).toBe("");
   });
 
   test("falls back to asking brew for the repository path", () => {
@@ -237,6 +191,33 @@ describe("install-trust", () => {
     expect(tapped()).toBe("oven-sh/bun");
   });
 
+  describe("trust", () => {
+    test("trusts every declared tap in one call, tapped or not", () => {
+      declared("oven-sh/bun", "schpet/tap");
+      installed("oven-sh/bun");
+
+      const r = runScript();
+      expect(r.status).toBe(0);
+      expect(box.read("trusted").trim()).toBe("--tap oven-sh/bun schpet/tap");
+    });
+
+    test("makes no call when no tap is declared", () => {
+      const r = runScript();
+      expect(r.status).toBe(0);
+      expect(existsSync(box.path("trusted"))).toBe(false);
+    });
+
+    test("warns rather than failing the install when brew trust fails", () => {
+      declared("schpet/tap");
+      installed("schpet/tap");
+      box.write("trust-fails", "");
+
+      const r = runScript();
+      expect(r.status).toBe(0);
+      expect(r.stderr).toContain("brew trust failed");
+    });
+  });
+
   // scripts/install runs under `set -e` well before brew bundle, mise and the
   // symlinks, so a tap that exits nonzero used to take the whole install with
   // it and leave the machine without every formula a Brewfile declares.
@@ -258,36 +239,5 @@ describe("install-trust", () => {
       expect(r.stderr).toContain("greptileai/tap");
       expect(r.stderr).not.toContain("schpet/tap");
     });
-
-    test("is left out of the trust list", () => {
-      declared("greptileai/tap", "schpet/tap");
-      tapFails("greptileai/tap");
-
-      const r = runScript();
-      expect(r.status).toBe(0);
-      expect(trusted()).toBe("--tap schpet/tap");
-    });
-
-    test("trusts nothing when it was the only tap declared", () => {
-      declared("greptileai/tap");
-      tapFails("greptileai/tap");
-
-      const r = runScript();
-      expect(r.status).toBe(0);
-      expect(trusted()).toBe("");
-    });
-  });
-
-  // A tap on disk still installs from it. What trust gates is brew bundle
-  // reading a formula out of one, which is next run's problem rather than a
-  // reason to abandon the install steps after this.
-  test("carries on when brew trust itself fails", () => {
-    declared("oven-sh/bun");
-    installed("oven-sh/bun");
-    trustFails();
-
-    const r = runScript();
-    expect(r.status).toBe(0);
-    expect(r.stderr).toContain("brew trust failed");
   });
 });

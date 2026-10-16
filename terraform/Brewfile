@@ -1,16 +1,16 @@
 brew 'terraform-docs', ci: :extra
 
-tap 'terraform-linters/tap'
+tap 'terraform-linters/tap', trusted: true
 cask 'tflint'
 
-tap 'minamijoyo/hcledit'
+tap 'minamijoyo/hcledit', trusted: true
 brew 'hcledit', ci: :extra
 
-tap 'minamijoyo/tfschema'
+tap 'minamijoyo/tfschema', trusted: true
 brew 'tfschema', ci: :extra
 
-tap 'pulumi/tap'
+tap 'pulumi/tap', trusted: true
 brew 'pulumi', ci: :extra
 
-tap 'hashicorp/tap'
+tap 'hashicorp/tap', trusted: true
 brew 'hashicorp/tap/hcp', ci: :extra
