@@ -365,7 +365,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v5.1.2
+      - uses: jdx/mise-action@v5.2.0
       # The tests that drive shell scripts stub what those scripts call, but
       # the interpreters and the tools a script legitimately uses are real.
       # zsh is the one the image does not already carry.
@@ -407,7 +407,7 @@ jobs:
       - uses: actions/checkout@v7
       # The skill under test queries shell history through duckdb, and builds
       # its own fixture database the same way.
-      - uses: jdx/mise-action@v5.1.2
+      - uses: jdx/mise-action@v5.2.0
         with:
           install_args: bun aqua:duckdb/duckdb
       # A leading ./ is what makes bun read this as a path. Bare, it is a filter
@@ -426,7 +426,7 @@ jobs:
           # lint:secrets reads history, which a shallow checkout omits.
           fetch-depth: 0
       - name: Install lint dependencies
-        uses: jdx/mise-action@v5.1.2
+        uses: jdx/mise-action@v5.2.0
       # Homebrew's libxml2 is keg-only, so apt is what puts xmllint on PATH.
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y libxml2-utils
