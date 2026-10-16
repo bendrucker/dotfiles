@@ -10,7 +10,7 @@
 // it at 3am as a decision nobody has made.
 //
 // Migrations live in migrations/, one file per cleanup, named
-// `YYYYMMDDNNNN-slug.ts`. See CLAUDE.md for how to add one.
+// `YYYYMMDDNNNN-slug.ts`. See migrations/CLAUDE.md for how to add one.
 //
 //   dotfiles-migrate [dotfiles-root]
 //
