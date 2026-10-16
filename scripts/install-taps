@@ -1,18 +1,26 @@
 #!/usr/bin/env sh
 # Usage: install-taps [dotfiles-root]
 #
-# Tap the taps declared in the Brewfiles before `brew bundle` runs. Trust is
-# declared there too, as `trusted: true` on each `tap` line, which `brew bundle`
-# applies itself. Cloning stays here rather than in `brew bundle` for two
-# reasons: the HTTPS pin below, and one unreachable tap failing only itself
-# rather than the whole bundle.
+# Tap and trust the taps declared in the Brewfiles before `brew bundle` runs.
+# Cloning stays here rather than in `brew bundle` for two reasons: the HTTPS pin
+# below, and one unreachable tap failing only itself rather than the whole
+# bundle.
+#
+# The Brewfiles declare trust too, as `trusted: true` on each `tap` line, but
+# `brew bundle` applies that too late for its own upgrade check. A run that
+# starts without the trust store warns that it cannot check whether a tap
+# formula is outdated, and leaves it at the installed version even once the tap
+# is trusted. Only the next run upgrades it. Trusting here means the first
+# bundle on a new machine, or on a CI runner, upgrades tap formulae the same
+# way it upgrades core ones.
 #
 # Every `brew` call pays ~400ms of Ruby startup, so the steady-state run makes
-# one of them rather than one per tap. The conditions under which `brew tap`
+# two of them rather than two per tap. The conditions under which `brew tap`
 # would do nothing are two file tests Homebrew itself uses: Tap#installed? is
 # `path.directory?` and Tap#shallow? is `.git/shallow`. Meeting both is what
 # makes Tap#install raise TapAlreadyTappedError, which `brew tap` swallows.
 # A shallow tap still needs the call, because that is what unshallows it.
+# `brew trust` takes every tap at once.
 set -e
 
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
@@ -70,3 +78,11 @@ if [ -n "$failed" ]; then
     printf '%s' "$failed"
   } >&2
 fi
+
+[ -n "$taps" ] || exit 0
+
+# `brew trust` records a tap that is not on disk without complaint, so one that
+# failed to clone above is trusted along with the rest.
+# shellcheck disable=SC2086 # tap names never contain whitespace
+brew trust --tap $taps >/dev/null ||
+  echo "WARNING: brew trust failed - brew bundle will not upgrade tap formulae this run" >&2
