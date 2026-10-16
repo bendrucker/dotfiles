@@ -14,9 +14,9 @@
 // when the gate refused, the sync failed, or the submodules did. A failing
 // bootstrap exits with its own status.
 
-import { accessSync, constants, realpathSync } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { reviewDirty, syncNotify } from "#jobs/sync-gate";
 import { log, type Output, streamOutput } from "#jobs/output";
 import { notify } from "#jobs/report";
@@ -42,8 +42,10 @@ export function run(args: string[], out: Output): number {
   // A fetch with nothing to pull says nothing about whether they reached the
   // revisions this checkout pins: an update that failed once leaves them behind,
   // and the superproject reads as current on every run after that. Returning
-  // early there would strand them at the wrong revision for good.
-  const submodules = out.run([
+  // early there would strand them at the wrong revision for good. The update
+  // itself costs a shell wrapper and a handful of git processes, so it runs only
+  // when some submodule is missing or off its pinned revision.
+  const submodules = submodulesPinned(out, home) ? 0 : out.run([
     SPIN,
     "--show-error",
     "--title",
@@ -79,6 +81,38 @@ export function run(args: string[], out: Output): number {
     log(out, "warn", "some config reloads had issues");
   }
   return 0;
+}
+
+// Index entries for submodules: mode 160000, the pinned commit, stage 0.
+const GITLINK = /^160000 ([0-9a-f]+) 0\t(.+)$/;
+
+// True when every submodule the index pins has that commit checked out.
+function submodulesPinned(out: Output, home: string): boolean {
+  const staged = out.read(["git", "-C", home, "ls-files", "--stage", "-z"]);
+  if (staged.status !== 0) return false;
+
+  for (const entry of staged.stdout.split("\0")) {
+    const gitlink = GITLINK.exec(entry);
+    if (gitlink !== null && checkedOut(join(home, gitlink[2] ?? "")) !== gitlink[1]) return false;
+  }
+  return true;
+}
+
+// The commit a submodule's HEAD names, through one loose branch ref at most. A
+// submodule that was never initialized, or whose branch is packed, never
+// matches a pin, which only costs the full update.
+function checkedOut(dir: string): string | undefined {
+  try {
+    let gitDir = join(dir, ".git");
+    if (statSync(gitDir).isFile()) {
+      gitDir = resolve(dir, readFileSync(gitDir, "utf8").replace(/^gitdir: /, "").trim());
+    }
+    const head = readFileSync(join(gitDir, "HEAD"), "utf8").trim();
+    if (!head.startsWith("ref: ")) return head;
+    return readFileSync(join(gitDir, head.slice("ref: ".length)), "utf8").trim();
+  } catch {
+    return undefined;
+  }
 }
 
 // The shell fell through to the reload when the bootstrap script was not
