@@ -154,6 +154,9 @@ jobs:
         ln -sfn "$RUNNER_TEMP/main" "$HOME/.dotfiles"
         unset DOTFILES_TRACE_DIR
         "$RUNNER_TEMP/main/scripts/bootstrap"
+        # install-symlinks resolved ~/.dotfiles to main's worktree. A machine's
+        # conf.d names ~/.dotfiles itself, so its mise hooks follow a sync.
+        ln -sfn "$HOME/.dotfiles" "$HOME/.config/mise/conf.d"
         ln -sfn "$GITHUB_WORKSPACE" "$HOME/.dotfiles"
       env: &bootstrap-env
         # scripts/shell/trace.sh records a span per step here, for the report
