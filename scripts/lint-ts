@@ -15,7 +15,7 @@
 // the output back to the real ones. The mirror entries are symlinks, so the
 // content and every line number are the file's own.
 
-import { mkdirSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
 const USAGE = [
@@ -216,7 +216,15 @@ function oxlintBin(root: string): string {
   return path;
 }
 
-function oxlint(bin: string, root: string, args: string[], mirror?: Mirror): number {
+// Where a run's output goes. The command line passes the process streams, and
+// the Claude Code hooks collect it to hand back to the session.
+export type Write = (stream: "stdout" | "stderr", text: string) => void;
+
+export interface LintOptions {
+  install?: boolean;
+}
+
+function oxlint(bin: string, root: string, args: string[], write: Write, mirror?: Mirror): number {
   const run = Bun.spawnSync({
     cmd: [bin, ...args],
     cwd: root,
@@ -225,24 +233,44 @@ function oxlint(bin: string, root: string, args: string[], mirror?: Mirror): num
     stdout: "pipe",
     stderr: "pipe",
   });
-  process.stdout.write(rewrite(run.stdout.toString(), mirror));
-  process.stderr.write(rewrite(run.stderr.toString(), mirror));
+  write("stdout", rewrite(run.stdout.toString(), mirror));
+  write("stderr", rewrite(run.stderr.toString(), mirror));
   return run.exitCode;
 }
 
-async function main(args: string[]): Promise<number> {
-  if (args.includes("-h") || args.includes("--help")) {
-    process.stdout.write(`${USAGE}\n`);
-    return 0;
+function pinned(root: string): boolean {
+  try {
+    const installed = JSON.parse(readFileSync(join(root, "node_modules/oxlint/package.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    return installed.version === manifest.devDependencies?.oxlint;
+  } catch {
+    return false;
   }
+}
 
-  const named = args.find((arg) => arg.startsWith(ROOT_FLAG))?.slice(ROOT_FLAG.length);
-  const root = resolve(named ?? join(import.meta.dir, ".."));
-  const flags = args.filter((arg) => !arg.startsWith(ROOT_FLAG));
+// bun install checks the registry on every call, at up to a second and a half,
+// so it runs only when the installed oxlint is not the pinned one.
+function install(root: string, write: Write): boolean {
+  if (pinned(root)) return true;
+  const run = Bun.spawnSync({
+    cmd: [process.execPath, "install", "--frozen-lockfile"],
+    cwd: root,
+    env: process.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (run.exitCode === 0) return true;
+  write("stderr", `bun install failed\n${run.stdout}${run.stderr}`);
+  return false;
+}
+
+export async function lint(root: string, flags: string[], write: Write, options: LintOptions = {}): Promise<number> {
   const separator = flags.indexOf("--");
   const rest = separator === -1 ? flags : flags.slice(0, separator);
   const selection = separator === -1 ? undefined : await select(root, flags.slice(separator + 1));
   if (selection?.files.length === 0 && selection.scripts.length === 0) return 0;
+  if (options.install && !install(root, write)) return 1;
 
   const bin = oxlintBin(root);
   const scripts = selection?.scripts ?? (await bunScripts(root));
@@ -254,19 +282,31 @@ async function main(args: string[]): Promise<number> {
   // names every violation rather than one pass worth at a time.
   const repo =
     selection === undefined
-      ? oxlint(bin, root, [...rest, `--ignore-pattern=${MIRROR}/**`])
+      ? oxlint(bin, root, [...rest, `--ignore-pattern=${MIRROR}/**`], write)
       : selection.files.length === 0
         ? 0
-        : oxlint(bin, root, [...rest, ...selection.files]);
+        : oxlint(bin, root, [...rest, ...selection.files], write);
   if (scripts.length === 0) return repo === 0 ? 0 : 1;
 
   try {
     link(root, dir, scripts);
-    const bins = oxlint(bin, root, [...rest, dir], { dir, scripts });
+    const bins = oxlint(bin, root, [...rest, dir], write, { dir, scripts });
     return repo === 0 && bins === 0 ? 0 : 1;
   } finally {
     clean(root, dir);
   }
+}
+
+async function main(args: string[]): Promise<number> {
+  if (args.includes("-h") || args.includes("--help")) {
+    process.stdout.write(`${USAGE}\n`);
+    return 0;
+  }
+
+  const named = args.find((arg) => arg.startsWith(ROOT_FLAG))?.slice(ROOT_FLAG.length);
+  const root = resolve(named ?? join(import.meta.dir, ".."));
+  const flags = args.filter((arg) => !arg.startsWith(ROOT_FLAG));
+  return lint(root, flags, (stream, text) => process[stream].write(text));
 }
 
 if (import.meta.main) process.exit(await main(process.argv.slice(2)));
