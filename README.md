@@ -48,7 +48,7 @@ zsh startup is a glob-driven loader split across two files, following zsh's own 
 1. [`zsh/.zshenv`](zsh/.zshenv) (symlinked to `~/.zshenv`) runs on **every** shell, interactive or not. It resolves which dotfiles root is active (see [dev mode](#dev-mode-and-testing)), runs `brew shellenv`, sources every `path.zsh`, then forces the repo's own `bin/` to the front of `$PATH`:
 
    ```zsh
-   for file in $ZSH/**/path.zsh; do source $file; done
+   for file in $ZSH/*/path.zsh; do source $file; done
    typeset -gU path
    path=("$ZSH/bin" "$HOME/.local/bin" $path)
    ```
@@ -56,7 +56,7 @@ zsh startup is a glob-driven loader split across two files, following zsh's own 
 2. [`zsh/.zshrc`](zsh/.zshrc) (symlinked into `$ZDOTDIR`) runs on interactive shells. It globs every topic's `.zsh` files and sources all of them **except** the path and completion files, which are handled separately:
 
    ```zsh
-   config_files=($ZSH/**/*.zsh)
+   config_files=($ZSH/*/*.zsh)
    for file in ${${config_files:#*/path.zsh}:#*/completion.zsh}; do
      source $file
    done
@@ -69,7 +69,7 @@ Completions are the expensive part of startup. They don't run before the first p
 ```zsh
 _load_deferred_completions() {
   add-zsh-hook -d precmd _load_deferred_completions
-  for file in $ZSH/**/completion.zsh; do source $file; done
+  for file in $ZSH/*/completion.zsh; do source $file; done
 }
 add-zsh-hook precmd _load_deferred_completions
 ```

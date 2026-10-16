@@ -41,7 +41,7 @@ done
 
 # all of our zsh files
 typeset -U config_files
-config_files=($ZSH/**/*.zsh)
+config_files=($ZSH/*/*.zsh)
 
 FPATH="$HOMEBREW_PREFIX/share/zsh/site-functions:${FPATH}"
 
@@ -62,7 +62,7 @@ unset config_files
 autoload -Uz add-zsh-hook
 _load_deferred_completions() {
   add-zsh-hook -d precmd _load_deferred_completions
-  for file in $ZSH/**/completion.zsh; do
+  for file in $ZSH/*/completion.zsh; do
     source $file
   done
 }
