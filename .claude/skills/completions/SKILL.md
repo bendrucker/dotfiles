@@ -220,7 +220,7 @@ Using `#compdef` directive when file is sourced directly. Use `compdef` registra
 ### Completions Not Loading
 
 1. Check file naming: `*/completion.zsh`
-2. Verify file is being sourced: `echo $ZSH/**/*.zsh | grep completion`
+2. Verify file is being sourced: `echo $ZSH/*/completion.zsh`
 3. Check for syntax errors: `zsh -n path/to/completion.zsh`
 
 ## Examples

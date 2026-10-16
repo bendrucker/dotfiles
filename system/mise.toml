@@ -37,6 +37,9 @@ depends = ["lint:*"]
 [tasks."lint:completion-naming"]
 run = "if find . -name completions.zsh -not -path './.git/*' | grep .; then echo 'rename to completion.zsh, the only name the deferred completion filter matches' >&2; exit 1; fi"
 
+[tasks."lint:zsh-depth"]
+run = "if git ls-files '*.zsh' | awk -F/ 'NF != 2' | grep .; then echo 'move into a topic directory, the only level zsh/.zshrc and zsh/.zshenv load .zsh files from' >&2; exit 1; fi"
+
 [tasks."lint:glyphs"]
 run = "bin/glyph-scan"
 
