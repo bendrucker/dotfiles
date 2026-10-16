@@ -47,24 +47,34 @@ function entries(dir: string): string[] {
   }
 }
 
-// $PATH without mise's own directories. An install directory is on it only
-// where mise's hook put it for the current project, which is not the context
-// this check judges.
-export function fallbackPath(path: string, data: string): string[] {
+export type SearchPath = { ahead: string[]; behind: string[] };
+
+// $PATH split at the shims directory, without mise's own directories. An
+// install directory is on it only where mise's hook put it for the current
+// project, which is not the context this check judges. With no shims directory
+// on $PATH, everything counts as behind it.
+export function searchPath(path: string, data: string): SearchPath {
   const root = resolve(data);
-  return path
-    .split(delimiter)
-    .filter(Boolean)
-    .map((dir) => resolve(dir))
-    .filter((dir) => dir !== root && !dir.startsWith(`${root}/`));
+  const dirs = path.split(delimiter).filter(Boolean).map((dir) => resolve(dir));
+  const shims = dirs.indexOf(join(root, "shims"));
+  const outside = (dir: string) => dir !== root && !dir.startsWith(`${root}/`);
+  return {
+    ahead: dirs.slice(0, Math.max(shims, 0)).filter(outside),
+    behind: dirs.slice(shims + 1).filter(outside),
+  };
 }
 
-export function findShadows(shims: string[], active: Set<string>, path: string[]): Shadow[] {
+function locate(dirs: string[], name: string): string | undefined {
+  return dirs.find((dir) => isExecutable(join(dir, name)));
+}
+
+// A copy ahead of the shims directory wins before the shim is ever reached.
+export function findShadows(shims: string[], active: Set<string>, path: SearchPath): Shadow[] {
   return shims
-    .filter((name) => !active.has(name))
+    .filter((name) => !active.has(name) && locate(path.ahead, name) === undefined)
     .sort()
     .flatMap((name) => {
-      const dir = path.find((candidate) => isExecutable(join(candidate, name)));
+      const dir = locate(path.behind, name);
       return dir === undefined ? [] : [{ name, target: join(dir, name) }];
     });
 }
@@ -93,7 +103,7 @@ function main(): number {
     console.error("mise-shim-shadows: mise bin-paths failed, so shadowing shims would go unnoticed.");
     return 1;
   }
-  const shadows = findShadows(entries(join(data, "shims")), active, fallbackPath(env.PATH ?? "", data));
+  const shadows = findShadows(entries(join(data, "shims")), active, searchPath(env.PATH ?? "", data));
   for (const { name, target } of shadows) console.log(`${name}  ${target}`);
   return 0;
 }

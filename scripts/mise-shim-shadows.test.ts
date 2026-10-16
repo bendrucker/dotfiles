@@ -77,6 +77,17 @@ describe("mise-shim-shadows", () => {
     expect(result).toMatchObject({ status: 0, stdout: "" });
   });
 
+  test("ignores a shim whose command resolves ahead of the shims directory", () => {
+    shim("gh");
+    const local = box.mkdir("local", "bin");
+    executable(join(local, "gh"));
+    executable(join(brew, "gh"));
+
+    const result = check({ path: [box.bin, local, join(data, "shims"), brew] });
+
+    expect(result).toMatchObject({ status: 0, stdout: "" });
+  });
+
   test("fails when mise cannot list the active tools", () => {
     shim("bun");
     executable(join(brew, "bun"));
