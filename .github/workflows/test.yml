@@ -137,9 +137,8 @@ jobs:
           ~/.config/herdr/plugins.json
     # Formulae and casks come from the live API while the image pins brew, so
     # they use DSL it lacks. Must follow the cache restore, which rewrites
-    # brew's own prefix. This also fetches every tap's checkout, so a third-party
-    # formula can move ahead of its cached keg the same way a core one moves
-    # ahead with the API, and the first brew bundle upgrades both.
+    # brew's own prefix. It also fetches every tap's checkout, which can move a
+    # third-party formula ahead of its cached keg.
     - name: Update Homebrew
       run: brew update
     - name: Print Homebrew configuration
