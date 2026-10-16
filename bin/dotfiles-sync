@@ -14,9 +14,9 @@
 // when the gate refused, the sync failed, or the submodules did. A failing
 // bootstrap exits with its own status.
 
-import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { reviewDirty, syncNotify } from "#jobs/sync-gate";
 import { log, type Output, streamOutput } from "#jobs/output";
 import { notify } from "#jobs/report";
@@ -86,33 +86,19 @@ export function run(args: string[], out: Output): number {
 // Index entries for submodules: mode 160000, the pinned commit, stage 0.
 const GITLINK = /^160000 ([0-9a-f]+) 0\t(.+)$/;
 
-// True when every submodule the index pins has that commit checked out.
+// True when every submodule the index pins has that commit checked out. An
+// uninitialized submodule is an empty directory, where rev-parse answers with
+// the superproject's HEAD, which never matches a pin.
 function submodulesPinned(out: Output, home: string): boolean {
   const staged = out.read(["git", "-C", home, "ls-files", "--stage", "-z"]);
   if (staged.status !== 0) return false;
 
-  for (const entry of staged.stdout.split("\0")) {
+  return staged.stdout.split("\0").every((entry) => {
     const gitlink = GITLINK.exec(entry);
-    if (gitlink !== null && checkedOut(join(home, gitlink[2] ?? "")) !== gitlink[1]) return false;
-  }
-  return true;
-}
-
-// The commit a submodule's HEAD names, through one loose branch ref at most. A
-// submodule that was never initialized, or whose branch is packed, never
-// matches a pin, which only costs the full update.
-function checkedOut(dir: string): string | undefined {
-  try {
-    let gitDir = join(dir, ".git");
-    if (statSync(gitDir).isFile()) {
-      gitDir = resolve(dir, readFileSync(gitDir, "utf8").replace(/^gitdir: /, "").trim());
-    }
-    const head = readFileSync(join(gitDir, "HEAD"), "utf8").trim();
-    if (!head.startsWith("ref: ")) return head;
-    return readFileSync(join(gitDir, head.slice("ref: ".length)), "utf8").trim();
-  } catch {
-    return undefined;
-  }
+    if (gitlink === null) return true;
+    const head = out.read(["git", "-C", join(home, gitlink[2] ?? ""), "rev-parse", "HEAD"]);
+    return head.status === 0 && head.stdout.trim() === gitlink[1];
+  });
 }
 
 // The shell fell through to the reload when the bootstrap script was not
