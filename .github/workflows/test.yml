@@ -137,8 +137,7 @@ jobs:
           ~/.config/herdr/plugins.json
     # Formulae and casks come from the live API while the image pins brew, so
     # they use DSL it lacks. Must follow the cache restore, which rewrites
-    # brew's own prefix. Updates brew only: bottles stay pinned by
-    # HOMEBREW_NO_INSTALL_UPGRADE.
+    # brew's own prefix. Also fetches every tap.
     - name: Update Homebrew
       run: brew update
     - name: Print Homebrew configuration

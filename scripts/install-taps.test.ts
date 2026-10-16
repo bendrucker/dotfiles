@@ -33,6 +33,9 @@ beforeEach(() => {
       '    done',
       '    if grep -qx "$2" "$FIXTURES/tap-fails" 2>/dev/null; then exit 128; fi',
       '    ;;',
+      '  trust) shift; echo "$*" >> "$FIXTURES/trusted"',
+      '    [ ! -f "$FIXTURES/trust-fails" ] || exit 1',
+      '    ;;',
       "esac",
     ].join("\n"),
   );
@@ -186,6 +189,33 @@ describe("install-taps", () => {
     const r = runScript();
     expect(r.status).toBe(0);
     expect(tapped()).toBe("oven-sh/bun");
+  });
+
+  describe("trust", () => {
+    test("trusts every declared tap in one call, tapped or not", () => {
+      declared("oven-sh/bun", "schpet/tap");
+      installed("oven-sh/bun");
+
+      const r = runScript();
+      expect(r.status).toBe(0);
+      expect(box.read("trusted").trim()).toBe("--tap oven-sh/bun schpet/tap");
+    });
+
+    test("makes no call when no tap is declared", () => {
+      const r = runScript();
+      expect(r.status).toBe(0);
+      expect(existsSync(box.path("trusted"))).toBe(false);
+    });
+
+    test("warns rather than failing the install when brew trust fails", () => {
+      declared("schpet/tap");
+      installed("schpet/tap");
+      box.write("trust-fails", "");
+
+      const r = runScript();
+      expect(r.status).toBe(0);
+      expect(r.stderr).toContain("brew trust failed");
+    });
   });
 
   // scripts/install runs under `set -e` well before brew bundle, mise and the
