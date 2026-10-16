@@ -35,6 +35,7 @@ const SYNC_JOB = "dotfiles-sync";
 const DRIFT_JOB = "brew-drift";
 const CREDENTIALS_JOB = "credential-audit";
 const ROOT_CASKS_JOB = "brew-root-casks";
+const SHIM_SHADOWS_JOB = "mise-shim-shadows";
 
 // launchd keeps a loaded job firing after its plist is deleted and its label
 // disabled, so the job this one replaced kept running beside it and the two
@@ -320,6 +321,35 @@ function reportDrift(home: string, listing: string): number {
   });
 }
 
+// A shim for a tool active only inside some project falls through to the copy
+// behind it everywhere else, at mise's startup cost on every spawn. Latched on
+// the shim names, as drift is on its package set.
+function checkShimShadows(home: string): number {
+  const check = runCapturingStdout([join(home, "scripts", "mise-shim-shadows")]);
+  if (check.status !== 0) {
+    log("warn", "mise shim check could not run");
+    return 0;
+  }
+  if (check.output === "") {
+    reportSuccess(SHIM_SHADOWS_JOB);
+    return 0;
+  }
+
+  log("warn", "mise shims shadow other commands");
+  const names = check.output.split("\n").map((line) => line.split(/\s+/)[0]);
+  return reportFailure({
+    job: SHIM_SHADOWS_JOB,
+    title: "mise shims shadow other commands",
+    command: join(home, "scripts", "mise-shim-shadows"),
+    output: check.output,
+    revision: currentRevision(home),
+    extraMeta:
+      "- **Fix:** `mise uninstall <tool> --all && mise reshim` for a leftover, or add the command to `shims.exclude`",
+    outputHeading: "Shim and Shadowed Command",
+    fingerprint: driftFingerprint(names.join("\n")),
+  });
+}
+
 // Latched one credential at a time, so a leftover nobody has dealt with stays
 // quiet while the rest of the set churns around it.
 function reportCredentials(home: string, listing: string): number {
@@ -502,6 +532,9 @@ async function upgrade(home: string): Promise<number> {
   } else {
     reportSuccess(DRIFT_JOB);
   }
+
+  const shadowed = checkShimShadows(home);
+  if (shadowed !== 0) return shadowed;
 
   // After the install, which ran credentials/install.sh and tightened every
   // mode it could. What is left is what a chmod cannot fix.
