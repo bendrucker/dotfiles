@@ -35,7 +35,7 @@
 #   Returns:
 #     0  updated   (new short rev echoed to stdout)
 #     2  current   (already up to date)
-#     1  failed    (guard, fetch, or pull failure; reason logged)
+#     1  failed    (guard, fetch, or fast-forward failure; reason logged)
 #   Callers own their own notification and post-update side effects.
 
 GIT_SYNC_UPDATED=0
@@ -266,7 +266,7 @@ git_sync() {
 
   # remote_rev was already fetched above, so merge it directly.
   if ! git -C "$repo_dir" merge --ff-only "$remote_rev" 1>&2; then
-    gum log --level error "Failed to pull - may need manual intervention"
+    gum log --level error "Failed to fast-forward - may need manual intervention"
     return "$GIT_SYNC_FAILED"
   fi
 
