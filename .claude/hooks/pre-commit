@@ -58,10 +58,21 @@ lint_ts() {
   return 1
 }
 
-# Runs both whatever the other reports, so one pass names every finding.
+# Runs both whatever the other reports, so one pass names every finding. lint_ts
+# runs alongside the hooks, but a fixer may rewrite a file while oxlint reads it,
+# so after a failed run it lints again and reports that result instead.
 check() {
-  local status=0
+  local status=0 lint_status=0 lint_output="$cache_root/pre-commit-lint.$$"
+  lint_ts "$@" > "$lint_output" 2>&1 &
+  local lint_pid=$!
   $runner run --files "$@" 2>&1 || status=1
-  lint_ts "$@" || status=1
-  return "$status"
+  wait "$lint_pid" || lint_status=1
+  if [[ $status -eq 0 ]]; then
+    cat "$lint_output"
+    rm -f "$lint_output"
+    return "$lint_status"
+  fi
+  rm -f "$lint_output"
+  lint_ts "$@"
+  return 1
 }
