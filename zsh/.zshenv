@@ -34,7 +34,7 @@ for brew in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
 done
 
 # load the path files
-for file in $ZSH/**/path.zsh; do
+for file in $ZSH/*/path.zsh; do
   source $file
 done
 
