@@ -88,8 +88,8 @@ function pushCommit(rule?: string): void {
   run(["git", "-C", upstream, "push", "-q", "origin", "main"]);
 }
 
-// Pin a submodule in the clone and push it. One left uninitialized is what a
-// failed update, or a submodule newly added upstream, leaves behind.
+// An uninitialized submodule is what a failed update, or one newly added
+// upstream, leaves behind.
 function addSubmodule({ initialized }: { initialized: boolean }): void {
   const sub = join(sandbox, "sub");
   run(["git", "init", "-q", "-b", "main", sub]);
