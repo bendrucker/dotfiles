@@ -264,7 +264,9 @@ git_sync() {
 
   gum log --level info "Updating from ${local_rev:0:7} to ${remote_rev:0:7}..."
 
-  if ! git -C "$repo_dir" pull --ff-only origin "$branch" 1>&2; then
+  # The fetch above already brought remote_rev in. A pull would fetch it again,
+  # paying another round trip to the remote for nothing.
+  if ! git -C "$repo_dir" merge --ff-only "$remote_rev" 1>&2; then
     gum log --level error "Failed to pull - may need manual intervention"
     return "$GIT_SYNC_FAILED"
   fi
