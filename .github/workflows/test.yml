@@ -399,7 +399,7 @@ jobs:
       # A leading ./ is what makes bun read this as a path. Bare, it is a filter
       # matched against discovered files, and discovery skips dot directories.
       - name: Run tests
-        run: bun test ./.claude/skills/
+        run: bun test ./.claude/skills/ ./.claude/hooks/
   lint:
     runs-on: ubuntu-latest
     # The pins live in a topic file that reaches mise through a conf.d link
