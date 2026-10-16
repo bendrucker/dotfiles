@@ -42,6 +42,11 @@ done
 typeset -gU path
 path=("$ZSH/bin" "$HOME/.local/bin" $path)
 
+# mise activate recorded PATH before the dedupe above. Its first precmd re-runs
+# hook-env (~80ms) when PATH differs from that record, and only the order and
+# duplicates changed, so hand it the current PATH.
+[[ -n $__MISE_ZSH_ACTIVATE_PATH ]] && __MISE_ZSH_ACTIVATE_PATH=$PATH
+
 # Deliberately not exported. .zshrc keys its rebuild on this, and a child shell
 # that inherited it would read its parent's startup as its own and skip the
 # rebuild it needs. See the block at the top of .zshrc.

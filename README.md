@@ -68,10 +68,10 @@ Completions are the expensive part of startup. `.zshrc` sources every `completio
 
 ### Startup Budget
 
-[CI benchmarks startup](.github/workflows/test.yml) with [hyperfine](https://github.com/sharkdp/hyperfine) and **fails the build if median startup exceeds one second**:
+[CI benchmarks startup](.github/workflows/test.yml) with [hyperfine](https://github.com/sharkdp/hyperfine) and **fails the build if the median time to first prompt exceeds one second**:
 
 ```sh
-hyperfine --warmup 3 --runs 10 --shell=none 'zsh -i -c exit'
+hyperfine --warmup 3 --runs 10 --shell=none --input null 'zsh -i'
 # median > 1.0s → exit 1
 ```
 

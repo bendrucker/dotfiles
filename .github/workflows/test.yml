@@ -256,8 +256,8 @@ jobs:
       run: bun test integration.test.ts
     - name: Benchmark shell startup
       run: |
-        hyperfine --warmup 3 --runs 10 --shell=none \
-          'zsh -i -c exit' \
+        hyperfine --warmup 3 --runs 10 --shell=none --input null \
+          'zsh -i' \
           --export-json /tmp/bench.json \
           --export-markdown /tmp/bench.md
 
@@ -265,7 +265,7 @@ jobs:
           echo '## Shell Startup Benchmark'
           echo ''
           echo '```'
-          hyperfine --warmup 0 --runs 1 --shell=none 'zsh -i -c exit'
+          hyperfine --warmup 0 --runs 1 --shell=none --input null 'zsh -i'
           echo '```'
           echo ''
           cat /tmp/bench.md
