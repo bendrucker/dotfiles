@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { copyFixture } from "#harness/fixture";
+import { fixture } from "#harness/fixture";
 import type { Capture, SpawnOptions } from "#jobs/output";
 import {
   auditPlugins,
@@ -84,8 +84,8 @@ function recording(): Capture {
       keep(text);
     },
     run(cmd, options) {
-      // Answered as the gum stub answers it, the message alone on stderr. The
-      // job logs a few lines per step, and a spawn for each is most of a test.
+      // Answer `gum log` in-process. The job logs a few lines per step, and a
+      // spawn for each is most of a test.
       if (cmd[0] === "gum" && cmd[1] === "log") {
         keep(`${cmd.at(-1)}\n`);
         return 0;
@@ -336,6 +336,8 @@ function buildRepo(root: string): void {
   run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
 }
 
+const copyRepo = fixture(buildRepo);
+
 beforeEach(() => {
   // A refused plugin update pauses before its retry, and the pause is real time
   // with nothing to assert about it.
@@ -416,7 +418,7 @@ beforeEach(() => {
 
   writePluginFixture();
 
-  copyFixture(buildRepo, sandbox);
+  copyRepo(sandbox);
   symlinkSync(join(repo, "user", "settings.json"), settingsLink());
 
   // A stub that failed to shadow the real CLI would enumerate this machine's own

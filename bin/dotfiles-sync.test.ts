@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { copyFixture } from "#harness/fixture";
+import { fixture } from "#harness/fixture";
 
 // Run as the launchd job runs it, so the exit status, the log, and the
 // notification are read off the real script rather than off its parts.
@@ -128,6 +128,8 @@ function buildRepo(root: string): void {
   run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
 }
 
+const copyRepo = fixture(buildRepo);
+
 beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), "dotfiles-sync-"));
   stubs = join(sandbox, "stub");
@@ -164,7 +166,7 @@ beforeEach(() => {
   writeScript(join(stubs, "osascript"), `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
   writeScript(join(stubs, "open"), `printf 'todo\\n' >>"${join(sandbox, "todos")}"`);
 
-  copyFixture(buildRepo, sandbox);
+  copyRepo(sandbox);
 });
 
 afterEach(() => {

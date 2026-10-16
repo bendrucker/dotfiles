@@ -27,7 +27,7 @@ import {
   stripNewlines,
   syncNotify,
 } from "#jobs/sync-gate";
-import { copyFixture } from "#harness/fixture";
+import { fixture } from "#harness/fixture";
 import type { Capture, SpawnOptions } from "#jobs/output";
 
 let sandbox: string;
@@ -175,6 +175,8 @@ function buildRepo(root: string): void {
   run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
 }
 
+const copyRepo = fixture(buildRepo);
+
 beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), "sync-gate-"));
   stubs = join(sandbox, "stub");
@@ -256,7 +258,7 @@ beforeEach(() => {
   delete process.env.GUM_CHOICE;
   gitConfigEnvironment = gitConfigKeys().map((key) => [key, process.env[key] ?? ""]);
 
-  copyFixture(buildRepo, sandbox);
+  copyRepo(sandbox);
 
   // A stub that failed to shadow the real command would reach this machine's own
   // hostname and the real gh, so every example after it would be asserting
