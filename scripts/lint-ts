@@ -25,8 +25,8 @@ const USAGE = [
   "that oxlint's own file discovery cannot see. Arguments are passed through.",
   "",
   "  --root=<path>  lint this tree instead of the one this script sits in",
-  "  -- <path>...   lint only these, skipping any that are not TypeScript;",
-  "                 naming .oxlintrc.json lints the whole tree",
+  "  -- <path>...   lint only these, skipping any that are not TypeScript or",
+  "                 that git ignores. Naming .oxlintrc.json lints the whole tree",
 ].join("\n");
 
 const ROOT_FLAG = "--root=";
@@ -97,16 +97,45 @@ function within(root: string, path: string): string | undefined {
   }
 }
 
+// oxlint lints a path it is handed by name even where its own discovery would
+// skip it, so a named path goes through only when git lists it as tracked or as
+// untracked and not ignored. Outside a checkout there is nothing to filter by.
+function listed(root: string, paths: string[]): Set<string> {
+  if (paths.length === 0) return new Set();
+  const run = Bun.spawnSync({
+    cmd: ["git", "--literal-pathspecs", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", ...paths],
+    cwd: root,
+    env: process.env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (run.exitCode !== 0) return new Set(paths);
+  return new Set(run.stdout.toString().split("\0").filter(Boolean));
+}
+
+function outside(named: string): boolean {
+  return named === ".." || named.startsWith("../");
+}
+
 // Paths resolve against the working directory and come back relative to root.
 // Undefined means the whole tree.
 export async function select(root: string, paths: string[]): Promise<Selection | undefined> {
-  const selection: Selection = { files: [], scripts: [] };
+  const named: string[] = [];
   for (const path of paths) {
-    const named = within(root, path);
-    if (named === undefined || named.startsWith("..")) continue;
-    if (named === CONFIG) return undefined;
-    if (LINTABLE.test(named)) selection.files.push(named);
-    else if (await readsAsBunScript(root, named)) selection.scripts.push(named);
+    const relative = within(root, path);
+    if (relative === undefined || outside(relative)) continue;
+    if (relative === CONFIG) return undefined;
+    if (LINTABLE.test(relative) || extname(relative) === "") named.push(relative);
+  }
+
+  const visible = listed(root, named);
+  const selection: Selection = { files: [], scripts: [] };
+  for (const path of named.filter((path) => visible.has(path))) {
+    // git still lists a tracked file that was deleted, and oxlint fails on it.
+    if (LINTABLE.test(path)) {
+      if (statSync(join(root, path), { throwIfNoEntry: false })?.isFile()) selection.files.push(path);
+    } else if (await readsAsBunScript(root, path)) selection.scripts.push(path);
   }
   return selection;
 }

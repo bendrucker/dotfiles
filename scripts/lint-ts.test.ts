@@ -230,14 +230,29 @@ describe("lint-ts", () => {
     expect(outcome.stdout).not.toContain("bin/stale");
   });
 
-  test.each<{ name: string; executable: string; module?: string; paths: string[]; status: number; reports?: string }>([
-    { name: "a named module", executable: "", module: NESTED, paths: ["packages/module.ts"], status: 1, reports: "packages/module.ts:2:" },
-    { name: "a named executable", executable: NESTED, paths: ["bin/worktree-tool"], status: 1, reports: "bin/worktree-tool:3:" },
-    { name: "an unnamed executable", executable: NESTED, paths: ["packages/module.ts"], status: 0 },
-    { name: "the config, as the whole tree", executable: NESTED, paths: [".oxlintrc.json"], status: 1, reports: "bin/worktree-tool:3:" },
-    { name: "a path given absolute", executable: "", module: NESTED, paths: ["<root>/packages/module.ts"], status: 1, reports: "packages/module.ts:2:" },
-  ])("after -- lints only $name", ({ executable, module, paths, status, reports }) => {
+  // A whole-tree run never reads what git ignores, so naming it must not either.
+  test.each<{
+    name: string;
+    executable: string;
+    module?: string;
+    files?: Record<string, string>;
+    removed?: string;
+    paths: string[];
+    status: number;
+    reports?: string;
+  }>([
+    { name: "lints only a named module", executable: "", module: NESTED, paths: ["packages/module.ts"], status: 1, reports: "packages/module.ts:2:" },
+    { name: "lints only a named executable", executable: NESTED, paths: ["bin/worktree-tool"], status: 1, reports: "bin/worktree-tool:3:" },
+    { name: "skips an unnamed executable", executable: NESTED, paths: ["packages/module.ts"], status: 0 },
+    { name: "lints the whole tree for the config", executable: NESTED, paths: [".oxlintrc.json"], status: 1, reports: "bin/worktree-tool:3:" },
+    { name: "lints a path given absolute", executable: "", module: NESTED, paths: ["<root>/packages/module.ts"], status: 1, reports: "packages/module.ts:2:" },
+    { name: "lints an untracked path git does not ignore", executable: "", files: { "packages/new.ts": NESTED }, paths: ["packages/new.ts"], status: 1, reports: "packages/new.ts:2:" },
+    { name: "skips a path git ignores", executable: "", files: { ".gitignore": "node_modules/\nscratch/\n", "scratch/module.ts": NESTED }, paths: ["scratch/module.ts"], status: 0 },
+    { name: "skips a tracked file deleted since", executable: "", removed: "packages/module.ts", paths: ["packages/module.ts"], status: 0 },
+  ])("after -- $name", ({ executable, module, files = {}, removed, paths, status, reports }) => {
     fixture({ executable, module });
+    for (const [name, contents] of Object.entries(files)) box.write(name, contents);
+    if (removed !== undefined) rmSync(join(box.dir, removed));
     const outcome = run(["--", ...paths.map((path) => path.replace("<root>", box.dir))]);
 
     expect(outcome.status).toBe(status);

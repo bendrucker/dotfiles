@@ -12,6 +12,7 @@ if [[ ! -f "$config" ]]; then
 fi
 
 cache_root="${CLAUDE_CODE_TMPDIR:-/tmp}"
+mkdir -p "$cache_root"
 
 # gitleaks-system scans the staged index rather than the files it is given, so
 # after an edit it reads whatever happens to be staged, at up to seconds a run.
@@ -38,11 +39,15 @@ oxlint_installed() {
 }
 
 lint_ts() {
-  local output path candidates=()
+  local output path line candidates=()
   # Starting bun costs more than linting a file, so paths lint-ts would drop
   # anyway are dropped here first. It still decides among the rest.
   for path in "$@"; do
-    [[ $path =~ \.[cm]?[jt]sx?$ || ${path##*/} == .oxlintrc.json || ${path##*/} != *.* ]] && candidates+=("$path")
+    if [[ $path =~ \.[cm]?[jt]sx?$ || ${path##*/} == .oxlintrc.json ]]; then
+      candidates+=("$path")
+    elif [[ ${path##*/} != *.* && -f $path ]] && IFS= read -r line < "$path" && [[ $line == '#!'*bun* ]]; then
+      candidates+=("$path")
+    fi
   done
   [[ ${#candidates[@]} -gt 0 ]] || return 0
   set -- "${candidates[@]}"
@@ -62,7 +67,8 @@ lint_ts() {
 # runs alongside the hooks, but a fixer may rewrite a file while oxlint reads it,
 # so after a failed run it lints again and reports that result instead.
 check() {
-  local status=0 lint_status=0 lint_output="$cache_root/pre-commit-lint.$$"
+  local status=0 lint_status=0 lint_output
+  lint_output=$(mktemp "$cache_root/pre-commit-lint.XXXXXX")
   lint_ts "$@" > "$lint_output" 2>&1 &
   local lint_pid=$!
   $runner run --files "$@" 2>&1 || status=1
