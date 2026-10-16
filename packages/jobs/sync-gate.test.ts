@@ -159,7 +159,6 @@ function run(cmd: string[]): void {
   }
 }
 
-// A clone with one commit, pushed to its origin.
 function buildRepo(root: string): void {
   const repo = join(root, "repo");
   const origin = join(root, "origin.git");

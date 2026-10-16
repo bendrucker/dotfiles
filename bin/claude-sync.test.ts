@@ -318,7 +318,7 @@ function writeRepoSettings(settings: unknown, indent = 2): void {
   writeFileSync(join(repo, "user", "settings.json"), `${JSON.stringify(settings, null, indent)}\n`);
 }
 
-// The repo ~/.claude/settings.json links into, pushed to its origin.
+// The repo `~/.claude/settings.json` links into.
 function buildRepo(root: string): void {
   const repo = join(root, "repo");
   const origin = join(root, "origin.git");

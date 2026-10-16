@@ -100,8 +100,6 @@ function addSubmodule({ initialized }: { initialized: boolean }): void {
   run(["git", "-C", repo, "push", "-q", "origin", "main"]);
   if (!initialized) run(["git", "-C", repo, "submodule", "deinit", "-q", "-f", "sub"]);
 }
-
-// A clone carrying the reload and bootstrap entry points, pushed to its origin.
 function buildRepo(root: string): void {
   const repo = join(root, "repo");
   const origin = join(root, "origin.git");
