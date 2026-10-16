@@ -15,16 +15,18 @@
 // the output back to the real ones. The mirror entries are symlinks, so the
 // content and every line number are the file's own.
 
-import { mkdirSync, rmdirSync, rmSync, statSync, symlinkSync } from "node:fs";
-import { dirname, extname, join, resolve } from "node:path";
+import { mkdirSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 
 const USAGE = [
-  "usage: lint-ts [--root=<path>] [oxlint-args...]",
+  "usage: lint-ts [--root=<path>] [oxlint-args...] [-- <path>...]",
   "",
   "Lint the repo with oxlint, including the extensionless bun executables",
   "that oxlint's own file discovery cannot see. Arguments are passed through.",
   "",
   "  --root=<path>  lint this tree instead of the one this script sits in",
+  "  -- <path>...   lint only these, skipping any that are not TypeScript;",
+  "                 naming .oxlintrc.json lints the whole tree",
 ].join("\n");
 
 const ROOT_FLAG = "--root=";
@@ -62,6 +64,53 @@ export function isBunScript(name: string, firstLine: string): boolean {
   return extname(name) === "" && SHEBANG.test(firstLine);
 }
 
+async function readsAsBunScript(root: string, path: string): Promise<boolean> {
+  // A submodule is listed by its gitlink path, which stats as a directory,
+  // and a symlink whose target is gone stats as nothing at all.
+  if (!statSync(join(root, path), { throwIfNoEntry: false })?.isFile()) return false;
+  const head = await Bun.file(join(root, path)).slice(0, 200).text();
+  return isBunScript(path, head.split("\n")[0] ?? "");
+}
+
+// The extensions oxlint discovers on its own. Naming only paths outside them
+// makes oxlint exit 1 with "No files found to lint".
+const LINTABLE = /\.[cm]?[jt]sx?$/;
+
+// The config reaches every file, so a change to it is a change to all of them.
+const CONFIG = ".oxlintrc.json";
+
+// What a run limited to named paths lints, split the way the two passes take it.
+export interface Selection {
+  files: string[];
+  scripts: string[];
+}
+
+// The directory is resolved rather than the path, so a tracked symlink keeps
+// its own name, and both sides agree when the tree sits under a symlinked
+// /tmp. A path whose directory is gone resolves to nothing.
+function within(root: string, path: string): string | undefined {
+  try {
+    const absolute = resolve(path);
+    return relative(realpathSync(root), join(realpathSync(dirname(absolute)), basename(absolute)));
+  } catch {
+    return undefined;
+  }
+}
+
+// Paths resolve against the working directory and come back relative to root.
+// Undefined means the whole tree.
+export async function select(root: string, paths: string[]): Promise<Selection | undefined> {
+  const selection: Selection = { files: [], scripts: [] };
+  for (const path of paths) {
+    const named = within(root, path);
+    if (named === undefined || named.startsWith("..")) continue;
+    if (named === CONFIG) return undefined;
+    if (LINTABLE.test(named)) selection.files.push(named);
+    else if (await readsAsBunScript(root, named)) selection.scripts.push(named);
+  }
+  return selection;
+}
+
 export async function bunScripts(root: string): Promise<string[]> {
   const listed = Bun.spawnSync({
     cmd: ["git", "ls-files", "-z"],
@@ -76,12 +125,7 @@ export async function bunScripts(root: string): Promise<string[]> {
   const paths = listed.stdout.toString().split("\0").filter(Boolean);
   const found: string[] = [];
   for (const path of paths) {
-    if (extname(path) !== "") continue;
-    // A submodule is listed by its gitlink path, which stats as a directory,
-    // and a symlink whose target is gone stats as nothing at all.
-    if (!statSync(join(root, path), { throwIfNoEntry: false })?.isFile()) continue;
-    const head = await Bun.file(join(root, path)).slice(0, 200).text();
-    if (isBunScript(path, head.split("\n")[0] ?? "")) found.push(path);
+    if (extname(path) === "" && (await readsAsBunScript(root, path))) found.push(path);
   }
   return found.sort();
 }
@@ -165,17 +209,26 @@ async function main(args: string[]): Promise<number> {
 
   const named = args.find((arg) => arg.startsWith(ROOT_FLAG))?.slice(ROOT_FLAG.length);
   const root = resolve(named ?? join(import.meta.dir, ".."));
-  const rest = args.filter((arg) => !arg.startsWith(ROOT_FLAG));
+  const flags = args.filter((arg) => !arg.startsWith(ROOT_FLAG));
+  const separator = flags.indexOf("--");
+  const rest = separator === -1 ? flags : flags.slice(0, separator);
+  const selection = separator === -1 ? undefined : await select(root, flags.slice(separator + 1));
+  if (selection?.files.length === 0 && selection.scripts.length === 0) return 0;
 
   const bin = oxlintBin(root);
-  const scripts = await bunScripts(root);
+  const scripts = selection?.scripts ?? (await bunScripts(root));
   const dir = mirrorDir();
 
   // The ignore covers every mirror, this run's and any a killed run left
   // behind, so neither pass depends on the other having finished.
   // Both passes run whatever the first one reports, so a single invocation
   // names every violation rather than one pass worth at a time.
-  const repo = oxlint(bin, root, [...rest, `--ignore-pattern=${MIRROR}/**`]);
+  const repo =
+    selection === undefined
+      ? oxlint(bin, root, [...rest, `--ignore-pattern=${MIRROR}/**`])
+      : selection.files.length === 0
+        ? 0
+        : oxlint(bin, root, [...rest, ...selection.files]);
   if (scripts.length === 0) return repo === 0 ? 0 : 1;
 
   try {

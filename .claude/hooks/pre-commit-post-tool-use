@@ -11,7 +11,7 @@ fi
 hook_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$hook_dir/pre-commit"
 
-output=$($runner run --files "$file_path" 2>&1) && exit 0
+output=$(check "$file_path") && exit 0
 
 jq -n --arg ctx "$runner issues in $file_path:
 

@@ -2,9 +2,11 @@
 set -euo pipefail
 
 # Shared setup for pre-commit hooks. Sourced by post-tool-use and stop scripts.
-# Sets $runner to prek or pre-commit, or exits 0 if neither is available.
+# Sets $runner to prek or pre-commit and defines check, or exits 0 if neither
+# is available.
 
-config="${CLAUDE_PROJECT_DIR:-.}/.pre-commit-config.yaml"
+root="${CLAUDE_PROJECT_DIR:-.}"
+config="$root/.pre-commit-config.yaml"
 if [[ ! -f "$config" ]]; then
   exit 0
 fi
@@ -14,7 +16,9 @@ cache_root="${CLAUDE_CODE_TMPDIR:-/tmp}"
 # gitleaks-system scans the staged index rather than the files it is given, so
 # after an edit it reads whatever happens to be staged, at up to seconds a run.
 # It still runs at commit time, where the staged index is what is committed.
-export SKIP="${SKIP:+$SKIP,}gitleaks-system"
+# The oxlint hook lints the whole tree and runs bun install first, which is
+# what a commit wants. lint_ts below covers the edited files instead.
+export SKIP="${SKIP:+$SKIP,}gitleaks-system,oxlint"
 
 if command -v prek > /dev/null 2>&1; then
   export PREK_HOME="${PREK_HOME:-$cache_root/prek}"
@@ -25,3 +29,39 @@ elif command -v pre-commit > /dev/null 2>&1; then
 else
   exit 0
 fi
+
+# bun install checks the registry on every call, at up to a second and a half,
+# so it runs only when the installed oxlint is not the pinned one.
+oxlint_installed() {
+  jq -en --slurpfile installed "$root/node_modules/oxlint/package.json" --slurpfile pinned "$root/package.json" \
+    '$installed[0].version == $pinned[0].devDependencies.oxlint' > /dev/null 2>&1
+}
+
+lint_ts() {
+  local output path candidates=()
+  # Starting bun costs more than linting a file, so paths lint-ts would drop
+  # anyway are dropped here first. It still decides among the rest.
+  for path in "$@"; do
+    [[ $path =~ \.[cm]?[jt]sx?$ || $path == */.oxlintrc.json || ${path##*/} != *.* ]] && candidates+=("$path")
+  done
+  [[ ${#candidates[@]} -gt 0 ]] || return 0
+  set -- "${candidates[@]}"
+
+  if ! oxlint_installed; then
+    output=$(cd "$root" && bun install --frozen-lockfile 2>&1) || {
+      printf 'oxlint: bun install failed\n%s\n' "$output"
+      return 1
+    }
+  fi
+  output=$("$root/scripts/lint-ts" --root="$root" --deny-warnings -- "$@" 2>&1) && return 0
+  printf 'oxlint (scripts/lint-ts)...Failed\n%s\n' "$output"
+  return 1
+}
+
+# Runs both whatever the other reports, so one pass names every finding.
+check() {
+  local status=0
+  $runner run --files "$@" 2>&1 || status=1
+  lint_ts "$@" || status=1
+  return "$status"
+}

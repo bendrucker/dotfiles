@@ -35,10 +35,10 @@ fi
 # First pass: let fixers (trailing-whitespace, end-of-file-fixer, etc.) auto-fix.
 # A fixer that rewrites a file fails the run, so success means nothing changed
 # and a second pass would only repeat it.
-$runner run --files "${existing_files[@]}" > /dev/null 2>&1 && exit 0
+check "${existing_files[@]}" > /dev/null 2>&1 && exit 0
 
 # Second pass: check for remaining issues after auto-fix.
-output=$($runner run --files "${existing_files[@]}" 2>&1) && exit 0
+output=$(check "${existing_files[@]}") && exit 0
 
 jq -n --arg reason "$runner found issues that could not be auto-fixed:
 
