@@ -42,7 +42,7 @@ lint_ts() {
   # Starting bun costs more than linting a file, so paths lint-ts would drop
   # anyway are dropped here first. It still decides among the rest.
   for path in "$@"; do
-    [[ $path =~ \.[cm]?[jt]sx?$ || $path == */.oxlintrc.json || ${path##*/} != *.* ]] && candidates+=("$path")
+    [[ $path =~ \.[cm]?[jt]sx?$ || ${path##*/} == .oxlintrc.json || ${path##*/} != *.* ]] && candidates+=("$path")
   done
   [[ ${#candidates[@]} -gt 0 ]] || return 0
   set -- "${candidates[@]}"

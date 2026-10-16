@@ -18,7 +18,7 @@ fi
 # is touched before the check and kept only when the check passes, so an edit
 # made after that point is newer and a blocked Stop leaves its files to recheck.
 stamp=""
-if [[ -n "$session_id" ]]; then
+if [[ $session_id =~ ^[A-Za-z0-9_-]+$ ]]; then
   mkdir -p "$cache_root/pre-commit-stop"
   stamp="$cache_root/pre-commit-stop/$session_id"
   touch "$stamp.next"
