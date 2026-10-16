@@ -1,27 +1,21 @@
 #!/usr/bin/env sh
-# Usage: install-trust [dotfiles-root]
+# Usage: install-taps [dotfiles-root]
 #
-# Tap and trust the taps declared in the Brewfiles. The Brewfiles are the single
-# source of truth: committing a `tap` line records the decision, and this script
-# enforces it. The trust file is rebuilt from scratch each run, so a tap removed
-# from the Brewfiles drops out of it too.
-#
-# Homebrew 6.0.0 stopped auto-tapping untrusted taps from `brew bundle`
-# (Homebrew/brew#22599), so trusting a tap is no longer enough to let `brew
-# bundle` clone it. Tap each one explicitly so the formulae are on disk before
-# `brew bundle` runs, then trust so `brew bundle` can install from it.
+# Tap the taps declared in the Brewfiles before `brew bundle` runs. Trust is
+# declared there too, as `trusted: true` on each `tap` line, which `brew bundle`
+# applies itself. Cloning stays here rather than in `brew bundle` for two
+# reasons: the HTTPS pin below, and one unreachable tap failing only itself
+# rather than the whole bundle.
 #
 # Every `brew` call pays ~400ms of Ruby startup, so the steady-state run makes
-# two of them rather than two per tap. The conditions under which `brew tap`
+# one of them rather than one per tap. The conditions under which `brew tap`
 # would do nothing are two file tests Homebrew itself uses: Tap#installed? is
 # `path.directory?` and Tap#shallow? is `.git/shallow`. Meeting both is what
 # makes Tap#install raise TapAlreadyTappedError, which `brew tap` swallows.
 # A shallow tap still needs the call, because that is what unshallows it.
-# `brew trust` takes every tap at once.
 set -e
 
 DOTFILES_ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd -P)}"
-: "${XDG_CONFIG_HOME:=$HOME/.config}"
 
 # Homebrew clones a tap from its https://github.com/<user>/homebrew-<repo> URL,
 # but a `url.git@github.com:.insteadOf` rule rewrites that to SSH on the way out
@@ -49,11 +43,8 @@ fi
 taps=$(brew bundle list --file "$DOTFILES_ROOT/Brewfile" --tap)
 
 # One tap that cannot be cloned is not a reason to leave the rest untapped, or
-# to fail an install that has not reached brew, mise or the symlinks yet. A tap
-# nothing could clone is left out of the trust list rather than asked for by
-# name, since brew trust answers for the whole list at once.
+# to fail an install that has not reached brew, mise or the symlinks yet.
 failed=""
-reachable=""
 
 for tap in $taps; do
   # Tap#path is HOMEBREW_TAP_DIRECTORY/<user>/homebrew-<repo>, downcased
@@ -69,11 +60,8 @@ for tap in $taps; do
     if ! brew tap "$tap"; then
       failed="$failed  $tap
 "
-      continue
     fi
   fi
-
-  reachable="$reachable $tap"
 done
 
 if [ -n "$failed" ]; then
@@ -82,11 +70,3 @@ if [ -n "$failed" ]; then
     printf '%s' "$failed"
   } >&2
 fi
-
-rm -f "$XDG_CONFIG_HOME/homebrew/trust.json"
-
-[ -n "$reachable" ] || exit 0
-
-# shellcheck disable=SC2086 # tap names never contain whitespace
-brew trust --tap $reachable ||
-  echo "WARNING: brew trust failed - bundle cannot install from a tap this run" >&2

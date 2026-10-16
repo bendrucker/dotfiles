@@ -1,4 +1,4 @@
-tap 'oven-sh/bun'
+tap 'oven-sh/bun', trusted: true
 
 brew 'deno', ci: :extra
 brew 'oven-sh/bun/bun'

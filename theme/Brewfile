@@ -1,2 +1,2 @@
-tap 'cormacrelf/tap'
+tap 'cormacrelf/tap', trusted: true
 brew 'cormacrelf/tap/dark-notify'
