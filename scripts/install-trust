@@ -4,7 +4,9 @@
 # Tap and trust the taps declared in the Brewfiles. The Brewfiles are the single
 # source of truth: committing a `tap` line records the decision, and this script
 # enforces it. The trust file is rebuilt from scratch each run, so a tap removed
-# from the Brewfiles drops out of it too.
+# from the Brewfiles drops out of it too. Each `tap` line also carries
+# `trusted: true`, because `brew bundle cleanup --force` resets the trust file
+# to those options and would otherwise empty it.
 #
 # Homebrew 6.0.0 stopped auto-tapping untrusted taps from `brew bundle`
 # (Homebrew/brew#22599), so trusting a tap is no longer enough to let `brew

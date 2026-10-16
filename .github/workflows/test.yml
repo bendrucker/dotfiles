@@ -202,6 +202,14 @@ jobs:
         snapshot > "$RUNNER_TEMP/after"
         diff -u "$RUNNER_TEMP/before" "$RUNNER_TEMP/after"
       env: *bootstrap-env
+    # `brew bundle cleanup --force` resets the trust store to the Brewfile's
+    # `trusted:` options, undoing scripts/install-trust for any tap without
+    # one. A formula named on the command line loads regardless, so only a
+    # load of one nobody named, like a `conflicts_with` target, notices.
+    - name: Check that Brewfile taps stay trusted
+      run: |
+        brew tap-info --json $(brew bundle list --tap --file=Brewfile) |
+          jq -r '[.[] | select(.trusted | not) | .name] | if length > 0 then "untrusted: \(join(" "))\n" | halt_error(1) else empty end'
     - name: Report bootstrap trace
       if: ${{ always() && steps.bootstrap.outcome != 'skipped' }}
       env:

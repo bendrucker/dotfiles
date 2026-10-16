@@ -1,6 +1,6 @@
-tap 'lightpanda-io/browser'
-tap 'rjyo/moshi'
-tap 'steipete/tap'
+tap 'lightpanda-io/browser', trusted: true
+tap 'rjyo/moshi', trusted: true
+tap 'steipete/tap', trusted: true
 
 cask 'claude'
 cask 'claude-devtools'
