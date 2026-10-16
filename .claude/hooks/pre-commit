@@ -11,6 +11,11 @@ fi
 
 cache_root="${CLAUDE_CODE_TMPDIR:-/tmp}"
 
+# gitleaks-system scans the staged index rather than the files it is given, so
+# after an edit it reads whatever happens to be staged, at up to seconds a run.
+# It still runs at commit time, where the staged index is what is committed.
+export SKIP="${SKIP:+$SKIP,}gitleaks-system"
+
 if command -v prek > /dev/null 2>&1; then
   export PREK_HOME="${PREK_HOME:-$cache_root/prek}"
   export runner="prek"
