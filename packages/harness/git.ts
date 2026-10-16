@@ -1,8 +1,6 @@
 /**
  * Commit `files` onto `branch` of the repository at `gitDir`, as though a
- * clone had committed them and pushed. One `git fast-import` does in a single
- * process what a clone, a commit and a push take a dozen for, which is what a
- * case that lands upstream work spends most of its time on.
+ * clone had committed them and pushed.
  */
 export function landCommit(gitDir: string, files: Record<string, string>, message: string, branch = "main"): void {
   const data = (text: string) => `data ${Buffer.byteLength(text)}\n${text}\n`;

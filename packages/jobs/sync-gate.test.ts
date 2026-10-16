@@ -68,10 +68,8 @@ function recording(): Capture {
     cmd: string[],
     options?: SpawnOptions,
   ): { status: number; stdout: string; stderr: string } => {
-    // Log lines and the spin wrapper are most of what a gate run spawns, and
-    // neither is under test here. Each is answered the way its stub chain would
-    // answer off a terminal: gum log prints its message, and spin logs its title
-    // and runs the command.
+    // gum log and spin are most of what a gate run spawns, and neither is under
+    // test here.
     if (cmd[0] === "gum" && cmd[1] === "log") return { status: 0, stdout: "", stderr: `${cmd.at(-1)}\n` };
     if (cmd[0] === SPIN) {
       const separator = cmd.indexOf("--");
