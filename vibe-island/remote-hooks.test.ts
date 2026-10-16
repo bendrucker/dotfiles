@@ -71,7 +71,7 @@ describe("revertRemoteHookRewrite", () => {
     box.write(`repo/${FILE}`, COMMITTED);
     must(["git", "init", "-q"], { cwd: repo });
     must(["git", "add", "."], { cwd: repo });
-    must(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "init"], { cwd: repo });
+    must(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", "init"], { cwd: repo });
   });
 
   afterEach(() => {
