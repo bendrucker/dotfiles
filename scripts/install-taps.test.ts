@@ -191,8 +191,6 @@ describe("install-taps", () => {
     expect(tapped()).toBe("oven-sh/bun");
   });
 
-  // brew bundle applies `trusted: true` too late for its own outdated check, so
-  // a run starting without the trust store never upgrades a tap formula.
   describe("trust", () => {
     test("trusts every declared tap in one call, tapped or not", () => {
       declared("oven-sh/bun", "schpet/tap");
