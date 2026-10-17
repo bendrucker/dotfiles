@@ -26,10 +26,10 @@ Example: `claude/completion.zsh`
 
 ### Loading Process
 
-From `zsh/zshrc`:
+From `zsh/.zshrc`:
 
 1. `compinit` is called to initialize the completion system
-2. All `*/completion.zsh` files are sourced
+2. All `*/completion.zsh` files are sourced from a one-shot `zle-line-init` hook, after the first prompt draws
 3. Files are sourced directly, NOT added to `fpath`
 
 ### File Structure
@@ -227,4 +227,4 @@ Using `#compdef` directive when file is sourced directly. Use `compdef` registra
 
 See existing completion files:
 - `claude/completion.zsh` - Complex multi-level subcommands
-- `gcloud/completions.zsh` - Third-party completion sourcing
+- `gcloud/completion.zsh` - Third-party completion sourcing
