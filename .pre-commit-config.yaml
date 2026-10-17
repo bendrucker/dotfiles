@@ -21,12 +21,6 @@ repos:
       - id: ast-grep
         files: (Brewfile$|\.(sh|zsh)$)
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.4
-    hooks:
-      - id: ruff
-      - id: ruff-format
-
   # gitleaks-system runs the binary on PATH, so system/mise.toml owns the
   # version. The repo's other two ids build it from source or pull a Docker
   # image. pass_filenames is an override, not a preference: upstream omits it on
