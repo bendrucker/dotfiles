@@ -230,6 +230,48 @@ describe("lint-ts", () => {
     expect(outcome.stdout).not.toContain("bin/stale");
   });
 
+  // A whole-tree run never reads what git ignores, so naming it must not either.
+  test.each<{
+    name: string;
+    executable: string;
+    module?: string;
+    files?: Record<string, string>;
+    removed?: string;
+    paths: string[];
+    status: number;
+    reports?: string;
+  }>([
+    { name: "lints only a named module", executable: "", module: NESTED, paths: ["packages/module.ts"], status: 1, reports: "packages/module.ts:2:" },
+    { name: "lints only a named executable", executable: NESTED, paths: ["bin/worktree-tool"], status: 1, reports: "bin/worktree-tool:3:" },
+    { name: "skips an unnamed executable", executable: NESTED, paths: ["packages/module.ts"], status: 0 },
+    { name: "lints the whole tree for the config", executable: NESTED, paths: [".oxlintrc.json"], status: 1, reports: "bin/worktree-tool:3:" },
+    { name: "lints a path given absolute", executable: "", module: NESTED, paths: ["<root>/packages/module.ts"], status: 1, reports: "packages/module.ts:2:" },
+    { name: "lints an untracked path git does not ignore", executable: "", files: { "packages/new.ts": NESTED }, paths: ["packages/new.ts"], status: 1, reports: "packages/new.ts:2:" },
+    { name: "skips a path git ignores", executable: "", files: { ".gitignore": "node_modules/\nscratch/\n", "scratch/module.ts": NESTED }, paths: ["scratch/module.ts"], status: 0 },
+    { name: "skips a tracked file deleted since", executable: "", removed: "packages/module.ts", paths: ["packages/module.ts"], status: 0 },
+  ])("after -- $name", ({ executable, module, files = {}, removed, paths, status, reports }) => {
+    fixture({ executable, module });
+    for (const [name, contents] of Object.entries(files)) box.write(name, contents);
+    if (removed !== undefined) rmSync(join(box.dir, removed));
+    const outcome = run(["--", ...paths.map((path) => path.replace("<root>", box.dir))]);
+
+    expect(outcome.status).toBe(status);
+    if (reports !== undefined) expect(outcome.stdout).toContain(reports);
+    expect(outcome.stdout).not.toContain(MIRROR);
+  });
+
+  // An edit hook hands over whatever it touched, and a tree with nothing
+  // installed should not fail over a file oxlint would never read.
+  test("passes paths that are not TypeScript without needing oxlint", () => {
+    fixture({});
+    box.write("README.md", "# readme\n");
+    rmSync(join(box.dir, "node_modules"));
+
+    const outcome = run(["--", "README.md"]);
+
+    expect(outcome.status).toBe(0);
+  });
+
   // Both callers install before running this, so a missing oxlint is a tree
   // nobody installed into rather than a lint result.
   test("says which oxlint it could not find", () => {

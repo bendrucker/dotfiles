@@ -14,6 +14,10 @@ trace_begin install-taps
 ./scripts/install-taps
 trace_end
 
+trace_begin brew-taps-https
+./scripts/brew-taps-https
+trace_end
+
 trace_begin install-cask-variants
 ./scripts/install-cask-variants
 trace_end

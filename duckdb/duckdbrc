@@ -1,0 +1,8 @@
+-- Per-process ceiling for every DuckDB CLI process. DuckDB's defaults (80% of RAM,
+-- every core, spill up to 90% of free disk) apply per process, so concurrent
+-- processes can exhaust the machine. `-init <file>` replaces this file.
+SET memory_limit = '4GiB';
+SET threads = 4;
+SET max_temp_directory_size = '16GiB';
+-- A per-process spill dir under $TMPDIR, writable under the Claude Code sandbox.
+SET temp_directory = rtrim(coalesce(getenv('TMPDIR'), '/tmp'), '/') || '/duckdb-' || uuid();

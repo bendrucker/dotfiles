@@ -1,19 +1,14 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env bun
 
-input=$(cat)
-file_path=$(echo "$input" | jq -r '.tool_input.file_path // empty')
+import { check, field, payload, runner } from "./pre-commit.ts";
 
-if [[ -z "$file_path" ]]; then
-  exit 0
-fi
+const path = field(await payload(), "tool_input", "file_path");
+const run = path === undefined ? undefined : runner();
 
-hook_dir="$(cd "$(dirname "$0")" && pwd)"
-source "$hook_dir/pre-commit"
-
-output=$($runner run --files "$file_path" 2>&1) && exit 0
-
-jq -n --arg ctx "$runner issues in $file_path:
-
-$output" \
-  '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $ctx}}'
+if (path !== undefined && run !== undefined) {
+  const result = await check(run, [path]);
+  if (!result.passed) {
+    const context = `${run.name} issues in ${path}:\n\n${result.output.trimEnd()}`;
+    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: context } }));
+  }
+}

@@ -4,8 +4,7 @@
 # The library stays shell because scripts/setup sources it on a fresh machine,
 # before brew bundle has installed bun, and it reaches nearly every function
 # through git_sync. A TypeScript caller reaches it here rather than carrying a
-# second implementation of the transport rules in CLAUDE.md's GitHub Transport
-# section.
+# second implementation of its GitHub transport rules.
 #
 # sync <repo_dir> [branch]
 #   Fast-forward the clone. Prints the new short rev on stdout when it moved.

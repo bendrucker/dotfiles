@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Usage: brew-taps-https
+#
+# Hold Homebrew's own clone and every tap clone on anonymous HTTPS. `brew
+# update` fetches them with plain git, so an org `insteadOf` rule sending
+# https://github.com/ to SSH puts the 3am fetch on a key Secretive will not sign
+# while the Mac is locked. The fetch fails with only a warning, and `brew
+# bundle` carries on against formulae that stopped moving. Homebrew runs git
+# under `env -i`, so the pin has to live in each clone's own config rather than
+# the environment.
+#
+# Always exits 0: `brew bundle` runs next under `set -e`, and a stale tap is no
+# reason to skip it. git_https_pin warns when a pin does not take.
+
+cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=scripts/shell/git-sync.sh
+. scripts/shell/git-sync.sh
+
+repository=$(brew --repository) || exit 0
+
+for dir in "$repository" "$repository"/Library/Taps/*/*; do
+  url=$(git -C "$dir" config --get remote.origin.url 2>/dev/null) || continue
+  [[ "$url" == "$GIT_HTTPS_BASE"* ]] || continue
+  git_https_pin "$dir" origin "$url" "$(git -C "$dir" ls-remote --get-url origin)"
+done
+
+exit 0
