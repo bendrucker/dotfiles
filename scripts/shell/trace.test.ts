@@ -99,19 +99,4 @@ describe.each(shells)("trace.sh under %s", (_, interpreter) => {
     expect(r.stdout.trim()).toBe("/elsewhere");
     expect(readdirSync(dir)).not.toContain("git");
   });
-
-  // Topic installers call trace_run while bun may not be installed yet.
-  test("trace_run runs the command plainly when bun is absent, keeping its status", () => {
-    const r = traced("trace_run sh -c 'echo ran; exit 4'", { onlyPath: ["/usr/bin", "/bin"] });
-    expect(r.stdout.trim()).toBe("ran");
-    expect(r.status).toBe(4);
-    expect(readdirSync(dir)).not.toContain("lines");
-  });
-
-  test("trace_run hands the command to scripts/trace-run when bun is present", () => {
-    const r = traced("trace_run sh -c 'echo ran; exit 4'", { env: { ZSH: repoRoot } });
-    expect(r.stdout.trim()).toBe("ran");
-    expect(r.status).toBe(4);
-    expect(readdirSync(join(dir, "lines"))).toHaveLength(1);
-  });
 });

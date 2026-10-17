@@ -42,7 +42,7 @@ if (!dir || positionals.length > 1 || !Number.isInteger(top) || top < 0 || !(min
 
 let tree;
 try {
-  tree = await loadTrace(dir);
+  tree = loadTrace(dir);
 } catch (error) {
   console.error(`trace-report: ${error instanceof Error ? error.message : error}`);
   process.exit(1);

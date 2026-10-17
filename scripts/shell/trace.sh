@@ -1,8 +1,7 @@
 # shellcheck shell=dash
 # Span markers for the bootstrap path, read by scripts/trace-report. Inert
 # unless DOTFILES_TRACE_DIR is set. POSIX: it is sourced before bun exists.
-# trace_begin <name> and trace_end bracket a step, keeping $?. trace_run <cmd>…
-# also times each output line, once bun is installed.
+# trace_begin <name> and trace_end bracket a step, keeping $?.
 
 # Fractions are padded or cut to nine digits: zsh prints ten, bash six.
 trace_now() {
@@ -23,14 +22,6 @@ trace_mark() {
 
 trace_begin() { [ -n "${DOTFILES_TRACE_DIR-}" ] && trace_mark B 0 "$1"; return 0; }
 trace_end() { _trace_s=$?; [ -n "${DOTFILES_TRACE_DIR-}" ] && trace_mark E "$_trace_s" ""; return "$_trace_s"; }
-
-trace_run() {
-  if [ -n "${DOTFILES_TRACE_DIR-}" ] && command -v bun >/dev/null 2>&1; then
-    bun "${ZSH:-$HOME/.dotfiles}/scripts/trace-run" -- "$@"
-  else
-    "$@"
-  fi
-}
 
 # A failure under set -e skips every trace_end, so an EXIT trap records the
 # exit status as an X line.

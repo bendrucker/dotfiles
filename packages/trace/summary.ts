@@ -112,7 +112,7 @@ export function renderSummary(tree: Tree, options: SummaryOptions): string {
     "",
     "</details>",
     "",
-    "Every span, unpruned, is in this job's `bootstrap-trace` artifact as `otlp.json`, which Jaeger's Upload JSON and otel-desktop-viewer both load. The raw `events.tsv`, `lines/`, and `git/` records sit beside it.",
+    "Every span, unpruned, is in this job's `bootstrap-trace` artifact as `otlp.json`, which Jaeger's Upload JSON and otel-desktop-viewer both load. The raw `events.tsv` and `git/` records sit beside it.",
     "",
   ].join("\n");
 }
