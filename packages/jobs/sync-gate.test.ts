@@ -27,6 +27,7 @@ import {
   stripNewlines,
   syncNotify,
 } from "#jobs/sync-gate";
+import { fixture } from "#harness/fixture";
 import type { Capture, SpawnOptions } from "#jobs/output";
 
 let sandbox: string;
@@ -158,6 +159,24 @@ function run(cmd: string[]): void {
   }
 }
 
+function buildRepo(root: string): void {
+  const repo = join(root, "repo");
+  const origin = join(root, "origin.git");
+  run(["git", "init", "-q", "--bare", "-b", "main", origin]);
+  run(["git", "init", "-q", "-b", "main", repo]);
+  run(["git", "-C", repo, "config", "user.email", "spec@example.test"]);
+  run(["git", "-C", repo, "config", "user.name", "Spec"]);
+  run(["git", "-C", repo, "config", "commit.gpgsign", "false"]);
+  run(["git", "-C", repo, "remote", "add", "origin", origin]);
+  writeFileSync(join(repo, "file.txt"), "tracked\n");
+  run(["git", "-C", repo, "add", "-A"]);
+  run(["git", "-C", repo, "commit", "-q", "-m", "initial"]);
+  run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
+  run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+}
+
+const copyRepo = fixture(buildRepo);
+
 beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), "sync-gate-"));
   stubs = join(sandbox, "stub");
@@ -239,17 +258,7 @@ beforeEach(() => {
   delete process.env.GUM_CHOICE;
   gitConfigEnvironment = gitConfigKeys().map((key) => [key, process.env[key] ?? ""]);
 
-  run(["git", "init", "-q", "--bare", "-b", "main", origin]);
-  run(["git", "init", "-q", "-b", "main", repo]);
-  run(["git", "-C", repo, "config", "user.email", "spec@example.test"]);
-  run(["git", "-C", repo, "config", "user.name", "Spec"]);
-  run(["git", "-C", repo, "config", "commit.gpgsign", "false"]);
-  run(["git", "-C", repo, "remote", "add", "origin", origin]);
-  writeFileSync(join(repo, "file.txt"), "tracked\n");
-  run(["git", "-C", repo, "add", "-A"]);
-  run(["git", "-C", repo, "commit", "-q", "-m", "initial"]);
-  run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
-  run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+  copyRepo(sandbox);
 
   // A stub that failed to shadow the real command would reach this machine's own
   // hostname and the real gh, so every example after it would be asserting

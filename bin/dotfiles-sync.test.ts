@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fixture } from "#harness/fixture";
 
 // Run as the launchd job runs it, so the exit status, the log, and the
 // notification are read off the real script rather than off its parts.
@@ -109,6 +110,33 @@ function addSubmodule({ initialized }: { initialized: boolean }): void {
   if (!initialized) run(["git", "-C", repo, "submodule", "deinit", "-q", "-f", "sub"]);
 }
 
+function buildRepo(root: string): void {
+  const repo = join(root, "repo");
+  const origin = join(root, "origin.git");
+  run(["git", "init", "-q", "--bare", "-b", "main", origin]);
+  run(["git", "init", "-q", "-b", "main", repo]);
+  // So an example can take the executable bit off a tracked script without the
+  // gate seeing a modified file.
+  run(["git", "-C", repo, "config", "core.fileMode", "false"]);
+  run(["git", "-C", repo, "remote", "add", "origin", origin]);
+
+  writeFileSync(join(repo, "file.txt"), "tracked\n");
+  mkdirSync(join(repo, "bin"));
+  mkdirSync(join(repo, "scripts"));
+  writeScript(
+    join(repo, "bin", "dotfiles-reload"),
+    ['printf \'reloaded\\n\' >>"$RELOAD_LOG"', 'exit "${RELOAD_STATUS:-0}"'].join("\n"),
+  );
+  writeScript(join(repo, "scripts", "bootstrap"), `printf '%s\\n' "$*" >>"$BOOTSTRAP_LOG"`);
+
+  run(["git", "-C", repo, "add", "-A"]);
+  run(["git", "-C", repo, "commit", "-q", "-m", "initial"]);
+  run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
+  run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+}
+
+const copyRepo = fixture(buildRepo);
+
 beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), "dotfiles-sync-"));
   stubs = join(sandbox, "stub");
@@ -145,26 +173,7 @@ beforeEach(() => {
   writeScript(join(stubs, "osascript"), `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
   writeScript(join(stubs, "open"), `printf 'todo\\n' >>"${join(sandbox, "todos")}"`);
 
-  run(["git", "init", "-q", "--bare", "-b", "main", origin]);
-  run(["git", "init", "-q", "-b", "main", repo]);
-  // So an example can take the executable bit off a tracked script without the
-  // gate seeing a modified file.
-  run(["git", "-C", repo, "config", "core.fileMode", "false"]);
-  run(["git", "-C", repo, "remote", "add", "origin", origin]);
-
-  writeFileSync(join(repo, "file.txt"), "tracked\n");
-  mkdirSync(join(repo, "bin"));
-  mkdirSync(join(repo, "scripts"));
-  writeScript(
-    join(repo, "bin", "dotfiles-reload"),
-    ['printf \'reloaded\\n\' >>"$RELOAD_LOG"', 'exit "${RELOAD_STATUS:-0}"'].join("\n"),
-  );
-  writeScript(join(repo, "scripts", "bootstrap"), `printf '%s\\n' "$*" >>"$BOOTSTRAP_LOG"`);
-
-  run(["git", "-C", repo, "add", "-A"]);
-  run(["git", "-C", repo, "commit", "-q", "-m", "initial"]);
-  run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
-  run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+  copyRepo(sandbox);
 });
 
 afterEach(() => {

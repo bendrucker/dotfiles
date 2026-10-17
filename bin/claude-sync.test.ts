@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fixture } from "#harness/fixture";
 import type { Capture, SpawnOptions } from "#jobs/output";
 import {
   auditPlugins,
@@ -35,7 +36,6 @@ import {
 let sandbox: string;
 let stubs: string;
 let repo: string;
-let origin: string;
 let out: Capture;
 
 const environment = {
@@ -84,6 +84,12 @@ function recording(): Capture {
       keep(text);
     },
     run(cmd, options) {
+      // Answer `gum log` in-process. The job logs a few lines per step, and a
+      // spawn for each is most of a test.
+      if (cmd[0] === "gum" && cmd[1] === "log") {
+        keep(`${cmd.at(-1)}\n`);
+        return 0;
+      }
       const result = spawn(cmd, options);
       keep(result.stdout);
       keep(result.stderr);
@@ -312,6 +318,26 @@ function writeRepoSettings(settings: unknown, indent = 2): void {
   writeFileSync(join(repo, "user", "settings.json"), `${JSON.stringify(settings, null, indent)}\n`);
 }
 
+// The repo `~/.claude/settings.json` links into.
+function buildRepo(root: string): void {
+  const repo = join(root, "repo");
+  const origin = join(root, "origin.git");
+  run(["git", "init", "-q", "--bare", "-b", "main", origin]);
+  run(["git", "init", "-q", "-b", "main", repo]);
+  run(["git", "-C", repo, "config", "user.email", "spec@example.test"]);
+  run(["git", "-C", repo, "config", "user.name", "Spec"]);
+  run(["git", "-C", repo, "config", "commit.gpgsign", "false"]);
+  run(["git", "-C", repo, "remote", "add", "origin", origin]);
+  mkdirSync(join(repo, "user"));
+  writeFileSync(join(repo, "user", "settings.json"), `${JSON.stringify(settingsJson(GUARDED_HOOK), null, 2)}\n`);
+  run(["git", "-C", repo, "add", "-A"]);
+  run(["git", "-C", repo, "commit", "-q", "-m", "settings"]);
+  run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
+  run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+}
+
+const copyRepo = fixture(buildRepo);
+
 beforeEach(() => {
   // A refused plugin update pauses before its retry, and the pause is real time
   // with nothing to assert about it.
@@ -319,7 +345,6 @@ beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), "claude-sync-"));
   stubs = join(sandbox, "stub");
   repo = join(sandbox, "repo");
-  origin = join(sandbox, "origin.git");
   mkdirSync(stubs);
 
   writeScript(join(stubs, "claude"), claudeStub);
@@ -393,18 +418,7 @@ beforeEach(() => {
 
   writePluginFixture();
 
-  run(["git", "init", "-q", "--bare", "-b", "main", origin]);
-  run(["git", "init", "-q", "-b", "main", repo]);
-  run(["git", "-C", repo, "config", "user.email", "spec@example.test"]);
-  run(["git", "-C", repo, "config", "user.name", "Spec"]);
-  run(["git", "-C", repo, "config", "commit.gpgsign", "false"]);
-  run(["git", "-C", repo, "remote", "add", "origin", origin]);
-  mkdirSync(join(repo, "user"));
-  writeRepoSettings(settingsJson(GUARDED_HOOK));
-  run(["git", "-C", repo, "add", "-A"]);
-  run(["git", "-C", repo, "commit", "-q", "-m", "settings"]);
-  run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
-  run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+  copyRepo(sandbox);
   symlinkSync(join(repo, "user", "settings.json"), settingsLink());
 
   // A stub that failed to shadow the real CLI would enumerate this machine's own

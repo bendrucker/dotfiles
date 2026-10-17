@@ -78,7 +78,7 @@ Exit 0 without doing anything when the tool is not installed or not running.
 
 ## Tests
 
-Put a test beside what it covers, named after it: `scripts/install-taps.test.ts` covers `scripts/install-taps`. Test shell scripts from TypeScript with `#harness`. Run `bun run test` to match the `bun` job, since bare `bun test` runs files serially. Run `mise run lint` to match the `lint` job.
+Put a test beside what it covers, named after it: `scripts/install-taps.test.ts` covers `scripts/install-taps`. Test shell scripts from TypeScript with `#harness`. Run `bun run test` to match the `bun` job, since bare `bun test` runs files serially. It points `GIT_CONFIG_GLOBAL` at `/dev/null` so fixture commits never reach your signing agent, and keeps that out of `bunfig.toml` because the integration tests read the installed git config. It records each file's duration in `tmp/test-timings.json` and starts the slowest files first on the next run. Run `mise run lint` to match the `lint` job.
 
 To call a shell library function directly, source the library inside a `shell()` snippet. Functions redefined after the `source` line override the library's.
 

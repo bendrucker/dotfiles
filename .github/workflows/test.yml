@@ -386,7 +386,22 @@ jobs:
       # The test script in package.json carries those ignores, installs
       # aws/vm's own dependencies, and runs each file in a worker process of
       # its own, one per core.
+      # It also records each file's duration and reads the last record back
+      # to start the slowest files first. Only main saves one, so a PR starts
+      # from main's newest. Entries cannot be overwritten, hence one per commit.
+      - name: Restore test timings
+        uses: actions/cache/restore@v6
+        with:
+          path: tmp/test-timings.json
+          key: bun-test-timings-${{ github.sha }}
+          restore-keys: bun-test-timings-
       - run: bun run test
+      - name: Save test timings
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: tmp/test-timings.json
+          key: bun-test-timings-${{ github.sha }}
   skill-tests:
     strategy:
       matrix:
