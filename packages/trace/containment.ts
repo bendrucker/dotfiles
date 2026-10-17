@@ -1,4 +1,4 @@
-import { duration, type Span } from "#trace/span";
+import type { Span } from "#trace/span";
 
 export function covers(outer: Pick<Span, "start" | "end">, inner: Pick<Span, "start" | "end">): boolean {
   return outer.start <= inner.start && inner.end <= outer.end;
@@ -18,13 +18,4 @@ export function nestShell(spans: Span[]): void {
     span.parent = stack[stack.length - 1];
     stack.push(span);
   }
-}
-
-export function deepestCovering(shell: Span[], start: number, end: number): Span | undefined {
-  let best: Span | undefined;
-  for (const span of shell) {
-    if (!covers(span, { start, end })) continue;
-    if (!best || duration(span) <= duration(best)) best = span;
-  }
-  return best;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { deepestCovering, nestShell } from "#trace/containment";
+import { nestShell } from "#trace/containment";
 import type { Span } from "#trace/span";
 
 function makeSpan(name: string, start: number, end: number, overrides: Partial<Span> = {}): Span {
@@ -36,20 +36,5 @@ describe("nestShell", () => {
     const b = makeSpan("b", 5, 9);
     nestShell([a, b]);
     expect(b.parent).toBeUndefined();
-  });
-});
-
-describe("deepestCovering", () => {
-  const root = makeSpan("root", 0, 100);
-  const bundle = makeSpan("brew bundle", 10, 50);
-  const later = makeSpan("later", 60, 90);
-
-  test.each<{ name: string; start: number; end: number; expected: string | undefined }>([
-    { name: "inside the innermost span", start: 20, end: 30, expected: "brew bundle" },
-    { name: "between children", start: 52, end: 58, expected: "root" },
-    { name: "straddling two children", start: 40, end: 70, expected: "root" },
-    { name: "outside everything", start: 150, end: 160, expected: undefined },
-  ])("$name", ({ start, end, expected }) => {
-    expect(deepestCovering([root, bundle, later], start, end)?.name).toBe(expected);
   });
 });
