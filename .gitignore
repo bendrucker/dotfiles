@@ -1,6 +1,3 @@
 Brewfile.lock.json
 *.local
-__pycache__/
-.venv/
-.pytest_cache/
 node_modules/

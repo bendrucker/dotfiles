@@ -65,12 +65,6 @@
       "matchFileNames": ["python/mise.toml"],
       "matchDepNames": ["uv"],
       "enabled": false
-    },
-    {
-      "description": "pygit2 ships wheels for a new CPython some time after its release, and uv builds it from source without libgit2 headers until then. Move the link schemes Python by hand once uv.lock carries wheels for it.",
-      "matchManagers": ["pyenv"],
-      "matchFileNames": ["herdr/links/.python-version"],
-      "enabled": false
     }
   ]
 }
