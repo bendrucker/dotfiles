@@ -46,11 +46,11 @@ describe("vm-setup", () => {
     expect(readlinkSync(join(out, "prek"))).toBe(join(tools, "prek"));
   });
 
-  test("links the Claude config from the clone for cloud", () => {
+  test("links the Claude config from the clone for remote", () => {
     box.stub("mise", mise());
 
     expect(setup().status).toBe(0);
-    expect(box.read("linked")).toBe(`${box.path("claude-repo")} cloud\n`);
+    expect(box.read("linked")).toBe(`${box.path("claude-repo")} remote\n`);
   });
 
   test("installs mise into the bin directory when it is missing", () => {

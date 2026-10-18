@@ -13,9 +13,9 @@ beforeEach(() => {
     "user/settings.json",
     "user/CLAUDE.md",
     "user/skills/ship/SKILL.md",
-    "platforms/mac/platform.md",
-    "platforms/cloud/platform.md",
-    "platforms/cloud/settings.json",
+    "platforms/local/platform.md",
+    "platforms/remote/platform.md",
+    "platforms/remote/settings.json",
   ])
     box.write(`repo/${file}`, "");
   box.mkdir(".claude");
@@ -35,17 +35,17 @@ function call(fn: string, env: Record<string, string> = {}) {
 describe("install_claude_symlinks", () => {
   test.each([
     {
-      platform: "mac",
-      links: { "settings.json": "user/settings.json", "CLAUDE.md": "user/CLAUDE.md", "platform.md": "platforms/mac/platform.md", skills: "user/skills" },
+      platform: "local",
+      links: { "settings.json": "user/settings.json", "CLAUDE.md": "user/CLAUDE.md", "platform.md": "platforms/local/platform.md", skills: "user/skills" },
     },
     {
-      platform: "cloud",
-      links: { "settings.json": "platforms/cloud/settings.json", "CLAUDE.md": "user/CLAUDE.md", "platform.md": "platforms/cloud/platform.md", skills: "user/skills" },
+      platform: "remote",
+      links: { "settings.json": "platforms/remote/settings.json", "CLAUDE.md": "user/CLAUDE.md", "platform.md": "platforms/remote/platform.md", skills: "user/skills" },
     },
     {
-      platform: "cloud",
+      platform: "remote",
       existing: true,
-      links: { "skills/ship": "user/skills/ship", "platform.md": "platforms/cloud/platform.md" },
+      links: { "skills/ship": "user/skills/ship", "platform.md": "platforms/remote/platform.md" },
     },
   ])("$platform, skills directory existing: $existing", ({ platform, existing, links }) => {
     if (existing) {
@@ -60,10 +60,10 @@ describe("install_claude_symlinks", () => {
     if (existing) expect(readdirSync(box.path(".claude/skills")).toSorted()).toEqual(["ship", "synced"]);
   });
 
-  test("refuses a directory where a Mac link belongs", () => {
+  test("refuses a directory where a local link belongs", () => {
     box.mkdir(".claude", "skills");
 
-    expect(call("install_claude_symlinks mac")).toMatchObject({ status: 1, stderr: expect.stringContaining("is a directory") });
+    expect(call("install_claude_symlinks local")).toMatchObject({ status: 1, stderr: expect.stringContaining("is a directory") });
   });
 });
 

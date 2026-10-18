@@ -1,7 +1,7 @@
 #!/bin/sh
 # Puts the tools pinned in system/mise.toml on PATH in a fresh Linux VM, with
 # no Homebrew and no full install, so this repo's hooks and lint can run there,
-# and links the Claude Code config the way claude/link does for cloud:
+# and links the Claude Code config as for a remote session:
 #   curl -fsSL https://raw.githubusercontent.com/bendrucker/dotfiles/main/scripts/vm-setup | sh
 #
 # VM setup scripts often abort the boot on a non-zero exit, so every failure
@@ -35,4 +35,4 @@ done
 # a VM snapshot can outlive the clone by days.
 claude=${CLAUDE_REPO_HOME:-$HOME/.claude-repo}
 [ -d "$claude" ] || git clone --quiet --depth 1 https://github.com/bendrucker/claude "$claude" || warn "claude clone failed"
-CLAUDE_REPO_HOME=$claude bash "$dir/claude/link" cloud || warn "claude link failed"
+CLAUDE_REPO_HOME=$claude bash "$dir/claude/link" remote || warn "claude link failed"

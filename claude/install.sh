@@ -6,7 +6,7 @@ set -e
 
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 
-# Links ~/.claude for a platform, mac or cloud: each entry of the config
+# Links ~/.claude for local or remote (a cloud session): each entry of the config
 # repo's user/, with platforms/<platform>/ adding entries and replacing those
 # of the same name. Also sourced by claude/settings-link.ts to relink after
 # installers replace ~/.claude/settings.json.
@@ -16,12 +16,12 @@ install_claude_symlinks() {
     return 0
   fi
   mkdir -p "$HOME/.claude"
-  CLAUDE_PLATFORM="${1:-mac}" claude_link "$HOME/.claude" "$CLAUDE_REPO_HOME/user" "$CLAUDE_REPO_HOME/platforms/${1:-mac}"
+  CLAUDE_PLATFORM="${1:-local}" claude_link "$HOME/.claude" "$CLAUDE_REPO_HOME/user" "$CLAUDE_REPO_HOME/platforms/${1:-local}"
 }
 
 # claude_link <dst> <src>...
 #   Link each entry of the srcs into dst, a later src winning a shared name,
-#   and prune links into the repo that dst no longer gets. On cloud, claude.ai
+#   and prune links into the repo that dst no longer gets. On remote, claude.ai
 #   sync owns ~/.claude/skills as a real directory, so entries go inside it.
 claude_link() {
   local dst="$1" desired="" name item target
@@ -30,7 +30,7 @@ claude_link() {
     for src; do [[ -e "$src/$name" ]] && item="$src/$name"; done
     target="$dst/$name"
 
-    if [[ "$CLAUDE_PLATFORM" == cloud && -d "$target" && ! -L "$target" ]]; then
+    if [[ "$CLAUDE_PLATFORM" == remote && -d "$target" && ! -L "$target" ]]; then
       claude_link "$target" "$item"
       continue
     fi
@@ -71,8 +71,9 @@ install_claude_managed() {
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   # The config setup first, so a failed download doesn't hold it back.
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    install_claude_symlinks mac
+  # Only where the config repo is cloned, which mise's bootstrap does on macOS.
+  if [[ -d "$CLAUDE_REPO_HOME" ]]; then
+    install_claude_symlinks local
     install_claude_managed
   fi
   "$(dirname "${BASH_SOURCE[0]}")/install-native"
