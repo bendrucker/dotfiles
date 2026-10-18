@@ -198,8 +198,8 @@ export function changesNameHost(repoDir: string): boolean {
 // names this machine, and again once it is staged.
 export function openPr(out: Output, repoDir: string, title: string): boolean {
   // The repos this serves are public deploy checkouts, and what lands in them
-  // without being written by hand is whatever an app decided to configure -
-  // Vibe Island puts the machine's own name into a hook command. Refuse the
+  // without being written by hand is whatever an app decided to configure,
+  // which can include the machine's own name in a hook command. Refuse the
   // whole sync, leaving the tree for inspection.
   if (changesNameHost(repoDir)) return refuseNamedHost(out, title);
 
@@ -220,7 +220,7 @@ export function openPr(out: Output, repoDir: string, title: string): boolean {
     return false;
   }
 
-  // Checked again now that the tree is staged. Vibe Island writes on its own
+  // Checked again now that the tree is staged. An app writes on its own
   // schedule, so a write that landed after the first check would otherwise ride
   // out on this commit.
   if (changesNameHost(repoDir)) {
