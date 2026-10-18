@@ -1,13 +1,26 @@
 # The release tarball runs as a user agent, since the cask installs a root daemon.
-[tools]
-"github:osquery/osquery" = { version = "5.23.1", os = ["macos"], asset_pattern = "osquery-*_1.macos_arm64.tar.gz", bin_path = "opt/osquery/lib/osquery.app/Contents/MacOS" }
+[tools."github:osquery/osquery"]
+version = "5.23.1"
+
+[tools."github:osquery/osquery".platforms]
+macos-arm64 = { asset_pattern = "osquery-*_1.macos_arm64.tar.gz", bin_path = "opt/osquery/lib/osquery.app/Contents/MacOS" }
+linux-x64 = { asset_pattern = "osquery-*_1.linux_x86_64.tar.gz", bin_path = "opt/osquery/bin" }
+linux-arm64 = { asset_pattern = "osquery-*_1.linux_aarch64.tar.gz", bin_path = "opt/osquery/bin" }
+
+# Bootstrap lays these before it loads the agent, which creates none of them.
+[bootstrap.directories."~/.local/state/osquery/db"]
+[bootstrap.directories."~/.local/state/osquery/logs"]
 
 # Background ProcessType would throttle sampling under the load it records.
 [bootstrap.macos.launchd.agents.osquery]
-program = "/bin/sh"
+program = "~/.local/share/mise/shims/osqueryd"
 args = [
-  "-c",
-  'state="$HOME/.local/state/osquery" && mkdir -p "$state/db" "$state/logs" && exec "$HOME/.local/share/mise/shims/osqueryd" --config_path="$HOME/.dotfiles/osquery/osquery.conf" --database_path="$state/db" --pidfile="$state/osqueryd.pid" --logger_path="$state/logs" --disable_extensions --watchdog_level=1',
+  "--config_path={{ env.HOME }}/.dotfiles/osquery/osquery.conf",
+  "--database_path={{ env.HOME }}/.local/state/osquery/db",
+  "--pidfile={{ env.HOME }}/.local/state/osquery/osqueryd.pid",
+  "--logger_path={{ env.HOME }}/.local/state/osquery/logs",
+  "--disable_extensions",
+  "--watchdog_level=1",
 ]
 run_at_load = true
 keep_alive = true
