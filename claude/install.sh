@@ -57,7 +57,7 @@ install_claude_managed() {
   local dir="/etc/claude-code/managed-settings.d"
   [[ "$(uname -s)" == Darwin ]] && dir="/Library/Application Support/ClaudeCode/managed-settings.d"
   dir="${CLAUDE_MANAGED_DIR:-$dir}"
-  [[ "$(readlink "$dir/50-bendrucker.json")" == "$source" ]] && return 0
+  [[ "$(readlink "$dir/50-dotfiles.json")" == "$source" ]] && return 0
 
   local sudo=""
   mkdir -p "$dir" 2>/dev/null && [[ -w "$dir" ]] || sudo=sudo
@@ -65,8 +65,8 @@ install_claude_managed() {
     echo "Skipped linking $dir, which needs sudo. Run claude/install.sh from a terminal." >&2
     return 0
   fi
-  $sudo mkdir -p "$dir" && $sudo ln -sfn "$source" "$dir/50-bendrucker.json"
-  echo "  ✓ $dir/50-bendrucker.json"
+  $sudo mkdir -p "$dir" && $sudo ln -sfn "$source" "$dir/50-dotfiles.json"
+  echo "  ✓ $dir/50-dotfiles.json"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

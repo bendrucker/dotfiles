@@ -69,14 +69,14 @@ describe("install_claude_symlinks", () => {
 
 describe("install_claude_managed", () => {
   test.each([
-    { name: "links into a writable directory", env: {}, stdout: "50-bendrucker.json", linked: true },
+    { name: "links into a writable directory", env: {}, stdout: "50-dotfiles.json", linked: true },
     { name: "skips a directory that needs sudo off a terminal", env: { CLAUDE_MANAGED_DIR: "/dev/null/managed", NONINTERACTIVE: "1" }, stderr: "needs sudo", linked: false },
   ])("$name", ({ env, stdout = "", stderr = "", linked }) => {
     const result = call("install_claude_managed", env);
 
     expect(result).toMatchObject({ status: 0, stdout: expect.stringContaining(stdout), stderr: expect.stringContaining(stderr) });
     if (linked) {
-      expect(readlinkSync(box.path("managed/50-bendrucker.json"))).toBe(box.path("repo/managed/settings.json"));
+      expect(readlinkSync(box.path("managed/50-dotfiles.json"))).toBe(box.path("repo/managed/settings.json"));
       expect(call("install_claude_managed").stdout).toBe("");
     }
   });
