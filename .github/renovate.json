@@ -40,7 +40,7 @@
     },
     {
       "matchManagers": ["mise"],
-      "matchFileNames": ["system/mise.toml"],
+      "matchFileNames": ["system/mise.toml", "system/mise.remote.toml"],
       "groupName": "pinned CLI tools",
       "schedule": ["* 0-5 * * 1"],
       "separateMajorMinor": false,
