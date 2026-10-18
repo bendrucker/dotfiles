@@ -68,6 +68,18 @@ install_claude_local_marketplace() {
   link_claude_managed 60-local.json "$file"
 }
 
+# Keeps the observability plugin's session index outside ~/.claude, where the
+# desktop app can grant a cloud thread read access to it. Claude Code still
+# reaches it through the plugin's data path. A real directory there is moved by
+# a migration, never here.
+install_claude_session_index() {
+  local link="$HOME/.claude/plugins/data/observability-bendrucker"
+  local target="${XDG_DATA_HOME:-$HOME/.local/share}/session-index"
+  [[ -e "$link" && ! -L "$link" ]] && return 0
+  mkdir -p "$target" "$(dirname "$link")"
+  [[ "$(readlink "$link")" == "$target" ]] || ln -sfn "$target" "$link"
+}
+
 # link_claude_managed <name> <source>
 link_claude_managed() {
   local name="$1" source="$2"
@@ -93,6 +105,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     install_claude_symlinks local
     install_claude_managed
     install_claude_local_marketplace
+    install_claude_session_index
   fi
   "$(dirname "${BASH_SOURCE[0]}")/install-native"
 fi

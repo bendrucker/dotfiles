@@ -12,6 +12,8 @@ Where the config repo is cloned, `install.sh` links each entry of its `user/` in
 
 `scripts/vm-setup` runs `claude/link remote` for a cloud session's VM, which overlays `platforms/remote/` the same way. There claude.ai sync owns `~/.claude/skills`, so skills link inside it. A VM snapshot can outlive its clone by days, so the remote settings pull the clone and rerun `claude/link` at each session start.
 
+The observability plugin's session index lives in `~/.local/share/session-index`, and `install.sh` links the plugin's data path, `~/.claude/plugins/data/observability-bendrucker`, to it. The desktop app won't grant a cloud thread anything under `~/.claude`, but it can grant this folder after you approve its prompt, and that gives the thread every indexed transcript. A thread should copy `session.duckdb` into its own scratch space before opening it read-only, so a refresh on the Mac can't collide with its lock.
+
 ## Worktree Aliases
 
 Launch Claude in a [Worktrunk](https://worktrunk.dev) worktree. All variants pass `--name` to Claude, set from the branch name, and append a system prompt telling Claude it is in a dedicated worktree it can work in directly.

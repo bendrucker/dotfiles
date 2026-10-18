@@ -96,3 +96,22 @@ describe("install_claude_local_marketplace", () => {
     expect(call("install_claude_local_marketplace", env).stdout).toBe("");
   });
 });
+
+describe("install_claude_session_index", () => {
+  const link = () => box.path(".claude/plugins/data/observability-bendrucker");
+  const env = () => ({ XDG_DATA_HOME: box.path("data") });
+
+  test("links the plugin's data path to the index outside ~/.claude", () => {
+    expect(call("install_claude_session_index", env()).status).toBe(0);
+    expect(readlinkSync(link())).toBe(box.path("data/session-index"));
+    expect(call("install_claude_session_index", env()).status).toBe(0);
+    expect(readlinkSync(link())).toBe(box.path("data/session-index"));
+  });
+
+  test("leaves a real directory for the migration to move", () => {
+    box.write(".claude/plugins/data/observability-bendrucker/session.duckdb", "db");
+
+    expect(call("install_claude_session_index", env()).status).toBe(0);
+    expect(box.read(".claude/plugins/data/observability-bendrucker/session.duckdb")).toBe("db");
+  });
+});
