@@ -1,6 +1,6 @@
 // The Claude Code plugins installed on this machine, and where each one's
 // marketplace says it comes from. bin/claude-sync prunes and updates the
-// plugins and bin/claude-plugin-audit checks the update landed.
+// plugins.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -262,9 +262,19 @@ export function declaredMarketplacePins(): Map<string, string> {
 // What `claude plugin marketplace update` walks. A bare `marketplace add` lands
 // here too, so it holds more than settings.json names.
 export function knownMarketplaces(): Registry {
+  const registered = readRegistry();
+  if (!registered.ok) return registered;
+  return { ok: true, names: Object.keys(registered.entries) };
+}
+
+type RegistryEntries =
+  | { ok: true; entries: Record<string, unknown> }
+  | { ok: false; reason: string };
+
+function readRegistry(): RegistryEntries {
   const path = join(claudePluginsDir(), "known_marketplaces.json");
   // Only absence reads as an empty registry; an unreadable file fails below.
-  if (!existsSync(path)) return { ok: true, names: [] };
+  if (!existsSync(path)) return { ok: true, entries: {} };
 
   let captured: string;
   try {
@@ -279,11 +289,43 @@ export function knownMarketplaces(): Registry {
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
-  if (registered === null) return { ok: true, names: [] };
+  if (registered === null) return { ok: true, entries: {} };
   if (!isRecord(registered)) {
     return { ok: false, reason: "known_marketplaces.json does not hold an object" };
   }
-  return { ok: true, names: Object.keys(registered) };
+  return { ok: true, entries: registered };
+}
+
+const LOCAL_SOURCES = new Set(["directory", "file"]);
+
+// Marketplaces registered from a local path, whose relative-path plugins load in
+// place. An unreadable registry names none.
+export function localMarketplaces(): Set<string> {
+  const registered = readRegistry();
+  const names = new Set<string>();
+  if (!registered.ok) return names;
+
+  for (const [name, entry] of Object.entries(registered.entries)) {
+    const source = isRecord(entry) ? entry.source : undefined;
+    const type = isRecord(source) ? source.source : undefined;
+    if (typeof type === "string" && LOCAL_SOURCES.has(type)) names.add(name);
+  }
+  return names;
+}
+
+// A local marketplace has no clone under marketplaces/, so its manifest is read
+// where it lives.
+function marketplaceManifest(marketplace: string): string {
+  const registered = readRegistry();
+  const entry = registered.ok ? registered.entries[marketplace] : undefined;
+  const location = isRecord(entry) ? entry.installLocation : undefined;
+
+  if (typeof location === "string" && location !== "") {
+    return location.endsWith(".json")
+      ? location
+      : join(location, ".claude-plugin", "marketplace.json");
+  }
+  return join(claudePluginsDir(), "marketplaces", marketplace, ".claude-plugin", "marketplace.json");
 }
 
 // At every scope: a project's plugin gets no user-scope key, so a prune reading
@@ -364,13 +406,7 @@ export function autoInstalledPlugins(): Declaration {
 export function pluginSource(id: string): SourceLookup {
   const { name, marketplace } = splitPluginId(id);
 
-  const manifest = join(
-    claudePluginsDir(),
-    "marketplaces",
-    marketplace,
-    ".claude-plugin",
-    "marketplace.json",
-  );
+  const manifest = marketplaceManifest(marketplace);
   if (!isFile(manifest)) return UNREADABLE;
 
   let parsed: unknown;
@@ -404,65 +440,6 @@ export function pluginSource(id: string): SourceLookup {
   const source = entry.source;
   if (source === undefined || source === null || source === false) return UNREADABLE;
   return { ok: true, source };
-}
-
-// Neither side of the comparison owns these. .in_use and .orphaned_at are
-// runtime markers Claude Code writes into a payload, node_modules is an
-// install-time artifact, and .git and .gcs-sha are the provenance markers of a
-// marketplace whose whole tree is the plugin.
-const PAYLOAD_NOISE = [".in_use", ".orphaned_at", "node_modules", ".git", ".gcs-sha"];
-
-export interface Comparison {
-  same: boolean;
-  differences: string[];
-  // A comparison can fail without diff saying anything, so failure is tracked
-  // apart from the message.
-  failed: boolean;
-  error: string;
-}
-
-export function comparePayload(payload: string, sourceDir: string): Comparison {
-  const excludes = PAYLOAD_NOISE.map((marker) => `--exclude=${marker}`);
-
-  // Claude Code synthesizes .claude-plugin/plugin.json for a plugin that ships
-  // none, so on those the directory exists only on the payload side and is not
-  // drift.
-  if (!isDirectory(join(sourceDir, ".claude-plugin"))) excludes.push("--exclude=.claude-plugin");
-
-  let run;
-  try {
-    run = Bun.spawnSync({
-      cmd: ["diff", "-rq", ...excludes, payload, sourceDir],
-      env: process.env,
-      stdin: "ignore",
-    });
-  } catch (error) {
-    return { same: false, differences: [], failed: true, error: describe(error) };
-  }
-
-  // Both signals are needed. diff exits 2 on a path it could not read, but on
-  // macOS a dangling symlink gets it an error on stderr and exit 0, so a status
-  // check alone would call the payload current over a file nothing compared.
-  const said = run.stderr.toString();
-  // A diff killed by a signal has no exit code, so count it as a failure.
-  const status = run.exitCode ?? 2;
-  if (status > 1 || said !== "") {
-    return { same: false, differences: [], failed: true, error: firstLine(said) };
-  }
-
-  return {
-    same: status === 0,
-    differences: run.stdout.toString().split("\n").filter((line) => line !== ""),
-    failed: false,
-    error: "",
-  };
-}
-
-// Where a marketplace that carries a plugin in its own tree keeps it. A
-// single-plugin marketplace whose whole tree is the plugin declares `.`, which
-// carries no `./` to strip and so resolves to the marketplace root.
-export function inTreeSource(marketplace: string, relative: string): string {
-  return join(claudePluginsDir(), "marketplaces", marketplace, relative.replace(/^\.\//, ""));
 }
 
 function parse(captured: string, what: string): unknown {
@@ -503,10 +480,6 @@ function isDirectory(path: string): boolean {
   } catch {
     return false;
   }
-}
-
-function firstLine(text: string): string {
-  return text.split("\n")[0] ?? "";
 }
 
 function describe(error: unknown): string {

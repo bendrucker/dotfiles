@@ -9,6 +9,7 @@ import {
   declaredPlugins,
   installedPlugins,
   knownMarketplaces,
+  localMarketplaces,
   pluginInventory,
   pluginMarketplaces,
   pluginSource,
@@ -503,6 +504,23 @@ describe("knownMarketplaces", () => {
   });
 });
 
+describe("localMarketplaces", () => {
+  test("names the marketplaces registered from a local path", () => {
+    writeRegistry({
+      remote: { source: { source: "github", repo: "example/remote" } },
+      folder: { source: { source: "directory", path: "/srv/folder" } },
+      manifest: { source: { source: "file", path: "/srv/marketplace.json" } },
+      odd: { source: "directory" },
+    });
+    expect([...localMarketplaces()].sort()).toEqual(["folder", "manifest"]);
+  });
+
+  test("names none when the registry cannot be read", () => {
+    writeRegistry("not json\n");
+    expect(localMarketplaces().size).toBe(0);
+  });
+});
+
 describe("pluginMarketplaces", () => {
   function used(): string[] {
     const read = pluginMarketplaces();
@@ -645,6 +663,21 @@ describe("pluginSource", () => {
   test("splits the id on its last @", () => {
     writeManifest("third", { plugins: [{ name: "a@b", source: "./plugins/ab" }] });
     expect(pluginSource("a@b@third")).toEqual({ ok: true, source: "./plugins/ab" });
+  });
+
+  test.each<{ name: string; location: (root: string) => string }>([
+    { name: "a directory", location: (root) => root },
+    { name: "a manifest file", location: (root) => join(root, ".claude-plugin", "marketplace.json") },
+  ])("reads the manifest of a marketplace registered from $name", ({ location }) => {
+    const root = join(sandbox, "local");
+    mkdirSync(join(root, ".claude-plugin"), { recursive: true });
+    writeFileSync(
+      join(root, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({ plugins: [{ name: "delta", source: "./plugins/delta" }] }),
+    );
+    writeRegistry({ local: { source: { source: "directory" }, installLocation: location(root) } });
+
+    expect(pluginSource("delta@local")).toEqual({ ok: true, source: "./plugins/delta" });
   });
 
   // An id with no @ names a marketplace of that whole name, which is normally

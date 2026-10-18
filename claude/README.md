@@ -68,9 +68,13 @@ without removing, `--force` skips the prompt.
 
 ## Plugins
 
-`claude-sync --full` runs nightly. It syncs the Claude config repo, reinstalls the herdr and moshi integrations, uninstalls the plugins the synced `settings.json` no longer declares, refreshes every marketplace, then updates every plugin installed at user scope, disabled ones included. `claude plugin enable` does not update, so a plugin skipped while disabled would come back stale months later. Each install is skipped where its binary is absent.
+The config repo's own plugins come from `~/.claude-repo`, the clone `claude/mise.macos.toml` declares, through a `directory`-source marketplace. Its path holds `$HOME`, so no tracked file can declare it. `install.sh` writes it to `~/.local/state/claude/local-settings.json` and links that file into the managed-settings drop-in directory as `60-local.json`, beside `50-dotfiles.json` and with the same one-time `sudo`. Managed settings outrank the `github` source in the config repo's `settings.json`, which stays as the fallback for a machine without the link. Claude Code loads a relative-path plugin from a local marketplace in place, so an edit that `claude-sync` pulls takes effect at the next session start or `/reload-plugins`, with no cached copy to update. Claude Code installs no npm dependencies for an in-place plugin, so `claude-sync` runs `bun install --frozen-lockfile` at the clone's root after every sync. The plugins are workspaces of the root `package.json`, so that one install covers all of them. A failed install warns, the run carries on, and the to-do names it.
 
-A hand run of `claude-sync`, say after pushing to the config repo, only refreshes every marketplace and updates the plugins. The hook installs, both prunes, and the audit run only with `--full`, which the launchd job passes.
+The third-party marketplaces still come from GitHub, and Claude Code copies their plugins into `~/.claude/plugins/cache`. The update and prune passes below exist for those copies.
+
+`claude-sync --full` runs nightly. It syncs the Claude config repo, installs its dependencies, reinstalls the herdr and moshi integrations, uninstalls the plugins the synced `settings.json` no longer declares, refreshes every marketplace, then updates every plugin installed at user scope, disabled ones included. `claude plugin enable` does not update, so a plugin skipped while disabled would come back stale months later. Each install is skipped where its binary is absent. A relative-path plugin from a marketplace registered from a local path is skipped by the update pass, and installed only when it has no install record. An entry there that names a repo of its own is copied and updated like any other.
+
+A hand run of `claude-sync`, say after pushing to the config repo, only installs the dependencies, refreshes every marketplace, and updates the plugins. The hook installs and both prunes run only with `--full`, which the launchd job passes. A failed marketplace refresh fails either run.
 
 The herdr install writes `~/.claude/hooks/herdr-agent-state.sh`, which the config repo gitignores. It also appends a `SessionStart` entry to `settings.json`, which the sync discards: herdr cannot recognize the committed `$HOME` form of the same entry and only checks the script's version marker. What comes back is the file as it stood before the install, so an edit already in the tree survives. The restore runs whether or not the install finished, because an entry left behind stops the next night's run at the sync gate, before it reaches the step that would clear it. The moshi install's edits stay. A diff in `settings.json` is a moshi upgrade, and the run stops at that same gate until the diff is committed.
 
@@ -78,7 +82,7 @@ The herdr and moshi installs both write `~/.claude/settings.json` by replacing i
 
 Vibe Island's SSH remote deploy rewrites the hook commands in `settings.json` on the machine it deploys to. Each one then names `vibe-island-hook`, a binary only its remote agent installs. Its `hookAutoConfig_claude` preference covers local hooks only. No setting stops the remote write. When every hook command the committed file lacks names `vibe-island-hook` and nothing outside `.hooks` changed, the sync restores the committed file and posts a notification. Any other change is left for the gate.
 
-A plugin no longer offered by its marketplace is left alone. Nothing can update it, so the fix is to uninstall it, and the audit says so.
+A plugin no longer offered by its marketplace is left alone, with an info line in the log. Nothing can update it, so the fix is to uninstall it.
 
 ### Pruning
 
@@ -90,31 +94,13 @@ Dependencies are the exception a declaration cannot express. Claude Code install
 
 An unreadable `settings.json` fails the run rather than pruning against an empty declaration, which would take every plugin on the machine. Uninstalling touches only ids the file does not name, so the pass writes nothing back and cannot dirty the tracked config and stall the next night at the sync gate.
 
-A plugin the marketplace dropped keeps its declaration, so the prune leaves it and the audit reports it as `orphaned`. Removing the payload while `settings.json` still names it would leave an entry pointing at nothing.
+A plugin the marketplace dropped keeps its declaration, so the prune leaves it. Removing the payload while `settings.json` still names it would leave an entry pointing at nothing.
 
-### Auditing
+### Repairing a Stale Plugin
 
-`claude plugin update` exiting 0 is not evidence that anything changed. A plugin that declares a fixed `version` string reports "already at the latest version" however far its source has moved, and an id the updater never enumerated is never attempted at all. Both leave a stale install behind a successful run.
+`claude plugin uninstall <id>` then `claude plugin install <id>`. Deleting the payload and running `claude plugin update` does not work on a plugin that declares a fixed `version`: it reports `already at the latest version` whether or not the payload is even there, so the delete stands and the plugin ends up uninstalled behind a successful-looking update.
 
-`claude-plugin-audit` checks the result instead. For a plugin that the marketplace carries in its own tree, it compares the installed payload against that tree, ignoring the runtime markers and installed dependencies that only ever exist on the payload side, and the provenance markers that only ever exist on the marketplace's. For a plugin living in its own repo, it compares the recorded commit against the sha the marketplace pins, or against what the remote points at when the marketplace pins nothing. It exits non-zero, listing what needs attention, and is worth running by hand for an on-demand answer.
-
-The marketplace trees are checked too. Every other comparison reads them as ground truth, and `claude plugin marketplace update` warns rather than fails, so a tree that quietly stopped advancing would match a stale install and hide the drift from both sides. Claude Code clones some marketplaces and materializes others from GCS. Each records its origin differently: a clone has `.git` and answers to `rev-parse HEAD`, while a materialized tree holds the commit it was built from in a `.gcs-sha` file at its root. The audit resolves both against what the source ref points at. A tree carrying neither marker is reported as unverified, and so is one whose marker does not look like a commit sha, because a half-written one says nothing about the tree.
-
-A payload is only as current as the tree it was compared against, so a plugin that matches a marketplace the audit could not vouch for is reported as unverified rather than current. Without that, one unchecked marketplace would hide every install it serves.
-
-A comparison that could not be made is not a finding. At 3am an unreachable remote is a flaky network far more often than a real change, so unverified results print but do not fail the audit. An inventory the audit could not read is different: it exits 2 and reports nothing, because calling zero plugins current is the silence the tool exists to break.
-
-The tree comparison is on content rather than the recorded `gitCommitSha`, because a forced refresh restores current content while leaving that field at its old value. A plugin sourced from its own repo has no local copy of that repo to compare against, so it falls back to the recorded commit and inherits the same inaccuracy.
-
-A payload whose source still offers the version already installed is reported as `pinned` rather than stale. `claude plugin update` compares those two version strings, so nothing reaches the install however far the tree behind the version has moved, and the fix is the reinstall below. For a plugin living in its own repo, the offered version comes from the manifest at the commit the ref resolves to, read over GitHub's raw-content route rather than by cloning. A manifest the audit cannot read leaves the verdict at stale.
-
-### Repairing a Flagged Plugin
-
-`claude plugin uninstall <id>` then `claude plugin install <id>`. Deleting the payload and running `claude plugin update` does not work on the plugins most likely to be flagged: a version-keyed plugin reports `already at the latest version` whether or not the payload is even there, so the delete stands and the plugin ends up uninstalled behind a successful-looking update. Reinstalling also rewrites `gitCommitSha`, which a forced refresh leaves stale and permanently flagged for a plugin sourced from its own repo.
-
-Payload directories carry an `.in_use` directory holding one file per session PID. Check those with `kill -0` before removing anything by hand. Deleting a payload out from under a live session breaks its skill loads until restart, which is why the audit only ever reports.
-
-`claude-sync` runs the audit after updating and files its findings as a Things to-do on a latch separate from the sync's own. Drift outlives the run that should have fixed it, so one stale plugin sharing the sync latch would suppress the to-do for a later sync failure. The latch also holds a fingerprint of which plugins are flagged, so a plugin that goes stale months later reopens it instead of hiding behind one that has been stale all along.
+Payload directories carry an `.in_use` directory holding one file per session PID. Check those with `kill -0` before removing anything by hand. Deleting a payload out from under a live session breaks its skill loads until restart.
 
 ## Computer Use
 

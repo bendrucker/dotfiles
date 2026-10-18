@@ -81,3 +81,18 @@ describe("install_claude_managed", () => {
     }
   });
 });
+
+describe("install_claude_local_marketplace", () => {
+  test("declares the clone in a generated file the drop-in links to", () => {
+    const env = { XDG_STATE_HOME: box.path("state") };
+    const result = call("install_claude_local_marketplace", env);
+
+    expect(result).toMatchObject({ status: 0, stdout: expect.stringContaining("60-local.json") });
+    const file = box.path("state/claude/local-settings.json");
+    expect(readlinkSync(box.path("managed/60-local.json"))).toBe(file);
+    expect(JSON.parse(box.read("state/claude/local-settings.json"))).toEqual({
+      extraKnownMarketplaces: { bendrucker: { source: { source: "directory", path: box.path("repo") } } },
+    });
+    expect(call("install_claude_local_marketplace", env).stdout).toBe("");
+  });
+});

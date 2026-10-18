@@ -1,38 +1,33 @@
 #!/usr/bin/env bun
 //
 // Claude configuration sync, run nightly from launchd with --full. A hand run
-// without it only refreshes the marketplaces and updates the plugins.
+// without it only installs the repo's dependencies, refreshes the marketplaces,
+// and updates the plugins.
 //
 // It reverts a cosmetic rewrite of a tracked settings file and a Vibe Island
-// remote-hook rewrite, syncs the repo, relinks ~/.claude, reinstalls the vendor
-// hooks, then brings the installed plugins to what the synced settings.json
-// declares: uninstall what it no longer names, refresh
-// every marketplace, and update every plugin installed at user scope, disabled
-// ones included, unless its payload already matches its marketplace's tree.
-// `claude plugin enable` does not update, so a plugin skipped while disabled
-// would come back stale months later.
+// remote-hook rewrite, syncs the repo, relinks ~/.claude, installs the repo's
+// dependencies, reinstalls the vendor hooks, then brings the installed plugins
+// to what the synced settings.json declares: uninstall what it no longer names,
+// refresh every marketplace, and update every plugin installed at user scope,
+// disabled ones included. `claude plugin enable` does not update, so a plugin
+// skipped while disabled would come back stale months later.
 //
 // The whole run is captured as it happens: a failure files a Things to-do built
-// from that log, on a latch keyed by which steps warned. The audit's own
-// findings go to a second latch, because drift outlives the run that should have
-// fixed it and one stale plugin sharing the sync's latch would suppress the
-// to-do for a later sync failure.
+// from that log, on a latch keyed by which steps warned.
 
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   autoInstalledPlugins,
   claudePluginsDir,
-  comparePayload,
   declaredMarketplacePins,
   declaredMarketplaces,
   declaredPlugins,
-  inTreeSource,
-  type InstalledPlugin,
   installedPlugins,
   knownMarketplaces,
+  localMarketplaces,
   pluginInventory,
   pluginMarketplaces,
   pluginSource,
@@ -51,15 +46,9 @@ import {
   capturedOutput,
   log,
   type Output,
-  type SpawnOptions,
 } from "#jobs/output";
 import { byCodeUnit, canonicalJson } from "#jobs/json";
-import {
-  type Finding,
-  reportFailure,
-  reportFindings,
-  reportSuccess,
-} from "#jobs/report";
+import { reportFailure, reportSuccess } from "#jobs/report";
 import {
   adoptReplacedSettings,
   relinkClaudeHome,
@@ -71,11 +60,6 @@ import { installClaudeHooks } from "../moshi/claude-hooks";
 
 const TITLE = "Claude Sync";
 const SYNC_JOB = "claude-sync";
-const DRIFT_JOB = "claude-plugin-drift";
-
-// ~/.dotfiles is a symlink to the checkout, so the audit is found through the
-// resolved path rather than the invoked one.
-const BIN = dirname(realpathSync(import.meta.path));
 
 // $HOME is read before the account's own home directory, because that is what
 // the shell expanded and what a spec re-points between examples.
@@ -122,8 +106,23 @@ export function syncRepo(out: Output, repoDir: string): boolean {
   return true;
 }
 
-// The caller still updates the plugins after a failed refresh, and decides
-// whether the failure fails the run.
+// Claude Code installs no dependencies for an in-place plugin. Frozen, so a
+// lockfile that disagrees with its package.json fails instead of being rewritten
+// in the deployed clone, which would stop the next night at the sync gate.
+export function installDependencies(
+  out: Output,
+  repoDir: string,
+  env: Record<string, string | undefined>,
+): boolean {
+  log(out, "info", "Installing Claude repository dependencies...");
+
+  if (out.run(["bun", "install", "--frozen-lockfile"], { cwd: repoDir, env, stdin: "ignore" }) !== 0) {
+    log(out, "warn", "bun install failed in the Claude repository, continuing");
+    return false;
+  }
+  return true;
+}
+
 export function updateMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
   log(out, "info", "Updating marketplaces...");
 
@@ -319,20 +318,24 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
     return false;
   }
 
+  const inPlace = localMarketplaces();
   let failed = 0;
-  let current = 0;
+  let loadedInPlace = 0;
   for (const plugin of inventory.plugins) {
     if (plugin.id === "") continue;
 
     const source = pluginSource(plugin.id);
     // A marketplace that no longer offers the plugin has nothing to update it
-    // to, so `claude plugin update` can only ever fail. claude-plugin-audit
-    // reports these. Counting them here would make every run fail.
-    if (!source.ok && source.reason === "absent") continue;
+    // to, so `claude plugin update` can only ever fail. Counting them here would
+    // make every run fail.
+    if (!source.ok && source.reason === "absent") {
+      log(out, "info", `${plugin.id} is no longer offered by its marketplace; uninstall it`);
+      continue;
+    }
 
     if (plugin.installPath === "" || !isDirectory(plugin.installPath)) {
       // Installing an id the marketplace cannot vouch for is a guess that fails
-      // every night. The audit names it instead.
+      // every night.
       if (!source.ok) continue;
 
       log(out, "info", `Installing ${plugin.id} (not yet installed)...`);
@@ -343,8 +346,13 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
       continue;
     }
 
-    if (source.ok && payloadCurrent(plugin, source.source)) {
-      current += 1;
+    // Only a relative-path entry loads in place.
+    if (
+      source.ok &&
+      typeof source.source === "string" &&
+      inPlace.has(splitPluginId(plugin.id).marketplace)
+    ) {
+      loadedInPlace += 1;
       continue;
     }
 
@@ -355,53 +363,12 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
     }
   }
 
-  if (current > 0) log(out, "info", `${current} plugin(s) already match their marketplace`);
+  if (loadedInPlace > 0) log(out, "info", `${loadedInPlace} plugin(s) load in place from a local marketplace`);
   if (failed > 0) {
     log(out, "warn", `${failed} plugin(s) failed to update`);
     return false;
   }
   return true;
-}
-
-// A plugin its marketplace carries in-tree records the marketplace commit as its
-// version, so every commit bumps all of them and `claude plugin update` re-copies
-// payloads that did not change, at a second or more apiece. A payload matching
-// its source is what claude-plugin-audit calls current, so it skips the CLI. One
-// whose npm install never landed still goes through, since updating retries it.
-const NPM_LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json"];
-
-function payloadCurrent(plugin: InstalledPlugin, source: unknown): boolean {
-  if (typeof source !== "string") return false;
-
-  const sourceDir = inTreeSource(splitPluginId(plugin.id).marketplace, source);
-  if (!isDirectory(sourceDir)) return false;
-
-  const comparison = comparePayload(plugin.installPath, sourceDir);
-  return comparison.same && !comparison.failed && dependenciesInstalled(plugin.installPath);
-}
-
-// Claude Code installs a plugin's dependencies with `npm ci`, which needs a
-// lockfile, so a payload shipping none was never meant to have node_modules.
-// An interrupted install can leave node_modules partial, so each declared
-// package has to be there.
-function dependenciesInstalled(payload: string): boolean {
-  const manifest = join(payload, "package.json");
-  const locked = NPM_LOCKFILES.some((name) => isFile(join(payload, name)));
-  if (!isFile(manifest) || !locked) return true;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(manifest, "utf8").replace(/^\uFEFF/, ""));
-  } catch {
-    return false;
-  }
-
-  const dependencies =
-    typeof parsed === "object" && parsed !== null && "dependencies" in parsed
-      ? parsed.dependencies
-      : undefined;
-  const declared = typeof dependencies === "object" && dependencies !== null ? Object.keys(dependencies) : [];
-  return declared.every((name) => isFile(join(payload, "node_modules", name, "package.json")));
 }
 
 const UPDATE_ATTEMPTS = 2;
@@ -507,31 +474,6 @@ function restoreSettings(out: Output, path: string, before: string | undefined):
   return true;
 }
 
-export interface AuditOptions extends SpawnOptions {
-  audit?: string;
-}
-
-// Check what the update pass actually produced, and report drift on a latch of
-// its own.
-export function auditPlugins(out: Output, repoDir: string, options: AuditOptions = {}): boolean {
-  log(out, "info", "Auditing plugin payloads...");
-
-  const audit = mergedOutput([options.audit ?? join(BIN, "claude-plugin-audit")], options.env);
-  // Reprinted so the findings reach the captured log the to-do is built from. A
-  // clean audit prints nothing, and a bare newline is not a finding.
-  if (audit.output !== "") out.write(1, `${audit.output}\n`);
-
-  // A run that found nothing still carries the rows it could not check, so it
-  // goes through the reporter rather than clearing the latch outright.
-  if (audit.status <= 1) return reportDrift(audit.output, repoDir) === 0;
-
-  // The audit could not run at all: missing, not executable, or unable to read
-  // the inventory. Filing that as drift would name plugins it never checked, and
-  // would leave the sync reporting success over a check that never ran.
-  log(out, "warn", "Plugin audit did not run");
-  return false;
-}
-
 export function repoRevision(repoDir: string): string {
   const rev = stripNewlines(gitQuiet(["rev-parse", "--short", "HEAD"], repoDir).stdout);
   return rev === "" ? "unknown" : rev;
@@ -572,26 +514,6 @@ export function failureFields(output: string): string[] {
     });
 }
 
-const DRIFTED = new Set(["stale", "pinned", "orphaned"]);
-
-// The report is aligned columns, so a row's subject and verdict are its first
-// two fields. Block headers and the summary line carry something else in the
-// second field, which is what keeps them out of both groups.
-//
-// Standing findings carry no detail, so drift that deepens on a plugin already
-// named is still the finding already latched for it. Unverified rows come back
-// as held, for the latch to hold rather than clear.
-export function driftReport(output: string): { standing: Finding[]; held: string[] } {
-  const rows = output.split("\n").map(awkFields);
-
-  return {
-    standing: rows
-      .filter((fields) => DRIFTED.has(fields[1] ?? ""))
-      .map((fields) => ({ subject: fields[0], verdict: fields[1] })),
-    held: rows.filter((fields) => fields[1] === "unverified").map((fields) => fields[0]),
-  };
-}
-
 // awk's default splitting: leading and trailing blanks ignored, runs of blanks
 // and tabs separating the fields.
 function awkFields(line: string): string[] {
@@ -612,25 +534,8 @@ export function reportSyncFailure(output: string, repoDir: string): number {
   });
 }
 
-// Latched one finding at a time. The set churns as plugins go stale and get
-// fixed around a finding that has not moved, and a latch covering the whole set
-// re-filed the unmoved one every time anything else joined or left it.
-export function reportDrift(output: string, repoDir: string): number {
-  return reportFindings({
-    job: DRIFT_JOB,
-    title: "Claude plugins are stale",
-    command: "claude-plugin-audit",
-    output,
-    revision: repoRevision(repoDir),
-    extraMeta: versionMeta(),
-    outputHeading: "Stale Plugins",
-    ...driftReport(output),
-  });
-}
-
-// Interactive leaves the hook installs, prunes, and audit to the nightly.
-// Marketplaces still refresh, or the plugins would update to the old revision.
-export interface SyncOptions extends AuditOptions {
+// Interactive leaves the hook installs and prunes to the nightly.
+export interface SyncOptions {
   interactive?: boolean;
 }
 
@@ -647,13 +552,15 @@ export function sync(out: Output, repoDir: string, options: SyncOptions = {}): n
   // moves the repo itself, and its PR push has to stay on the SSH pushurl.
   const env = { ...process.env, ...httpsEnv() };
 
-  // No audit follows to catch a stale plugin, so a failed refresh fails the run.
+  // Right after the pull, so in-place plugins get the new revision's dependencies.
+  const installed = installDependencies(out, repoDir, env);
+
   if (options.interactive) {
     const refreshed = updateMarketplaces(out, env);
-    return updatePlugins(out, env) && refreshed && linked ? 0 : 1;
+    return updatePlugins(out, env) && refreshed && installed && linked ? 0 : 1;
   }
 
-  let status = linked ? 0 : 1;
+  let status = linked && installed ? 0 : 1;
   // After the sync, so the pull that removes a stale script from the clone runs
   // against a clean tree and the installer puts the current one back.
   if (!installAgentHooks(out, repoDir, env)) status = 1;
@@ -665,13 +572,9 @@ export function sync(out: Output, repoDir: string, options: SyncOptions = {}): n
   // before the update so a clone on its way out is not fetched first.
   if (!pruneMarketplaces(out, env)) status = 1;
 
-  updateMarketplaces(out, env);
+  if (!updateMarketplaces(out, env)) status = 1;
 
   if (!updatePlugins(out, env)) status = 1;
-  // The audit runs whatever the update pass did, since a failed update is the
-  // case most likely to have left something stale. Its own findings go to a
-  // separate latch, so only a broken audit reaches this status.
-  if (!auditPlugins(out, repoDir, { ...options, env })) status = 1;
   return status;
 }
 
