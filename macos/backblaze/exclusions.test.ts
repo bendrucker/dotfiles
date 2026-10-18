@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { run, sandbox, type Run, type Sandbox } from "#harness";
+import { ignoresModes, run, sandbox, type Run, type Sandbox } from "#harness";
 import { block, merge, rulesFrom } from "./exclusions.ts";
 
 const script = join(import.meta.dir, "exclusions.ts");
@@ -81,7 +81,7 @@ describe("macos/backblaze/exclusions.ts", () => {
     expect(contents()).toBe(merge(shipped, rules));
   });
 
-  test("reports an unreadable file in one line", () => {
+  test.skipIf(ignoresModes)("reports an unreadable file in one line", () => {
     chmodSync(file, 0o000);
     const r = install();
     expect(r.status).toBe(1);

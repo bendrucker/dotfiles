@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
+import { ignoresModes, repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
 
 const audit = join(repoRoot, "credentials", "bin", "credential-audit");
 
@@ -155,7 +155,7 @@ describe("reporting", () => {
 
   // Dropping it at the glob would take it out of the report altogether, and an
   // empty report is what clears the latch on a key that is still sitting there.
-  test("holds an ssh key it cannot read rather than dropping it", () => {
+  test.skipIf(ignoresModes)("holds an ssh key it cannot read rather than dropping it", () => {
     const path = credential("home/.ssh/id_unreadable", pem("OPENSSH", ""));
     chmodSync(path, 0o000);
     expect(verdicts(runAudit().stdout)["~/.ssh/id_unreadable"]).toBe("unreadable");

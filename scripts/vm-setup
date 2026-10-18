@@ -1,7 +1,8 @@
 #!/bin/sh
-# Puts the tools pinned in system/mise.toml on PATH in a fresh Linux VM, with
-# no Homebrew and no full install, so this repo's hooks and lint can run there,
-# and links the Claude Code config as for a remote session:
+# Puts the tools pinned in system/mise.toml and its remote module on PATH in a
+# fresh Linux VM, with no Homebrew and no full install, so this repo's hooks,
+# lint, and tests can run there, and links the Claude Code config as for a
+# remote session:
 #   curl -fsSL https://raw.githubusercontent.com/bendrucker/dotfiles/main/scripts/vm-setup | sh
 #
 # VM setup scripts often abort the boot on a non-zero exit, so every failure
@@ -20,6 +21,8 @@ warn() {
 [ -d "$dir" ] || git clone --quiet --depth 1 https://github.com/bendrucker/dotfiles "$dir" || warn "clone failed"
 command -v mise >/dev/null || curl -fsSL https://mise.run | MISE_INSTALL_PATH="$bin/mise" sh || warn "mise install failed"
 
+# The remote module adds what a machine takes from Homebrew instead.
+export MISE_ENV=remote
 cd "$dir/system" || warn "no system/ in $dir"
 mise trust --quiet mise.toml || warn "mise trust failed"
 mise install --yes || warn "mise install failed"

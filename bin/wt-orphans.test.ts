@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ignoresModes } from "#harness";
 import {
   classify,
   type Facts,
@@ -385,7 +386,7 @@ describe("sweeping a repo", () => {
   // The husks exist because a removal already died on a file it could not
   // unlink, so the sweep meets the same wall and has to report it rather than
   // fail the run or retry forever.
-  test("reports a removal that could not finish and carries on to the next", () => {
+  test.skipIf(ignoresModes)("reports a removal that could not finish and carries on to the next", () => {
     const stuck = husk("stuck");
     const vendored = join(stuck, "vendored");
     mkdirSync(vendored);
@@ -432,7 +433,7 @@ describe("sweeping a repo", () => {
 
   // A root read as absent when it is merely unreadable would report the repo
   // swept while nothing looked inside it.
-  test("reports a root it could not read and still sweeps the rest", () => {
+  test.skipIf(ignoresModes)("reports a root it could not read and still sweeps the rest", () => {
     const orphan = husk("agent-abc");
     const outside = join(box, ".worktrees", "owner", "repo");
     mkdirSync(outside, { recursive: true });

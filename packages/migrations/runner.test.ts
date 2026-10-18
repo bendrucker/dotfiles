@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { repoRoot, sandbox, type Sandbox } from "#harness";
+import { ignoresModes, repoRoot, sandbox, type Sandbox } from "#harness";
 import type { Context, Platform } from "#migrations/migration";
 import {
   devRoot,
@@ -157,7 +157,7 @@ describe("stampVersion", () => {
 });
 
 describe("errors the readers cannot suppress", () => {
-  test("a migrations directory that exists and cannot be read", () => {
+  test.skipIf(ignoresModes)("a migrations directory that exists and cannot be read", () => {
     const dir = box.mkdir("root", "migrations");
     chmodSync(dir, 0o000);
     try {
@@ -177,7 +177,7 @@ describe("errors the readers cannot suppress", () => {
     expect(() => readVersion(file)).toThrow(/unreadable/);
   });
 
-  test("a home directory that exists and cannot be read is not a fresh machine", () => {
+  test.skipIf(ignoresModes)("a home directory that exists and cannot be read is not a fresh machine", () => {
     chmodSync(home, 0o000);
     try {
       expect(() => previouslyInstalled(home, join(home, ".config"), [installed])).toThrow();
@@ -186,7 +186,7 @@ describe("errors the readers cannot suppress", () => {
     }
   });
 
-  test("a stamp that exists and cannot be read is not an absent stamp", () => {
+  test.skipIf(ignoresModes)("a stamp that exists and cannot be read is not an absent stamp", () => {
     const file = box.path("state", "migration-version");
     box.mkdir("state");
     writeFileSync(file, "1\n");
@@ -198,7 +198,7 @@ describe("errors the readers cannot suppress", () => {
     }
   });
 
-  test("run reports an unwritable state directory rather than crashing", async () => {
+  test.skipIf(ignoresModes)("run reports an unwritable state directory rather than crashing", async () => {
     markInstalled();
     migration("202601010001-first");
     const state = box.mkdir("state");
@@ -210,7 +210,7 @@ describe("errors the readers cannot suppress", () => {
     }
   });
 
-  test("run reports an unreadable migrations directory rather than stamping past it", async () => {
+  test.skipIf(ignoresModes)("run reports an unreadable migrations directory rather than stamping past it", async () => {
     markInstalled();
     const dir = box.mkdir("root", "migrations");
     chmodSync(dir, 0o000);

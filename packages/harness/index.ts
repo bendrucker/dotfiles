@@ -84,6 +84,11 @@ export function must(cmd: string[], options: RunOptions = {}): string {
   return result.stdout;
 }
 
+// Root bypasses file modes, so a test that withholds a permission to force an
+// error cannot produce that error. CI runs as an ordinary user; a cloud session
+// runs as root.
+export const ignoresModes = process.getuid?.() === 0;
+
 export function commandExists(name: string): boolean {
   return run(["sh", "-c", `command -v ${quote(name)}`]).status === 0;
 }

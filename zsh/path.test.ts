@@ -39,7 +39,9 @@ function pathOf(files: string[]): string[] {
   // `compinit -C` sources any dump it finds without checking it, and building
   // one in a fresh $ZDOTDIR costs about a second. Nothing here reads completions.
   writeFileSync(join(zdotdir, ".zcompdump"), "");
-  run(["zsh", "-i", "-c", `print -l $path > ${out}`], {
+  // Resolved from the caller's PATH, since a cloud VM's zsh sits outside the
+  // system dirs the shell gets.
+  run([Bun.which("zsh") ?? "zsh", "-i", "-c", `print -l $path > ${out}`], {
     onlyPath: ["/usr/bin", "/bin", "/usr/sbin", "/sbin"],
     env: { ZDOTDIR: zdotdir, DOTFILES_USE_DEV: repoRoot },
     stdin: "ignore",
