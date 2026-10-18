@@ -1,0 +1,105 @@
+#!/usr/bin/env bun
+//
+// Compares GitHub Actions timings across runs, which no single run shows.
+// fetch replaces the database with every job and step from the last N days.
+// report prints p50/p90 queue and run time per job, then the slowest steps.
+
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { parseArgs } from "node:util";
+
+const USAGE = [
+  "Usage: ci-timings fetch [--days N] OWNER/REPO...",
+  "       ci-timings report",
+  "  --days N    how far back to fetch (default 14)",
+  "  --db PATH   DuckDB file (default ~/.local/state/ci-timings/ci.duckdb)",
+].join("\n");
+
+const LOAD = `
+create or replace table jobs as select repo, event, run_id, run_attempt as attempt, name as job,
+  conclusion, created_at::timestamptz as created_at, started_at::timestamptz as started_at,
+  completed_at::timestamptz as completed_at, steps
+from read_json('/dev/stdin', format = 'newline_delimited');
+create or replace table steps as select repo, job, s.name as step, s.conclusion,
+  s.started_at::timestamptz as started_at, s.completed_at::timestamptz as completed_at
+from (select repo, job, unnest(steps) as s from jobs);`;
+
+// Skipped work still carries timestamps, so it would count as zero seconds.
+const REPORT = `
+select repo, job, count(*) as n,
+  quantile_cont(epoch(started_at - created_at), [0.5, 0.9])::int[] as queue,
+  quantile_cont(epoch(completed_at - started_at), [0.5, 0.9])::int[] as run
+from jobs where conclusion not in ('skipped', 'cancelled')
+group by all order by run[2] desc;
+select repo, job, step, count(*) as n,
+  quantile_cont(epoch(completed_at - started_at), [0.5, 0.9])::int[] as seconds
+from steps where conclusion = 'success'
+group by all having seconds[2] >= 10 order by seconds[2] desc limit 25;`;
+
+async function gh(path: string, jq: string): Promise<Record<string, unknown>[]> {
+  const proc = Bun.spawn(["gh", "api", "--paginate", path, "--jq", jq], { stderr: "inherit" });
+  const out = await new Response(proc.stdout).text();
+  if ((await proc.exited) !== 0) throw new Error(`gh api ${path} failed`);
+  return out.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+
+async function fetchJobs(repo: string, from: string): Promise<Record<string, unknown>[]> {
+  const runs = await gh(`repos/${repo}/actions/runs?per_page=100&status=completed&created=>=${from}`, ".workflow_runs[]");
+  const jobs = [];
+  // Eight runs at a time keeps gh's process count and the API's rate in check.
+  for (let i = 0; i < runs.length; i += 8) {
+    const batch = runs.slice(i, i + 8).map(async (run) =>
+      (await gh(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100&filter=all`, ".jobs[]")).map(
+        (job) => ({ ...job, repo, event: run.event }),
+      ),
+    );
+    jobs.push(...(await Promise.all(batch)).flat());
+  }
+  console.error(`${repo}: ${runs.length} runs`);
+  return jobs;
+}
+
+function duckdb(db: string, sql: string, stdin?: string): void {
+  mkdirSync(dirname(db), { recursive: true });
+  const proc = Bun.spawnSync(["duckdb", "-box", db, "-c", sql], {
+    stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if (proc.exitCode !== 0) throw new Error("duckdb failed");
+}
+
+export async function main(argv: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: {
+      days: { type: "string", default: "14" },
+      db: { type: "string", default: join(homedir(), ".local/state/ci-timings/ci.duckdb") },
+    },
+  });
+  const [command, ...repos] = positionals;
+  const days = Number(values.days);
+  if (command === "fetch" && repos.length > 0 && Number.isInteger(days) && days > 0) {
+    const from = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+    const jobs = (await Promise.all(repos.map((repo) => fetchJobs(repo, from)))).flat();
+    duckdb(values.db, LOAD, jobs.map((job) => JSON.stringify(job)).join("\n"));
+    return 0;
+  }
+  if (command === "report") {
+    duckdb(values.db, REPORT);
+    return 0;
+  }
+  console.error(USAGE);
+  return 2;
+}
+
+if (import.meta.main) {
+  process.exit(
+    await main(process.argv.slice(2)).catch((error: Error) => {
+      console.error(`ci-timings: ${error.message}`);
+      return 1;
+    }),
+  );
+}

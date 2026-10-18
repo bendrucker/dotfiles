@@ -27,6 +27,9 @@ jobs:
         # A PR also takes the upgrade path a machine takes: main installed
         # first, this head over it, then a second run that must change nothing.
         pass: ${{ fromJSON(github.event_name == 'pull_request' && '["fresh", "upgrade"]' || '["fresh"]') }}
+        # macOS runners are scarce, so a PR takes only the upgrade pass there.
+        # Main pushes and the nightly install the head fresh.
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"macos","pass":"fresh"}]' || '[]') }}
         include:
           - name: linux
             # Not 22.04: its glibc predates Homebrew's minimum, so brew builds
@@ -35,7 +38,8 @@ jobs:
             os: ubuntu-latest
           - name: macos
             os: macos-15
-    name: bootstrap (${{ matrix.name }}${{ matrix.pass == 'upgrade' && ', upgrade' || '' }})
+    # The branch ruleset requires `bootstrap (macos)`.
+    name: bootstrap (${{ matrix.name }}${{ matrix.pass == 'upgrade' && matrix.name != 'macos' && ', upgrade' || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
