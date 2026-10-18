@@ -16,4 +16,8 @@
 <excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/target/release/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
 <!-- Bytecode Python rewrites on import. -->
 <excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/__pycache__/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
+<!-- The session index, rewritten on every refresh and rebuilt from transcripts. -->
+<excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/.claude/plugins/data/observability-bendrucker/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
+<!-- osquery's database and rolling sample logs. -->
+<excludefname_rule plat="mac" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith="users/" contains_1="/.local/state/osquery/" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="*" />
 </bzexclusions>

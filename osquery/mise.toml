@@ -1,0 +1,22 @@
+# Per-process CPU, memory footprint, and disk I/O on both Macs, for attributing
+# load to agent sessions after the fact. The cask is a root .pkg with a root
+# daemon, so the release tarball runs as a user agent instead. Root-owned
+# processes report -1 from it.
+[tools]
+"github:osquery/osquery" = { version = "5.23.1", os = ["macos"], asset_pattern = "osquery-*_1.macos_arm64.tar.gz", bin_path = "opt/osquery/lib/osquery.app/Contents/MacOS" }
+
+# launchd doesn't create the directories osquery writes to, so the shell makes
+# them before handing off. Background ProcessType would throttle the samples
+# during the very overload they record, so only nice lowers its priority.
+[bootstrap.macos.launchd.agents.osquery]
+program = "/bin/sh"
+args = [
+  "-c",
+  'state="$HOME/.local/state/osquery" && mkdir -p "$state/db" "$state/logs" && exec "$HOME/.local/share/mise/shims/osqueryd" --config_path="$HOME/.dotfiles/osquery/osquery.conf" --database_path="$state/db" --pidfile="$state/osqueryd.pid" --logger_path="$state/logs" --disable_extensions --watchdog_level=1',
+]
+run_at_load = true
+keep_alive = true
+throttle_interval = 60
+nice = 10
+stdout_path = "~/Library/Logs/osquery.log"
+stderr_path = "~/Library/Logs/osquery.log"
