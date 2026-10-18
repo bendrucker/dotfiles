@@ -19,7 +19,7 @@ Put a tool that needs only a Brewfile line and a few aliases in an existing topi
 
 Declare a new tool in its topic's `Brewfile`. Use the topic's `mise.toml` instead only when the version must vary per project, as with language runtimes and `terraform`.
 
-Pin a tool that this repo's own scripts, tests, or CI call in `system/mise.toml`, and declare it in no Brewfile. `gum` is the exception and stays on Homebrew, because `scripts/homebrew.sh` installs it before mise exists.
+Pin a tool that this repo's own scripts, tests, or CI call in `system/mise.toml`, and declare it in no Brewfile. `gum` is the exception and stays on Homebrew, because `scripts/homebrew.sh` installs it before mise exists. A Claude Code cloud session has no Homebrew, so `system/mise.remote.toml` pins it there, and `.claude/hooks/session-start` installs both files.
 
 Mark a formula `ci: :extra` when nothing in this repo configures it, calls it, or loads it at shell startup. Remove the marker in the same change that gives it a config file or a caller.
 

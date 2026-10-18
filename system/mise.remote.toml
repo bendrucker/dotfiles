@@ -1,0 +1,5 @@
+# Loads only in a Claude Code cloud session, where .claude/hooks/session-start
+# selects the remote env. Homebrew installs gum on a machine (see
+# system/Brewfile), and CI's bun job installs it the same way.
+[tools]
+"aqua:charmbracelet/gum" = "0.17.0"

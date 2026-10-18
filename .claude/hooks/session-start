@@ -1,7 +1,8 @@
 #!/bin/sh
-# Installs what the bun job's runner adds to ubuntu-latest, so `bun run test`
-# gives the same signal in a Claude Code cloud session as in CI: zsh, which the
-# image lacks, and gum, which CI takes from Homebrew. Cloud sessions only.
+# Gives a Claude Code cloud session the tools CI's jobs have, so `bun run test`
+# and the lint tasks give the same signal there. The tools come from
+# system/mise.toml plus the remote module, system/mise.remote.toml. zsh comes
+# from apt, the way the bun job installs it. Cloud sessions only.
 set -eu
 
 [ "${CLAUDE_CODE_REMOTE-}" = true ] || exit 0
@@ -11,16 +12,10 @@ if ! command -v zsh >/dev/null; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zsh >/dev/null
 fi
 
-gum_version=0.17.0
-if ! command -v gum >/dev/null; then
-  case "$(uname -m)" in
-  x86_64) arch=x86_64 ;;
-  aarch64 | arm64) arch=arm64 ;;
-  *) echo "session-start: no gum build for $(uname -m)" >&2 && exit 0 ;;
-  esac
-  dir=$(mktemp -d)
-  curl -fsSL "https://github.com/charmbracelet/gum/releases/download/v$gum_version/gum_${gum_version}_Linux_$arch.tar.gz" |
-    tar xz -C "$dir" --strip-components 1
-  install -m 0755 "$dir/gum" /usr/local/bin/gum
-  rm -rf "$dir"
-fi
+command -v mise >/dev/null || curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh >/dev/null 2>&1
+
+system=$CLAUDE_PROJECT_DIR/system
+export MISE_ENV=remote
+mise trust -q "$system"
+mise install -q -C "$system"
+mise env -C "$system" -s bash >>"$CLAUDE_ENV_FILE"
