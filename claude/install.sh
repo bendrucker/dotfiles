@@ -6,106 +6,67 @@ set -e
 
 CLAUDE_REPO_HOME="${CLAUDE_REPO_HOME:-$HOME/.claude-repo}"
 
-# Links ~/.claude for a platform, mac or cloud. Also sourced by
-# claude/settings-link.ts to relink after installers replace
-# ~/.claude/settings.json, and run in cloud VMs through claude/link.
-#
-# Cloud swaps in its own settings.json, since user/settings.json is the Mac's.
-# There claude.ai sync owns ~/.claude/skills as a real directory, so a
-# directory that is already there gets each entry linked inside it.
+# Links ~/.claude for a platform, mac or cloud: each entry of the config
+# repo's user/, with platforms/<platform>/ adding entries and replacing those
+# of the same name. Also sourced by claude/settings-link.ts to relink after
+# installers replace ~/.claude/settings.json.
 install_claude_symlinks() {
-  local platform="${1:-mac}"
-  local source_dir="$CLAUDE_REPO_HOME/user"
-  local target_dir="$HOME/.claude"
-
-  if [[ ! -d "$source_dir" ]]; then
+  if [[ ! -d "$CLAUDE_REPO_HOME/user" ]]; then
     echo "  Claude repo user/ not found, skipping symlinks"
     return 0
   fi
-
-  mkdir -p "$target_dir"
-
-  local desired=""
-  for item in "$source_dir"/*; do
-    [[ -e "$item" ]] || continue
-    local name
-    name="$(basename "$item")"
-    local target="$target_dir/$name"
-
-    if [[ "$platform" == cloud && "$name" == settings.json ]]; then
-      item="$CLAUDE_REPO_HOME/platforms/cloud/settings.json"
-    fi
-    if [[ "$platform" == cloud && -d "$target" && ! -L "$target" ]]; then
-      install_claude_entries "$item" "$target"
-      continue
-    fi
-
-    local repaired=""
-    if [[ -e "$target" || -L "$target" ]] && [[ "$(readlink "$target")" != "$item" ]]; then
-      repaired=1
-    fi
-
-    symlink_create "$item" "$target"
-    if [[ -n "$repaired" ]]; then
-      local warning="Relinked ~/.claude/$name, which no longer pointed into the repo"
-      # Cloud VMs have no gum.
-      if command -v gum >/dev/null; then gum log --level warn "$warning"; else echo "$warning" >&2; fi
-    else
-      echo "  ✓ ~/.claude/$name"
-    fi
-
-    desired+="${desired:+$'\n'}$target"
-  done
-
-  find "$target_dir" -maxdepth 1 -type l | symlink_prune "$CLAUDE_REPO_HOME/user" "$desired"
-
-  # user/CLAUDE.md imports this, so each platform's guidance loads after it.
-  local platform_md="$CLAUDE_REPO_HOME/platforms/$platform/CLAUDE.md"
-  if [[ -f "$platform_md" ]]; then
-    symlink_create "$platform_md" "$target_dir/platform.md"
-  fi
+  mkdir -p "$HOME/.claude"
+  CLAUDE_PLATFORM="${1:-mac}" claude_link "$HOME/.claude" "$CLAUDE_REPO_HOME/user" "$CLAUDE_REPO_HOME/platforms/${1:-mac}"
 }
 
-# install_claude_entries <src dir> <dst dir>
-#   Link each entry of src inside dst, pruning links into src it no longer has.
-install_claude_entries() {
-  local desired=""
-  for entry in "$1"/*; do
-    [[ -e "$entry" ]] || continue
-    symlink_create "$entry" "$2/$(basename "$entry")"
-    desired+="${desired:+$'\n'}$2/$(basename "$entry")"
-  done
-  find "$2" -maxdepth 1 -type l | symlink_prune "$1" "$desired"
-  echo "  ✓ ~/.claude/$(basename "$2")/*"
+# claude_link <dst> <src>...
+#   Link each entry of the srcs into dst, a later src winning a shared name,
+#   and prune links into the repo that dst no longer gets. On cloud, claude.ai
+#   sync owns ~/.claude/skills as a real directory, so entries go inside it.
+claude_link() {
+  local dst="$1" desired="" name item target
+  shift
+  while IFS= read -r name; do
+    for src; do [[ -e "$src/$name" ]] && item="$src/$name"; done
+    target="$dst/$name"
+
+    if [[ "$CLAUDE_PLATFORM" == cloud && -d "$target" && ! -L "$target" ]]; then
+      claude_link "$target" "$item"
+      continue
+    fi
+    local stale=""
+    [[ -L "$target" || -e "$target" ]] && [[ "$(readlink "$target")" != "$item" ]] && stale=1
+    symlink_create "$item" "$target"
+    if [[ -n "$stale" ]]; then
+      local warning="Relinked ~${target#"$HOME"}, which no longer pointed into the repo"
+      if command -v gum >/dev/null; then gum log --level warn "$warning"; else echo "$warning" >&2; fi
+    else
+      echo "  ✓ ~${target#"$HOME"}"
+    fi
+    desired+="${desired:+$'\n'}$target"
+  done < <(for src; do ls "$src" 2>/dev/null; done | sort -u)
+
+  find "$dst" -maxdepth 1 -type l | symlink_prune "$CLAUDE_REPO_HOME" "$desired"
 }
 
 # Links managed/settings.json, the settings every platform shares, into the
-# managed-settings drop-in directory, which outranks user and project settings.
-# The macOS directory is root-owned, so the link takes sudo once, and only
-# from a terminal. Edits flow through the link after that. The link can land
-# before the repo ships the file, so it is in place when the file arrives.
+# managed-settings drop-in directory. On macOS that directory is root-owned, so
+# the link takes sudo once, from a terminal, and the nightly run skips it.
 install_claude_managed() {
   local source="$CLAUDE_REPO_HOME/managed/settings.json"
+  local dir="/etc/claude-code/managed-settings.d"
+  [[ "$(uname -s)" == Darwin ]] && dir="/Library/Application Support/ClaudeCode/managed-settings.d"
+  dir="${CLAUDE_MANAGED_DIR:-$dir}"
+  [[ "$(readlink "$dir/50-bendrucker.json")" == "$source" ]] && return 0
 
-  local dir="${CLAUDE_MANAGED_DIR:-}"
-  if [[ -z "$dir" ]]; then
-    case "$(uname -s)" in
-      Darwin) dir="/Library/Application Support/ClaudeCode/managed-settings.d" ;;
-      *) dir="/etc/claude-code/managed-settings.d" ;;
-    esac
-  fi
-  local target="$dir/50-bendrucker.json"
-  [[ "$(readlink "$target" 2>/dev/null)" == "$source" ]] && return 0
-
-  if mkdir -p "$dir" 2>/dev/null && [[ -w "$dir" ]]; then
-    ln -sfn "$source" "$target"
-  elif [[ -n "${NONINTERACTIVE-}" || ! -t 0 ]]; then
-    echo "Skipped linking $target, which needs sudo. Run claude/install.sh from a terminal." >&2
+  local sudo=""
+  mkdir -p "$dir" 2>/dev/null && [[ -w "$dir" ]] || sudo=sudo
+  if [[ -n "$sudo" && ( -n "${NONINTERACTIVE-}" || ! -t 0 ) ]]; then
+    echo "Skipped linking $dir, which needs sudo. Run claude/install.sh from a terminal." >&2
     return 0
-  else
-    sudo mkdir -p "$dir" && sudo ln -sfn "$source" "$target"
   fi
-  echo "  ✓ $target"
+  $sudo mkdir -p "$dir" && $sudo ln -sfn "$source" "$dir/50-bendrucker.json"
+  echo "  ✓ $dir/50-bendrucker.json"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
