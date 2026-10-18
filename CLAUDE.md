@@ -89,7 +89,7 @@ The test's name and location pick its CI job:
 - Tests under `.claude/skills/` and `.claude/hooks/` run in the `skill-tests` job, whatever their suffix.
 - `scripts/lint-ts.test.ts` runs in `lint:ts`, and the `bun` job ignores it by path.
 
-On a PR, `bootstrap` installs main, installs the PR head over it, then installs again. On macOS that is a PR's only pass, so a fresh install of the head runs there only after merge, on main's push and in the nightly. The last two installs must leave identical links, packages, and tools, so every install step must converge.
+On a PR, `bootstrap` installs main, installs the PR head over it, then installs again. On macOS that is a PR's only pass, so a fresh install there waits for main's push and the nightly. The last two installs must leave identical links, packages, and tools, so every install step must converge.
 
 When a test stubs a dependency of a `#!/usr/bin/env zsh` script, set `ZDOTDIR` to an empty directory. Otherwise `~/.zshenv` runs `brew shellenv`, which can put `$HOMEBREW_PREFIX/bin` ahead of the stub, and the test passes locally but fails in CI.
 

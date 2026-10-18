@@ -27,11 +27,8 @@ jobs:
         # A PR also takes the upgrade path a machine takes: main installed
         # first, this head over it, then a second run that must change nothing.
         pass: ${{ fromJSON(github.event_name == 'pull_request' && '["fresh", "upgrade"]' || '["fresh"]') }}
-        # macOS runners are scarce, and when PRs overlap a third macOS job per
-        # PR queues and slows every cache restore. A PR's macOS install takes
-        # the upgrade pass alone, which installs main fresh first. Linux still
-        # installs the head fresh, and main pushes and the nightly install it
-        # fresh on macOS.
+        # macOS runners are scarce, so a PR takes only the upgrade pass there.
+        # Main pushes and the nightly install the head fresh.
         exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"macos","pass":"fresh"}]' || '[]') }}
         include:
           - name: linux
@@ -41,8 +38,7 @@ jobs:
             os: ubuntu-latest
           - name: macos
             os: macos-15
-    # The macOS job keeps its unsuffixed name on a PR, where it is the only
-    # macOS pass, because the branch ruleset requires `bootstrap (macos)`.
+    # The branch ruleset requires `bootstrap (macos)`.
     name: bootstrap (${{ matrix.name }}${{ matrix.pass == 'upgrade' && matrix.name != 'macos' && ', upgrade' || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
