@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import {
-  chmodSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -11,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeStub } from "#harness";
 import { fixture } from "#harness/fixture";
 import type { Capture, SpawnOptions } from "#jobs/output";
 import {
@@ -104,11 +104,6 @@ function recording(): Capture {
       return chunks.join("");
     },
   };
-}
-
-function writeScript(path: string, body: string): void {
-  writeFileSync(path, `#!/usr/bin/env bash\n${body}\n`);
-  chmodSync(path, 0o755);
 }
 
 function readLog(name: string): string {
@@ -347,10 +342,10 @@ beforeEach(() => {
   repo = join(sandbox, "repo");
   mkdirSync(stubs);
 
-  writeScript(join(stubs, "claude"), claudeStub);
+  writeStub(join(stubs, "claude"), claudeStub);
   // The spin branch runs the command after the separator, and log echoes the
   // message to stderr, where the real gum writes it.
-  writeScript(
+  writeStub(
     join(stubs, "gum"),
     [
       'case "$1" in',
@@ -361,7 +356,8 @@ beforeEach(() => {
       '    exec "$@"',
       "    ;;",
       "  log)",
-      '    printf "%s\\n" "${@: -1}" >&2',
+      '    for last; do :; done',
+      '    printf "%s\\n" "$last" >&2',
       "    ;;",
       "esac",
       "exit 0",
@@ -369,19 +365,19 @@ beforeEach(() => {
   );
   // A to-do is filed by handing a things:/// URL to `open`, so a logged line is
   // the whole observation of whether a latch let one through.
-  writeScript(join(stubs, "open"), `printf '%s\\n' "$2" >>"${join(sandbox, "todos")}"`);
-  writeScript(join(stubs, "osascript"), `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
+  writeStub(join(stubs, "open"), `printf '%s\\n' "$2" >>"${join(sandbox, "todos")}"`);
+  writeStub(join(stubs, "osascript"), `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
   // A to-do names the machine it was filed from and is keyed on the hardware, so
   // both answers come from a stub rather than from whichever machine runs this.
-  writeScript(join(stubs, "scutil"), `printf '%s\\n' 'Testbox'`);
-  writeScript(join(stubs, "ioreg"), `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST`);
+  writeStub(join(stubs, "scutil"), `printf '%s\\n' 'Testbox'`);
+  writeStub(join(stubs, "ioreg"), `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST`);
   // herdr writes through the link, or replaces it with HERDR_REPLACES. It writes
   // before it can fail, so a failed run still leaves an entry for the discard to
   // take back. moshi-hook replaces the link, as the real one does.
   const hookLog = join(sandbox, "hooks.log");
   const replaceLink = (name: string) =>
     `jq '. + {"${name}":1}' "$HOME/.claude/settings.json" >"$HOME/.claude/settings.json.new" && mv "$HOME/.claude/settings.json.new" "$HOME/.claude/settings.json"`;
-  writeScript(
+  writeStub(
     join(stubs, "herdr"),
     [
       `printf '%s %s\\n' "herdr" "$*" >>"${hookLog}"`,
@@ -391,7 +387,7 @@ beforeEach(() => {
       "exit 0",
     ].join("\n"),
   );
-  writeScript(
+  writeStub(
     join(stubs, "moshi-hook"),
     [
       `printf '%s %s\\n' "moshi-hook" "$*" >>"${hookLog}"`,
@@ -813,7 +809,7 @@ describe("updatePlugins", () => {
 
 describe("updateMarketplaces", () => {
   test("warns and carries on when the refresh fails", () => {
-    writeScript(join(stubs, "claude"), "exit 1");
+    writeStub(join(stubs, "claude"), "exit 1");
     expect(updateMarketplaces(out, process.env)).toBe(false);
     expect(out.captured()).toContain("marketplace update had issues, continuing");
   });
@@ -902,7 +898,7 @@ describe("syncRepo", () => {
 describe("auditPlugins", () => {
   function auditStub(status: number, output = ""): string {
     const path = join(sandbox, `audit-${status}`);
-    writeScript(path, [output === "" ? "true" : `printf '%s\\n' "${output}"`, `exit ${status}`].join("\n"));
+    writeStub(path, [output === "" ? "true" : `printf '%s\\n' "${output}"`, `exit ${status}`].join("\n"));
     return path;
   }
 
@@ -1178,7 +1174,7 @@ describe("versionMeta", () => {
   });
 
   test("says unknown where the CLI cannot answer", () => {
-    writeScript(join(stubs, "claude"), "exit 1");
+    writeStub(join(stubs, "claude"), "exit 1");
     expect(versionMeta()).toBe("- **Claude:** unknown");
   });
 });
@@ -1278,7 +1274,7 @@ describe("installAgentHooks", () => {
 describe("sync", () => {
   function auditStub(status: number): string {
     const path = join(sandbox, `audit-${status}`);
-    writeScript(path, `exit ${status}`);
+    writeStub(path, `exit ${status}`);
     return path;
   }
 
@@ -1386,7 +1382,7 @@ describe("main", () => {
   test("clears the sync latch when the run succeeds", () => {
     process.env.CLAUDE_REPO_HOME = repo;
     const audit = join(sandbox, "audit-clean");
-    writeScript(audit, "exit 0");
+    writeStub(audit, "exit 0");
 
     expect(main(out, { audit })).toBe(0);
     expect(todoCount()).toBe(0);

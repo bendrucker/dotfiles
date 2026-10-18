@@ -2,7 +2,9 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeStub } from "#harness";
 import { fixture } from "#harness/fixture";
+import { landCommit } from "#harness/git";
 
 // Run as the launchd job runs it, so the exit status, the log, and the
 // notification are read off the real script rather than off its parts.
@@ -55,7 +57,7 @@ function sync(...args: string[]): Run {
 }
 
 function writeScript(path: string, body: string): void {
-  writeFileSync(path, `#!/usr/bin/env bash\n${body}\n`);
+  writeFileSync(path, `#!/bin/sh\n${body}\n`);
   chmodSync(path, 0o755);
 }
 
@@ -64,7 +66,7 @@ function writeScript(path: string, body: string): void {
 function stubGit(body: string): void {
   const realGit = Bun.which("git", { PATH: parentPath });
   if (realGit === null) throw new Error("git is not on PATH");
-  writeScript(
+  writeStub(
     join(stubs, "git"),
     ['for a in "$@"; do', `  [ "$a" = submodule ] && { ${body}; }`, "done", `exec ${realGit} "$@"`].join("\n"),
   );
@@ -88,14 +90,9 @@ function run(cmd: string[]): void {
 // Land a commit on origin that the clone has not pulled, optionally carrying a
 // .gitignore rule this checkout has no way to know about yet.
 function pushCommit(rule?: string): void {
-  const upstream = join(sandbox, "upstream");
-  rmSync(upstream, { recursive: true, force: true });
-  run(["git", "clone", "-q", origin, upstream]);
-  if (rule !== undefined) writeFileSync(join(upstream, ".gitignore"), `${rule}\n`);
-  writeFileSync(join(upstream, "landed.txt"), "landed\n");
-  run(["git", "-C", upstream, "add", "-A"]);
-  run(["git", "-C", upstream, "commit", "-q", "-m", "landed"]);
-  run(["git", "-C", upstream, "push", "-q", "origin", "main"]);
+  const files: Record<string, string> = { "landed.txt": "landed\n" };
+  if (rule !== undefined) files[".gitignore"] = `${rule}\n`;
+  landCommit(origin, files, "landed");
 }
 
 // An uninitialized submodule is what a failed update, or one newly added
@@ -147,7 +144,7 @@ beforeEach(() => {
   // gum prefixes each line with the level, as the real gum does with no --time
   // set, because the fingerprint the nightly report latches on is read off that
   // prefix.
-  writeScript(
+  writeStub(
     join(stubs, "gum"),
     [
       'case "$1" in',
@@ -163,15 +160,16 @@ beforeEach(() => {
       "      error) level=ERRO ;;",
       "      *)     level=INFO ;;",
       "    esac",
-      '    printf "%s %s\\n" "$level" "${@: -1}" >&2',
+      '    for last; do :; done',
+      '    printf "%s %s\\n" "$level" "$last" >&2',
       "    ;;",
       "esac",
       "exit 0",
     ].join("\n"),
   );
 
-  writeScript(join(stubs, "osascript"), `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
-  writeScript(join(stubs, "open"), `printf 'todo\\n' >>"${join(sandbox, "todos")}"`);
+  writeStub(join(stubs, "osascript"), `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
+  writeStub(join(stubs, "open"), `printf 'todo\\n' >>"${join(sandbox, "todos")}"`);
 
   copyRepo(sandbox);
 });
