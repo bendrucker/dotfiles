@@ -53,20 +53,37 @@ claude_link() {
 # managed-settings drop-in directory. On macOS that directory is root-owned, so
 # the link takes sudo once, from a terminal, and the nightly run skips it.
 install_claude_managed() {
-  local source="$CLAUDE_REPO_HOME/managed/settings.json"
+  link_claude_managed 50-dotfiles.json "$CLAUDE_REPO_HOME/managed/settings.json"
+}
+
+# Declares the config repo clone as the bendrucker marketplace, so its plugins
+# load in place. The path holds $HOME, which no tracked file can, so it lives in
+# a generated file that the drop-in links to: a later rewrite needs no sudo.
+install_claude_local_marketplace() {
+  local file="${XDG_STATE_HOME:-$HOME/.local/state}/claude/local-settings.json"
+  local json
+  json=$(printf '{"extraKnownMarketplaces":{"bendrucker":{"source":{"source":"directory","path":"%s"}}}}' "$CLAUDE_REPO_HOME")
+  mkdir -p "$(dirname "$file")"
+  [[ "$(cat "$file" 2>/dev/null)" == "$json" ]] || printf '%s\n' "$json" >"$file"
+  link_claude_managed 60-local.json "$file"
+}
+
+# link_claude_managed <name> <source>
+link_claude_managed() {
+  local name="$1" source="$2"
   local dir="/etc/claude-code/managed-settings.d"
   [[ "$(uname -s)" == Darwin ]] && dir="/Library/Application Support/ClaudeCode/managed-settings.d"
   dir="${CLAUDE_MANAGED_DIR:-$dir}"
-  [[ "$(readlink "$dir/50-dotfiles.json")" == "$source" ]] && return 0
+  [[ "$(readlink "$dir/$name")" == "$source" ]] && return 0
 
   local sudo=""
   mkdir -p "$dir" 2>/dev/null && [[ -w "$dir" ]] || sudo=sudo
   if [[ -n "$sudo" && ( -n "${NONINTERACTIVE-}" || ! -t 0 ) ]]; then
-    echo "Skipped linking $dir, which needs sudo. Run claude/install.sh from a terminal." >&2
+    echo "Skipped linking $dir/$name, which needs sudo. Run claude/install.sh from a terminal." >&2
     return 0
   fi
-  $sudo mkdir -p "$dir" && $sudo ln -sfn "$source" "$dir/50-dotfiles.json"
-  echo "  ✓ $dir/50-dotfiles.json"
+  $sudo mkdir -p "$dir" && $sudo ln -sfn "$source" "$dir/$name"
+  echo "  ✓ $dir/$name"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
@@ -75,6 +92,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   if [[ -d "$CLAUDE_REPO_HOME" ]]; then
     install_claude_symlinks local
     install_claude_managed
+    install_claude_local_marketplace
   fi
   "$(dirname "${BASH_SOURCE[0]}")/install-native"
 fi
