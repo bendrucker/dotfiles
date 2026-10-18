@@ -10,19 +10,16 @@ macos-arm64 = { asset_pattern = "osquery-*_1.macos_arm64.tar.gz", bin_path = "op
 linux-x64 = { asset_pattern = "osquery-*_1.linux_x86_64.tar.gz", bin_path = "opt/osquery/bin" }
 linux-arm64 = { asset_pattern = "osquery-*_1.linux_aarch64.tar.gz", bin_path = "opt/osquery/bin" }
 
-# Bootstrap lays these before it loads the agent, which creates none of them.
-# Directory keys take no templates, so these spell out the default state home.
-[bootstrap.directories."~/.local/state/osquery/db"]
-[bootstrap.directories."~/.local/state/osquery/logs"]
-
-# Background ProcessType would throttle sampling under the load it records.
+# osquery creates the database path with its parents, but not the logger path,
+# so the logs share the database's parent. Background ProcessType would
+# throttle sampling under the load it records.
 [bootstrap.macos.launchd.agents.osquery]
 program = "~/.local/share/mise/shims/osqueryd"
 args = [
   "--config_path={{ xdg_config_home }}/osquery/osquery.conf",
   "--database_path={{ xdg_state_home }}/osquery/db",
   "--pidfile={{ xdg_state_home }}/osquery/osqueryd.pid",
-  "--logger_path={{ xdg_state_home }}/osquery/logs",
+  "--logger_path={{ xdg_state_home }}/osquery",
   "--disable_extensions",
   "--watchdog_level=1",
 ]

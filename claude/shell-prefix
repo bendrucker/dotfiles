@@ -1,4 +1,5 @@
 #!/bin/sh
 # Runs agent tool calls, hooks, and MCP servers below terminals in CPU and disk
-# priority. Children inherit it.
-exec /usr/sbin/taskpolicy -c utility -d utility /bin/zsh -c "$1"
+# priority. Children inherit it. The command is written for the shell Claude
+# Code picked, which CLAUDE_CODE_SHELL overrides.
+exec taskpolicy -c utility -d utility "${CLAUDE_CODE_SHELL:-${SHELL:-/bin/sh}}" -c "$1"
