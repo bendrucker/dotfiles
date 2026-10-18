@@ -6,6 +6,12 @@ Shell integration for [Claude Code](https://docs.anthropic.com/en/docs/claude-co
 
 `claude/install-native` runs Anthropic's native installer on macOS and Linux. It puts `claude` in `~/.local/bin` and keeps it current with its own background updater, so a release arrives the day it ships. The script does nothing once `~/.local/bin/claude` exists, so the nightly install downloads it only the first time.
 
+## Config
+
+Where the config repo is cloned, `install.sh` links each entry of its `user/` into `~/.claude`, plus each entry of `platforms/local/`, which replaces any of the same name. It also links the repo's `managed/settings.json` into the managed-settings drop-in directory. That directory is root-owned on macOS, so the link takes `sudo` once, from a terminal, and the nightly run skips it with a warning until then.
+
+`scripts/vm-setup` runs `claude/link remote` for a cloud session's VM, which overlays `platforms/remote/` the same way. There claude.ai sync owns `~/.claude/skills`, so skills link inside it. A VM snapshot can outlive its clone by days, so the remote settings pull the clone and rerun `claude/link` at each session start.
+
 ## Worktree Aliases
 
 Launch Claude in a [Worktrunk](https://worktrunk.dev) worktree. All variants pass `--name` to Claude, set from the branch name, and append a system prompt telling Claude it is in a dedicated worktree it can work in directly.
