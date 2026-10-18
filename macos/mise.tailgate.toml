@@ -9,4 +9,5 @@ keep_alive = true
 throttle_interval = 60
 stdout_path = "~/Library/Logs/tailgate.log"
 stderr_path = "~/Library/Logs/tailgate.log"
-environment = { PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
+# tailgate passes its environment to the MCP servers it spawns.
+environment = { PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin", THINGS_LINK_BASE = "https://things.bendrucker.me/show?id=" }
