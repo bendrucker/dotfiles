@@ -46,6 +46,13 @@ describe("vm-setup", () => {
     expect(readlinkSync(join(out, "prek"))).toBe(join(tools, "prek"));
   });
 
+  test("installs with the remote module selected", () => {
+    box.stub("mise", `[ "$1" = install ] && echo "$MISE_ENV" > ${box.path("env")}\n${mise()}`);
+
+    expect(setup().status).toBe(0);
+    expect(box.read("env")).toBe("remote\n");
+  });
+
   test("links the Claude config from the clone for remote", () => {
     box.stub("mise", mise());
 

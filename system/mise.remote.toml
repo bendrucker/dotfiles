@@ -1,5 +1,4 @@
-# Loads only in a Claude Code cloud session, where .claude/hooks/session-start
-# selects the remote env. Homebrew installs gum on a machine (see
-# system/Brewfile), and CI's bun job installs it the same way.
+# Loads only in a cloud VM, where scripts/vm-setup selects the remote env.
+# A machine takes gum from Homebrew instead (see system/Brewfile).
 [tools]
 "aqua:charmbracelet/gum" = "0.17.0"
