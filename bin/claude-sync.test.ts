@@ -14,16 +14,14 @@ import { writeStub } from "#harness";
 import { fixture } from "#harness/fixture";
 import type { Capture, SpawnOptions } from "#jobs/output";
 import {
-  auditPlugins,
   claudeRepoHome,
-  driftReport,
   failureFields,
   failureFingerprint,
   installAgentHooks,
+  installDependencies,
   main,
   pruneMarketplaces,
   prunePlugins,
-  reportDrift,
   repoRevision,
   revertCosmeticJsonChanges,
   sync,
@@ -116,29 +114,6 @@ function readLog(name: string): string {
 
 function todoCount(): number {
   return readLog("todos").split("\n").filter(Boolean).length;
-}
-
-// The notes of the last to-do filed, decoded out of the things:/// URL.
-function filedNotes(): string {
-  const url = readLog("todos").split("\n").filter(Boolean).at(-1) ?? "";
-  return decodeURIComponent(url.split("&notes=")[1]?.split("&")[0] ?? "");
-}
-
-// The "New:" line of every to-do filed, which is the finding each one was filed
-// for.
-function filedNewLines(): string[] {
-  return readLog("todos")
-    .split("\n")
-    .filter(Boolean)
-    .flatMap((url) =>
-      decodeURIComponent(url)
-        .split("\n")
-        .filter((line) => line.startsWith("- **New:**")),
-    );
-}
-
-function driftLatch(): string {
-  return readFileSync(join(sandbox, "state", "dotfiles", "claude-plugin-drift.status"), "utf8");
 }
 
 function run(cmd: string[]): void {
@@ -253,13 +228,28 @@ function writeSettings(
   );
 }
 
-function writeKnownMarketplaces(names: string[]): void {
+function writeKnownMarketplaces(names: string[], local: Record<string, string> = {}): void {
   const dir = join(sandbox, ".claude", "plugins");
   mkdirSync(dir, { recursive: true });
+  const remote = names.map((name) => [name, { source: { source: "github" } }]);
+  const registered = Object.entries(local).map(([name, path]) => [
+    name,
+    { source: { source: "directory", path }, installLocation: path },
+  ]);
   writeFileSync(
     join(dir, "known_marketplaces.json"),
-    JSON.stringify(Object.fromEntries(names.map((name) => [name, { source: { source: "github" } }]))),
+    JSON.stringify(Object.fromEntries([...remote, ...registered])),
   );
+}
+
+// A marketplace registered from a local path, as the config repo is. Claude Code
+// keeps no copy of it under marketplaces/, so its manifest is read where it is.
+function writeLocalMarketplace(name: string, entries: unknown[]): string {
+  const root = join(sandbox, "local", name);
+  mkdirSync(join(root, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(root, ".claude-plugin", "marketplace.json"), JSON.stringify({ name, plugins: entries }));
+  writeKnownMarketplaces(["first", "third"], { [name]: root });
+  return root;
 }
 
 // alpha, beta and gamma are installed and offered by their marketplaces. The
@@ -343,6 +333,16 @@ beforeEach(() => {
   mkdirSync(stubs);
 
   writeStub(join(stubs, "claude"), claudeStub);
+  // The dependency install records where it ran, which is the whole of what the
+  // job asks of it.
+  writeStub(
+    join(stubs, "bun"),
+    [
+      `printf '%s %s\\n' "$PWD" "$*" >>"${join(sandbox, "bun.log")}"`,
+      '[ -n "$BUN_INSTALL_FAILS" ] && exit 1',
+      "exit 0",
+    ].join("\n"),
+  );
   // The spin branch runs the command after the separator, and log echoes the
   // message to stderr, where the real gum writes it.
   writeStub(
@@ -410,6 +410,7 @@ beforeEach(() => {
   process.env.HERDR_FAILS = "";
   process.env.HERDR_LOCKS = "";
   process.env.HERDR_REPLACES = "";
+  process.env.BUN_INSTALL_FAILS = "";
   writeFileSync(process.env.CLAUDE_PLUGIN_LOG, "");
 
   writePluginFixture();
@@ -448,6 +449,7 @@ afterEach(() => {
   delete process.env.HERDR_FAILS;
   delete process.env.HERDR_LOCKS;
   delete process.env.HERDR_REPLACES;
+  delete process.env.BUN_INSTALL_FAILS;
   rmSync(sandbox, { recursive: true, force: true });
 });
 
@@ -683,7 +685,7 @@ describe("updatePlugins", () => {
   });
 
   // Nothing can update a plugin its marketplace stopped offering, so the update
-  // pass leaves it alone and claude-plugin-audit names it instead.
+  // pass leaves it alone.
   test("leaves a plugin its marketplace dropped alone", () => {
     writePluginList([
       { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
@@ -693,6 +695,7 @@ describe("updatePlugins", () => {
 
     expect(updatePlugins(out, process.env)).toBe(true);
     expect(readLog("plugin.log")).not.toContain("ghost@first");
+    expect(out.captured()).toContain("ghost@first is no longer offered by its marketplace");
   });
 
   // Only a marketplace that stopped listing the plugin is beyond updating. One
@@ -737,73 +740,50 @@ describe("updatePlugins", () => {
     expect(readLog("plugin.log")).toContain("install gamma@first");
   });
 
-  describe("payload already matching its in-tree source", () => {
-    function writeTree(dir: string, files: Record<string, string>): void {
-      for (const [name, body] of Object.entries(files)) {
-        mkdirSync(join(dir, name, ".."), { recursive: true });
-        writeFileSync(join(dir, name), body);
-      }
-    }
+  // Claude Code loads these from the marketplace's own path and keeps no copy to
+  // refresh, so an update per plugin would cost a CLI call each and change
+  // nothing.
+  test("leaves a plugin from a local marketplace to load in place", () => {
+    writeLocalMarketplace("mine", [
+      { name: "delta", source: "./plugins/delta" },
+      { name: "omega", source: { source: "github", repo: "example/omega" } },
+    ]);
+    writePluginList([
+      { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
+      { id: "delta@mine", installPath: payload("mine", "delta", "abc123") },
+      { id: "omega@mine", installPath: payload("mine", "omega", "def456") },
+    ]);
+    writeSettings({ "alpha@first": true, "delta@mine": true, "omega@mine": true });
 
-    function alphaSource(): string {
-      return join(sandbox, ".claude", "plugins", "marketplaces", "first", "plugins", "alpha");
-    }
+    expect(updatePlugins(out, process.env)).toBe(true);
+    expect(readLog("plugin.log")).toContain("update alpha@first");
+    expect(readLog("plugin.log")).not.toContain("delta@mine");
+    // A repo of its own is copied into the cache wherever its marketplace lives.
+    expect(readLog("plugin.log")).toContain("update omega@mine");
+  });
 
-    function alphaPayload(): string {
-      return join(sandbox, ".claude", "plugins", "cache", "first", "alpha", "1.0.0");
-    }
+  // Its manifest is read from the registered path, since there is no clone under
+  // marketplaces/ to vouch for the id.
+  test("installs a plugin from a local marketplace that has no install record", () => {
+    writeLocalMarketplace("mine", [{ name: "delta", source: "./plugins/delta" }]);
+    writePluginList([]);
+    writeSettings({ "delta@mine": true, "ghost@mine": true });
 
-    test("skips the update", () => {
-      writeTree(alphaSource(), { "skills/a/SKILL.md": "one\n" });
-      writeTree(alphaPayload(), { "skills/a/SKILL.md": "one\n", ".in_use": "" });
+    expect(updatePlugins(out, process.env)).toBe(true);
+    expect(readLog("plugin.log")).toBe("install delta@mine\n");
+  });
+});
 
-      expect(updatePlugins(out, process.env)).toBe(true);
-      expect(readLog("plugin.log")).not.toContain("update alpha@first");
-      expect(readLog("plugin.log")).toContain("update gamma@first");
-    });
+describe("installDependencies", () => {
+  test("runs a frozen install at the root of the repo", () => {
+    expect(installDependencies(out, repo, process.env)).toBe(true);
+    expect(readLog("bun.log")).toBe(`${repo} install --frozen-lockfile\n`);
+  });
 
-    test("updates a payload that differs", () => {
-      writeTree(alphaSource(), { "skills/a/SKILL.md": "two\n" });
-      writeTree(alphaPayload(), { "skills/a/SKILL.md": "one\n" });
-
-      expect(updatePlugins(out, process.env)).toBe(true);
-      expect(readLog("plugin.log")).toContain("update alpha@first");
-    });
-
-    // A failed npm install leaves the tree matching with no node_modules, and
-    // only another update retries the install.
-    test("updates a payload whose dependencies are missing or partial", () => {
-      const files = {
-        "package.json": JSON.stringify({ dependencies: { zod: "^4.0.0" } }),
-        "package-lock.json": "{}",
-      };
-      writeTree(alphaSource(), files);
-      writeTree(alphaPayload(), files);
-
-      expect(updatePlugins(out, process.env)).toBe(true);
-      expect(readLog("plugin.log")).toContain("update alpha@first");
-
-      mkdirSync(join(alphaPayload(), "node_modules"));
-      writeFileSync(join(sandbox, "plugin.log"), "");
-      expect(updatePlugins(out, process.env)).toBe(true);
-      expect(readLog("plugin.log")).toContain("update alpha@first");
-
-      writeTree(join(alphaPayload(), "node_modules"), { "zod/package.json": "{}" });
-      writeFileSync(join(sandbox, "plugin.log"), "");
-      expect(updatePlugins(out, process.env)).toBe(true);
-      expect(readLog("plugin.log")).not.toContain("update alpha@first");
-    });
-
-    // With no lockfile Claude Code never runs `npm ci`, so no node_modules ever
-    // arrives and waiting for one would send the plugin to the CLI every run.
-    test("skips a payload declaring dependencies without a lockfile", () => {
-      const manifest = JSON.stringify({ dependencies: { zod: "^4.0.0" } });
-      writeTree(alphaSource(), { "package.json": manifest });
-      writeTree(alphaPayload(), { "package.json": manifest });
-
-      expect(updatePlugins(out, process.env)).toBe(true);
-      expect(readLog("plugin.log")).not.toContain("update alpha@first");
-    });
+  test("warns when the install fails", () => {
+    process.env.BUN_INSTALL_FAILS = "1";
+    expect(installDependencies(out, repo, process.env)).toBe(false);
+    expect(out.captured()).toContain("bun install failed in the Claude repository");
   });
 });
 
@@ -895,179 +875,6 @@ describe("syncRepo", () => {
   });
 });
 
-describe("auditPlugins", () => {
-  function auditStub(status: number, output = ""): string {
-    const path = join(sandbox, `audit-${status}`);
-    writeStub(path, [output === "" ? "true" : `printf '%s\\n' "${output}"`, `exit ${status}`].join("\n"));
-    return path;
-  }
-
-  test("passes a clean audit and clears the drift latch", () => {
-    expect(auditPlugins(out, repo, { audit: auditStub(0), env: process.env })).toBe(true);
-    expect(todoCount()).toBe(0);
-    expect(driftLatch()).toBe("standing\n");
-  });
-
-  // Drift outlives the run that should have fixed it, so it goes to a latch of its
-  // own rather than failing the sync.
-  test("files drift without failing the sync", () => {
-    const audit = auditStub(1, "  alpha@first  stale  differs from ./plugins/alpha at 1 path");
-
-    expect(auditPlugins(out, repo, { audit, env: process.env })).toBe(true);
-    expect(todoCount()).toBe(1);
-    // Reprinted so the findings reach the captured log the to-do is built from.
-    expect(out.captured()).toContain("alpha@first  stale");
-  });
-
-  // Filing a check that never ran as drift would name plugins it never looked at,
-  // and would leave the sync reporting success over nothing.
-  test("fails the sync when the audit could not run at all", () => {
-    expect(auditPlugins(out, repo, { audit: auditStub(2), env: process.env })).toBe(false);
-    expect(out.captured()).toContain("Plugin audit did not run");
-    expect(todoCount()).toBe(0);
-  });
-
-  test("fails the sync when the audit is not there", () => {
-    expect(auditPlugins(out, repo, { audit: join(sandbox, "no-such-audit"), env: process.env })).toBe(false);
-    expect(out.captured()).toContain("Plugin audit did not run");
-  });
-});
-
-// The latch decides whether a night's findings refile. It keyed on the whole
-// finding set, so a plugin that had been stale for a week filed a fresh to-do
-// every time an unrelated one joined or left the set around it.
-describe("drift latch", () => {
-  const staleRow = "  alpha@first  stale  differs from ./plugins/alpha at 1 path";
-  const pinnedRow = "  beta@third  pinned  still offered as 1.0.0";
-
-  test("files again when a pinned finding joins the stale ones", () => {
-    reportDrift(staleRow, repo);
-    reportDrift(`${staleRow}\n${pinnedRow}`, repo);
-    expect(todoCount()).toBe(2);
-  });
-
-  test("stays quiet while the same pinned finding stands", () => {
-    reportDrift(pinnedRow, repo);
-    reportDrift(pinnedRow, repo);
-    expect(todoCount()).toBe(1);
-  });
-
-  // Detail that deepens on a plugin already named is the same finding, and the
-  // latch has already filed it.
-  test("stays quiet while only the detail of a finding changes", () => {
-    reportDrift(staleRow, repo);
-    reportDrift(`${staleRow} and one more`, repo);
-    expect(todoCount()).toBe(1);
-  });
-
-  test("stays quiet for a standing finding while the set churns around it", () => {
-    reportDrift(staleRow, repo);
-    reportDrift(`${staleRow}\n${pinnedRow}`, repo);
-    reportDrift(staleRow, repo);
-    expect(todoCount()).toBe(2);
-  });
-
-  test("names the finding it filed for", () => {
-    reportDrift(staleRow, repo);
-    reportDrift(`${staleRow}\n${pinnedRow}`, repo);
-    expect(filedNotes()).toContain("**New:** beta@third pinned");
-  });
-
-  // The whole report reaches the parser, so a block header or the summary line
-  // read as a finding would file a to-do naming "Findings" every night.
-  test("reads no finding out of the headers and the summary", () => {
-    reportDrift(`Findings (act on these):\n${staleRow}\n\n1 finding to act on (6 current)`, repo);
-    reportDrift(`Findings (act on these):\n${staleRow}\n\n1 finding to act on (7 current)`, repo);
-    expect(todoCount()).toBe(1);
-  });
-});
-
-// The four nights of 2026-09-02 through 05, as they were actually reported.
-// agents-md@bendrucker was stale throughout and never changed: installed
-// 6030636029d9 against a HEAD of 7e6c36e88a5e. ast-grep and cloudflare joined and
-// left the set around it on alternating machines, and the set-wide latch refiled
-// agents-md every time one of them did, for four to-dos in four nights.
-describe("September churn", () => {
-  const agentsMd =
-    "  agents-md@bendrucker  stale  installed 6030636029d9, https://github.com/bendrucker/agents.md HEAD is 7e6c36e88a5e";
-  const astGrep =
-    "  ast-grep@bendrucker  stale  differs from ./plugins/ast-grep at 2 paths: SKILL.md, README.md";
-  const cloudflare =
-    "  cloudflare@bendrucker  stale  differs from ./plugins/cloudflare at 1 path: SKILL.md";
-
-  function report(...rows: string[]): string {
-    const noun = rows.length === 1 ? "finding" : "findings";
-    return ["Findings (act on these):", ...rows, "", `${rows.length} ${noun} to act on (6 current)`].join("\n");
-  }
-
-  // The night every marketplace resolved to "has no HEAD". agents-md is
-  // repo-backed, so its own ls-remote went with them and its row moved out of the
-  // findings and into the unverified block. ast-grep is compared against a local
-  // marketplace tree, so nothing about it needed the network.
-  const night0902 = [
-    "Unverified (could not check):",
-    "  agents-md@bendrucker  unverified  https://github.com/bendrucker/agents.md has no HEAD",
-    "  marketplace/bendrucker  unverified  https://github.com/bendrucker/claude has no HEAD",
-    "",
-    report(astGrep),
-  ].join("\n");
-
-  // Each machine keeps its own latch under XDG_STATE_HOME and files into the one
-  // shared inbox, so the two nights each ran are replayed against separate state.
-  function onHost(host: string, output: string): void {
-    process.env.XDG_STATE_HOME = join(sandbox, "state", host);
-    reportDrift(output, repo);
-  }
-
-  // agents-md had already been reported before the episode opened, which is the
-  // state the four nights ran against.
-  function churn(): void {
-    onHost("mbp", report(agentsMd));
-    onHost("studio", report(agentsMd));
-    writeFileSync(join(sandbox, "todos"), "");
-
-    onHost("mbp", night0902);
-    onHost("studio", report(agentsMd));
-    onHost("mbp", report(agentsMd, astGrep));
-    onHost("studio", report(agentsMd, cloudflare));
-  }
-
-  // One per machine, each for the plugin that was genuinely new to it.
-  // Deduplicating across the two is a separate problem and is not solved here.
-  test("files one to-do per machine instead of one per night", () => {
-    churn();
-    expect(todoCount()).toBe(2);
-  });
-
-  test("names the plugin that was new to each machine", () => {
-    churn();
-    expect(filedNewLines()).toEqual([
-      "- **New:** ast-grep@bendrucker stale",
-      "- **New:** cloudflare@bendrucker stale",
-    ]);
-  });
-
-  // The one that was refiled three times. It never changed, so nothing about it
-  // should have reached the inbox again.
-  test("never refiles the finding that did not change", () => {
-    churn();
-    expect(filedNewLines().join("\n")).not.toContain("agents-md");
-  });
-
-  // Leaving the unverified rows out of the old key was meant to keep a network
-  // blip from reopening the latch. It did the opposite: agents-md dropped out of
-  // the hashed set, so the set changed and the blip reopened the latch through
-  // the back door.
-  test("does not let a blip clear a finding it could not check", () => {
-    onHost("mbp", report(agentsMd));
-    onHost("mbp", night0902);
-    onHost("mbp", report(agentsMd));
-    // The first night for agents-md and the second for ast-grep. Nothing on the
-    // third: agents-md came back to a latch that still held it.
-    expect(todoCount()).toBe(2);
-  });
-});
-
 describe("failureFields", () => {
   const log = [
     "INFO Syncing Claude repository...",
@@ -1106,28 +913,6 @@ describe("failureFields", () => {
   // fingerprint moves with the padding rather than with the finding.
   test("pads a short line rather than dropping it", () => {
     expect(failureFields("WARN stray.txt \n")).toEqual(["stray.txt   "]);
-  });
-});
-
-describe("driftReport", () => {
-  const findings = [
-    "  alpha@first  stale  differs from ./plugins/alpha at 1 path",
-    "  beta@third  pinned  still offered as 1.0.0",
-    "  gamma@first  orphaned  first no longer offers it",
-    "  delta@third  unverified  could not compare",
-    "  epsilon@third  current",
-  ].join("\n");
-
-  test("keeps the subject and verdict of every drifted row", () => {
-    expect(driftReport(findings).standing).toEqual([
-      { subject: "alpha@first", verdict: "stale" },
-      { subject: "beta@third", verdict: "pinned" },
-      { subject: "gamma@first", verdict: "orphaned" },
-    ]);
-  });
-
-  test("takes the unverified rows as held rather than as findings", () => {
-    expect(driftReport(findings).held).toEqual(["delta@third"]);
   });
 });
 
@@ -1272,14 +1057,8 @@ describe("installAgentHooks", () => {
 });
 
 describe("sync", () => {
-  function auditStub(status: number): string {
-    const path = join(sandbox, `audit-${status}`);
-    writeStub(path, `exit ${status}`);
-    return path;
-  }
-
-  test("succeeds when the sync, the updates and the audit all do", () => {
-    expect(sync(out, repo, { audit: auditStub(0) })).toBe(0);
+  test("succeeds when the sync and the updates do", () => {
+    expect(sync(out, repo)).toBe(0);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
@@ -1287,7 +1066,7 @@ describe("sync", () => {
   // the clone runs against a clean tree before the installer puts the current one
   // back.
   test("reinstalls the hooks after the sync and before the plugins", () => {
-    expect(sync(out, repo, { audit: auditStub(0) })).toBe(0);
+    expect(sync(out, repo)).toBe(0);
     const log = out.captured();
     expect(log.indexOf("Syncing Claude repository")).toBeLessThan(log.indexOf("Installing herdr"));
     expect(log.indexOf("Installing moshi")).toBeLessThan(log.indexOf("Updating marketplaces"));
@@ -1295,7 +1074,7 @@ describe("sync", () => {
 
   // So a marketplace losing its last plugin goes with it, unfetched on the way.
   test("prunes marketplaces after the plugins and before the refresh", () => {
-    expect(sync(out, repo, { audit: auditStub(0) })).toBe(0);
+    expect(sync(out, repo)).toBe(0);
     const log = out.captured();
     expect(log.indexOf("Pruning undeclared plugins")).toBeLessThan(
       log.indexOf("Pruning undeclared marketplaces"),
@@ -1305,47 +1084,67 @@ describe("sync", () => {
     );
   });
 
-  test("fails when a hook install fails, and still updates the plugins", () => {
-    process.env.HERDR_FAILS = "1";
-    expect(sync(out, repo, { audit: auditStub(0) })).toBe(1);
+  test.each<{ name: string; interactive: boolean }>([
+    { name: "full", interactive: false },
+    { name: "interactive", interactive: true },
+  ])("installs the repo's dependencies after the sync: $name", ({ interactive }) => {
+    expect(sync(out, repo, { interactive })).toBe(0);
+    const log = out.captured();
+    expect(readLog("bun.log")).toBe(`${repo} install --frozen-lockfile\n`);
+    expect(log.indexOf("Syncing Claude repository")).toBeLessThan(
+      log.indexOf("Installing Claude repository dependencies"),
+    );
+  });
+
+  test.each<{ name: string; interactive: boolean }>([
+    { name: "full", interactive: false },
+    { name: "interactive", interactive: true },
+  ])("fails when the dependency install fails, and still updates the plugins: $name", ({ interactive }) => {
+    process.env.BUN_INSTALL_FAILS = "1";
+    expect(sync(out, repo, { interactive })).toBe(1);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
-  test("fails when a plugin update fails, and still audits", () => {
+  test("fails when a hook install fails, and still updates the plugins", () => {
+    process.env.HERDR_FAILS = "1";
+    expect(sync(out, repo)).toBe(1);
+    expect(readLog("plugin.log")).toContain("update alpha@first");
+  });
+
+  test("fails when a plugin update fails", () => {
     process.env.CLAUDE_UPDATE_FAILS = "beta@third";
-    expect(sync(out, repo, { audit: auditStub(0) })).toBe(1);
-    expect(out.captured()).toContain("Auditing plugin payloads");
+    expect(sync(out, repo)).toBe(1);
   });
 
   test("updates the plugins alone when interactive", () => {
     process.env.HERDR_FAILS = "1";
-    expect(sync(out, repo, { audit: auditStub(2), interactive: true })).toBe(0);
+    expect(sync(out, repo, { interactive: true })).toBe(0);
     const log = out.captured();
     expect(readLog("plugin.log")).toContain("update alpha@first");
     expect(log).toContain("Updating marketplaces");
-    for (const skipped of ["Installing herdr", "Pruning undeclared", "Auditing plugin payloads"]) {
+    for (const skipped of ["Installing herdr", "Pruning undeclared"]) {
       expect(log).not.toContain(skipped);
     }
   });
 
   test("fails an interactive run when a plugin update fails", () => {
     process.env.CLAUDE_UPDATE_FAILS = "beta@third";
-    expect(sync(out, repo, { audit: auditStub(0), interactive: true })).toBe(1);
+    expect(sync(out, repo, { interactive: true })).toBe(1);
   });
 
-  test.each<{ name: string; interactive: boolean; expected: number }>([
-    { name: "full run passes on its audit", interactive: false, expected: 0 },
-    { name: "interactive run fails", interactive: true, expected: 1 },
-  ])("failed refresh: $name", ({ interactive, expected }) => {
+  test.each<{ name: string; interactive: boolean }>([
+    { name: "full", interactive: false },
+    { name: "interactive", interactive: true },
+  ])("failed refresh fails the run and still updates: $name", ({ interactive }) => {
     process.env.CLAUDE_REFRESH_FAILS = "1";
-    expect(sync(out, repo, { audit: auditStub(0), interactive })).toBe(expected);
+    expect(sync(out, repo, { interactive })).toBe(1);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
   test("heals a remote hook rewrite that replaced the link", () => {
     replaceLink(settingsJson(REMOTE_HOOK));
 
-    expect(sync(out, repo, { audit: auditStub(0) })).toBe(0);
+    expect(sync(out, repo)).toBe(0);
     expect(linked()).toBe(true);
     expect(readFileSync(settingsLink(), "utf8")).not.toContain("vibe-island-hook");
     expect(readLog("notifications")).toContain("remote hook rewrite");
@@ -1355,14 +1154,15 @@ describe("sync", () => {
     writeRepoSettings(settingsJson(GUARDED_HOOK, "changed"));
     replaceLink(settingsJson(GUARDED_HOOK));
 
-    expect(sync(out, repo, { audit: auditStub(0) })).toBe(1);
+    expect(sync(out, repo)).toBe(1);
     expect(linked()).toBe(true);
   });
 
-  test("leaves the plugins unattempted when the sync refuses", () => {
+  test("leaves the plugins and dependencies unattempted when the sync refuses", () => {
     writeRepoSettings(settingsJson(GUARDED_HOOK, "changed"));
-    expect(sync(out, repo, { audit: auditStub(0) })).toBe(1);
+    expect(sync(out, repo)).toBe(1);
     expect(readLog("plugin.log")).toBe("");
+    expect(readLog("bun.log")).toBe("");
   });
 });
 
@@ -1381,10 +1181,8 @@ describe("main", () => {
   // no output to assert against beyond the latch it clears.
   test("clears the sync latch when the run succeeds", () => {
     process.env.CLAUDE_REPO_HOME = repo;
-    const audit = join(sandbox, "audit-clean");
-    writeStub(audit, "exit 0");
 
-    expect(main(out, { audit })).toBe(0);
+    expect(main(out)).toBe(0);
     expect(todoCount()).toBe(0);
     expect(readFileSync(join(sandbox, "state", "dotfiles", "claude-sync.status"), "utf8")).toBe(
       "ok\n",
