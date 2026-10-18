@@ -1,17 +1,44 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, lstatSync, mkdtempSync, readFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { must, repoRoot, run } from "#harness";
+import { must, run } from "#harness";
 
-const configPath = join(repoRoot, "osquery", "osquery.conf");
-const schedule: Record<string, { query: string; platform?: string }> = JSON.parse(
-  readFileSync(configPath, "utf8"),
-).schedule;
+interface Query {
+  query: string;
+  interval: number;
+  platform?: string;
+}
+
+const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+const stateHome = process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
+const configPath = join(configHome, "osquery", "osquery.conf");
+const snapshots = join(stateHome, "osquery", "logs", "osqueryd.snapshots.log");
+const schedule: Record<string, Query> = JSON.parse(readFileSync(configPath, "utf8")).schedule;
 const platform = process.platform === "darwin" ? "darwin" : "linux";
 const database = () => `--database_path=${mkdtempSync(join(tmpdir(), "osquery-"))}`;
 
+// osquery splays each query's first run across its interval, and the agent may
+// still be starting when the test does.
+const SAMPLE_INTERVALS = 6;
+const POLL_MS = 1000;
+const sampleWaitMs = (schedule.pressure?.interval ?? 0) * 1000 * SAMPLE_INTERVALS;
+
+async function waitFor<T>(read: () => T | undefined, timeoutMs: number): Promise<T | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  let value = read();
+  while (value === undefined && Date.now() < deadline) {
+    await Bun.sleep(POLL_MS);
+    value = read();
+  }
+  return value;
+}
+
 describe("osquery", () => {
+  test("symlinks the config into place", () => {
+    expect(lstatSync(configPath).isSymbolicLink()).toBe(true);
+  });
+
   test("accepts the config", () => {
     must(["osqueryd", "--config_check", `--config_path=${configPath}`, database()]);
   });
@@ -33,23 +60,21 @@ describe("osquery", () => {
     });
   }
 
-  // The LaunchAgent bootstrap loaded logs a pressure sample every 10 seconds.
   test.skipIf(platform !== "darwin")(
-    "the agent logs a pressure sample",
+    "the agent bootstrap loaded logs a pressure sample",
     async () => {
-      const log = join(process.env.HOME ?? "", ".local/state/osquery/logs/osqueryd.snapshots.log");
-      const sample = () =>
-        existsSync(log)
-          ? readFileSync(log, "utf8")
-              .split("\n")
-              .find((line) => line.includes('"name":"pressure"'))
-          : undefined;
-      for (let waited = 0; waited < 60_000 && sample() === undefined; waited += 2000) {
-        await Bun.sleep(2000);
-      }
-      expect(sample()).toBeDefined();
-      console.log(sample());
+      const sample = await waitFor(
+        () =>
+          existsSync(snapshots)
+            ? readFileSync(snapshots, "utf8")
+                .split("\n")
+                .find((line) => line.includes('"name":"pressure"'))
+            : undefined,
+        sampleWaitMs,
+      );
+      expect(sample).toBeDefined();
+      console.log(sample);
     },
-    70_000,
+    sampleWaitMs * 2,
   );
 });
