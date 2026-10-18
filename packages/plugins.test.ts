@@ -515,8 +515,6 @@ describe("localMarketplaces", () => {
     expect([...localMarketplaces()].sort()).toEqual(["folder", "manifest"]);
   });
 
-  // Naming none leaves every plugin to the update pass, which costs time and
-  // changes nothing on an in-place plugin.
   test("names none when the registry cannot be read", () => {
     writeRegistry("not json\n");
     expect(localMarketplaces().size).toBe(0);
@@ -667,8 +665,6 @@ describe("pluginSource", () => {
     expect(pluginSource("a@b@third")).toEqual({ ok: true, source: "./plugins/ab" });
   });
 
-  // A marketplace registered from a local path has no clone under
-  // marketplaces/, so its manifest is read where the registry says it is.
   test.each<{ name: string; location: (root: string) => string }>([
     { name: "a directory", location: (root) => root },
     { name: "a manifest file", location: (root) => join(root, ".claude-plugin", "marketplace.json") },

@@ -57,8 +57,8 @@ install_claude_managed() {
 }
 
 # Declares the config repo clone as the bendrucker marketplace, so its plugins
-# load in place. The path holds $HOME, which no tracked file can, so it lives in
-# a generated file that the drop-in links to: a later rewrite needs no sudo.
+# load in place. The path holds $HOME, so it lives in a generated file the
+# drop-in links to, and a rewrite needs no sudo.
 install_claude_local_marketplace() {
   local file="${XDG_STATE_HOME:-$HOME/.local/state}/claude/local-settings.json"
   local json

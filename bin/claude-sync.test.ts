@@ -333,8 +333,6 @@ beforeEach(() => {
   mkdirSync(stubs);
 
   writeStub(join(stubs, "claude"), claudeStub);
-  // The dependency install records where it ran, which is the whole of what the
-  // job asks of it.
   writeStub(
     join(stubs, "bun"),
     [
@@ -684,8 +682,6 @@ describe("updatePlugins", () => {
     expect(attempts).toHaveLength(2);
   });
 
-  // Nothing can update a plugin its marketplace stopped offering, so the update
-  // pass leaves it alone.
   test("leaves a plugin its marketplace dropped alone", () => {
     writePluginList([
       { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
@@ -762,8 +758,6 @@ describe("updatePlugins", () => {
     expect(readLog("plugin.log")).toContain("update omega@mine");
   });
 
-  // Its manifest is read from the registered path, since there is no clone under
-  // marketplaces/ to vouch for the id.
   test("installs a plugin from a local marketplace that has no install record", () => {
     writeLocalMarketplace("mine", [{ name: "delta", source: "./plugins/delta" }]);
     writePluginList([]);

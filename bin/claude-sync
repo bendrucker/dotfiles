@@ -10,9 +10,7 @@
 // to what the synced settings.json declares: uninstall what it no longer names,
 // refresh every marketplace, and update every plugin installed at user scope,
 // disabled ones included. `claude plugin enable` does not update, so a plugin
-// skipped while disabled would come back stale months later. A relative-path
-// plugin from a marketplace registered from a local path, as the repo's own
-// are, loads in place, so it has no copy to update.
+// skipped while disabled would come back stale months later.
 //
 // The whole run is captured as it happens: a failure files a Things to-do built
 // from that log, on a latch keyed by which steps warned.
@@ -108,11 +106,9 @@ export function syncRepo(out: Output, repoDir: string): boolean {
   return true;
 }
 
-// Claude Code installs no dependencies for a plugin it loads in place, so the
-// repo's own plugins get theirs from the workspace install at the root. Frozen,
-// so a lockfile the pull brought in is installed as committed and one that
-// disagrees with its package.json fails here instead of being rewritten in the
-// deployed clone, where the next night's gate would stop on it.
+// Claude Code installs no dependencies for an in-place plugin. Frozen, so a
+// lockfile that disagrees with its package.json fails instead of being rewritten
+// in the deployed clone, which would stop the next night at the sync gate.
 export function installDependencies(
   out: Output,
   repoDir: string,
@@ -127,7 +123,6 @@ export function installDependencies(
   return true;
 }
 
-// The caller still updates the plugins after a failed refresh.
 export function updateMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
   log(out, "info", "Updating marketplaces...");
 
@@ -351,8 +346,7 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
       continue;
     }
 
-    // Only a relative path loads in place. An entry in the same marketplace
-    // naming a repo of its own is still copied, and still needs the update.
+    // Only a relative-path entry loads in place.
     if (
       source.ok &&
       typeof source.source === "string" &&
@@ -540,8 +534,7 @@ export function reportSyncFailure(output: string, repoDir: string): number {
   });
 }
 
-// Interactive leaves the hook installs and prunes to the nightly. Marketplaces
-// still refresh, or the plugins would update to the old revision.
+// Interactive leaves the hook installs and prunes to the nightly.
 export interface SyncOptions {
   interactive?: boolean;
 }
@@ -559,9 +552,7 @@ export function sync(out: Output, repoDir: string, options: SyncOptions = {}): n
   // moves the repo itself, and its PR push has to stay on the SSH pushurl.
   const env = { ...process.env, ...httpsEnv() };
 
-  // Straight after the pull, so the in-place plugins stop running against the
-  // previous revision's dependencies as soon as they can. A failure warns, the
-  // run carries on, and the to-do names it.
+  // Right after the pull, so in-place plugins get the new revision's dependencies.
   const installed = installDependencies(out, repoDir, env);
 
   if (options.interactive) {
@@ -581,8 +572,6 @@ export function sync(out: Output, repoDir: string, options: SyncOptions = {}): n
   // before the update so a clone on its way out is not fetched first.
   if (!pruneMarketplaces(out, env)) status = 1;
 
-  // Nothing downstream checks what a stale clone left behind, so a failed
-  // refresh fails the run, here as in a hand run.
   if (!updateMarketplaces(out, env)) status = 1;
 
   if (!updatePlugins(out, env)) status = 1;

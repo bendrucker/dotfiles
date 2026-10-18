@@ -298,10 +298,8 @@ function readRegistry(): RegistryEntries {
 
 const LOCAL_SOURCES = new Set(["directory", "file"]);
 
-// The marketplaces registered from a local path. Claude Code loads their
-// relative-path plugins in place from that path, so there is no cached copy for
-// `claude plugin update` to refresh. A registry that cannot be read names none,
-// which leaves every plugin to the update pass.
+// Marketplaces registered from a local path, whose relative-path plugins load in
+// place. An unreadable registry names none.
 export function localMarketplaces(): Set<string> {
   const registered = readRegistry();
   const names = new Set<string>();
@@ -315,9 +313,8 @@ export function localMarketplaces(): Set<string> {
   return names;
 }
 
-// Where Claude Code reads a marketplace's manifest from: the clone under
-// marketplaces/ for a remote source, or the path itself for a local one, which
-// gets no copy there.
+// A local marketplace has no clone under marketplaces/, so its manifest is read
+// where it lives.
 function marketplaceManifest(marketplace: string): string {
   const registered = readRegistry();
   const entry = registered.ok ? registered.entries[marketplace] : undefined;
