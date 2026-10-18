@@ -1,0 +1,30 @@
+#!/bin/sh
+# Puts the tools pinned in system/mise.toml on PATH in a fresh Linux VM, with
+# no Homebrew and no full install, so this repo's hooks and lint can run there:
+#   curl -fsSL https://raw.githubusercontent.com/bendrucker/dotfiles/main/scripts/vm-setup | sh
+#
+# VM setup scripts often abort the boot on a non-zero exit, so every failure
+# warns and exits 0, leaving whatever needs the tool to report it missing.
+set -u
+
+dir=${VM_SETUP_DIR:-/opt/dotfiles}
+bin=${VM_SETUP_BIN:-/usr/local/bin}
+PATH="$bin:$PATH"
+
+warn() {
+  echo "vm-setup: $*" >&2
+  exit 0
+}
+
+[ -d "$dir" ] || git clone --quiet --depth 1 https://github.com/bendrucker/dotfiles "$dir" || warn "clone failed"
+command -v mise >/dev/null || curl -fsSL https://mise.run | MISE_INSTALL_PATH="$bin/mise" sh || warn "mise install failed"
+
+cd "$dir/system" || warn "no system/ in $dir"
+mise trust --quiet mise.toml || warn "mise trust failed"
+mise install --yes || warn "mise install failed"
+
+for path in $(mise bin-paths); do
+  for tool in "$path"/*; do
+    if [ -f "$tool" ] && [ -x "$tool" ]; then ln -sf "$tool" "$bin/"; fi
+  done
+done
