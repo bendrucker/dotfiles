@@ -102,6 +102,22 @@ jobs:
           mise-${{ runner.os }}-${{ runner.arch }}-
         path: |
           ~/.local/share/mise
+    # scripts/vm-setup is the path for a bare Linux VM with no Homebrew, so it
+    # runs before bootstrap puts mise on PATH. It always exits 0, so the tools
+    # it links are what prove it worked. Its bin directory stays off PATH, out
+    # of bootstrap's way.
+    - name: Set up tools as on a bare VM
+      if: ${{ runner.os == 'Linux' && matrix.pass == 'fresh' }}
+      timeout-minutes: 5
+      env:
+        VM_SETUP_DIR: ${{ github.workspace }}
+        VM_SETUP_BIN: ${{ runner.temp }}/vm-setup
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        mkdir -p "$VM_SETUP_BIN"
+        scripts/vm-setup
+        "$VM_SETUP_BIN/prek" --version
+        "$VM_SETUP_BIN/shellcheck" --version
     # The cache holds the whole prefix, staged at /opt/homebrew-cached so the
     # restore runs with the image's prefix still in place: its gtar and zstd
     # link libraries by absolute path under /opt/homebrew, so they cannot run
