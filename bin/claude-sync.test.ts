@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeStub } from "#harness";
+import { ignoresModes, writeStub } from "#harness";
 import { fixture } from "#harness/fixture";
 import type { Capture, SpawnOptions } from "#jobs/output";
 import {
@@ -1032,7 +1032,7 @@ describe("installAgentHooks", () => {
 
   // The entry survives a restore that could not write, and the sync gate blocks
   // on it the next night. Reporting it here is what says which run put it there.
-  test("reports a restore that could not run", () => {
+  test.skipIf(ignoresModes)("reports a restore that could not run", () => {
     const env = without("moshi-hook");
 
     expect(installAgentHooks(out, repo, { ...env, HERDR_LOCKS: "1" })).toBe(false);

@@ -1,0 +1,26 @@
+#!/bin/sh
+# Installs what the bun job's runner adds to ubuntu-latest, so `bun run test`
+# gives the same signal in a Claude Code cloud session as in CI: zsh, which the
+# image lacks, and gum, which CI takes from Homebrew. Cloud sessions only.
+set -eu
+
+[ "${CLAUDE_CODE_REMOTE-}" = true ] || exit 0
+
+if ! command -v zsh >/dev/null; then
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zsh >/dev/null
+fi
+
+gum_version=0.17.0
+if ! command -v gum >/dev/null; then
+  case "$(uname -m)" in
+  x86_64) arch=x86_64 ;;
+  aarch64 | arm64) arch=arm64 ;;
+  *) echo "session-start: no gum build for $(uname -m)" >&2 && exit 0 ;;
+  esac
+  dir=$(mktemp -d)
+  curl -fsSL "https://github.com/charmbracelet/gum/releases/download/v$gum_version/gum_${gum_version}_Linux_$arch.tar.gz" |
+    tar xz -C "$dir" --strip-components 1
+  install -m 0755 "$dir/gum" /usr/local/bin/gum
+  rm -rf "$dir"
+fi

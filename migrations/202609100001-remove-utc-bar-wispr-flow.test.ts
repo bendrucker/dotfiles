@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { ignoresModes, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { up } from "./202609100001-remove-utc-bar-wispr-flow";
@@ -87,7 +87,7 @@ describe("remove-utc-bar-wispr-flow", () => {
   // The unwritable bundle is what the OS refuses, and root is refused nothing,
   // so as root the removal would succeed and the case would assert the wrong
   // half. CI runs as an ordinary user, which is where this means something.
-  test.skipIf(process.getuid?.() === 0)("says what to run rather than escalating when the bundle is root's", () => {
+  test.skipIf(ignoresModes)("says what to run rather than escalating when the bundle is root's", () => {
     const app = bundle(false);
 
     try {

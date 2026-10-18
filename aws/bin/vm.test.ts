@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
+import { ignoresModes, repoRoot, run, sandbox, type Run, type Sandbox } from "#harness";
 import { formatMinutes, isoSeconds, parseDuration } from "../vm/duration.ts";
 import { guestTools, toolLines } from "../vm/guest.ts";
 import { HERDR } from "../vm/herdr.ts";
@@ -588,7 +588,7 @@ describe("commands", () => {
     expect(existsSync(entry())).toBe(false);
   });
 
-  test("launch stops before run-instances when it cannot write its local files", async () => {
+  test.skipIf(ignoresModes)("launch stops before run-instances when it cannot write its local files", async () => {
     box.mkdir("state/vm");
     chmodSync(box.path("state", "vm"), 0o500);
     const launched = await perf("launch", "--name", "t1");
@@ -749,7 +749,7 @@ describe("commands", () => {
     expect(existsSync(entry())).toBe(false);
   });
 
-  test("destroy names the files it could not remove, and a rerun finishes", async () => {
+  test.skipIf(ignoresModes)("destroy names the files it could not remove, and a rerun finishes", async () => {
     await perf("launch", "--name", "t1");
     chmodSync(box.path("state", "vm"), 0o500);
     const blocked = await perf("destroy", "t1");
