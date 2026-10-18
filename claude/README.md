@@ -80,8 +80,6 @@ The herdr install writes `~/.claude/hooks/herdr-agent-state.sh`, which the confi
 
 The herdr and moshi installs both write `~/.claude/settings.json` by replacing it, which breaks the symlink into the config repo. Every run relinks `~/.claude` with `install_claude_symlinks` from `claude/install.sh`, after the gate and after each install, and warns for each link it repaired. Before the gate, the sync copies a replaced `settings.json` into the config repo when its content differs, so a real change stops at the gate instead of being lost in the relink. A replacement that is not valid JSON is discarded.
 
-Vibe Island's SSH remote deploy rewrites the hook commands in `settings.json` on the machine it deploys to. Each one then names `vibe-island-hook`, a binary only its remote agent installs. Its `hookAutoConfig_claude` preference covers local hooks only. No setting stops the remote write. When every hook command the committed file lacks names `vibe-island-hook` and nothing outside `.hooks` changed, the sync restores the committed file and posts a notification. Any other change is left for the gate.
-
 A plugin no longer offered by its marketplace is left alone, with an info line in the log. Nothing can update it, so the fix is to uninstall it.
 
 ### Pruning

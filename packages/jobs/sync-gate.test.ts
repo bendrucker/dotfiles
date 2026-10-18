@@ -274,9 +274,9 @@ afterEach(() => {
 });
 
 // openPr is the one path that pushes a dirty deploy checkout to a remote, and
-// both repos it serves are public. Vibe Island writes this machine's name into
-// settings.json as part of a hook command, so the changes this path captures are
-// exactly the ones that can carry it.
+// both repos it serves are public. An app that writes into settings.json can
+// put this machine's name there, so the changes this path captures are exactly
+// the ones that can carry it.
 describe("openPr against changes that name this machine", () => {
   function refused(): void {
     expect(openPr(out, repo, "Title")).toBe(false);
@@ -294,8 +294,8 @@ describe("openPr against changes that name this machine", () => {
     refused();
   });
 
-  // Vibe Island writes the host lowercased into the hook command while the
-  // machine reports it capitalized, so an exact match would miss it.
+  // An app may write the host lowercased while the machine reports it
+  // capitalized, so an exact match would miss it.
   test("refuses a name in another case", () => {
     writeFileSync(join(repo, "file.txt"), "ran on SPECHOST\n");
     refused();
@@ -329,7 +329,7 @@ describe("openPr against changes that name this machine", () => {
   });
 });
 
-// Vibe Island writes on its own schedule, so the tree can gain the machine's name
+// An app writes on its own schedule, so the tree can gain the machine's name
 // after the first check has already passed. The git stub writes it in on the
 // `add`, standing in for that timing.
 test("openPr refuses a change that arrives once the tree is staged", () => {

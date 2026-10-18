@@ -4,8 +4,7 @@
 // without it only installs the repo's dependencies, refreshes the marketplaces,
 // and updates the plugins.
 //
-// It reverts a cosmetic rewrite of a tracked settings file and a Vibe Island
-// remote-hook rewrite, syncs the repo, relinks ~/.claude, installs the repo's
+// It reverts a cosmetic rewrite of a tracked settings file, syncs the repo, relinks ~/.claude, installs the repo's
 // dependencies, reinstalls the vendor hooks, then brings the installed plugins
 // to what the synced settings.json declares: uninstall what it no longer names,
 // refresh every marketplace, and update every plugin installed at user scope,
@@ -55,7 +54,6 @@ import {
   SETTINGS,
   settingsReplaced,
 } from "../claude/settings-link";
-import { revertRemoteHookRewrite } from "../vibe-island/remote-hooks";
 import { installClaudeHooks } from "../moshi/claude-hooks";
 
 const TITLE = "Claude Sync";
@@ -91,11 +89,9 @@ export function syncRepo(out: Output, repoDir: string): boolean {
 
   if (!isDirectory(repoDir)) return false;
 
-  // Before the gate, so a tree dirtied only by a reformat or a remote hook
-  // rewrite is clean by the time it looks. A dirty tracked file stalls the sync
+  // Before the gate, so a tree dirtied only by a reformat is clean by the time it looks. A dirty tracked file stalls the sync
   // behind it every night.
   adoptReplacedSettings(out, repoDir);
-  revertRemoteHookRewrite(out, repoDir, SETTINGS, TITLE);
   revertCosmeticJsonChanges(out, repoDir);
 
   if (!reviewDirty(out, repoDir, TITLE)) return false;

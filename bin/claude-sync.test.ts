@@ -275,8 +275,7 @@ const DECLARATION = {
   extraKnownMarketplaces: { first: {}, third: {} },
 };
 
-const GUARDED_HOOK = '/bin/sh -c [ -x "$HOME/.vibe-island/bin/vibe-island-bridge" ] && exit 0';
-const REMOTE_HOOK = "VIBE_ISLAND_PORTS=1 ~/.vibe-island/bin/vibe-island-hook --host user@example";
+const HOOK = '/bin/sh -c [ -x "$HOME/bin/hook" ] && exit 0';
 
 function settingsJson(command: unknown, extra = "bar"): unknown {
   return {
@@ -314,7 +313,7 @@ function buildRepo(root: string): void {
   run(["git", "-C", repo, "config", "commit.gpgsign", "false"]);
   run(["git", "-C", repo, "remote", "add", "origin", origin]);
   mkdirSync(join(repo, "user"));
-  writeFileSync(join(repo, "user", "settings.json"), `${JSON.stringify(settingsJson(GUARDED_HOOK), null, 2)}\n`);
+  writeFileSync(join(repo, "user", "settings.json"), `${JSON.stringify(settingsJson(HOOK), null, 2)}\n`);
   run(["git", "-C", repo, "add", "-A"]);
   run(["git", "-C", repo, "commit", "-q", "-m", "settings"]);
   run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
@@ -823,7 +822,7 @@ describe("revertCosmeticJsonChanges", () => {
   // An app that rewrote a tracked settings file without changing anything in it
   // would otherwise stall the sync behind a diff with nothing in it.
   test("reverts a file whose keys only moved", () => {
-    writeRepoSettings(settingsJson(GUARDED_HOOK), 4);
+    writeRepoSettings(settingsJson(HOOK), 4);
     revertCosmeticJsonChanges(out, repo);
 
     expect(out.captured()).toContain("Reverting cosmetic reorder in user/settings.json");
@@ -831,7 +830,7 @@ describe("revertCosmeticJsonChanges", () => {
   });
 
   test("leaves a file whose values changed alone", () => {
-    writeRepoSettings(settingsJson(GUARDED_HOOK, "changed"));
+    writeRepoSettings(settingsJson(HOOK, "changed"));
     revertCosmeticJsonChanges(out, repo);
 
     expect(settingsStatus()).toBe("dirty");
@@ -845,8 +844,6 @@ describe("revertCosmeticJsonChanges", () => {
   });
 });
 
-// Vibe Island's SSH remote deploy writes the remote agent's hook into every
-// event on the machine it deploys to.
 describe("syncRepo", () => {
   test("refuses a repo directory that is not there", () => {
     expect(syncRepo(out, join(sandbox, "missing"))).toBe(false);
@@ -855,14 +852,14 @@ describe("syncRepo", () => {
   // The revert runs before the gate, so a tree dirtied only by a reformat is
   // clean by the time it looks.
   test("clears a cosmetic reorder before the gate sees it", () => {
-    writeRepoSettings(settingsJson(GUARDED_HOOK), 4);
+    writeRepoSettings(settingsJson(HOOK), 4);
 
     expect(syncRepo(out, repo)).toBe(true);
     expect(settingsStatus()).toBe("clean");
   });
 
   test("stops at the gate on a real local change", () => {
-    writeRepoSettings(settingsJson(GUARDED_HOOK, "changed"));
+    writeRepoSettings(settingsJson(HOOK, "changed"));
 
     expect(syncRepo(out, repo)).toBe(false);
     expect(out.captured()).toContain("Local changes present - skipping sync");
@@ -993,7 +990,7 @@ describe("installAgentHooks", () => {
     expect(readLog("hooks.log")).toBe(
       "herdr integration install claude\nmoshi-hook install --target claude\n",
     );
-    expect(repoSettings()).toEqual({ ...(settingsJson(GUARDED_HOOK) as object), "moshi-hook": 1 });
+    expect(repoSettings()).toEqual({ ...(settingsJson(HOOK) as object), "moshi-hook": 1 });
     expect(linked()).toBe(true);
   });
 
@@ -1135,25 +1132,16 @@ describe("sync", () => {
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
-  test("heals a remote hook rewrite that replaced the link", () => {
-    replaceLink(settingsJson(REMOTE_HOOK));
-
-    expect(sync(out, repo)).toBe(0);
-    expect(linked()).toBe(true);
-    expect(readFileSync(settingsLink(), "utf8")).not.toContain("vibe-island-hook");
-    expect(readLog("notifications")).toContain("remote hook rewrite");
-  });
-
   test("relinks even when the gate refuses", () => {
-    writeRepoSettings(settingsJson(GUARDED_HOOK, "changed"));
-    replaceLink(settingsJson(GUARDED_HOOK));
+    writeRepoSettings(settingsJson(HOOK, "changed"));
+    replaceLink(settingsJson(HOOK));
 
     expect(sync(out, repo)).toBe(1);
     expect(linked()).toBe(true);
   });
 
   test("leaves the plugins and dependencies unattempted when the sync refuses", () => {
-    writeRepoSettings(settingsJson(GUARDED_HOOK, "changed"));
+    writeRepoSettings(settingsJson(HOOK, "changed"));
     expect(sync(out, repo)).toBe(1);
     expect(readLog("plugin.log")).toBe("");
     expect(readLog("bun.log")).toBe("");
