@@ -12,6 +12,8 @@ let out: string;
 beforeEach(() => {
   box = sandbox("vm-setup");
   box.write("dotfiles/system/mise.toml", "");
+  box.mkdir("claude-repo");
+  box.stub("dotfiles/claude/link", `echo "$CLAUDE_REPO_HOME $*" > ${box.path("linked")}`);
   tools = box.mkdir("installs", "prek", "bin");
   chmodSync(box.write("installs/prek/bin/prek", ""), 0o755);
   box.mkdir("installs", "prek", "bin", "share");
@@ -31,7 +33,7 @@ function mise(installStatus = 0): string {
 function setup() {
   return run(["sh", script], {
     onlyPath: [box.bin, "/usr/bin", "/bin"],
-    env: { VM_SETUP_DIR: box.path("dotfiles"), VM_SETUP_BIN: out },
+    env: { VM_SETUP_DIR: box.path("dotfiles"), VM_SETUP_BIN: out, CLAUDE_REPO_HOME: box.path("claude-repo") },
   });
 }
 
@@ -42,6 +44,13 @@ describe("vm-setup", () => {
     expect(setup().status).toBe(0);
     expect(readdirSync(out)).toEqual(["prek"]);
     expect(readlinkSync(join(out, "prek"))).toBe(join(tools, "prek"));
+  });
+
+  test("links the Claude config from the clone for cloud", () => {
+    box.stub("mise", mise());
+
+    expect(setup().status).toBe(0);
+    expect(box.read("linked")).toBe(`${box.path("claude-repo")} cloud\n`);
   });
 
   test("installs mise into the bin directory when it is missing", () => {

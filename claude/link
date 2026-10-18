@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Links ~/.claude and the managed settings from the claude repo clone without
+# the rest of the install. scripts/vm-setup runs it, and the cloud settings
+# rerun it after each pull at session start:
+#   claude/link cloud
+set -e
+
+# shellcheck source=install.sh
+. "$(dirname "${BASH_SOURCE[0]}")/install.sh"
+
+install_claude_symlinks "${1:-cloud}"
+install_claude_managed
