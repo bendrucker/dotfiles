@@ -1,0 +1,31 @@
+[dotfiles]
+"~/.config/osquery/osquery.conf" = "osquery.conf"
+
+# The release tarball runs as a user agent, since the cask installs a root daemon.
+[tools."github:osquery/osquery"]
+version = "5.23.1"
+
+[tools."github:osquery/osquery".platforms]
+macos-arm64 = { asset_pattern = "osquery-*_1.macos_arm64.tar.gz", bin_path = "opt/osquery/lib/osquery.app/Contents/MacOS" }
+linux-x64 = { asset_pattern = "osquery-*_1.linux_x86_64.tar.gz", bin_path = "opt/osquery/bin" }
+linux-arm64 = { asset_pattern = "osquery-*_1.linux_aarch64.tar.gz", bin_path = "opt/osquery/bin" }
+
+# osquery creates the database path with its parents, but not the logger path,
+# so the logs share the database's parent. Background ProcessType would
+# throttle sampling under the load it records.
+[bootstrap.macos.launchd.agents.osquery]
+program = "~/.local/share/mise/shims/osqueryd"
+args = [
+  "--config_path={{ xdg_config_home }}/osquery/osquery.conf",
+  "--database_path={{ xdg_state_home }}/osquery/db",
+  "--pidfile={{ xdg_state_home }}/osquery/osqueryd.pid",
+  "--logger_path={{ xdg_state_home }}/osquery",
+  "--disable_extensions",
+  "--watchdog_level=1",
+]
+run_at_load = true
+keep_alive = true
+throttle_interval = 60
+nice = 10
+stdout_path = "~/Library/Logs/osquery.log"
+stderr_path = "~/Library/Logs/osquery.log"
