@@ -1,6 +1,4 @@
 #!/bin/sh
-# CLAUDE_CODE_SHELL_PREFIX: runs each Bash tool call, hook, and stdio MCP server
-# at utility QoS with utility disk I/O. Children inherit the clamp, so browsers,
-# test workers, and DuckDB an agent starts yield the P-cores and the disk to
-# terminals, while the session's own TUI keeps its priority.
+# Runs agent tool calls, hooks, and MCP servers below terminals in CPU and disk
+# priority. Children inherit it.
 exec /usr/sbin/taskpolicy -c utility -d utility /bin/zsh -c "$1"

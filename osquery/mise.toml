@@ -1,13 +1,8 @@
-# Per-process CPU, memory footprint, and disk I/O on both Macs, for attributing
-# load to agent sessions after the fact. The cask is a root .pkg with a root
-# daemon, so the release tarball runs as a user agent instead. Root-owned
-# processes report -1 from it.
+# The release tarball runs as a user agent, since the cask installs a root daemon.
 [tools]
 "github:osquery/osquery" = { version = "5.23.1", os = ["macos"], asset_pattern = "osquery-*_1.macos_arm64.tar.gz", bin_path = "opt/osquery/lib/osquery.app/Contents/MacOS" }
 
-# launchd doesn't create the directories osquery writes to, so the shell makes
-# them before handing off. Background ProcessType would throttle the samples
-# during the very overload they record, so only nice lowers its priority.
+# Background ProcessType would throttle sampling under the load it records.
 [bootstrap.macos.launchd.agents.osquery]
 program = "/bin/sh"
 args = [
