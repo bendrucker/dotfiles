@@ -8,9 +8,9 @@ Shell integration for [Claude Code](https://docs.anthropic.com/en/docs/claude-co
 
 ## Config
 
-`install.sh` links each entry of the config repo's `user/` into `~/.claude`, and `platforms/mac/CLAUDE.md` to `~/.claude/platform.md`, which `user/CLAUDE.md` imports. It links the repo's `managed/settings.json`, the settings every platform shares, into the managed-settings drop-in directory. That directory is root-owned on macOS, so the link takes `sudo` once, from a terminal. The nightly run skips it with a warning until then.
+`install.sh` links each entry of the config repo's `user/` into `~/.claude`, plus each entry of `platforms/mac/`, which replaces any of the same name. It also links the repo's `managed/settings.json` into the managed-settings drop-in directory. That directory is root-owned on macOS, so the link takes `sudo` once, from a terminal, and the nightly run skips it with a warning until then.
 
-`scripts/vm-setup` runs `claude/link cloud` for a Linux VM. It swaps in `platforms/cloud/settings.json` for the Mac's `settings.json`, and links skills one by one into a `~/.claude/skills` that claude.ai sync already created. A VM snapshot can outlive its clone by days, so the cloud settings fast-forward the clone and rerun `claude/link` at each session start.
+`scripts/vm-setup` runs `claude/link cloud` for a Linux VM, which overlays `platforms/cloud/` the same way. There claude.ai sync owns `~/.claude/skills`, so skills link inside it. A VM snapshot can outlive its clone by days, so the cloud settings pull the clone and rerun `claude/link` at each session start.
 
 ## Worktree Aliases
 
