@@ -12,6 +12,10 @@ Where the config repo is cloned, `install.sh` links each entry of its `user/` in
 
 `scripts/vm-setup` runs `claude/link remote` for a cloud session's VM, which overlays `platforms/remote/` the same way. There claude.ai sync owns `~/.claude/skills`, so skills link inside it. A VM snapshot can outlive its clone by days, so the remote settings pull the clone and rerun `claude/link` at each session start.
 
+## Remote Control
+
+On the one machine that sets `DOTFILES_CLAUDE_HOST=1` in `~/.zshenv.local`, a LaunchAgent keeps `claude remote-control` running in `~/src`, so claude.ai projects can start sessions there with no terminal or desktop app open. Trust `~/src` once by running `claude` in it, since the server has no terminal to ask on. The nightly run never reloads the agent, because a reload ends every session it is serving. Logs go to `~/Library/Logs/claude-remote-control.log`. Any other scheduled job that runs Claude belongs in `mise.claude-host.toml` beside it.
+
 ## Worktree Aliases
 
 Launch Claude in a [Worktrunk](https://worktrunk.dev) worktree. All variants pass `--name` to Claude, set from the branch name, and append a system prompt telling Claude it is in a dedicated worktree it can work in directly.
