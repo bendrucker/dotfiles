@@ -349,6 +349,14 @@ test("--bootstrap re-runs bootstrap instead of the reload", () => {
   expect(readLog("reload.log")).toBe("");
 });
 
+test("--bootstrap re-runs bootstrap when the repo is already up to date", () => {
+  const result = sync("--bootstrap");
+  expect(result.status).toBe(0);
+  expect(result.stderr).toContain("Already up to date");
+  expect(readLog("bootstrap.log")).toBe("--no-prompt\n");
+  expect(readLog("reload.log")).toBe("");
+});
+
 // The shell fell through to the reload when the bootstrap script was not
 // executable, so a caller that asked for a symlink refresh got a config reload
 // and was told it had succeeded.

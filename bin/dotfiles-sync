@@ -64,14 +64,17 @@ export function run(args: string[], out: Output): number {
     return 1;
   }
 
-  if (sync.status === "current") return 0;
+  if (sync.status !== "current") {
+    log(out, "info", `Successfully updated to ${sync.rev}`);
+    notify(TITLE, `Updated to ${sync.rev}`, "Glass");
+  }
 
-  log(out, "info", `Successfully updated to ${sync.rev}`);
-  notify(TITLE, `Updated to ${sync.rev}`, "Glass");
-
-  // The symlink refresh is opt-in; the launchd job skips it. Unknown arguments
-  // have never meant anything here.
+  // The symlink refresh is opt-in; the launchd job skips it. It runs on a
+  // current checkout too, since a machine-local change like ~/.zshenv.local can
+  // need a converge with nothing to pull. Unknown arguments have never meant
+  // anything here.
   if (args[0] === "--bootstrap") return bootstrap(out, home);
+  if (sync.status === "current") return 0;
 
   // The symlinks didn't move, but the files they point at just did, so anything
   // holding the old config is now behind. A reload that had trouble is a
