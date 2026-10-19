@@ -22,7 +22,7 @@ Guide for writing and managing custom ZSH completion files in this dotfiles repo
 
 Completion files in this repo use: `<topic>/completion.zsh`
 
-Example: `claude/completion.zsh`
+Example: `gcloud/completion.zsh`
 
 ### Loading Process
 
@@ -226,5 +226,4 @@ Using `#compdef` directive when file is sourced directly. Use `compdef` registra
 ## Examples
 
 See existing completion files:
-- `claude/completion.zsh` - Complex multi-level subcommands
 - `gcloud/completion.zsh` - Third-party completion sourcing
