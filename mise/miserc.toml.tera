@@ -14,7 +14,7 @@ env_conf_d = true
 {% set tailgate_config = [xdg_config_home, "tailgate", "tailgate.hujson"] | join_path %}
 {% set tailgate_bin = [env.HOME, ".local", "share", "mise", "shims", "tailgate"] | join_path %}
 {% set claude_bin = [env.HOME, ".local", "bin", "claude"] | join_path %}
-{% set remote_control_dir = get_env(name="CLAUDE_REMOTE_CONTROL_DIR", default="") %}
+{% set src = [env.HOME, "src"] | join_path %}
 
 env = [
   # [bootstrap.repos] has no os filter.
@@ -34,7 +34,7 @@ env = [
   # leaves its own agent out and the next interactive install updates it.
   {% if standalone and get_env(name="DOTFILES_JOB", default="") != "dotfiles-upgrade" %}"dotfiles-upgrade",{% endif %}
 
-  # A machine opts in by setting CLAUDE_REMOTE_CONTROL_DIR in ~/.zshenv.local.
-  # Reloading the server ends its sessions, so the nightly run leaves it out.
-  {% if remote_control_dir and remote_control_dir is dir and claude_bin is file and get_env(name="DOTFILES_JOB", default="") != "dotfiles-upgrade" %}"remote-control",{% endif %}
+  # Reloading the Remote Control server ends its sessions, so the nightly run
+  # leaves it out.
+  {% if src is dir and claude_bin is file and get_env(name="DOTFILES_JOB", default="") != "dotfiles-upgrade" %}"remote-control",{% endif %}
 ]
