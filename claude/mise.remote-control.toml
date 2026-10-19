@@ -1,0 +1,13 @@
+# Keeps a Remote Control server up in $CLAUDE_REMOTE_CONTROL_DIR so claude.ai
+# projects can start sessions on this machine without a terminal or the desktop
+# app open. Loads only where mise/miserc.toml.tera finds that variable set.
+[bootstrap.macos.launchd.agents.claude-remote-control]
+program = "~/.local/bin/claude"
+args = ["remote-control"]
+working_directory = "{{ env.CLAUDE_REMOTE_CONTROL_DIR }}"
+run_at_load = true
+keep_alive = true
+throttle_interval = 60
+stdout_path = "~/Library/Logs/claude-remote-control.log"
+stderr_path = "~/Library/Logs/claude-remote-control.log"
+environment = { PATH = "{{ env.HOME }}/.local/bin:{{ env.HOME }}/.local/share/mise/shims:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
