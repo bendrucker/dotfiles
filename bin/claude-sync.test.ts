@@ -20,7 +20,6 @@ import {
   installAgentHooks,
   installDependencies,
   main,
-  compactSessionIndex,
   pruneMarketplaces,
   prunePlugins,
   repoRevision,
@@ -337,7 +336,7 @@ beforeEach(() => {
     join(stubs, "bun"),
     [
       `printf '%s %s\\n' "$PWD" "$*" >>"${join(sandbox, "bun.log")}"`,
-      '[ -n "$BUN_FAILS" ] && exit 1',
+      '[ -n "$BUN_INSTALL_FAILS" ] && exit 1',
       "exit 0",
     ].join("\n"),
   );
@@ -408,7 +407,7 @@ beforeEach(() => {
   process.env.HERDR_FAILS = "";
   process.env.HERDR_LOCKS = "";
   process.env.HERDR_REPLACES = "";
-  process.env.BUN_FAILS = "";
+  process.env.BUN_INSTALL_FAILS = "";
   writeFileSync(process.env.CLAUDE_PLUGIN_LOG, "");
 
   writePluginFixture();
@@ -447,7 +446,7 @@ afterEach(() => {
   delete process.env.HERDR_FAILS;
   delete process.env.HERDR_LOCKS;
   delete process.env.HERDR_REPLACES;
-  delete process.env.BUN_FAILS;
+  delete process.env.BUN_INSTALL_FAILS;
   rmSync(sandbox, { recursive: true, force: true });
 });
 
@@ -775,7 +774,7 @@ describe("installDependencies", () => {
   });
 
   test("warns when the install fails", () => {
-    process.env.BUN_FAILS = "1";
+    process.env.BUN_INSTALL_FAILS = "1";
     expect(installDependencies(out, repo, process.env)).toBe(false);
     expect(out.captured()).toContain("bun install failed in the Claude repository");
   });
@@ -1092,7 +1091,7 @@ describe("sync", () => {
     { name: "full", interactive: false },
     { name: "interactive", interactive: true },
   ])("fails when the dependency install fails, and still updates the plugins: $name", ({ interactive }) => {
-    process.env.BUN_FAILS = "1";
+    process.env.BUN_INSTALL_FAILS = "1";
     expect(sync(out, repo, { interactive })).toBe(1);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
@@ -1146,30 +1145,6 @@ describe("sync", () => {
     expect(sync(out, repo)).toBe(1);
     expect(readLog("plugin.log")).toBe("");
     expect(readLog("bun.log")).toBe("");
-  });
-});
-
-describe("compactSessionIndex", () => {
-  const script = () => join(repo, "plugins/observability/skills/session/scripts/refresh.ts");
-
-  test("skips a clone without the session skill", () => {
-    expect(compactSessionIndex(out, repo)).toBe(true);
-    expect(readLog("bun.log")).toBe("");
-  });
-
-  test("runs the refresh with --compact from the clone", () => {
-    mkdirSync(join(script(), ".."), { recursive: true });
-    writeFileSync(script(), "");
-    expect(compactSessionIndex(out, repo)).toBe(true);
-    expect(readLog("bun.log")).toBe(`${repo} ${script()} --compact\n`);
-  });
-
-  test("warns when the compaction fails", () => {
-    mkdirSync(join(script(), ".."), { recursive: true });
-    writeFileSync(script(), "");
-    process.env.BUN_FAILS = "1";
-    expect(compactSessionIndex(out, repo)).toBe(false);
-    expect(out.captured()).toContain("session index compaction failed");
   });
 });
 

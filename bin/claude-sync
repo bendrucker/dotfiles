@@ -470,22 +470,6 @@ function restoreSettings(out: Output, path: string, before: string | undefined):
   return true;
 }
 
-const SESSION_REFRESH = join("plugins", "observability", "skills", "session", "scripts", "refresh.ts");
-
-// Runs the session index work an interactive refresh defers. It runs even when
-// the sync gate refuses, since the clone still holds a working copy.
-export function compactSessionIndex(out: Output, repoDir: string): boolean {
-  const script = join(repoDir, SESSION_REFRESH);
-  if (!isFile(script)) return true;
-
-  log(out, "info", "Compacting the session index...");
-  if (out.run(["bun", script, "--compact"], { cwd: repoDir, stdin: "ignore" }) !== 0) {
-    log(out, "warn", "session index compaction failed, continuing");
-    return false;
-  }
-  return true;
-}
-
 export function repoRevision(repoDir: string): string {
   const rev = stripNewlines(gitQuiet(["rev-parse", "--short", "HEAD"], repoDir).stdout);
   return rev === "" ? "unknown" : rev;
@@ -593,9 +577,7 @@ export function sync(out: Output, repoDir: string, options: SyncOptions = {}): n
 export function main(out: Capture = capturedOutput(), options: SyncOptions = {}): number {
   const repoDir = claudeRepoHome();
 
-  const synced = sync(out, repoDir, options) === 0;
-  const compacted = options.interactive === true || compactSessionIndex(out, repoDir);
-  if (!synced || !compacted) {
+  if (sync(out, repoDir, options) !== 0) {
     reportSyncFailure(stripNewlines(out.captured()), repoDir);
     return 1;
   }

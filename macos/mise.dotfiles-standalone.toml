@@ -13,3 +13,11 @@ start_calendar_interval = { hour = 4, minute = 0 }
 stdout_path = "/tmp/worktree-prune.log"
 stderr_path = "/tmp/worktree-prune.log"
 environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
+
+[bootstrap.macos.launchd.agents.session-index-compact]
+program = "/bin/zsh"
+args = ["-lc", "$HOME/.dotfiles/bin/session-index-compact"]
+start_calendar_interval = { weekday = 0, hour = 4, minute = 30 }
+stdout_path = "/tmp/session-index-compact.log"
+stderr_path = "/tmp/session-index-compact.log"
+environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
