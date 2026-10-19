@@ -1,5 +1,6 @@
 # Loads only in a cloud VM, where scripts/vm-setup selects the remote env.
 # A machine takes these from Homebrew and macOS instead.
 [tools]
+"aqua:aws/aws-cli" = "2.37.13"
 "aqua:charmbracelet/gum" = "2.0.2"
 "conda:zsh" = "5.9.2"
