@@ -34,7 +34,8 @@ env = [
   # leaves its own agent out and the next interactive install updates it.
   {% if standalone and get_env(name="DOTFILES_JOB", default="") != "dotfiles-upgrade" %}"dotfiles-upgrade",{% endif %}
 
-  # Reloading the Remote Control server ends its sessions, so the nightly run
-  # leaves it out.
-  {% if src is dir and claude_bin is file and get_env(name="DOTFILES_JOB", default="") != "dotfiles-upgrade" %}"remote-control",{% endif %}
+  # Agents that run Claude itself go on one machine, the one that sets
+  # DOTFILES_CLAUDE_HOST in ~/.zshenv.local. Reloading them ends their sessions,
+  # so the nightly run leaves them out.
+  {% if get_env(name="DOTFILES_CLAUDE_HOST", default="") and src is dir and claude_bin is file and get_env(name="DOTFILES_JOB", default="") != "dotfiles-upgrade" %}"claude-host",{% endif %}
 ]

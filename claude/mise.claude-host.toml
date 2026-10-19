@@ -1,3 +1,6 @@
+# Agents that run Claude, loaded only on the machine mise/miserc.toml.tera
+# selects as the Claude host.
+
 # Keeps a Remote Control server up in ~/src so claude.ai projects can start
 # sessions on this machine without a terminal or the desktop app open.
 [bootstrap.macos.launchd.agents.claude-remote-control]

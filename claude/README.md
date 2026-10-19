@@ -14,7 +14,7 @@ Where the config repo is cloned, `install.sh` links each entry of its `user/` in
 
 ## Remote Control
 
-A LaunchAgent keeps `claude remote-control` running in `~/src`, so claude.ai projects can start sessions there with no terminal or desktop app open. Trust `~/src` once by running `claude` in it, since the server has no terminal to ask on. The nightly run never reloads the agent, because a reload ends every session it is serving. Logs go to `~/Library/Logs/claude-remote-control.log`.
+On the one machine that sets `DOTFILES_CLAUDE_HOST=1` in `~/.zshenv.local`, a LaunchAgent keeps `claude remote-control` running in `~/src`, so claude.ai projects can start sessions there with no terminal or desktop app open. Trust `~/src` once by running `claude` in it, since the server has no terminal to ask on. The nightly run never reloads the agent, because a reload ends every session it is serving. Logs go to `~/Library/Logs/claude-remote-control.log`. Any other scheduled job that runs Claude belongs in `mise.claude-host.toml` beside it.
 
 ## Worktree Aliases
 
