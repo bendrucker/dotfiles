@@ -16,7 +16,17 @@ install_claude_symlinks() {
     return 0
   fi
   mkdir -p "$HOME/.claude"
-  CLAUDE_PLATFORM="${1:-local}" claude_link "$HOME/.claude" "$CLAUDE_REPO_HOME/user" "$CLAUDE_REPO_HOME/platforms/${1:-local}"
+  # Where an employer's managed source outranks the drop-ins, user-tier.ts
+  # writes settings.json itself, so it is not linked.
+  # The file checks repeat its managedOutranked, so other machines don't start bun.
+  local skip="" prefs="${CLAUDE_MANAGED_PREFS_DIR:-/Library/Managed Preferences}"
+  if [[ "${1:-local}" == local ]] &&
+    [[ -e "$prefs/com.anthropic.claudecode.plist" || -e "$prefs/$(id -un)/com.anthropic.claudecode.plist" || -e "$HOME/.claude/remote-settings.json" ]] &&
+    command -v bun >/dev/null &&
+    CLAUDE_REPO_HOME="$CLAUDE_REPO_HOME" bun "$(dirname "${BASH_SOURCE[0]}")/user-tier.ts"; then
+    skip=settings.json
+  fi
+  CLAUDE_PLATFORM="${1:-local}" CLAUDE_LINK_SKIP="$skip" claude_link "$HOME/.claude" "$CLAUDE_REPO_HOME/user" "$CLAUDE_REPO_HOME/platforms/${1:-local}"
 }
 
 # claude_link <dst> <src>...
@@ -27,6 +37,7 @@ claude_link() {
   local dst="$1" desired="" name item target
   shift
   while IFS= read -r name; do
+    [[ "$name" == "${CLAUDE_LINK_SKIP-}" ]] && continue
     for src; do [[ -e "$src/$name" ]] && item="$src/$name"; done
     target="$dst/$name"
 
