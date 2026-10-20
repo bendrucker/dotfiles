@@ -5,8 +5,7 @@
 // merging it. On such a machine the managed settings move down a tier, into a
 // generated ~/.claude/settings.json that merges them over user/settings.json.
 //
-// Run as a script, it writes that file and exits 0, or exits 1 on a machine
-// the drop-ins still reach, where ~/.claude/settings.json stays a link.
+// install.sh runs it as a script once its own checks find such a source.
 
 import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
@@ -52,8 +51,9 @@ export function writeUserTierSettings(repoDir: string, home: string): void {
 
   const target = join(home, ".claude", "settings.json");
   if (isRegularFile(target) && readFileSync(target, "utf8") === text) return;
-  writeFileSync(`${target}.tmp`, text);
-  renameSync(`${target}.tmp`, target);
+  const temp = `${target}.${process.pid}.tmp`;
+  writeFileSync(temp, text);
+  renameSync(temp, target);
 }
 
 function readJson(path: string): Json {
@@ -75,7 +75,6 @@ function isRegularFile(path: string): boolean {
 }
 
 if (import.meta.main) {
-  if (!managedOutranked()) process.exit(1);
   const home = process.env.HOME || homedir();
   writeUserTierSettings(process.env.CLAUDE_REPO_HOME || join(home, ".claude-repo"), home);
 }

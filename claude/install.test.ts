@@ -71,6 +71,17 @@ describe("install_claude_symlinks", () => {
     expect(readlinkSync(box.path(".claude/CLAUDE.md"))).toBe(box.path("repo/user/CLAUDE.md"));
   });
 
+  test("keeps the last generated settings.json and fails when the merge can't be written", () => {
+    box.write("prefs/com.anthropic.claudecode.plist", "");
+    box.write("repo/user/settings.json", "{}");
+    box.write("repo/managed/settings.json", "{");
+    box.write(".claude/settings.json", '{"generated":true}');
+
+    expect(call("install_claude_symlinks local")).toMatchObject({ status: 1, stderr: expect.stringContaining("keeping the last one") });
+
+    expect(box.read(".claude/settings.json")).toBe('{"generated":true}');
+  });
+
   test("refuses a directory where a local link belongs", () => {
     box.mkdir(".claude", "skills");
 

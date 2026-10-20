@@ -19,14 +19,18 @@ install_claude_symlinks() {
   # Where an employer's managed source outranks the drop-ins, user-tier.ts
   # writes settings.json itself, so it is not linked.
   # The file checks repeat its managedOutranked, so other machines don't start bun.
-  local skip="" prefs="${CLAUDE_MANAGED_PREFS_DIR:-/Library/Managed Preferences}"
+  # A failed write keeps the last file, since a link would drop the settings.
+  local skip="" failed="" prefs="${CLAUDE_MANAGED_PREFS_DIR:-/Library/Managed Preferences}"
   if [[ "${1:-local}" == local ]] &&
-    [[ -e "$prefs/com.anthropic.claudecode.plist" || -e "$prefs/$(id -un)/com.anthropic.claudecode.plist" || -e "$HOME/.claude/remote-settings.json" ]] &&
-    command -v bun >/dev/null &&
-    CLAUDE_REPO_HOME="$CLAUDE_REPO_HOME" bun "$(dirname "${BASH_SOURCE[0]}")/user-tier.ts"; then
+    [[ -e "$prefs/com.anthropic.claudecode.plist" || -e "$prefs/$(id -un)/com.anthropic.claudecode.plist" || -e "$HOME/.claude/remote-settings.json" ]]; then
     skip=settings.json
+    if ! command -v bun >/dev/null || ! CLAUDE_REPO_HOME="$CLAUDE_REPO_HOME" bun "$(dirname "${BASH_SOURCE[0]}")/user-tier.ts"; then
+      echo "Could not write ~/.claude/settings.json from the managed settings, keeping the last one" >&2
+      failed=1
+    fi
   fi
   CLAUDE_PLATFORM="${1:-local}" CLAUDE_LINK_SKIP="$skip" claude_link "$HOME/.claude" "$CLAUDE_REPO_HOME/user" "$CLAUDE_REPO_HOME/platforms/${1:-local}"
+  [[ -z "$failed" ]]
 }
 
 # claude_link <dst> <src>...
