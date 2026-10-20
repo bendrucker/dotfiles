@@ -129,6 +129,14 @@ describe("adoptReplacedSettings", () => {
     expect(out.captured()).toBe("");
   });
 
+  test("leaves the working copy alone where user-tier.ts generates the file", () => {
+    box.write(".claude/remote-settings.json", "{}");
+    replaceLink(settings("generated"));
+    adoptReplacedSettings(out, repo);
+
+    expect(settingsStatus()).toBe("clean");
+  });
+
   test("leaves the working copy alone while the link is intact", () => {
     writeRepoSettings(settings("local"));
     adoptReplacedSettings(out, repo);

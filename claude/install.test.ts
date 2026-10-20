@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readdirSync, readlinkSync, symlinkSync } from "node:fs";
+import { lstatSync, readdirSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, sandbox, shell, type Sandbox } from "#harness";
 
@@ -28,7 +28,7 @@ afterEach(() => {
 function call(fn: string, env: Record<string, string> = {}) {
   return shell(`. "$1" && ${fn}`, {
     args: [install],
-    env: { HOME: box.dir, CLAUDE_REPO_HOME: box.path("repo"), CLAUDE_MANAGED_DIR: box.path("managed"), ...env },
+    env: { HOME: box.dir, CLAUDE_REPO_HOME: box.path("repo"), CLAUDE_MANAGED_DIR: box.path("managed"), CLAUDE_MANAGED_PREFS_DIR: box.path("prefs"), ...env },
   });
 }
 
@@ -58,6 +58,28 @@ describe("install_claude_symlinks", () => {
     for (const [target, source] of Object.entries(links))
       expect(readlinkSync(box.path(".claude", target))).toBe(box.path("repo", source));
     if (existing) expect(readdirSync(box.path(".claude/skills")).toSorted()).toEqual(["ship", "synced"]);
+  });
+
+  test("writes settings.json instead of linking it where an MDM profile outranks the drop-ins", () => {
+    box.write("prefs/com.anthropic.claudecode.plist", "");
+    box.write("repo/user/settings.json", "{}");
+    box.write("repo/managed/settings.json", "{}");
+
+    expect(call("install_claude_symlinks local").status).toBe(0);
+
+    expect(lstatSync(box.path(".claude/settings.json")).isFile()).toBe(true);
+    expect(readlinkSync(box.path(".claude/CLAUDE.md"))).toBe(box.path("repo/user/CLAUDE.md"));
+  });
+
+  test("keeps the last generated settings.json and fails when the merge can't be written", () => {
+    box.write("prefs/com.anthropic.claudecode.plist", "");
+    box.write("repo/user/settings.json", "{}");
+    box.write("repo/managed/settings.json", "{");
+    box.write(".claude/settings.json", '{"generated":true}');
+
+    expect(call("install_claude_symlinks local")).toMatchObject({ status: 1, stderr: expect.stringContaining("keeping the last one") });
+
+    expect(box.read(".claude/settings.json")).toBe('{"generated":true}');
   });
 
   test("refuses a directory where a local link belongs", () => {

@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { canonicalJson } from "#jobs/json";
 import { log, type Output } from "#jobs/output";
+import { managedOutranked } from "./user-tier";
 
 export const SETTINGS = "user/settings.json";
 
@@ -32,7 +33,8 @@ function isRegularFile(path: string): boolean {
 // the reverts can see it, before relinking discards the file. A working copy
 // that already differs from HEAD is not overwritten.
 export function adoptReplacedSettings(out: Output, repoDir: string): void {
-  if (!settingsReplaced()) return;
+  // There the file is user-tier.ts's own output, regenerated on relink.
+  if (!settingsReplaced() || managedOutranked()) return;
   const link = settingsLink();
 
   const working = join(repoDir, SETTINGS);
