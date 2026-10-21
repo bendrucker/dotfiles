@@ -1,0 +1,16 @@
+# Keeps one bendrucker/actions-sandbox runner waiting for a job, each job in a
+# throwaway Linux VM. Loads only where mise/miserc.toml.tera finds Apple's
+# container tool and the machine's untracked runner config, which sets
+# ACTIONS_SANDBOX_REPO and any mounts.
+[bootstrap.repos."~/.local/share/actions-sandbox"]
+url = "https://github.com/bendrucker/actions-sandbox.git"
+
+[bootstrap.macos.launchd.agents.actions-sandbox]
+program = "/bin/zsh"
+args = ["-c", 'set -a; source "{{ xdg_config_home }}/actions-sandbox/env"; exec "$HOME/.local/share/actions-sandbox/bin/actions-sandbox"']
+run_at_load = true
+keep_alive = true
+throttle_interval = 30
+stdout_path = "~/Library/Logs/actions-sandbox.log"
+stderr_path = "~/Library/Logs/actions-sandbox.log"
+environment = { PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" }

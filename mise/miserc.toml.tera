@@ -13,6 +13,8 @@ env_conf_d = true
 {% if dotfiles is dir %}{% set standalone = dotfiles | canonicalize == dotfiles %}{% endif %}
 {% set tailgate_config = [xdg_config_home, "tailgate", "tailgate.hujson"] | join_path %}
 {% set tailgate_bin = [env.HOME, ".local", "share", "mise", "shims", "tailgate"] | join_path %}
+{% set actions_sandbox_config = [xdg_config_home, "actions-sandbox", "env"] | join_path %}
+{% set container_bin = [get_env(name="HOMEBREW_PREFIX", default="/opt/homebrew"), "bin", "container"] | join_path %}
 
 env = [
   # [bootstrap.repos] has no os filter.
@@ -22,6 +24,10 @@ env = [
   # whole apply. tailgate comes from an install that runs earlier in
   # scripts/install but can be absent.
   {% if tailgate_bin is file and tailgate_config is file %}"tailgate",{% endif %}
+
+  # Only the machine meant to take jobs has the runner config, and the agent
+  # would restart forever without the container tool it runs jobs in.
+  {% if container_bin is file and actions_sandbox_config is file %}"actions-sandbox",{% endif %}
 
   # The nightly jobs need ~/.dotfiles to be a clone of its own. A symlink means
   # it points into a development checkout they must not sync or prune.
