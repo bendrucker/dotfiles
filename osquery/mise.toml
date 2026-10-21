@@ -20,6 +20,7 @@ args = [
   "--database_path={{ xdg_state_home }}/osquery/db",
   "--pidfile={{ xdg_state_home }}/osquery/osqueryd.pid",
   "--logger_path={{ xdg_state_home }}/osquery",
+  "--config_refresh=300",
   "--disable_extensions",
   "--watchdog_level=1",
 ]
