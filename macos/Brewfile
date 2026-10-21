@@ -1,4 +1,6 @@
 if OS.mac?
+  # Apple's VM-per-container runtime, for bendrucker/actions-sandbox runners.
+  brew 'container', ci: :extra
   brew 'mactop'
   brew 'mas'
 end
