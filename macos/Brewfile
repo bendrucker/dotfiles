@@ -1,7 +1,7 @@
 if OS.mac?
-  # Apple's VM-per-container runtime, for bendrucker/actions-sandbox runners.
-  # It needs macOS 26, which CI's macOS runners predate.
-  brew 'container', ci: :extra if MacOS.version >= :tahoe
+  # Apple's VM-per-container runtime, for the actions-sandbox agent in
+  # mise.actions-sandbox.toml. It needs macOS 26, which CI's macOS runners predate.
+  brew 'container' if MacOS.version >= :tahoe
   brew 'mactop'
   brew 'mas'
 end
