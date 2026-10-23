@@ -30,13 +30,18 @@
       "automerge": false
     },
     {
-      "matchManagers": ["mise", "pep621"],
+      "matchManagers": ["mise"],
       "minimumReleaseAge": "2 weeks"
     },
     {
       "matchManagers": ["custom.regex"],
       "matchFileNames": ["**/mise.toml"],
       "minimumReleaseAge": "2 weeks"
+    },
+    {
+      "description": "uv ships about weekly, so a 2-week gate keeps it two releases behind.",
+      "matchDepNames": ["astral-sh/uv", "aqua:astral-sh/uv"],
+      "minimumReleaseAge": "3 days"
     },
     {
       "matchManagers": ["mise"],
