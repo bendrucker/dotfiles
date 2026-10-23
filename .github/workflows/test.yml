@@ -238,6 +238,9 @@ jobs:
     # Later steps reach the pinned tools through these.
     - name: Add mise shims to PATH
       run: echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+    # herdr/install.sh installs herdr here, which .zshenv puts on a shell's PATH.
+    - name: Add ~/.local/bin to PATH
+      run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
     # actions/checkout writes credentials to ~/.gitconfig, which takes
     # precedence over the XDG path (~/.config/git/config) where
     # install-symlinks places the dotfiles git config.
@@ -463,8 +466,8 @@ jobs:
       # Homebrew's libxml2 is keg-only, so apt is what puts xmllint on PATH.
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y libxml2-utils
-      # herdr is not installed here and its formula has no Linux bottle, so the
-      # config check runs in bootstrap instead, where brew bundle put it.
+      # herdr is not installed here, so the config check runs in bootstrap
+      # instead, where herdr/install.sh put it.
       # The prek pinned in system/mise.toml rather than prek-action's own, so a
       # Renovate bump to it runs here before it reaches a machine.
       - name: Cache hook environments

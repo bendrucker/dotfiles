@@ -5,35 +5,46 @@ and the thing that knows which coding agent occupies which one.
 
 `config.toml` is the whole configuration and carries its own reasoning inline,
 including every keybinding and why it took the key it did. `install.sh`
-converges plugins onto `plugins.list`, and `reload.sh` hands a changed
+installs and updates herdr and converges plugins onto `plugins.list`, and `reload.sh` hands a changed
 `config.toml` to the running server without restarting it, so the nightly
 upgrade never takes live panes down.
 
 ## Server
 
-On macOS, `me.bendrucker.herdr.plist` runs `herdr server` as a launchd agent, so
-it starts at login and restarts if it dies. A client attaches to whatever server
-answers on the socket and spawns one only when none does. Without the agent, the
-first client to start spawns the server, and that client's app becomes its TCC
-identity, which decides whether panes may send Apple Events to apps like Things.
+herdr installs from its own installer into `~/.local/bin`, not from Homebrew,
+because only a binary `herdr update` manages can live-hand-off a running server.
+`install.sh` runs `herdr update --handoff`, which moves every pane onto the new
+release without ending the processes in them. herdr refuses to update from
+inside one of its own panes, so a hand run from herdr leaves the update to the
+nightly upgrade. To update by hand, from a terminal outside herdr:
 
-`install.sh` never loads or reloads the agent while a server is running. A
-reload ends every pane, and a second server exits against the first one's
-socket and respawns until it stops. The installer writes the plist and warns
-instead, and the change takes effect at next login. To cut over by hand, from a
-terminal outside herdr:
+```sh
+herdr update --handoff
+```
+
+A failed handoff leaves the old server running with its panes.
+
+No launchd agent runs the server. The first `herdr` client spawns it, so on
+macOS the terminal that client runs in becomes its TCC identity, and the
+server and its panes get Ghostty's access to Desktop, Downloads, and Apple
+Events. A handoff passes that identity on to the replacement server. A server
+launchd starts is its own identity, and macOS doesn't extend those grants to a
+bare binary.
+
+### Leaving launchd
+
+A machine that ran the old launchd agent keeps its server under launchd until
+it restarts, and `install.sh` skips the update until then. The migration that
+removes the agent and the Homebrew formula waits for the same thing. When the
+panes can stop, from a terminal outside herdr:
 
 ```sh
 launchctl bootout "gui/$UID/me.bendrucker.herdr"
-herdr server stop
-launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/me.bendrucker.herdr.plist
+herdr
 ```
 
-`bootout` stops a server launchd already runs, where `KeepAlive` would restart
-one stopped any other way, and `herdr server stop` stops one it does not. Each
-errors harmlessly when there is nothing for it to stop. The server logs to
-`herdr-server.log` as before, and its stderr lands in
-`~/Library/Logs/me.bendrucker.herdr.log`.
+`[session] resume_agents_on_restore` brings the agents back, and the next
+install finishes the cleanup.
 
 ## Session persistence
 

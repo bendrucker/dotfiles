@@ -4,8 +4,8 @@
 onboarding = false
 
 [update]
-# brew owns the binary (herdr/Brewfile), so herdr update stays out of it.
-# manifest_check stays on: that's agent detection, not the binary.
+# herdr/install.sh runs `herdr update --handoff` nightly, so the in-app notice
+# stays off. manifest_check stays on: that's agent detection, not the binary.
 channel = "stable"
 version_check = false
 

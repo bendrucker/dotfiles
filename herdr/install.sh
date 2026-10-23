@@ -1,7 +1,6 @@
 #!/usr/bin/env zsh
 #
-# Load the herdr server's launchd agent, and converge herdr's plugins onto
-# plugins.list.
+# Install and update herdr, and converge herdr's plugins onto plugins.list.
 #
 # herdr has no declarative manifest of its own, so herdr-lazy supplies one and
 # installs the rest from it. That leaves herdr-lazy the one plugin this script
@@ -11,21 +10,38 @@ set -e
 
 cd "${0:A:h}"
 
-if ! command -v herdr >/dev/null 2>&1; then
-  echo "herdr not found; skipping plugin install" >&2
+# herdr's own installer rather than a package manager, because only a binary
+# `herdr update` manages can hand a running server's panes to a new release.
+export HERDR_INSTALL_DIR="${HERDR_INSTALL_DIR:-$HOME/.local/bin}"
+herdr_bin="$HERDR_INSTALL_DIR/herdr"
+
+if [[ ! -x "$herdr_bin" ]]; then
+  echo "› installing herdr to $HERDR_INSTALL_DIR"
+  curl --fail --silent --show-error --location https://herdr.dev/install.sh | sh ||
+    echo "✗ herdr install failed" >&2
+fi
+
+if [[ ! -x "$herdr_bin" ]]; then
+  echo "herdr not installed; skipping update and plugin install" >&2
   exit 0
 fi
 
-# A running server owns every pane, and launchd would either boot it out to
-# reload a changed plist or start a second one that exits against its socket.
-# While one is up, the plist is written and the cutover is left to a person. A
-# probe that fails counts as a running server, so only an explicit "not
-# running" lets launchd act.
-if [[ "$(uname -s)" == Darwin ]]; then
-  running=1
-  [[ "$(herdr status server --json 2>/dev/null | jq -r .running 2>/dev/null)" == false ]] && running=0
-  bash -c 'source "$ZSH/macos/shell/launch-agent.sh" && install_launch_agent "$@"' \
-    _ herdr/me.bendrucker.herdr.plist "herdr server" "$running" || launchd_failed=1
+# --handoff moves each running server's panes onto the new binary, so the
+# agents in them keep running. herdr refuses to update from inside one of its
+# own panes, which leaves a hand run there to the nightly upgrade. stdin is
+# closed so herdr never stops a server it cannot hand off.
+#
+# A server launchd still supervises would be restarted under the job's old
+# definition the moment a handoff retired it.
+# EXPIRES: 2027-01-22 every machine's herdr server has left launchd
+if [[ -n "${CI:-}" ]]; then
+  :
+elif [[ "${HERDR_ENV:-}" == 1 ]]; then
+  echo "inside herdr; leaving herdr update --handoff to the nightly upgrade" >&2
+elif [[ "$(uname -s)" == Darwin ]] && launchctl print "gui/$UID/me.bendrucker.herdr" 2>/dev/null | grep -qE '^[[:space:]]*pid = '; then
+  echo "✗ the herdr server still runs under launchd, so herdr update is skipped; see herdr/README.md" >&2
+else
+  "$herdr_bin" update --handoff </dev/null || echo "✗ herdr update --handoff did not finish" >&2
 fi
 
 # Read the list from this repo rather than herdr's plugin config dir, so the
@@ -75,7 +91,7 @@ fi
 lazy="$root/target/release/herdr-lazy"
 if [[ -z "$root" || ! -x "$lazy" ]]; then
   echo "✗ ${lazy_repo} is not installed; leaving herdr plugins as they are" >&2
-  exit "${launchd_failed:-0}"
+  exit 0
 fi
 
 # sync counts an unpinned entry as satisfied by whatever commit is installed, so
@@ -102,4 +118,4 @@ over_https "$lazy" sync --prune || echo "✗ herdr-lazy sync did not run; plugin
 # start instead of waiting for someone to re-run this script.
 "$lazy" auto-sync on || echo "✗ could not turn on auto-sync" >&2
 
-exit "${launchd_failed:-0}"
+exit 0
