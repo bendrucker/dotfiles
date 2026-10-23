@@ -23,8 +23,7 @@ afterEach(() => {
 
 const plist = () => box.path("home", "Library", "LaunchAgents", "me.bendrucker.herdr.plist");
 
-// Keyed on the command's first two words, with the tool's own path reduced to
-// its name, so a reply reads the way the command does.
+// The command's first two words, by tool name.
 function key(cmd: string[]): string {
   return cmd
     .slice(0, 2)
@@ -90,7 +89,7 @@ describe("herdr-direct-install", () => {
   test("keeps Homebrew's herdr until the direct install exists", () => {
     brewHerdr();
 
-    expect(() => withBrew(() => up(context()))).toThrow(/has not installed herdr/);
+    expect(() => withBrew(() => up(context()))).toThrow(/not installed yet/);
     expect(ran).not.toContain("brew uninstall");
   });
 

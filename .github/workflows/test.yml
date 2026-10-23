@@ -238,7 +238,6 @@ jobs:
     # Later steps reach the pinned tools through these.
     - name: Add mise shims to PATH
       run: echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
-    # herdr/install.sh installs herdr here, which .zshenv puts on a shell's PATH.
     - name: Add ~/.local/bin to PATH
       run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
     # actions/checkout writes credentials to ~/.gitconfig, which takes

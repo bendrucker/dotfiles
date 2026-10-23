@@ -10,8 +10,7 @@ set -e
 
 cd "${0:A:h}"
 
-# herdr's own installer rather than a package manager, because only a binary
-# `herdr update` manages can hand a running server's panes to a new release.
+# Only herdr's own installer supports `herdr update --handoff`.
 export HERDR_INSTALL_DIR="${HERDR_INSTALL_DIR:-$HOME/.local/bin}"
 herdr_bin="$HERDR_INSTALL_DIR/herdr"
 
@@ -26,20 +25,15 @@ if [[ ! -x "$herdr_bin" ]]; then
   exit 0
 fi
 
-# --handoff moves each running server's panes onto the new binary, so the
-# agents in them keep running. herdr refuses to update from inside one of its
-# own panes, which leaves a hand run there to the nightly upgrade. stdin is
-# closed so herdr never stops a server it cannot hand off.
-#
-# A server launchd still supervises would be restarted under the job's old
-# definition the moment a handoff retired it.
+# herdr refuses to update from inside its own panes. Closed stdin keeps it from
+# stopping a server it can't hand off. launchd would restart a handed-off server.
 # EXPIRES: 2027-01-22 every machine's herdr server has left launchd
 if [[ -n "${CI:-}" ]]; then
   :
 elif [[ "${HERDR_ENV:-}" == 1 ]]; then
   echo "inside herdr; leaving herdr update --handoff to the nightly upgrade" >&2
 elif [[ "$(uname -s)" == Darwin ]] && launchctl print "gui/$UID/me.bendrucker.herdr" 2>/dev/null | grep -qE '^[[:space:]]*pid = '; then
-  echo "✗ the herdr server still runs under launchd, so herdr update is skipped; see herdr/README.md" >&2
+  echo "✗ the herdr server still runs under launchd. Skipping herdr update. See herdr/README.md" >&2
 else
   "$herdr_bin" update --handoff </dev/null || echo "✗ herdr update --handoff did not finish" >&2
 fi

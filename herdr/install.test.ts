@@ -24,7 +24,6 @@ beforeAll(() => {
   const root = box.mkdir("lazy");
   // What an org that standardizes on SSH installs. It undoes an HTTPS clone.
   const global = box.write("gitconfig", '[url "git@github.com:"]\n\tinsteadOf = https://github.com/\n');
-  // Answers like a machine whose herdr server launchd does not hold.
   box.stub("launchctl", "exit 1");
 
   const listed = JSON.stringify({ result: { plugins: [{ plugin_id: "herdr-lazy", plugin_root: root }] } });
