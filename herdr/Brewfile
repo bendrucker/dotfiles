@@ -1,5 +1,3 @@
-brew 'herdr'
-
 # plannotator-tui — review a Markdown document and send the annotations back to
 # an agent. herdr-annotate's review pane runs the copy it bundles at build time
 # and never this one, so what brew buys is the two uses that pane cannot cover:

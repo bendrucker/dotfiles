@@ -5,35 +5,22 @@ and the thing that knows which coding agent occupies which one.
 
 `config.toml` is the whole configuration and carries its own reasoning inline,
 including every keybinding and why it took the key it did. `install.sh`
-converges plugins onto `plugins.list`, and `reload.sh` hands a changed
+installs and updates herdr and converges plugins onto `plugins.list`, and `reload.sh` hands a changed
 `config.toml` to the running server without restarting it, so the nightly
 upgrade never takes live panes down.
 
 ## Server
 
-On macOS, `me.bendrucker.herdr.plist` runs `herdr server` as a launchd agent, so
-it starts at login and restarts if it dies. A client attaches to whatever server
-answers on the socket and spawns one only when none does. Without the agent, the
-first client to start spawns the server, and that client's app becomes its TCC
-identity, which decides whether panes may send Apple Events to apps like Things.
+herdr installs from its own installer into `~/.local/bin`, which `herdr update --handoff` requires. `install.sh` runs that update outside herdr, since herdr refuses to update from inside a pane.
 
-`install.sh` never loads or reloads the agent while a server is running. A
-reload ends every pane, and a second server exits against the first one's
-socket and respawns until it stops. The installer writes the plist and warns
-instead, and the change takes effect at next login. To cut over by hand, from a
-terminal outside herdr:
+The first `herdr` client spawns the server, so it runs with Ghostty's TCC grants for Desktop, Downloads, and Apple Events.
+
+To move a server off the old launchd agent, from a terminal outside herdr:
 
 ```sh
 launchctl bootout "gui/$UID/me.bendrucker.herdr"
-herdr server stop
-launchctl bootstrap "gui/$UID" ~/Library/LaunchAgents/me.bendrucker.herdr.plist
+herdr
 ```
-
-`bootout` stops a server launchd already runs, where `KeepAlive` would restart
-one stopped any other way, and `herdr server stop` stops one it does not. Each
-errors harmlessly when there is nothing for it to stop. The server logs to
-`herdr-server.log` as before, and its stderr lands in
-`~/Library/Logs/me.bendrucker.herdr.log`.
 
 ## Session persistence
 
