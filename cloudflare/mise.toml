@@ -1,0 +1,9 @@
+[tools]
+"npm:cf" = "1.0.0-beta.23"
+
+# Terraform is the only write path to Cloudflare, so cf logs in with read scopes
+# alone and Cloudflare rejects any write it attempts. read-scopes holds every
+# read scope cf accepts; a product whose reads return 403 needs its scope added.
+[tasks."cloudflare:login"]
+run = "cf auth login --use-keyring --force --scopes $(cat cloudflare/read-scopes)"
+dir = "{{config_root}}/.."
