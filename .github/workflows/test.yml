@@ -444,7 +444,7 @@ jobs:
       # its own fixture database the same way.
       - uses: jdx/mise-action@v5.2.4
         with:
-          install_args: bun aqua:duckdb/duckdb
+          install_args: bun github:duckdb/duckdb
       # A leading ./ is what makes bun read this as a path. Bare, it is a filter
       # matched against discovered files, and discovery skips dot directories.
       - name: Run tests
