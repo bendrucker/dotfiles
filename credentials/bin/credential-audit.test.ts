@@ -81,6 +81,11 @@ describe("reporting", () => {
       contents: JSON.stringify({ auths: { "https://index.docker.io/v1/": {} }, credsStore: "desktop" }),
     },
     {
+      name: "a cf profile that keeps its token in the keychain",
+      path: "home/.config/cloudflare/config/default.enc",
+      contents: JSON.stringify({ v: 1, alg: "aes-256-gcm", iv: "x", tag: "x", ciphertext: "x" }),
+    },
+    {
       name: "a gh config that keeps its token in the keychain",
       path: "home/.config/gh/hosts.yml",
       contents: "github.com:\n    git_protocol: ssh\n    user: someone\n",
@@ -108,6 +113,12 @@ describe("reporting", () => {
       path: "home/.config/gh/hosts.yml",
       contents: "github.com:\n    oauth_token: gho_xxx\n",
       subject: "~/.config/gh/hosts.yml",
+    },
+    {
+      name: "a cf profile carrying an oauth token",
+      path: "home/.config/cloudflare/config/default.json",
+      contents: JSON.stringify({ oauth_token: "xxx", refresh_token: "xxx", scopes: ["zone:read"] }),
+      subject: "~/.config/cloudflare/config/default.json",
     },
     {
       name: "a token scoped to a registry naming a port",
