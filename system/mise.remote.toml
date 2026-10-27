@@ -3,4 +3,5 @@
 [tools]
 "aqua:aws/aws-cli" = "2.37.13"
 "aqua:charmbracelet/gum" = "2.0.2"
+"aqua:errata-ai/vale" = "3.25.1"
 "conda:zsh" = "5.9.2"

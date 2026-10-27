@@ -14,6 +14,8 @@ beforeEach(() => {
   box.write("dotfiles/system/mise.toml", "");
   box.mkdir("claude-repo");
   box.stub("dotfiles/claude/link", `echo "$CLAUDE_REPO_HOME $*" > ${box.path("linked")}`);
+  box.write("dotfiles/vale/vale.ini", "");
+  box.stub("vale", `echo "$*" > ${box.path("vale-args")}`);
   tools = box.mkdir("installs", "prek", "bin");
   chmodSync(box.write("installs/prek/bin/prek", ""), 0o755);
   box.mkdir("installs", "prek", "bin", "share");
@@ -33,7 +35,12 @@ function mise(installStatus = 0): string {
 function setup() {
   return run(["sh", script], {
     onlyPath: [box.bin, "/usr/bin", "/bin"],
-    env: { VM_SETUP_DIR: box.path("dotfiles"), VM_SETUP_BIN: out, CLAUDE_REPO_HOME: box.path("claude-repo") },
+    env: {
+      VM_SETUP_DIR: box.path("dotfiles"),
+      VM_SETUP_BIN: out,
+      CLAUDE_REPO_HOME: box.path("claude-repo"),
+      XDG_CONFIG_HOME: box.path("config"),
+    },
   });
 }
 
@@ -58,6 +65,15 @@ describe("vm-setup", () => {
 
     expect(setup().status).toBe(0);
     expect(box.read("linked")).toBe(`${box.path("claude-repo")} remote\n`);
+  });
+
+  test("links the vale config and syncs its packages", () => {
+    box.stub("mise", mise());
+
+    expect(setup().status).toBe(0);
+    const config = box.path("config", "vale", ".vale.ini");
+    expect(readlinkSync(config)).toBe(box.path("dotfiles", "vale", "vale.ini"));
+    expect(box.read("vale-args")).toBe(`sync --config ${config}\n`);
   });
 
   test("installs mise into the bin directory when it is missing", () => {

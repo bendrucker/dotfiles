@@ -1,8 +1,8 @@
 #!/bin/sh
 # Puts the tools pinned in system/mise.toml and its remote module on PATH in a
 # fresh Linux VM, with no Homebrew and no full install, so this repo's hooks,
-# lint, and tests can run there, and links the Claude Code config as for a
-# remote session:
+# lint, and tests can run there, and links the Claude Code and vale config as
+# for a remote session:
 #   curl -fsSL https://raw.githubusercontent.com/bendrucker/dotfiles/main/scripts/vm-setup | sh
 #
 # VM setup scripts often abort the boot on a non-zero exit, so every failure
@@ -40,3 +40,9 @@ claude=${CLAUDE_REPO_HOME:-$HOME/.claude-repo}
 url=$(sed -n 's/^url = "\(.*\)"$/\1/p' "$dir/claude/mise.macos.toml")
 [ -d "$claude" ] || git clone --quiet --depth 1 "$url" "$claude" || warn "claude clone failed"
 CLAUDE_REPO_HOME=$claude bash "$dir/claude/link" remote || warn "claude link failed"
+
+# The global vale config, as vale/mise.toml links it on a machine.
+vale=${XDG_CONFIG_HOME:-$HOME/.config}/vale
+mkdir -p "$vale" || warn "vale config dir failed"
+ln -sf "$dir/vale/vale.ini" "$vale/.vale.ini" || warn "vale config link failed"
+vale sync --config "$vale/.vale.ini" >/dev/null || warn "vale sync failed"

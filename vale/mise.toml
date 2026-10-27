@@ -1,0 +1,6 @@
+[dotfiles]
+"~/.config/vale/.vale.ini" = "vale.ini"
+
+# Download the packages vale.ini names into the default StylesPath.
+[tasks."vale:install"]
+run = "vale sync --config ~/.config/vale/.vale.ini >/dev/null"
