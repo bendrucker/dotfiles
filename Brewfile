@@ -56,7 +56,6 @@ brew 'jnv', ci: :extra
 brew 'openssl'
 brew 'schpet/tap/linear'
 brew 'teamookla/speedtest/speedtest', ci: :extra
-brew 'vale', ci: :extra
 brew 'watch'
 
 cask '1password'
