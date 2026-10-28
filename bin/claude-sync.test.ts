@@ -285,6 +285,24 @@ function settingsJson(command: unknown, extra = "bar"): unknown {
   };
 }
 
+const REX_COMMAND = "/bin/sh -c 'rex __internal session-start --agent claude 2>/dev/null || true'";
+const REX_EVENT = { UserPromptSubmit: [{ hooks: [{ type: "command", command: REX_COMMAND }] }] };
+
+function withRexHook(settings: unknown, command = REX_COMMAND): unknown {
+  const base = settings as { hooks: { SessionStart: unknown[] } };
+  const group = { hooks: [{ type: "command", command }] };
+  return { ...base, hooks: { ...base.hooks, SessionStart: [...base.hooks.SessionStart, group] } };
+}
+
+function withRexEvent(settings: unknown): unknown {
+  const base = settings as { hooks: object };
+  return { ...base, hooks: { ...base.hooks, ...REX_EVENT } };
+}
+
+function repoSettingsText(): string {
+  return readFileSync(join(repo, "user", "settings.json"), "utf8");
+}
+
 function settingsLink(): string {
   return join(sandbox, ".claude", "settings.json");
 }
@@ -880,6 +898,36 @@ describe("syncRepo", () => {
     expect(syncRepo(out, repo)).toBe(false);
     expect(out.captured()).toContain("Local changes present - skipping sync");
   });
+
+  // Rex owns its hook and setup re-adds it after the sync, so its entry alone
+  // never holds the gate shut.
+  test.each<{ name: string; settings: unknown }>([
+    { name: "beside a committed hook", settings: withRexHook(settingsJson(HOOK)) },
+    { name: "in an event of its own", settings: withRexEvent(settingsJson(HOOK)) },
+  ])("clears rex's hook before the gate sees it: $name", ({ settings }) => {
+    writeRepoSettings(settings);
+
+    expect(syncRepo(out, repo)).toBe(true);
+    expect(settingsStatus()).toBe("clean");
+  });
+
+  // A release that changes the command still matches while HEAD carries the
+  // entry, which it does until the claude repo drops it.
+  test("clears a changed rex hook that HEAD still carries", () => {
+    writeRepoSettings(withRexHook(settingsJson(HOOK)));
+    git("commit", "-q", "-am", "rex");
+    writeRepoSettings(withRexHook(settingsJson(HOOK), "rex __internal session-start --agent claude --v2"));
+
+    expect(syncRepo(out, repo)).toBe(true);
+    expect(settingsStatus()).toBe("clean");
+  });
+
+  test("stops at the gate on a real change beside rex's hook", () => {
+    writeRepoSettings(withRexHook(settingsJson(HOOK, "changed")));
+
+    expect(syncRepo(out, repo)).toBe(false);
+    expect(repoSettingsText()).toContain("rex __internal");
+  });
 });
 
 describe("failureFields", () => {
@@ -1146,6 +1194,12 @@ describe("sync", () => {
     process.env.BUN_INSTALL_FAILS = "1";
     expect(sync(out, repo, { interactive })).toBe(1);
     expect(readLog("plugin.log")).toContain("update alpha@first");
+  });
+
+  // The gate clears Rex's entry, and setup puts the installed release's back.
+  test("leaves rex's hook in place after the run", () => {
+    expect(sync(out, repo)).toBe(0);
+    expect(JSON.parse(repoSettingsText())).toMatchObject({ rex: 1 });
   });
 
   test("fails when a hook install fails, and still updates the plugins", () => {
