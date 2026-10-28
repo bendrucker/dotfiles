@@ -84,6 +84,37 @@ export function revertCosmeticJsonChanges(out: Output, repoDir: string): void {
   }
 }
 
+// Part of the Rex trial, through 2026-12-15. Rex owns its hook, and setup
+// re-adds it after every sync, so a settings.json that differs from HEAD only
+// in Rex's entries goes back to HEAD. Both sides drop them before comparing,
+// whether or not HEAD still carries one.
+const WITHOUT_REX_HOOKS = `
+  if (.hooks | type) == "object" then
+    .hooks |= (
+      map_values(
+        map(.hooks |= ((. // []) | map(select((.command // "") | contains("rex __internal") | not))))
+        | map(select(.hooks | length > 0))
+      )
+      | with_entries(select(.value | length > 0))
+    )
+    | if .hooks == {} then del(.hooks) else . end
+  else . end`;
+
+export function revertRexHooks(out: Output, repoDir: string): void {
+  const path = join(repoDir, SETTINGS);
+  if (!isFile(path)) return;
+
+  const head = gitQuiet(["show", `HEAD:${SETTINGS}`], repoDir);
+  const working = readText(path);
+  if (head.status !== 0 || working === head.stdout) return;
+
+  const stripped = canonicalJson(working, WITHOUT_REX_HOOKS);
+  if (stripped === undefined || stripped !== canonicalJson(head.stdout, WITHOUT_REX_HOOKS)) return;
+
+  log(out, "info", `Reverting rex's hook in ${SETTINGS}`);
+  out.run(["git", "-C", repoDir, "checkout", "HEAD", "--", SETTINGS]);
+}
+
 export function syncRepo(out: Output, repoDir: string): boolean {
   log(out, "info", "Syncing Claude repository...");
 
@@ -92,6 +123,7 @@ export function syncRepo(out: Output, repoDir: string): boolean {
   // Before the gate, so a tree dirtied only by a reformat is clean by the time it looks. A dirty tracked file stalls the sync
   // behind it every night.
   adoptReplacedSettings(out, repoDir);
+  revertRexHooks(out, repoDir);
   revertCosmeticJsonChanges(out, repoDir);
 
   if (!reviewDirty(out, repoDir, TITLE)) return false;
@@ -409,8 +441,11 @@ function claude(out: Output, args: string[], env: Record<string, string | undefi
 // script's version marker, so that edit is discarded, whether it came through
 // the link or replaced it.
 //
-// moshi's edit stays, so its install runs after herdr's restore. It replaces
-// the link as it writes, so what it changed is carried into the working copy.
+// moshi's and Rex's edits stay, so their installs run after herdr's restore.
+// A release that changes its hook dirties the clone for the sync gate to
+// surface. moshi replaces the link as it writes, so what it changed is carried
+// into the working copy. Rex writes through whichever file moshi left, so it
+// runs before that carry: after it, the dirty tree would refuse moshi's edit.
 export function installAgentHooks(
   out: Output,
   repoDir: string,
@@ -441,12 +476,36 @@ export function installAgentHooks(
   }
 
   if (!installClaudeHooks(out, env)) ok = false;
+
+  // Part of the Rex trial, through 2026-12-15.
+  const rex = rexCommand(env);
+  if (rex !== undefined) {
+    log(out, "info", "Installing rex claude integration...");
+    const setup = [rex, "skill", "setup", "--agent", "claude", "--autostart=false"];
+    if (out.run(setup, { env, stdin: "ignore" }) !== 0) {
+      log(out, "warn", "rex skill setup failed");
+      ok = false;
+    }
+  }
+
   if (settingsReplaced()) {
     adoptReplacedSettings(out, repoDir);
     if (!relinkClaudeHome(out, repoDir, env)) ok = false;
   }
 
   return ok;
+}
+
+// rex is on PATH only inside Rex terminals, so the nightly finds it in the app bundle.
+function rexCommand(env: Record<string, string | undefined>): string | undefined {
+  const onPath = Bun.which("rex", { PATH: env.PATH });
+  if (onPath !== null) return onPath;
+
+  const bundled = join(
+    env.HOME || homedir(),
+    "Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex",
+  );
+  return isFile(bundled) ? bundled : undefined;
 }
 
 function readSettings(path: string): string | undefined {
