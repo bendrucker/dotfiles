@@ -409,8 +409,11 @@ function claude(out: Output, args: string[], env: Record<string, string | undefi
 // script's version marker, so that edit is discarded, whether it came through
 // the link or replaced it.
 //
-// moshi's edit stays, so its install runs after herdr's restore. It replaces
-// the link as it writes, so what it changed is carried into the working copy.
+// moshi's and Rex's edits stay, so their installs run after herdr's restore.
+// A release that changes its hook dirties the clone for the sync gate to
+// surface. moshi replaces the link as it writes, so what it changed is carried
+// into the working copy. Rex writes through whichever file moshi left, so it
+// runs before that carry: after it, the dirty tree would refuse moshi's edit.
 export function installAgentHooks(
   out: Output,
   repoDir: string,
@@ -441,12 +444,36 @@ export function installAgentHooks(
   }
 
   if (!installClaudeHooks(out, env)) ok = false;
+
+  // Part of the Rex trial, through 2026-12-15.
+  const rex = rexCommand(env);
+  if (rex !== undefined) {
+    log(out, "info", "Installing rex claude integration...");
+    const setup = [rex, "skill", "setup", "--agent", "claude", "--autostart=false"];
+    if (out.run(setup, { env, stdin: "ignore" }) !== 0) {
+      log(out, "warn", "rex skill setup failed");
+      ok = false;
+    }
+  }
+
   if (settingsReplaced()) {
     adoptReplacedSettings(out, repoDir);
     if (!relinkClaudeHome(out, repoDir, env)) ok = false;
   }
 
   return ok;
+}
+
+// rex is on PATH only inside Rex terminals, so the nightly finds it in the app bundle.
+function rexCommand(env: Record<string, string | undefined>): string | undefined {
+  const onPath = Bun.which("rex", { PATH: env.PATH });
+  if (onPath !== null) return onPath;
+
+  const bundled = join(
+    env.HOME || homedir(),
+    "Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex",
+  );
+  return isFile(bundled) ? bundled : undefined;
 }
 
 function readSettings(path: string): string | undefined {

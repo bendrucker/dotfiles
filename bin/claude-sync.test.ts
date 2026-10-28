@@ -322,6 +322,18 @@ function buildRepo(root: string): void {
 
 const copyRepo = fixture(buildRepo);
 
+// rex writes through the ~/.claude/settings.json link, as the real one does.
+function rexStub(hookLog: string): string {
+  return [
+    `printf '%s %s\\n' "rex" "$*" >>"${hookLog}"`,
+    `jq '. + {"rex":1}' "$HOME/.claude/settings.json" >"$HOME/.claude/settings.json.new"`,
+    `cat "$HOME/.claude/settings.json.new" >"$HOME/.claude/settings.json"`,
+    `rm "$HOME/.claude/settings.json.new"`,
+    '[ -n "$REX_FAILS" ] && exit 1',
+    "exit 0",
+  ].join("\n");
+}
+
 beforeEach(() => {
   // A refused plugin update pauses before its retry, and the pause is real time
   // with nothing to assert about it.
@@ -370,7 +382,8 @@ beforeEach(() => {
   writeStub(join(stubs, "ioreg"), `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST`);
   // herdr writes through the link, or replaces it with HERDR_REPLACES. It writes
   // before it can fail, so a failed run still leaves an entry for the discard to
-  // take back. moshi-hook replaces the link, as the real one does.
+  // take back. rex writes through the link and moshi-hook replaces it, as the
+  // real ones do.
   const hookLog = join(sandbox, "hooks.log");
   const replaceLink = (name: string) =>
     `jq '. + {"${name}":1}' "$HOME/.claude/settings.json" >"$HOME/.claude/settings.json.new" && mv "$HOME/.claude/settings.json.new" "$HOME/.claude/settings.json"`;
@@ -384,6 +397,7 @@ beforeEach(() => {
       "exit 0",
     ].join("\n"),
   );
+  writeStub(join(stubs, "rex"), rexStub(hookLog));
   writeStub(
     join(stubs, "moshi-hook"),
     [
@@ -407,6 +421,7 @@ beforeEach(() => {
   process.env.HERDR_FAILS = "";
   process.env.HERDR_LOCKS = "";
   process.env.HERDR_REPLACES = "";
+  process.env.REX_FAILS = "";
   process.env.BUN_INSTALL_FAILS = "";
   writeFileSync(process.env.CLAUDE_PLUGIN_LOG, "");
 
@@ -446,6 +461,7 @@ afterEach(() => {
   delete process.env.HERDR_FAILS;
   delete process.env.HERDR_LOCKS;
   delete process.env.HERDR_REPLACES;
+  delete process.env.REX_FAILS;
   delete process.env.BUN_INSTALL_FAILS;
   rmSync(sandbox, { recursive: true, force: true });
 });
@@ -988,16 +1004,21 @@ describe("installAgentHooks", () => {
   test("discards herdr's settings edit and keeps moshi's", () => {
     expect(installAgentHooks(out, repo, process.env)).toBe(true);
     expect(readLog("hooks.log")).toBe(
-      "herdr integration install claude\nmoshi-hook install --target claude\n",
+      [
+        "herdr integration install claude",
+        "moshi-hook install --target claude",
+        "rex skill setup --agent claude --autostart=false",
+        "",
+      ].join("\n"),
     );
-    expect(repoSettings()).toEqual({ ...(settingsJson(HOOK) as object), "moshi-hook": 1 });
+    expect(repoSettings()).toEqual({ ...(settingsJson(HOOK) as object), "moshi-hook": 1, rex: 1 });
     expect(linked()).toBe(true);
   });
 
   // Replacing the link leaves the repo untouched, so the discard comes from
   // relinking.
   test("discards herdr's edit when it replaces the link", () => {
-    const env = without("moshi-hook");
+    const env = without("rex", "moshi-hook");
 
     expect(installAgentHooks(out, repo, { ...env, HERDR_REPLACES: "1" })).toBe(true);
     expect(out.captured()).toContain("Relinked ~/.claude/settings.json");
@@ -1009,7 +1030,7 @@ describe("installAgentHooks", () => {
   // take that back too: left in the tree, it holds the sync gate shut on every
   // later run, and that gate is what this step needs to clear to run again.
   test("reports a failed install and still discards what it wrote", () => {
-    const env = without("moshi-hook");
+    const env = without("rex", "moshi-hook");
 
     expect(installAgentHooks(out, repo, { ...env, HERDR_FAILS: "1" })).toBe(false);
     expect(out.captured()).toContain("herdr integration install failed");
@@ -1020,7 +1041,7 @@ describe("installAgentHooks", () => {
   // install started belongs to whoever made it, and restoring the committed file
   // would take that with it.
   test("keeps an edit the install did not make", () => {
-    const env = without("moshi-hook");
+    const env = without("rex", "moshi-hook");
     writeRepoSettings({ unrelated: 1 });
 
     expect(installAgentHooks(out, repo, env)).toBe(true);
@@ -1030,7 +1051,7 @@ describe("installAgentHooks", () => {
   // The entry survives a restore that could not write, and the sync gate blocks
   // on it the next night. Reporting it here is what says which run put it there.
   test.skipIf(ignoresModes)("reports a restore that could not run", () => {
-    const env = without("moshi-hook");
+    const env = without("rex", "moshi-hook");
 
     expect(installAgentHooks(out, repo, { ...env, HERDR_LOCKS: "1" })).toBe(false);
     expect(out.captured()).toContain("Could not discard herdr's edit");
@@ -1039,11 +1060,42 @@ describe("installAgentHooks", () => {
 
   // A missing installer stays out of the log rather than warning every night.
   test("skips an installer that is not on PATH", () => {
-    const env = without("herdr", "moshi-hook");
+    const env = without("herdr", "rex", "moshi-hook");
 
     expect(installAgentHooks(out, repo, env)).toBe(true);
     expect(out.captured()).toBe("");
     expect(readLog("hooks.log")).toBe("");
+  });
+
+  // A Rex release that changes its hook leaves the clone dirty, so the sync gate
+  // surfaces the new entry for a commit.
+  test("keeps rex's settings edit", () => {
+    const env = without("herdr", "moshi-hook");
+
+    expect(installAgentHooks(out, repo, env)).toBe(true);
+    expect(repoSettings()).toEqual({ ...(settingsJson(HOOK) as object), rex: 1 });
+    expect(linked()).toBe(true);
+  });
+
+  // Outside a Rex terminal, rex is only in the app bundle, which is where the
+  // nightly finds it.
+  test("runs rex from the app bundle when it is not on PATH", () => {
+    const env = without("herdr", "rex", "moshi-hook");
+    const bundled = join(
+      sandbox,
+      "Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex",
+    );
+    writeStub(bundled, rexStub(join(sandbox, "hooks.log")));
+
+    expect(installAgentHooks(out, repo, env)).toBe(true);
+    expect(readLog("hooks.log")).toBe("rex skill setup --agent claude --autostart=false\n");
+  });
+
+  test("reports a failed rex setup", () => {
+    const env = without("herdr", "moshi-hook");
+
+    expect(installAgentHooks(out, repo, { ...env, REX_FAILS: "1" })).toBe(false);
+    expect(out.captured()).toContain("rex skill setup failed");
   });
 });
 
