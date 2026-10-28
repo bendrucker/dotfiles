@@ -7,6 +7,7 @@
 
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import type { Io, SpawnOptions } from "#io";
 
 // `wt step prune` refuses to remove a worktree younger than this, because a
 // worktree just branched off main points at main's commit and so reads as
@@ -58,9 +59,9 @@ export function parseDuration(spec: string): number | undefined {
 // `wt list` carries only the tip commit's timestamp, which is main's tip for a
 // worktree that has no commits of its own. Age derived from it says nothing
 // about when the worktree appeared.
-export function worktreeAgeSecs(worktreePath: string): number | undefined {
-  const gitdir = capture(["git", "-C", worktreePath, "rev-parse", "--absolute-git-dir"]);
-  if (gitdir === undefined || gitdir === "") return undefined;
+export function worktreeAgeSecs(io: Io, worktreePath: string): number | undefined {
+  const gitdir = quietOutput(io, ["git", "-C", worktreePath, "rev-parse", "--absolute-git-dir"]);
+  if (gitdir === "") return undefined;
 
   const created = birthSeconds(gitdir) ?? modifiedSeconds(join(gitdir, "commondir"));
   if (created === undefined) return undefined;
@@ -100,8 +101,8 @@ function modifiedSeconds(path: string): number | undefined {
 // Asking worktrunk rather than reading git config is what makes the two agree:
 // the same resolution guards `wt remove`, and it detects and caches on a miss
 // instead of reporting nothing in a clone that has never been pruned.
-export function defaultBranch(): string {
-  return capture(["wt", "config", "state", "default-branch", "get"]) ?? "";
+export function defaultBranch(io: Io): string {
+  return quietOutput(io, ["wt", "config", "state", "default-branch", "get"]);
 }
 
 // The host of the origin remote, which decides whether gh or glab answers for
@@ -111,8 +112,8 @@ export function defaultBranch(): string {
 // resolves url.<base>.insteadOf rewrites, so an org-wide rule can report a host
 // the config never named, and a survivor routed to the wrong forge CLI comes
 // back with no state and is deferred forever.
-export function remoteHost(): string {
-  const url = capture(["git", "config", "--get", "remote.origin.url"]) ?? "";
+export function remoteHost(io: Io): string {
+  const url = quietOutput(io, ["git", "config", "--get", "remote.origin.url"]);
   // Drop any user@ prefix and any scheme, then keep everything up to the first
   // : or /, so git@github.com:o/r.git and https://github.com/o/r.git both name
   // github.com.
@@ -127,15 +128,15 @@ export interface PullRequest {
 
 // The exact PR/MR state for a branch on the forge, undefined when the branch
 // has none. gh is the tested path; glab mirrors it (newest MR wins).
-export function prState(branch: string, host: string): PullRequest | undefined {
-  return host.includes("gitlab") ? mergeRequest(branch) : pullRequest(branch);
+export function prState(io: Io, branch: string, host: string): PullRequest | undefined {
+  return host.includes("gitlab") ? mergeRequest(io, branch) : pullRequest(io, branch);
 }
 
-function pullRequest(branch: string): PullRequest | undefined {
+function pullRequest(io: Io, branch: string): PullRequest | undefined {
   // The extraction stays in gh's own --jq rather than moving here: gh answers
   // in one tab-separated line, and a branch with no PR exits nonzero and prints
   // nothing, which is the same empty answer as a gh that is not installed.
-  const captured = capture([
+  const captured = quietOutput(io, [
     "gh",
     "pr",
     "view",
@@ -145,14 +146,14 @@ function pullRequest(branch: string): PullRequest | undefined {
     "--jq",
     '"\\(.state)\\t\\(.number)"',
   ]);
-  if (captured === undefined || captured === "") return undefined;
+  if (captured === "") return undefined;
 
   const [state, number] = captured.split("\t");
   return { state, number: number ?? "" };
 }
 
-function mergeRequest(branch: string): PullRequest | undefined {
-  const captured = capture([
+function mergeRequest(io: Io, branch: string): PullRequest | undefined {
+  const captured = quietOutput(io, [
     "glab",
     "mr",
     "list",
@@ -163,7 +164,7 @@ function mergeRequest(branch: string): PullRequest | undefined {
     "--output",
     "json",
   ]);
-  if (captured === undefined || captured === "") return undefined;
+  if (captured === "") return undefined;
 
   let parsed: unknown;
   try {
@@ -201,9 +202,9 @@ export interface Worktree {
 // Undefined when wt could not be run or said nothing a caller can read, which
 // every caller treats as "no worktrees to consider" rather than as an empty
 // repo.
-export function listWorktrees(): Worktree[] | undefined {
-  const captured = capture(["wt", "list", "--format=json"]);
-  if (captured === undefined || captured === "") return undefined;
+export function listWorktrees(io: Io): Worktree[] | undefined {
+  const captured = quietOutput(io, ["wt", "list", "--format=json"]);
+  if (captured === "") return undefined;
   return readWorktrees(captured);
 }
 
@@ -242,22 +243,15 @@ export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-// Every spawn hands the environment over explicitly, because Bun otherwise
-// resolves a bare command name against the PATH it captured at startup and a
-// caller that adjusted PATH would reach a different binary than it meant to.
 // stdin is closed so a prompting command cannot eat what the caller is reading.
-//
-// A binary that is not installed throws here where the shell printed `command
-// not found` and carried on. Caught rather than raised: every caller was
-// written to degrade to doing nothing when its forge CLI or worktrunk is
-// absent, and a prune that aborts is worse than one that removes nothing.
-export function capture(cmd: string[]): string | undefined {
-  try {
-    const run = Bun.spawnSync({ cmd, env: process.env, stdin: "ignore", stderr: "ignore" });
-    return run.stdout.toString().replace(/\n+$/, "");
-  } catch {
-    return undefined;
-  }
+export const QUIET: SpawnOptions = { stdin: "ignore", stderr: "ignore" };
+
+// What a command printed, trailing newlines trimmed, whatever its status. A
+// binary that is not installed prints nothing: every caller was written to
+// degrade to doing nothing when its forge CLI or worktrunk is absent, and a
+// prune that aborts is worse than one that removes nothing.
+export function quietOutput(io: Io, cmd: string[]): string {
+  return io.read(cmd, QUIET).stdout.replace(/\n+$/, "");
 }
 
 function stat(path: string) {

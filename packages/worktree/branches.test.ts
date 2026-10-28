@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { sandbox, type Sandbox } from "#harness";
+import { fakeIo, sandbox, type Sandbox } from "#harness";
 import { decideBranch, EXPIRY, pruneBranches, readBranches, type BranchReport, type Decision } from "#worktree/branches";
+
+const LIVE = { dryRun: false, explaining: false };
+const io = fakeIo({ passthrough: true });
 
 let box: Sandbox;
 let repo: string;
@@ -112,7 +115,7 @@ describe("pruneBranches (sandboxed)", () => {
     git(["worktree", "add", box.path("wt-checked-out"), "-b", "checked-out"]);
 
     const rep = report();
-    pruneBranches("main", "1d", false, false, rep);
+    pruneBranches(io, "main", "1d", LIVE, rep);
 
     expect(rep.branches).toBe(0);
     expect(exists("refs/heads/main")).toBe(true);
@@ -123,7 +126,7 @@ describe("pruneBranches (sandboxed)", () => {
     aged(["branch", "same-as-main", "main"]);
 
     const rep = report();
-    pruneBranches("main", "1d", false, false, rep);
+    pruneBranches(io, "main", "1d", LIVE, rep);
 
     expect(rep.branches).toBe(1);
     expect(exists("refs/heads/same-as-main")).toBe(false);
@@ -137,7 +140,7 @@ describe("pruneBranches (sandboxed)", () => {
     git(["checkout", "-q", "main"]);
 
     const rep = report();
-    pruneBranches("main", "1d", false, false, rep);
+    pruneBranches(io, "main", "1d", LIVE, rep);
 
     expect(rep.branches).toBe(1);
     expect(exists("refs/heads/pushed")).toBe(false);
@@ -151,7 +154,7 @@ describe("pruneBranches (sandboxed)", () => {
     git(["checkout", "-q", "main"]);
 
     const rep = report();
-    pruneBranches("main", "1d", false, false, rep);
+    pruneBranches(io, "main", "1d", LIVE, rep);
 
     expect(rep.branches).toBe(1);
     expect(exists("refs/heads/local-only")).toBe(false);
@@ -168,7 +171,7 @@ describe("pruneBranches (sandboxed)", () => {
     git(["update-ref", "--create-reflog", "refs/archive/collide", unrelated]);
 
     const rep = report();
-    pruneBranches("main", "1d", false, false, rep);
+    pruneBranches(io, "main", "1d", LIVE, rep);
 
     expect(rep.branches).toBe(1);
     expect(git(["rev-parse", "refs/archive/collide"])).toBe(unrelated);
@@ -181,7 +184,7 @@ describe("pruneBranches (sandboxed)", () => {
     git(["branch", "fresh", "main"]);
 
     const rep = report();
-    pruneBranches("main", "1d", false, false, rep);
+    pruneBranches(io, "main", "1d", LIVE, rep);
 
     expect(rep.branches).toBe(0);
     expect(exists("refs/heads/fresh")).toBe(true);
@@ -191,7 +194,7 @@ describe("pruneBranches (sandboxed)", () => {
     aged(["branch", "same-as-main", "main"]);
 
     const rep = report();
-    pruneBranches("", "1d", false, false, rep);
+    pruneBranches(io, "", "1d", LIVE, rep);
 
     expect(rep.branches).toBe(0);
     expect(exists("refs/heads/same-as-main")).toBe(true);
@@ -201,7 +204,7 @@ describe("pruneBranches (sandboxed)", () => {
     aged(["branch", "same-as-main", "main"]);
 
     const rep = report();
-    pruneBranches("main", "soon", false, false, rep);
+    pruneBranches(io, "main", "soon", LIVE, rep);
 
     expect(rep.branches).toBe(0);
     expect(exists("refs/heads/same-as-main")).toBe(true);
@@ -214,7 +217,7 @@ describe("pruneBranches (sandboxed)", () => {
     aged(["branch", "same-as-main", "main"]);
 
     const rep = report();
-    pruneBranches("main", "1d", true, true, rep);
+    pruneBranches(io, "main", "1d", { dryRun: true, explaining: true }, rep);
 
     expect(rep.branches).toBe(2);
     expect(exists("refs/heads/local-only")).toBe(true);
@@ -240,7 +243,7 @@ describe("archive expiry", () => {
     archiveWithReflogAt("archived", Math.floor(Date.now() / 1000) - age);
 
     const rep = report();
-    pruneBranches("main", "1d", false, false, rep);
+    pruneBranches(io, "main", "1d", LIVE, rep);
 
     expect(rep.branches).toBe(expires ? 1 : 0);
     expect(exists("refs/archive/archived")).toBe(!expires);
@@ -257,7 +260,7 @@ describe("archive expiry", () => {
     });
 
     const rep = report();
-    pruneBranches("main", "1d", false, false, rep);
+    pruneBranches(io, "main", "1d", LIVE, rep);
 
     expect(rep.branches).toBe(1);
     expect(exists("refs/heads/refreshed")).toBe(false);
@@ -268,7 +271,7 @@ describe("archive expiry", () => {
     git(["update-ref", "refs/archive/no-reflog", tip("main")]);
 
     const rep = report();
-    pruneBranches("main", "1d", false, false, rep);
+    pruneBranches(io, "main", "1d", LIVE, rep);
 
     expect(rep.branches).toBe(0);
     expect(exists("refs/archive/no-reflog")).toBe(true);

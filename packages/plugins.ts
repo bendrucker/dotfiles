@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type Io, NOT_RUN, type Result } from "#io";
 
 export interface InstalledPlugin {
   id: string;
@@ -54,10 +55,10 @@ export function claudePluginsDir(): string {
   return join(home(), ".claude", "plugins");
 }
 
-export function pluginInventory(): Inventory {
+export function pluginInventory(io: Io): Inventory {
   let rows: InstalledPlugin[];
   try {
-    rows = listedPlugins().concat(enabledPlugins());
+    rows = listedPlugins(io).concat(enabledPlugins());
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
@@ -68,11 +69,11 @@ interface ListedPlugin extends InstalledPlugin {
   scope: string;
 }
 
-function listedRows(): ListedPlugin[] {
-  const run = runList();
-  if (run.exitCode !== 0) throw new Error("claude plugin list failed");
+function listedRows(io: Io): ListedPlugin[] {
+  const run = runList(io);
+  if (run.status !== 0) throw new Error("claude plugin list failed");
 
-  const captured = run.stdout.toString().replace(TRAILING_NEWLINES, "");
+  const captured = run.stdout.replace(TRAILING_NEWLINES, "");
   // No output at all is a machine with no plugins. Anything else, whitespace
   // included, has to parse.
   const listed = captured === "" ? [] : parse(captured, "claude plugin list");
@@ -95,30 +96,21 @@ function listedRows(): ListedPlugin[] {
 
 // `claude plugin update` works at user scope, so a project's plugin is not this
 // job's to update.
-function listedPlugins(): InstalledPlugin[] {
-  return listedRows()
+function listedPlugins(io: Io): InstalledPlugin[] {
+  return listedRows(io)
     .filter((row) => row.scope === "user")
     .map(({ id, installPath }) => ({ id, installPath }));
 }
 
-function runList() {
-  try {
-    return Bun.spawnSync({
-      cmd: ["claude", "plugin", "list", "--json"],
-      // Handed over rather than inherited, so the CLI is resolved against $PATH
-      // as it stands at the call. An inherited environment resolves against the
-      // $PATH the process started with, and a spec that shadows the CLI reaches
-      // the real one.
-      env: process.env,
-      // A prompt-happy CLI handed the caller's stdin would swallow whatever the
-      // caller is iterating. Its own complaints say nothing the failure this
-      // raises does not.
-      stdin: "ignore",
-      stderr: "ignore",
-    });
-  } catch (error) {
-    throw new Error(`claude plugin list could not be run: ${describe(error)}`);
+function runList(io: Io): Result {
+  // A prompt-happy CLI handed the caller's stdin would swallow whatever the
+  // caller is iterating. Its stderr is piped so only a binary that could not
+  // run says anything, and that reason goes into the failure.
+  const run = io.read(["claude", "plugin", "list", "--json"], { stdin: "ignore", stderr: "pipe" });
+  if (run.status === NOT_RUN) {
+    throw new Error(`claude plugin list could not be run: ${run.stderr.trim()}`);
   }
+  return run;
 }
 
 // The absent case is the caller's to interpret. Enabling nothing and declaring
@@ -186,10 +178,10 @@ export function declaredPlugins(): Declaration {
 // declared-but-never-installed rows pluginInventory folds in. Those rows carry
 // no payload, so a caller deciding what to uninstall has nothing to do with
 // them.
-export function installedPlugins(): Inventory {
+export function installedPlugins(io: Io): Inventory {
   let rows: InstalledPlugin[];
   try {
-    rows = listedPlugins();
+    rows = listedPlugins(io);
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
@@ -330,10 +322,10 @@ function marketplaceManifest(marketplace: string): string {
 
 // At every scope: a project's plugin gets no user-scope key, so a prune reading
 // the declaration alone would remove its marketplace out from under it.
-export function pluginMarketplaces(): MarketplaceUse {
+export function pluginMarketplaces(io: Io): MarketplaceUse {
   let rows: ListedPlugin[];
   try {
-    rows = listedRows();
+    rows = listedRows(io);
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }

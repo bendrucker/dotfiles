@@ -13,6 +13,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
+import { type Io, readOk } from "#io";
 
 // Long enough that two machines will not collide, short enough to sit in a marker
 // line a human reads past.
@@ -25,22 +26,22 @@ const PLATFORM_UUID = /"IOPlatformUUID"\s*=\s*"([^"]+)"/;
 // a key derived from a hostname CI reassigns per runner is not a key.
 const MACHINE_ID = "/etc/machine-id";
 
-export function machineName(): string {
-  return capture(["scutil", "--get", "ComputerName"]) || shortHostname();
+export function machineName(io: Io): string {
+  return capture(io, ["scutil", "--get", "ComputerName"]) || shortHostname();
 }
 
 // Hashed rather than used raw so the marker it lands in stays short and carries
 // nothing about the hardware.
-export function machineKey(): string {
-  return createHash("sha1").update(machineIdentity()).digest("hex").slice(0, KEY_LENGTH);
+export function machineKey(io: Io): string {
+  return createHash("sha1").update(machineIdentity(io)).digest("hex").slice(0, KEY_LENGTH);
 }
 
-function machineIdentity(): string {
-  return platformUuid() || linuxMachineId() || shortHostname();
+function machineIdentity(io: Io): string {
+  return platformUuid(io) || linuxMachineId() || shortHostname();
 }
 
-function platformUuid(): string {
-  const ioreg = capture(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]);
+function platformUuid(io: Io): string {
+  const ioreg = capture(io, ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]);
   return ioreg.match(PLATFORM_UUID)?.[1] ?? "";
 }
 
@@ -56,18 +57,8 @@ function shortHostname(): string {
   return hostname().split(".")[0];
 }
 
-// Resolving the binary rather than reading process.platform is what lets a test
-// put its own scutil on PATH, and it answers the question the call actually
-// depends on. A command that is absent or fails yields the empty string, which
-// every caller here reads as "ask the next source".
-function capture(cmd: string[]): string {
-  const binary = Bun.which(cmd[0], { PATH: process.env.PATH });
-  if (!binary) return "";
-
-  const child = Bun.spawnSync({
-    cmd: [binary, ...cmd.slice(1)],
-    env: process.env,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  return child.exitCode === 0 ? child.stdout.toString().trim() : "";
+// An absent or failing command yields the empty string, which every caller here
+// reads as "ask the next source".
+function capture(io: Io, cmd: string[]): string {
+  return readOk(io, cmd, { stdin: "ignore", stderr: "ignore" })?.trim() ?? "";
 }

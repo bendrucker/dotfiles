@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,62 +15,39 @@ import {
   pluginSource,
   splitPluginId,
 } from "#plugins";
+import { type FakeIo, fakeIo } from "#harness";
 
 let sandbox: string;
 let plugins: string;
-const environment = { HOME: process.env.HOME, PATH: process.env.PATH };
+let io: FakeIo;
+const environment = { HOME: process.env.HOME };
 
-// `claude plugin list --json` is the only call the inventory makes, so a file the
-// example writes is the whole of what the CLI reports. CLAUDE_LIST_STATUS makes
-// the call fail without changing what it would have printed.
-const claudeStub = `#!/bin/sh
-case "$2" in
-  list)
-    [ -n "\${CLAUDE_LIST_STATUS:-}" ] && exit "$CLAUDE_LIST_STATUS"
-    cat "$HOME/plugin-list.json"
-    ;;
-esac
-exit 0
-`;
+// `claude plugin list --json` is the only call the inventory makes, so the one
+// answer an example scripts is the whole of what the CLI reports.
+const LIST = ["claude", "plugin", "list", "--json"];
 
 beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), "plugins-"));
   plugins = join(sandbox, ".claude", "plugins");
   mkdirSync(plugins, { recursive: true });
 
-  const stubs = join(sandbox, "stub");
-  mkdirSync(stubs);
-  writeFileSync(join(stubs, "claude"), claudeStub);
-  chmodSync(join(stubs, "claude"), 0o755);
-
   process.env.HOME = sandbox;
-  process.env.PATH = `${stubs}:${environment.PATH}`;
-  delete process.env.CLAUDE_LIST_STATUS;
-
-  writeList([{ id: "probe@stub", scope: "user", installPath: "" }]);
-
-  // A stub that failed to shadow the real CLI would enumerate the machine's own
-  // plugins, and every example would then be asserting against whatever this
-  // machine happens to have installed. Prove the shadowing before each one.
-  const probed = pluginInventory();
-  if (!probed.ok || probed.plugins.length !== 1 || probed.plugins[0].id !== "probe@stub") {
-    throw new Error(`claude resolved to ${JSON.stringify(probed)}`);
-  }
+  io = fakeIo();
   writeList([]);
 });
 
 afterEach(() => {
   process.env.HOME = environment.HOME;
-  process.env.PATH = environment.PATH;
-  delete process.env.CLAUDE_LIST_STATUS;
   rmSync(sandbox, { recursive: true, force: true });
 });
 
 function writeList(listed: unknown): void {
-  writeFileSync(
-    join(sandbox, "plugin-list.json"),
-    typeof listed === "string" ? listed : JSON.stringify(listed),
-  );
+  const stdout = typeof listed === "string" ? listed : JSON.stringify(listed);
+  io.answers.splice(0, io.answers.length, { argv: LIST, stdout });
+}
+
+function failList(): void {
+  io.answers.splice(0, io.answers.length, { argv: LIST, status: 1, stdout: "[]" });
 }
 
 function writeSettings(settings: unknown): void {
@@ -97,13 +74,13 @@ function orphan(path: string): string {
 }
 
 function inventory(): Record<string, string> {
-  const read = pluginInventory();
+  const read = pluginInventory(io);
   if (!read.ok) throw new Error(`inventory failed: ${read.reason}`);
   return Object.fromEntries(read.plugins.map((plugin) => [plugin.id, plugin.installPath]));
 }
 
 function ids(): string[] {
-  const read = pluginInventory();
+  const read = pluginInventory(io);
   if (!read.ok) throw new Error(`inventory failed: ${read.reason}`);
   return read.plugins.map((plugin) => plugin.id);
 }
@@ -261,14 +238,14 @@ describe("unreadable inventory", () => {
     {
       name: "the CLI exits non-zero",
       arrange: () => {
-        process.env.CLAUDE_LIST_STATUS = "1";
+        failList();
       },
       reason: "claude plugin list failed",
     },
     {
       name: "the CLI is not installed",
       arrange: () => {
-        process.env.PATH = join(sandbox, "empty");
+        io.answers.length = 0;
       },
       reason: "claude plugin list",
     },
@@ -324,7 +301,7 @@ describe("unreadable inventory", () => {
     },
   ])("fails when $name", ({ arrange, reason }) => {
     arrange();
-    const read = pluginInventory();
+    const read = pluginInventory(io);
     if (read.ok) throw new Error(`inventory succeeded with ${JSON.stringify(read.plugins)}`);
     expect(read.reason).toContain(reason);
   });
@@ -333,7 +310,7 @@ describe("unreadable inventory", () => {
 describe("readable but empty inventory", () => {
   test("treats no output from the CLI as no plugins", () => {
     writeList("");
-    expect(pluginInventory()).toEqual({ ok: true, plugins: [] });
+    expect(pluginInventory(io)).toEqual({ ok: true, plugins: [] });
   });
 
   test("succeeds when settings.json is absent", () => {
@@ -429,15 +406,15 @@ describe("installedPlugins", () => {
     writeList([record("installed@market", payload("market", "installed", "1.0.0"))]);
     writeSettings({ enabledPlugins: { "installed@market": true, "missing@market": true } });
 
-    const read = installedPlugins();
+    const read = installedPlugins(io);
     if (!read.ok) throw new Error(read.reason);
     expect(read.plugins.map((plugin) => plugin.id)).toEqual(["installed@market"]);
     expect(ids()).toEqual(["installed@market", "missing@market"]);
   });
 
   test("fails when the CLI could not be read", () => {
-    process.env.CLAUDE_LIST_STATUS = "1";
-    expect(installedPlugins().ok).toBe(false);
+    failList();
+    expect(installedPlugins(io).ok).toBe(false);
   });
 });
 
@@ -523,7 +500,7 @@ describe("localMarketplaces", () => {
 
 describe("pluginMarketplaces", () => {
   function used(): string[] {
-    const read = pluginMarketplaces();
+    const read = pluginMarketplaces(io);
     if (!read.ok) throw new Error(read.reason);
     return [...read.names].sort();
   }
@@ -545,8 +522,8 @@ describe("pluginMarketplaces", () => {
   });
 
   test("fails when the CLI could not be read", () => {
-    process.env.CLAUDE_LIST_STATUS = "1";
-    expect(pluginMarketplaces().ok).toBe(false);
+    failList();
+    expect(pluginMarketplaces(io).ok).toBe(false);
   });
 });
 

@@ -7,7 +7,6 @@
 
 import { readdirSync, renameSync, rmdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { log } from "#jobs/output";
 import { type Context, exists, isEmpty, linkTarget, ownedLink } from "#migrations/migration";
 
 export function up(context: Context): void {
@@ -28,5 +27,5 @@ export function up(context: Context): void {
   let aside = `${confd}.pre-link`;
   if (exists(aside)) aside = `${aside}-${Date.now()}`;
   renameSync(confd, aside);
-  log(context.out, "warn", `moved ${confd} to ${aside}; it held config this repo did not link`);
+  context.io.log("warn", `moved ${confd} to ${aside}; it held config this repo did not link`);
 }

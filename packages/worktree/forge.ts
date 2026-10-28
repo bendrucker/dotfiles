@@ -4,6 +4,9 @@
 // point supplies only its own two queries, so the two commands cannot drift
 // apart in how they sort, dedupe, or open what you picked.
 
+import { type Io, readOk } from "#io";
+import { QUIET } from "#worktree/state";
+
 export type Bucket = "mine" | "review";
 
 export interface Request {
@@ -91,14 +94,14 @@ export interface Picker {
 // The chosen request, or undefined when the picker was dismissed. Only the
 // first three columns are shown. The url and the checkout ride along so the
 // selection carries everything the switch needs.
-export function choose(requests: Request[], picker: Picker): Request | undefined {
+export function choose(io: Io, requests: Request[], picker: Picker): Request | undefined {
   const rows = new Map(requests.map((request) => [pickerRow(request), request]));
 
   // The rows go in over stdin and only stdout is read back. fzf opens the
   // terminal itself to draw on, which is why a piped stdin does not stop it
   // from being interactive.
-  const run = spawn({
-    cmd: [
+  const run = io.read(
+    [
       "fzf",
       "--delimiter=\t",
       "--with-nth=1,2,3",
@@ -106,66 +109,32 @@ export function choose(requests: Request[], picker: Picker): Request | undefined
       `--preview=${picker.preview}`,
       "--preview-window=right,60%,border-left",
     ],
-    stdin: Buffer.from([...rows.keys()].map((row) => `${row}\n`).join("")),
-    stderr: "inherit",
-  });
+    { stdin: { input: [...rows.keys()].map((row) => `${row}\n`).join("") }, stderr: "log" },
+  );
 
-  return rows.get(run?.stdout.toString().replace(/\n+$/, "") ?? "");
+  return rows.get(run.stdout.replace(/\n+$/, ""));
 }
 
 // clone-repo resolves the checkout, cloning it when this machine has never had
 // it, and `wt switch` opens a worktree for the branch behind the URL. The two
 // are one step because neither is useful here without the other.
-export function switchTo(request: Request, rest: string[]): number {
-  const checkout = capture(["clone-repo", request.checkout]);
+export function switchTo(io: Io, request: Request, rest: string[]): number {
+  const checkout = readOk(io, ["clone-repo", request.checkout], QUIET);
   if (checkout === undefined || checkout === "") {
-    log("error", `could not resolve a checkout for ${request.checkout}`);
+    io.log("error", `could not resolve a checkout for ${request.checkout}`);
     return 1;
   }
 
   // Inherited on all three streams: `wt switch -x claude` hands the terminal to
   // whatever it launches. The shell exec'd here, so this leaves one more
   // process in the tree than it used to, waiting on the same child.
-  const run = spawn({
-    cmd: ["wt", "-C", checkout, "switch", request.url, ...rest],
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  return run?.exitCode ?? 1;
+  return io.run(["wt", "-C", checkout, "switch", request.url, ...rest]);
 }
 
 // The first tool that is missing, so the caller can name it rather than let the
 // failure surface as an empty picker.
 export function missingTool(tools: string[]): string | undefined {
   return tools.find((tool) => Bun.which(tool, { PATH: process.env.PATH }) === null);
-}
-
-export function log(level: "error" | "warn" | "info", message: string): void {
-  spawn({ cmd: ["gum", "log", "--level", level, message], stdio: ["ignore", "ignore", "inherit"] });
-}
-
-// Undefined when the command could not be run or exited nonzero. A forge query
-// that failed is not an empty result set: reporting "none open" for a network
-// error would quietly show half of what is waiting on you.
-export function capture(cmd: string[]): string | undefined {
-  const run = spawn({ cmd, stdin: "ignore", stderr: "ignore" });
-  if (run === undefined || run.exitCode !== 0) return undefined;
-  return run.stdout.toString().replace(/\n+$/, "");
-}
-
-// Every spawn hands the environment over explicitly, because Bun otherwise
-// resolves a bare command name against the PATH it captured at startup and a
-// caller that adjusted PATH would reach a different binary than it meant to.
-//
-// A binary that is not installed throws where the shell printed `command not
-// found`. Undefined here rather than a raise: missingTool is what reports an
-// absent tool by name, and every other caller already handles an answer it
-// could not get.
-function spawn(options: Parameters<typeof Bun.spawnSync>[0]): Bun.SyncSubprocess | undefined {
-  try {
-    return Bun.spawnSync({ ...options, env: process.env });
-  } catch {
-    return undefined;
-  }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

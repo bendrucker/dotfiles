@@ -4,15 +4,15 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ignoresModes, writeStub } from "#harness";
+import { type FakeIo, fakeIo, ignoresModes, writeStub } from "#harness";
 import { fixture } from "#harness/fixture";
-import type { Capture, SpawnOptions } from "#jobs/output";
 import {
   claudeRepoHome,
   failureFields,
@@ -34,7 +34,7 @@ import {
 let sandbox: string;
 let stubs: string;
 let repo: string;
-let out: Capture;
+let out: FakeIo;
 
 const environment = {
   HOME: process.env.HOME,
@@ -44,64 +44,20 @@ const environment = {
   CLAUDE_REPO_HOME: process.env.CLAUDE_REPO_HOME,
 };
 
-// Every branch under test is a sequence of real git and CLI calls, so the
-// children run for real. What they write is kept rather than let through to the
-// test runner's own streams, which is also how an example reads the log the job
-// produced.
-function recording(): Capture {
-  const chunks: string[] = [];
-  const keep = (text: string): void => {
-    if (text !== "") chunks.push(text);
-  };
-
-  const spawn = (
-    cmd: string[],
-    options?: SpawnOptions,
-  ): { status: number; stdout: string; stderr: string } => {
-    try {
-      const run = Bun.spawnSync({
-        cmd,
-        cwd: options?.cwd,
-        env: options?.env ?? process.env,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      return {
-        status: run.exitCode,
-        stdout: run.stdout.toString(),
-        stderr: run.stderr.toString(),
-      };
-    } catch {
-      return { status: 127, stdout: "", stderr: "" };
-    }
-  };
-
-  return {
-    write(_fd, text) {
-      keep(text);
-    },
-    run(cmd, options) {
-      // Answer `gum log` in-process. The job logs a few lines per step, and a
-      // spawn for each is most of a test.
-      if (cmd[0] === "gum" && cmd[1] === "log") {
-        keep(`${cmd.at(-1)}\n`);
-        return 0;
-      }
-      const result = spawn(cmd, options);
-      keep(result.stdout);
-      keep(result.stderr);
-      return result.status;
-    },
-    read(cmd, options) {
-      const result = spawn(cmd, options);
-      keep(result.stderr);
-      return { status: result.status, stdout: result.stdout };
-    },
-    captured() {
-      return chunks.join("");
-    },
-  };
+// Every branch under test is a sequence of real git and CLI calls, so what the
+// fake has no answer for runs for real. The machine's identity, the to-do filing
+// and the banner reach outside the sandbox, so they are answered.
+function newIo(): FakeIo {
+  return fakeIo({
+    passthrough: true,
+    answers: [
+      // A to-do names the machine it was filed from and is keyed on the hardware.
+      { argv: ["scutil", "--get", "ComputerName"], stdout: "Testbox\n" },
+      { argv: ["ioreg"], stdout: '"IOPlatformUUID" = "0000-TEST"\n' },
+      { argv: ["open"] },
+      { argv: ["osascript"] },
+    ],
+  });
 }
 
 function readLog(name: string): string {
@@ -112,8 +68,14 @@ function readLog(name: string): string {
   }
 }
 
+// A to-do is filed by handing a things:/// URL to `open`, so the call is the
+// whole observation of whether a latch let one through.
+function todos(): string[] {
+  return out.calls.filter((call) => call.argv[0] === "open").map((call) => call.argv.at(-1) ?? "");
+}
+
 function todoCount(): number {
-  return readLog("todos").split("\n").filter(Boolean).length;
+  return todos().length;
 }
 
 function run(cmd: string[]): void {
@@ -326,7 +288,7 @@ beforeEach(() => {
   // A refused plugin update pauses before its retry, and the pause is real time
   // with nothing to assert about it.
   spyOn(Bun, "sleepSync").mockImplementation(() => {});
-  sandbox = mkdtempSync(join(tmpdir(), "claude-sync-"));
+  sandbox = realpathSync(mkdtempSync(join(tmpdir(), "claude-sync-")));
   stubs = join(sandbox, "stub");
   repo = join(sandbox, "repo");
   mkdirSync(stubs);
@@ -360,14 +322,6 @@ beforeEach(() => {
       "exit 0",
     ].join("\n"),
   );
-  // A to-do is filed by handing a things:/// URL to `open`, so a logged line is
-  // the whole observation of whether a latch let one through.
-  writeStub(join(stubs, "open"), `printf '%s\\n' "$2" >>"${join(sandbox, "todos")}"`);
-  writeStub(join(stubs, "osascript"), `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
-  // A to-do names the machine it was filed from and is keyed on the hardware, so
-  // both answers come from a stub rather than from whichever machine runs this.
-  writeStub(join(stubs, "scutil"), `printf '%s\\n' 'Testbox'`);
-  writeStub(join(stubs, "ioreg"), `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST`);
   // herdr writes through the link, or replaces it with HERDR_REPLACES. It writes
   // before it can fail, so a failed run still leaves an entry for the discard to
   // take back. moshi-hook replaces the link, as the real one does.
@@ -422,7 +376,7 @@ beforeEach(() => {
     throw new Error(`claude resolved to ${probe.stdout.toString()}`);
   }
 
-  out = recording();
+  out = newIo();
 });
 
 afterEach(() => {
@@ -936,22 +890,22 @@ describe("failureFingerprint", () => {
 
 describe("repoRevision", () => {
   test("reads the short HEAD", () => {
-    expect(repoRevision(repo)).toBe(git("rev-parse", "--short", "HEAD").trim());
+    expect(repoRevision(out, repo)).toBe(git("rev-parse", "--short", "HEAD").trim());
   });
 
   test("reads unknown where there is no repo", () => {
-    expect(repoRevision(join(sandbox, "missing"))).toBe("unknown");
+    expect(repoRevision(out, join(sandbox, "missing"))).toBe("unknown");
   });
 });
 
 describe("versionMeta", () => {
   test("names the installed Claude version in a single bullet", () => {
-    expect(versionMeta()).toBe("- **Claude:** claude 1.2.3");
+    expect(versionMeta(out)).toBe("- **Claude:** claude 1.2.3");
   });
 
   test("says unknown where the CLI cannot answer", () => {
     writeStub(join(stubs, "claude"), "exit 1");
-    expect(versionMeta()).toBe("- **Claude:** unknown");
+    expect(versionMeta(out)).toBe("- **Claude:** unknown");
   });
 });
 
@@ -1156,7 +1110,7 @@ describe("main", () => {
 
     expect(main(out)).toBe(1);
     expect(todoCount()).toBe(1);
-    expect(readLog("todos")).toContain("Claude%20sync%20failed");
+    expect(todos().join("\n")).toContain("Claude%20sync%20failed");
   });
 
   // Nothing else runs the whole of a clean night, and the branch it ends on has

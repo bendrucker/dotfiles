@@ -10,6 +10,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdir, rename, stat } from "node:fs/promises";
+import { type Io, NOT_RUN, streamIo } from "#io";
 
 const USAGE = [
   "usage: clone-repo <repo|owner/repo|url>",
@@ -83,27 +84,27 @@ function isName(segment: string): boolean {
 // flags, each handled by a flat early return, so splitting on it would trade
 // one readable sequence for a dispatch table and a set of one-use helpers.
 // oxlint-disable-next-line complexity, max-statements
-async function main(argv: string[]): Promise<number> {
+async function main(io: Io, argv: string[]): Promise<number> {
   if (argv.includes("--help") || argv.includes("-h")) {
-    process.stdout.write(`${USAGE}\n`);
+    io.write(1, `${USAGE}\n`);
     return 0;
   }
 
   if (argv.includes("--refresh-owners")) {
-    const owners = await fetchOwners();
+    const owners = await fetchOwners(io);
     if (owners.length > 0) await writeCache(OWNERS_CACHE, owners);
     return 0;
   }
 
   if (argv.includes("--refresh-repos")) {
-    const repos = await fetchRepos();
+    const repos = await fetchRepos(io);
     if (repos.length > 0) await writeCache(REPOS_CACHE, repos);
     return 0;
   }
 
   if (argv.includes("--list")) {
-    for (const name of await getRepos()) {
-      console.log(name);
+    for (const name of await getRepos(io)) {
+      io.write(1, `${name}\n`);
     }
     return 0;
   }
@@ -113,8 +114,8 @@ async function main(argv: string[]): Promise<number> {
 
   if (completions) {
     if (!input.includes("/")) {
-      for (const owner of await getOwners()) {
-        console.log(owner);
+      for (const owner of await getOwners(io)) {
+        io.write(1, `${owner}\n`);
       }
       return 0;
     }
@@ -127,10 +128,10 @@ async function main(argv: string[]): Promise<number> {
       if (error instanceof Failure) return 0;
       throw error;
     }
-    const org = await resolveOwner(target.org);
+    const org = await resolveOwner(io, target.org);
     if (org === undefined) return 0;
-    for (const name of await listRepos(org, target.repo, target.host)) {
-      console.log(name);
+    for (const name of await listRepos(io, org, target.repo, target.host)) {
+      io.write(1, `${name}\n`);
     }
     return 0;
   }
@@ -145,7 +146,7 @@ async function main(argv: string[]): Promise<number> {
   const projects = process.env.PROJECTS;
   if (!projects) throw new Failure("PROJECTS is not set, so there is nowhere to clone into");
 
-  const org = await resolveOwner(target.org);
+  const org = await resolveOwner(io, target.org);
   if (org === undefined) {
     throw new Failure("gh could not report your login, so a bare repo has no owner; check `gh auth status`");
   }
@@ -153,7 +154,7 @@ async function main(argv: string[]): Promise<number> {
   const checkout = join(projects, org, repo);
 
   if (await exists(checkout)) {
-    console.log(checkout);
+    io.write(1, `${checkout}\n`);
     return 0;
   }
 
@@ -165,22 +166,31 @@ async function main(argv: string[]): Promise<number> {
         // git_protocol it was configured with. A bare path lets it pick.
         ["glab", "repo", "clone", `${org}/${repo}`, checkout]
       : ["gh", "repo", "clone", host ? input : `${org}/${repo}`, checkout];
-  const status = await exec(clone);
+  const status = io.run(clone, { stdin: "inherit" });
+  if (status === NOT_RUN) throw new Failure(`${clone[0]} is not installed`, NOT_RUN);
   if (status !== 0) throw new Failure(`${clone[0]} could not clone ${clone[3]}`, status);
 
   // Callers read the checkout path off stdout, so the linker only gets stderr. A
   // clone without an overlay is still a usable clone, so nothing here is fatal.
-  await spawn(["claude-overlay", "link", checkout], { stdout: "ignore", stderr: "inherit" })?.exited;
+  io.read(["claude-overlay", "link", checkout], { stdin: "ignore" });
 
-  console.log(checkout);
+  io.write(1, `${checkout}\n`);
   return 0;
 }
 
-async function listRepos(org: string, query: string, host?: string): Promise<string[]> {
+// Its stderr is dropped: every caller is reading a login or a listing, most of
+// them mid-completion, where a rate-limit notice would land in the middle of the
+// word being typed. Undefined when the command failed or is not installed.
+async function output(io: Io, cmd: string[]): Promise<string | undefined> {
+  const result = await io.readAsync(cmd, { stdin: "ignore", stderr: "ignore" });
+  return result.status === 0 ? result.stdout : undefined;
+}
+
+async function listRepos(io: Io, org: string, query: string, host?: string): Promise<string[]> {
   switch (host) {
     case "gitlab.com": {
       const search = query ? `&search=${query}` : "";
-      const result = await output([
+      const result = await output(io, [
         "glab",
         "api",
         `users/${org}/projects?per_page=20${search}`,
@@ -192,25 +202,25 @@ async function listRepos(org: string, query: string, host?: string): Promise<str
     default: {
       const args = ["search", "repos", "--owner", org, "--json", "fullName", "--jq", ".[].fullName", "--limit", "20"];
       if (query) args.splice(2, 0, query);
-      return lines((await output(["gh", ...args])) ?? "");
+      return lines((await output(io, ["gh", ...args])) ?? "");
     }
   }
 }
 
 // Undefined when @me cannot be resolved, which is a gh that is missing or not
 // signed in. Completion stays quiet about that and the clone path names it.
-async function resolveOwner(org: string): Promise<string | undefined> {
+async function resolveOwner(io: Io, org: string): Promise<string | undefined> {
   if (org !== "@me") return org;
   const cached = await readCache(OWNERS_CACHE);
   if (cached && cached.length > 0) return cached[0];
-  const login = (await output(["gh", "api", "user", "--jq", ".login"]))?.trim();
+  const login = (await output(io, ["gh", "api", "user", "--jq", ".login"]))?.trim();
   return login || undefined;
 }
 
-async function getOwners(): Promise<string[]> {
+async function getOwners(io: Io): Promise<string[]> {
   const cached = await readCache(OWNERS_CACHE);
   if (!cached) {
-    const owners = await fetchOwners();
+    const owners = await fetchOwners(io);
     if (owners.length > 0) await writeCache(OWNERS_CACHE, owners);
     return ["@me", ...owners];
   }
@@ -219,50 +229,53 @@ async function getOwners(): Promise<string[]> {
   return ["@me", ...cached];
 }
 
-async function getRepos(): Promise<string[]> {
+async function getRepos(io: Io): Promise<string[]> {
   const cached = await readCache(REPOS_CACHE);
   if (cached && cached.length > 0) {
     const { mtimeMs } = await Bun.file(REPOS_CACHE).stat();
     if (Date.now() - mtimeMs > REPOS_TTL_MS) spawnRefresh("--refresh-repos");
     return cached;
   }
-  const repos = await fetchRepos();
+  const repos = await fetchRepos(io);
   if (repos.length > 0) await writeCache(REPOS_CACHE, repos);
   return repos;
 }
 
+// Detached, so the completion that noticed a stale cache does not wait for the
+// refresh: an Io child is waited on, and this one must outlive the caller.
 function spawnRefresh(flag: string): void {
-  spawn([process.execPath, import.meta.path, flag], {
-    stdin: "ignore",
-    stdout: "ignore",
-    stderr: "ignore",
-  })?.unref();
+  try {
+    Bun.spawn([process.execPath, import.meta.path, flag], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    }).unref();
+  } catch {}
 }
 
 // Empty when either call fails, so a rate-limited org listing cannot overwrite
 // a complete cache with one that has lost every org until the next refresh. An
 // account with no orgs answers with an empty body, which is a success.
-async function fetchOwners(): Promise<string[]> {
+async function fetchOwners(io: Io): Promise<string[]> {
   const [login, orgs] = await Promise.all([
-    output(["gh", "api", "user", "--jq", ".login"]),
-    output(["gh", "api", "user/orgs", "--jq", ".[].login"]),
+    output(io, ["gh", "api", "user", "--jq", ".login"]),
+    output(io, ["gh", "api", "user/orgs", "--jq", ".[].login"]),
   ]);
   if (!login?.trim() || orgs === undefined) return [];
   return [login.trim(), ...lines(orgs)];
 }
 
-async function fetchRepos(): Promise<string[]> {
+async function fetchRepos(io: Io): Promise<string[]> {
   const cachedOwners = await readCache(OWNERS_CACHE);
   const orgs = cachedOwners ? cachedOwners.slice(1) : [];
   const tsv = ".[] | [.nameWithOwner, .pushedAt] | @tsv";
-  const sources = [
-    output(["gh", "repo", "list", "--json", "nameWithOwner,pushedAt", "--limit", "200", "--jq", tsv]),
-    output(["gh", "api", "user/starred", "--paginate", "--jq", ".[] | [.full_name, .pushed_at] | @tsv"]),
+  const results = await Promise.all([
+    output(io, ["gh", "repo", "list", "--json", "nameWithOwner,pushedAt", "--limit", "200", "--jq", tsv]),
+    output(io, ["gh", "api", "user/starred", "--paginate", "--jq", ".[] | [.full_name, .pushed_at] | @tsv"]),
     ...orgs.map((owner) =>
-      output(["gh", "repo", "list", owner, "--json", "nameWithOwner,pushedAt", "--limit", "100", "--jq", tsv]),
+      output(io, ["gh", "repo", "list", owner, "--json", "nameWithOwner,pushedAt", "--limit", "100", "--jq", tsv]),
     ),
-  ];
-  const results = await Promise.all(sources);
+  ]);
   const pushedAt = new Map<string, string>();
   for (const result of results) {
     for (const line of lines(result ?? "")) {
@@ -274,35 +287,6 @@ async function fetchRepos(): Promise<string[]> {
   return [...pushedAt.entries()]
     .sort(([, a], [, b]) => (a < b ? 1 : a > b ? -1 : 0))
     .map(([name]) => name);
-}
-
-// A command that is not installed throws where a shell would print `command not
-// found`. Undefined lets each caller say what that means for it.
-function spawn(cmd: string[], options: Parameters<typeof Bun.spawn>[1]): Bun.Subprocess | undefined {
-  try {
-    return Bun.spawn(cmd, options);
-  } catch {
-    return undefined;
-  }
-}
-
-// Run a command on the terminal and report how it ended. gh and glab explain
-// their own failures on stderr, so the caller adds one line naming what failed
-// rather than a stack trace behind it.
-async function exec(cmd: string[]): Promise<number> {
-  const proc = spawn(cmd, { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-  if (proc === undefined) throw new Failure(`${cmd[0]} is not installed`, 127);
-  return await proc.exited;
-}
-
-// stdout of a command that succeeded, or undefined. Its stderr is dropped: every
-// caller is reading a login or a listing, most of them mid-completion, where a
-// rate-limit notice would land in the middle of the word being typed.
-async function output(cmd: string[]): Promise<string | undefined> {
-  const proc = spawn(cmd, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
-  if (proc === undefined) return undefined;
-  const [text, status] = await Promise.all([new Response(proc.stdout as ReadableStream).text(), proc.exited]);
-  return status === 0 ? text : undefined;
 }
 
 function lines(text: string): string[] {
@@ -336,11 +320,12 @@ async function readCache(path: string): Promise<string[] | null> {
 }
 
 if (import.meta.main) {
+  const io = streamIo();
   try {
-    process.exit(await main(process.argv.slice(2)));
+    process.exit(await main(io, process.argv.slice(2)));
   } catch (error) {
     if (!(error instanceof Failure)) throw error;
-    process.stderr.write(`clone-repo: ${error.message}\n${error.usage ? `${USAGE}\n` : ""}`);
+    io.write(2, `clone-repo: ${error.message}\n${error.usage ? `${USAGE}\n` : ""}`);
     process.exit(error.status);
   }
 }

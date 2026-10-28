@@ -11,6 +11,7 @@
     "#harness": "./packages/harness/index.ts",
     "#harness/*": "./packages/harness/*.ts",
     "#history-secrets": "./packages/history-secrets.ts",
+    "#io": "./packages/io.ts",
     "#jobs/*": "./packages/jobs/*.ts",
     "#migrations/*": "./packages/migrations/*.ts",
     "#worktree/*": "./packages/worktree/*.ts",

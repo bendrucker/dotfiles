@@ -18,7 +18,7 @@ import { accessSync, constants, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { reviewDirty, syncNotify } from "#jobs/sync-gate";
-import { log, type Output, streamOutput } from "#jobs/output";
+import { type Io, streamIo } from "#io";
 import { notify } from "#jobs/report";
 
 const TITLE = "Dotfiles Sync";
@@ -27,14 +27,14 @@ const TITLE = "Dotfiles Sync";
 // through the resolved path rather than the invoked one.
 const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
 
-export function run(args: string[], out: Output): number {
+export function run(args: string[], io: Io): number {
   // $HOME is read before the account's own home directory, because that is what
   // the shell expanded and what a spec re-points between examples.
   const home = process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles");
 
-  if (!reviewDirty(out, home, TITLE)) return 1;
+  if (!reviewDirty(io, home, TITLE)) return 1;
 
-  const sync = syncNotify(out, home, TITLE);
+  const sync = syncNotify(io, home, TITLE);
   // The failure has already notified, and nothing after this ran.
   if (sync.status === "failed") return 1;
 
@@ -45,7 +45,7 @@ export function run(args: string[], out: Output): number {
   // early there would strand them at the wrong revision for good. The update
   // itself costs a shell wrapper and a handful of git processes, so it runs only
   // when some submodule is missing or off its pinned revision.
-  const submodules = submodulesPinned(out, home) ? 0 : out.run([
+  const submodules = submodulesPinned(io, home) ? 0 : io.run([
     SPIN,
     "--show-error",
     "--title",
@@ -59,29 +59,29 @@ export function run(args: string[], out: Output): number {
     "--init",
   ]);
   if (submodules !== 0) {
-    log(out, "error", "Submodule update failed");
-    notify(TITLE, "Failed: submodules");
+    io.log("error", "Submodule update failed");
+    notify(io, TITLE, "Failed: submodules");
     return 1;
   }
 
   if (sync.status !== "current") {
-    log(out, "info", `Successfully updated to ${sync.rev}`);
-    notify(TITLE, `Updated to ${sync.rev}`, "Glass");
+    io.log("info", `Successfully updated to ${sync.rev}`);
+    notify(io, TITLE, `Updated to ${sync.rev}`, "Glass");
   }
 
   // The symlink refresh is opt-in; the launchd job skips it. It runs on a
   // current checkout too, since a machine-local change like ~/.zshenv.local can
   // need a converge with nothing to pull. Unknown arguments have never meant
   // anything here.
-  if (args[0] === "--bootstrap") return bootstrap(out, home);
+  if (args[0] === "--bootstrap") return bootstrap(io, home);
   if (sync.status === "current") return 0;
 
   // The symlinks didn't move, but the files they point at just did, so anything
   // holding the old config is now behind. A reload that had trouble is a
   // warning: the sync it follows has already succeeded, and stale in-memory
   // config resolves itself the next time the program starts.
-  if (out.run([join(home, "bin", "dotfiles-reload")]) !== 0) {
-    log(out, "warn", "some config reloads had issues");
+  if (io.run([join(home, "bin", "dotfiles-reload")]) !== 0) {
+    io.log("warn", "some config reloads had issues");
   }
   return 0;
 }
@@ -92,14 +92,14 @@ const GITLINK = /^160000 ([0-9a-f]+) 0\t(.+)$/;
 // True when every submodule the index pins has that commit checked out. An
 // uninitialized submodule is an empty directory, where rev-parse answers with
 // the superproject's HEAD, which never matches a pin.
-function submodulesPinned(out: Output, home: string): boolean {
-  const staged = out.read(["git", "-C", home, "ls-files", "--stage", "-z"]);
+function submodulesPinned(io: Io, home: string): boolean {
+  const staged = io.read(["git", "-C", home, "ls-files", "--stage", "-z"]);
   if (staged.status !== 0) return false;
 
   return staged.stdout.split("\0").every((entry) => {
     const gitlink = GITLINK.exec(entry);
     if (gitlink === null) return true;
-    const head = out.read(["git", "-C", join(home, gitlink[2] ?? ""), "rev-parse", "HEAD"]);
+    const head = io.read(["git", "-C", join(home, gitlink[2] ?? ""), "rev-parse", "HEAD"]);
     return head.status === 0 && head.stdout.trim() === gitlink[1];
   });
 }
@@ -107,15 +107,15 @@ function submodulesPinned(out: Output, home: string): boolean {
 // The shell fell through to the reload when the bootstrap script was not
 // executable, so a caller that asked for a symlink refresh got a config reload
 // and was told it had succeeded.
-function bootstrap(out: Output, home: string): number {
+function bootstrap(io: Io, home: string): number {
   const script = join(home, "scripts", "bootstrap");
   if (!isExecutable(script)) {
-    log(out, "error", `${script} is not executable - cannot bootstrap`);
+    io.log("error", `${script} is not executable - cannot bootstrap`);
     return 1;
   }
 
-  log(out, "info", "Running bootstrap...");
-  return out.run([script, "--no-prompt"]);
+  io.log("info", "Running bootstrap...");
+  return io.run([script, "--no-prompt"]);
 }
 
 function isExecutable(path: string): boolean {
@@ -128,5 +128,5 @@ function isExecutable(path: string): boolean {
 }
 
 if (import.meta.main) {
-  process.exit(run(process.argv.slice(2), streamOutput()));
+  process.exit(run(process.argv.slice(2), streamIo()));
 }

@@ -3,7 +3,8 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findOpenTodo, markerQuery, thingsDatabase, thingsUrl } from "#jobs/things";
+import { fakeIo } from "#harness";
+import { addTodo, authToken, editTodo, findOpenTodo, markerQuery, thingsDatabase, thingsUrl } from "#jobs/things";
 
 let sandbox: string;
 const database = process.env.THINGS_DATABASE;
@@ -144,5 +145,53 @@ describe("thingsUrl", () => {
 
   test("leaves out a field with nothing in it", () => {
     expect(thingsUrl("update", { id: "abc", title: "" })).toBe("things:///update?id=abc");
+  });
+});
+
+describe("authToken", () => {
+  test.each<{ name: string; status?: number; stdout?: string; expected: string | undefined }>([
+    { name: "the keychain holds one", stdout: "token-abc\n", expected: "token-abc" },
+    { name: "the keychain has no such item", status: 44, expected: undefined },
+    { name: "the item is empty", stdout: "\n", expected: undefined },
+    { name: "security is not installed", status: 127, expected: undefined },
+  ])("is $expected where $name", ({ status, stdout, expected }) => {
+    const io = fakeIo({ answers: [{ argv: ["security"], status, stdout }] });
+    expect(authToken(io)).toBe(expected);
+    expect(io.calls[0].options).toEqual({ stdin: "ignore", stderr: "ignore" });
+  });
+});
+
+describe("addTodo", () => {
+  const todo = { title: "T", notes: "N", when: "anytime", tags: "dotfiles" };
+
+  test("hands the URL to open and returns open's status", () => {
+    const io = fakeIo({ answers: [{ argv: ["open"], status: 3, stderr: "refused\n" }] });
+    expect(addTodo(io, todo)).toBe(3);
+    expect(io.calls[0].argv).toEqual(["open", "-g", thingsUrl("add", todo)]);
+    expect(io.calls[0].options).toEqual({ stdin: "ignore", stderr: "pipe" });
+    expect(io.captured()).toBe("refused\n");
+  });
+
+  test("is 127 where open is not installed, and says nothing", () => {
+    const io = fakeIo({ answers: [{ argv: ["open"], status: 127, stderr: "open: not found\n" }] });
+    expect(addTodo(io, todo)).toBe(127);
+    expect(io.captured()).toBe("");
+  });
+});
+
+describe("editTodo", () => {
+  test("is refused without the token, and opens nothing", () => {
+    const io = fakeIo({ answers: [{ argv: ["security"], status: 44 }] });
+    expect(editTodo(io, { id: "abc" })).toBe(false);
+    expect(io.calls.map((call) => call.argv[0])).toEqual(["security"]);
+  });
+
+  test.each<{ name: string; status: number; expected: boolean }>([
+    { name: "open accepts it", status: 0, expected: true },
+    { name: "open refuses it", status: 1, expected: false },
+  ])("is $expected where $name", ({ status, expected }) => {
+    const io = fakeIo({ answers: [{ argv: ["security"], stdout: "token-abc\n" }, { argv: ["open"], status }] });
+    expect(editTodo(io, { id: "abc", appendNotes: "more" })).toBe(expected);
+    expect(io.calls[1].argv[2]).toContain("auth-token=token-abc");
   });
 });

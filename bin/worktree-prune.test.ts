@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeStub } from "#harness";
+import { streamIo } from "#io";
 import {
   auditRows,
   capturedLog,
@@ -424,7 +425,7 @@ describe("the prune pass", () => {
       audit: { stdout: LEAK },
     });
 
-    expect(await main()).toBe(1);
+    expect(await main(streamIo())).toBe(1);
     // The audit re-derives the survivor set this prune should have produced, so
     // a prune that did not finish must not be audited. The sweep has no such
     // dependency, and a prune that died partway through a removal is one of the
@@ -445,7 +446,7 @@ describe("the prune pass", () => {
   test("leaves the audit latches untouched when the prune fails", async () => {
     stubWtAll({ prune: { status: 1 } });
 
-    expect(await main()).toBe(1);
+    expect(await main(streamIo())).toBe(1);
     expect(latch("worktree-prune")).toMatch(/^failed [0-9a-f]{12}$/);
     expect(latch("wt-prune-audit-failed")).toBeUndefined();
     expect(latch("wt-prune-drift")).toBeUndefined();
@@ -468,7 +469,7 @@ describe("the prune pass", () => {
   // A status alone would leave the nightly failure with no stated reason, so
   // the unrunnable path reaches the to-do as text.
   test("reports a wt-all it cannot run", async () => {
-    expect(await main()).toBe(1);
+    expect(await main(streamIo())).toBe(1);
 
     const [todo] = todos();
     expect(todo.title).toBe(`Nightly worktree prune failed on ${MACHINE}`);
@@ -483,7 +484,7 @@ describe("the prune pass", () => {
     mkdirSync(join(dotfiles, "bin"), { recursive: true });
     stubWtAll({ audit: { stdout: LEAK } });
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(calls()).toEqual(["prune --before\tunset", "orphans\t1", "prune-audit\t1"]);
     expect(todos()[0].title).toBe(`Worktree prune leaked 1 worktree on ${MACHINE}`);
   });
@@ -491,7 +492,7 @@ describe("the prune pass", () => {
   test("clears the prune latch on a green prune", async () => {
     stubWtAll({});
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(latch("worktree-prune")).toBe("ok");
     expect(todos()).toEqual([]);
   });
@@ -499,7 +500,7 @@ describe("the prune pass", () => {
   test("logs each step of a clean run", async () => {
     stubWtAll({});
 
-    await main();
+    await main(streamIo());
     expect(logLines()).toEqual([
       "info\tRunning worktree prune",
       "info\tWorktree prune completed successfully",
@@ -514,14 +515,14 @@ describe("the audit pass", () => {
   test("asks for raw rows, and only for the audit", async () => {
     stubWtAll({});
 
-    await main();
+    await main(streamIo());
     expect(calls()).toEqual(["prune --before\tunset", "orphans\t1", "prune-audit\t1"]);
   });
 
   test("clears the audit latch when the audit runs clean", async () => {
     stubWtAll({});
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(latch("wt-prune-audit-failed")).toBe("ok");
     expect(latch("wt-prune-drift")).toBe("ok");
   });
@@ -533,7 +534,7 @@ describe("the audit pass", () => {
       audit: { stdout: LEAK, stderr: "some/repo:\n  fatal: not a git repository\n", status: 1 },
     });
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     const [failed, drift] = todos();
     expect(todos()).toHaveLength(2);
     expect(failed.title).toBe(`Worktree prune audit could not run on ${MACHINE}`);
@@ -548,7 +549,7 @@ describe("the audit pass", () => {
   test("keeps the audit's own diagnostics out of the findings", async () => {
     stubWtAll({ audit: { stderr: "repo\tbranch\treason\t/path\n", status: 1 } });
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(todos()).toHaveLength(1);
     expect(todos()[0].title).toBe(`Worktree prune audit could not run on ${MACHINE}`);
     expect(logLines()).toContain("info\tNo prune drift");
@@ -557,7 +558,7 @@ describe("the audit pass", () => {
   test("files the unparsable output without touching the drift latch", async () => {
     stubWtAll({ audit: { stdout: "some/repo unexpected free-form line\n" } });
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     const [todo] = todos();
     expect(todos()).toHaveLength(1);
     expect(todo.title).toBe(`Worktree prune audit output could not be parsed on ${MACHINE}`);
@@ -576,7 +577,7 @@ describe("the audit pass", () => {
   test("files each condition when the audit both fails and prints nothing parsable", async () => {
     stubWtAll({ audit: { stdout: "free-form\n", stderr: "boom\n", status: 1 } });
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(todos().map((todo) => todo.title)).toEqual([
       `Worktree prune audit could not run on ${MACHINE}`,
       `Worktree prune audit output could not be parsed on ${MACHINE}`,
@@ -589,7 +590,7 @@ describe("the sweep pass", () => {
   test("asks for raw rows and files nothing when every orphan cleared", async () => {
     stubWtAll({ sweep: { stdout: SWEPT } });
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(calls()).toContain("orphans\t1");
     expect(todos()).toEqual([]);
     expect(latch("wt-orphan-sweep-failed")).toBe("ok");
@@ -606,7 +607,7 @@ describe("the sweep pass", () => {
   test("files the orphans it could not remove, with a command per path", async () => {
     stubWtAll({ sweep: { stdout: SWEPT + STUCK } });
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     const [todo] = todos();
     expect(todos()).toHaveLength(1);
     expect(todo.title).toBe(
@@ -623,22 +624,22 @@ describe("the sweep pass", () => {
   // the rest of the set churns around it.
   test("stays quiet on a second night with the same orphan standing", async () => {
     stubWtAll({ sweep: { stdout: STUCK } });
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(todos()).toHaveLength(1);
 
     rmSync(todosFile);
     stubWtAll({ sweep: { stdout: STUCK } });
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(todos()).toEqual([]);
   });
 
   test("files again when a different orphan gets stuck", async () => {
     stubWtAll({ sweep: { stdout: STUCK } });
-    await main();
+    await main(streamIo());
 
     rmSync(todosFile);
     stubWtAll({ sweep: { stdout: STUCK + SECOND_STUCK } });
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(todos()).toHaveLength(1);
     expect(todos()[0].notes).toContain("**New:** /wt/agent-3");
   });
@@ -650,7 +651,7 @@ describe("the sweep pass", () => {
       sweep: { stdout: STUCK, stderr: "some/repo:\n  fatal: not a git repository\n", status: 1 },
     });
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     const [failed, stuck] = todos();
     expect(todos()).toHaveLength(2);
     expect(failed.title).toBe(`Orphan sweep could not run on ${MACHINE}`);
@@ -668,7 +669,7 @@ describe("the sweep pass", () => {
   test("sweeps on a night the prune failed", async () => {
     stubWtAll({ prune: { status: 1 }, sweep: { stdout: STUCK } });
 
-    expect(await main()).toBe(1);
+    expect(await main(streamIo())).toBe(1);
     expect(calls()).toEqual(["prune --before\tunset", "orphans\t1"]);
     expect(todos().map((todo) => todo.title)).toEqual([
       `Nightly worktree prune failed on ${MACHINE}`,
@@ -682,7 +683,7 @@ describe("the sweep pass", () => {
     const kept = "bendrucker/claude\tkept\tstranded by another repo\t/wt/x\n";
     stubWtAll({ sweep: { stdout: kept } });
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(todos()).toEqual([]);
   });
 });
@@ -700,7 +701,7 @@ describe("a filing Things refused", () => {
     stubWtAll(stubs);
     stub("open", "exit 7\n");
 
-    expect(await main()).toBe(7);
+    expect(await main(streamIo())).toBe(7);
   });
 });
 
@@ -708,7 +709,7 @@ describe("drift", () => {
   test("names each leaked worktree and still exits 0", async () => {
     stubWtAll({ audit: { stdout: LEAK + SECOND_LEAK } });
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     const [todo] = todos();
     expect(todo.title).toBe(`Worktree prune leaked 2 worktrees on ${MACHINE}`);
     expect(todo.notes).toContain("## Leaked worktrees");
@@ -724,14 +725,14 @@ describe("drift", () => {
     process.env.PROJECTS = "/elsewhere/src";
     stubWtAll({ audit: { stdout: LEAK } });
 
-    await main();
+    await main(streamIo());
     expect(todos()[0].notes).toContain("cd '/elsewhere/src/bendrucker/dotfiles'");
   });
 
   test("defaults the discovery root to $HOME/src", async () => {
     stubWtAll({ audit: { stdout: LEAK } });
 
-    await main();
+    await main(streamIo());
     expect(todos()[0].notes).toContain(`cd '${join(sandbox, "src", "bendrucker/dotfiles")}'`);
   });
 
@@ -742,7 +743,7 @@ describe("drift", () => {
     process.env.WT_PRUNE_MIN_AGE = "3d";
     stubWtAll({ audit: { stdout: LEAK } });
 
-    await main();
+    await main(streamIo());
     expect(todos()[0].notes).toContain("wt step prune --dry-run --min-age '3d'");
     expect(calls()).toEqual(["prune --before\tunset", "orphans\t1", "prune-audit\t1"]);
   });
@@ -750,14 +751,14 @@ describe("drift", () => {
   test("defaults the min-age guard to a day", async () => {
     stubWtAll({ audit: { stdout: LEAK } });
 
-    await main();
+    await main(streamIo());
     expect(todos()[0].notes).toContain("wt step prune --dry-run --min-age '1d'");
   });
 
   test("clears the drift latch when nothing leaks", async () => {
     stubWtAll({});
 
-    expect(await main()).toBe(0);
+    expect(await main(streamIo())).toBe(0);
     expect(latch("wt-prune-drift")).toBe("ok");
     expect(todos()).toEqual([]);
   });
@@ -767,17 +768,17 @@ describe("drift", () => {
   test("stays quiet while the same worktrees leak", async () => {
     stubWtAll({ audit: { stdout: LEAK } });
 
-    await main();
-    await main();
+    await main(streamIo());
+    await main(streamIo());
     expect(todos()).toHaveLength(1);
   });
 
   test("files again when another worktree leaks", async () => {
     stubWtAll({ audit: { stdout: LEAK } });
-    await main();
+    await main(streamIo());
 
     stubWtAll({ audit: { stdout: LEAK + SECOND_LEAK } });
-    await main();
+    await main(streamIo());
 
     expect(todos().map((todo) => todo.title)).toEqual([
       `Worktree prune leaked 1 worktree on ${MACHINE}`,
@@ -821,7 +822,7 @@ describe("the revision", () => {
     const revision = commit(dotfiles);
     stubWtAll({ prune: { status: 1 } });
 
-    await main();
+    await main(streamIo());
     expect(todos()[0].notes).toContain(`- **Revision:** ${revision}`);
   });
 
@@ -829,14 +830,14 @@ describe("the revision", () => {
     useRealGit();
     stubWtAll({ prune: { status: 1 } });
 
-    await main();
+    await main(streamIo());
     expect(todos()[0].notes).toContain("- **Revision:** unknown");
   });
 
   test("reports an unknown revision where git is absent", async () => {
     stubWtAll({ prune: { status: 1 } });
 
-    await main();
+    await main(streamIo());
     expect(todos()[0].notes).toContain("- **Revision:** unknown");
   });
 });

@@ -8,6 +8,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { type Io, streamIo } from "#io";
 
 const USAGE = [
   "Usage: ci-timings fetch [--days N] OWNER/REPO...",
@@ -37,40 +38,41 @@ select repo, job, step, count(*) as n,
 from steps where conclusion = 'success'
 group by all having seconds[2] >= 10 order by seconds[2] desc limit 25;`;
 
-async function gh(path: string, jq: string): Promise<Record<string, unknown>[]> {
-  const proc = Bun.spawn(["gh", "api", "--paginate", path, "--jq", jq], { stderr: "inherit" });
-  const out = await new Response(proc.stdout).text();
-  if ((await proc.exited) !== 0) throw new Error(`gh api ${path} failed`);
-  return out.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+async function gh(io: Io, path: string, jq: string): Promise<Record<string, unknown>[]> {
+  const result = await io.readAsync(["gh", "api", "--paginate", path, "--jq", jq], { stdin: "ignore" });
+  if (result.status !== 0) throw new Error(`gh api ${path} failed`);
+  return result.stdout.split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }
 
-async function fetchJobs(repo: string, from: string): Promise<Record<string, unknown>[]> {
-  const runs = await gh(`repos/${repo}/actions/runs?per_page=100&status=completed&created=>=${from}`, ".workflow_runs[]");
+async function fetchJobs(io: Io, repo: string, from: string): Promise<Record<string, unknown>[]> {
+  const runs = await gh(
+    io,
+    `repos/${repo}/actions/runs?per_page=100&status=completed&created=>=${from}`,
+    ".workflow_runs[]",
+  );
   const jobs = [];
   // Eight runs at a time keeps gh's process count and the API's rate in check.
   for (let i = 0; i < runs.length; i += 8) {
     const batch = runs.slice(i, i + 8).map(async (run) =>
-      (await gh(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100&filter=all`, ".jobs[]")).map(
+      (await gh(io, `repos/${repo}/actions/runs/${run.id}/jobs?per_page=100&filter=all`, ".jobs[]")).map(
         (job) => ({ ...job, repo, event: run.event }),
       ),
     );
     jobs.push(...(await Promise.all(batch)).flat());
   }
-  console.error(`${repo}: ${runs.length} runs`);
+  io.write(2, `${repo}: ${runs.length} runs\n`);
   return jobs;
 }
 
-function duckdb(db: string, sql: string, stdin?: string): void {
+function duckdb(io: Io, db: string, sql: string, stdin?: string): void {
   mkdirSync(dirname(db), { recursive: true });
-  const proc = Bun.spawnSync(["duckdb", "-box", db, "-c", sql], {
-    stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
-    stdout: "inherit",
-    stderr: "inherit",
+  const status = io.run(["duckdb", "-box", db, "-c", sql], {
+    stdin: stdin === undefined ? "ignore" : { input: stdin },
   });
-  if (proc.exitCode !== 0) throw new Error("duckdb failed");
+  if (status !== 0) throw new Error("duckdb failed");
 }
 
-export async function main(argv: string[]): Promise<number> {
+export async function main(io: Io, argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
@@ -83,23 +85,26 @@ export async function main(argv: string[]): Promise<number> {
   const days = Number(values.days);
   if (command === "fetch" && repos.length > 0 && Number.isInteger(days) && days > 0) {
     const from = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-    const jobs = (await Promise.all(repos.map((repo) => fetchJobs(repo, from)))).flat();
-    duckdb(values.db, LOAD, jobs.map((job) => JSON.stringify(job)).join("\n"));
+    const jobs = (await Promise.all(repos.map((repo) => fetchJobs(io, repo, from)))).flat();
+    duckdb(io, values.db, LOAD, jobs.map((job) => JSON.stringify(job)).join("\n"));
     return 0;
   }
   if (command === "report") {
-    duckdb(values.db, REPORT);
+    duckdb(io, values.db, REPORT);
     return 0;
   }
-  console.error(USAGE);
+  io.write(2, `${USAGE}\n`);
   return 2;
 }
 
 if (import.meta.main) {
-  process.exit(
-    await main(process.argv.slice(2)).catch((error: Error) => {
-      console.error(`ci-timings: ${error.message}`);
-      return 1;
-    }),
-  );
+  const io = streamIo();
+  let status: number;
+  try {
+    status = await main(io, process.argv.slice(2));
+  } catch (error) {
+    io.write(2, `ci-timings: ${error instanceof Error ? error.message : String(error)}\n`);
+    status = 1;
+  }
+  process.exit(status);
 }

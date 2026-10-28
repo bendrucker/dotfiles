@@ -9,7 +9,6 @@
 
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { log } from "#jobs/output";
 import { type Context, exists, removeCask } from "#migrations/migration";
 
 export const platform = "darwin";
@@ -35,10 +34,10 @@ function removeApplication(context: Context, name: string): void {
 
   try {
     rmSync(app, { recursive: true, force: true });
-    log(context.out, "info", `removed ${app}`);
+    context.io.log("info", `removed ${app}`);
   } catch (error) {
     if (!denied(error)) throw error;
-    log(context.out, "warn", `${app} needs root to remove: sudo rm -rf ${quote(app)}`);
+    context.io.log("warn", `${app} needs root to remove: sudo rm -rf ${quote(app)}`);
   }
 }
 

@@ -6,7 +6,6 @@
 
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { log } from "#jobs/output";
 import { type Context, exists, ownedLink, removeCask } from "#migrations/migration";
 
 export const platform = "darwin";
@@ -31,12 +30,12 @@ function retireAgents(context: Context): void {
   const domain = `gui/${process.getuid?.() ?? 0}`;
 
   for (const label of AGENTS) {
-    context.out.read(["launchctl", "bootout", `${domain}/${label}`]);
+    context.io.read(["launchctl", "bootout", `${domain}/${label}`]);
 
     const plist = join(context.home, "Library", "LaunchAgents", `${label}.plist`);
     if (!exists(plist)) continue;
     rmSync(plist);
-    log(context.out, "info", `retired ${label}`);
+    context.io.log("info", `retired ${label}`);
   }
 }
 
@@ -56,9 +55,9 @@ function removeImporter(context: Context): void {
   const uv = Bun.which("uv", { PATH: process.env.PATH });
   if (uv === null) return;
 
-  if (context.out.read([uv, "tool", "uninstall", "aw-import-screentime"]).status === 0) {
-    log(context.out, "info", "uninstalled aw-import-screentime");
+  if (context.io.read([uv, "tool", "uninstall", "aw-import-screentime"]).status === 0) {
+    context.io.log("info", "uninstalled aw-import-screentime");
   } else {
-    log(context.out, "warn", "could not uninstall aw-import-screentime: uv tool uninstall aw-import-screentime");
+    context.io.log("warn", "could not uninstall aw-import-screentime: uv tool uninstall aw-import-screentime");
   }
 }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { fakeIo, sandbox, type Sandbox } from "#harness";
 import { exists, type Context } from "#migrations/migration";
 import { up } from "./202609110001-remove-nvim-tmux-navigator";
 
@@ -25,11 +25,7 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [box.mkdir("installed")],
     platform: "darwin",
-    out: {
-      write() {},
-      run: () => 0,
-      read: () => ({ status: 1, stdout: "" }),
-    },
+    io: fakeIo(),
   };
 }
 

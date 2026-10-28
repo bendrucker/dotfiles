@@ -1,19 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { sandbox, type Sandbox } from "#harness";
-import type { CommandResult } from "#jobs/output";
+import { type Answer, type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { up } from "./202610220001-herdr-direct-install";
 
 let box: Sandbox;
-let ran: string[];
-let replies: Record<string, CommandResult>;
+let io: FakeIo;
+let replies: Record<string, Omit<Answer, "argv">>;
 
 beforeEach(() => {
   box = sandbox("herdr-direct-install");
   box.mkdir("home");
   box.stub("brew", "exit 0");
-  ran = [];
   replies = {};
 });
 
@@ -31,7 +29,19 @@ function key(cmd: string[]): string {
     .join(" ");
 }
 
+// `replies` answers by key, with brew resolved to the stub withBrew puts on PATH.
+// The commands the migration runs succeed, and anything else it reads fails.
 function context(platform: Context["platform"] = "darwin"): Context {
+  const brew = box.path("bin", "brew");
+  const argv = (words: string[]) => words.map((word) => (word === "brew" ? brew : word));
+  io = fakeIo({
+    answers: [
+      ...Object.entries(replies).map(([words, reply]) => ({ argv: argv(words.split(" ")), ...reply })),
+      { argv: ["launchctl", "bootout"] },
+      { argv: [brew, "uninstall"] },
+      { argv: [], status: 1 },
+    ],
+  });
   return {
     root: box.dir,
     home: box.path("home"),
@@ -40,15 +50,12 @@ function context(platform: Context["platform"] = "darwin"): Context {
     applications: box.path("Applications"),
     installed: [box.path("dotfiles")],
     platform,
-    out: {
-      write() {},
-      run(cmd) {
-        ran.push(key(cmd));
-        return 0;
-      },
-      read: (cmd) => replies[key(cmd)] ?? { status: 1, stdout: "" },
-    },
+    io,
   };
+}
+
+function ran(): string[] {
+  return io.calls.filter((call) => call.method === "run").map((call) => key(call.argv));
 }
 
 function withBrew(body: () => void): void {
@@ -73,7 +80,7 @@ describe("herdr-direct-install", () => {
 
     withBrew(() => up(context()));
 
-    expect(ran).toContain("launchctl bootout");
+    expect(ran()).toContain("launchctl bootout");
     expect(exists(plist())).toBe(false);
   });
 
@@ -82,7 +89,7 @@ describe("herdr-direct-install", () => {
     replies["launchctl print"] = { status: 0, stdout: "\tstate = running\n\tpid = 4242\n" };
 
     expect(() => withBrew(() => up(context()))).toThrow(/still runs under launchd/);
-    expect(ran).not.toContain("launchctl bootout");
+    expect(ran()).not.toContain("launchctl bootout");
     expect(exists(plist())).toBe(true);
   });
 
@@ -90,7 +97,7 @@ describe("herdr-direct-install", () => {
     brewHerdr();
 
     expect(() => withBrew(() => up(context()))).toThrow(/not installed yet/);
-    expect(ran).not.toContain("brew uninstall");
+    expect(ran()).not.toContain("brew uninstall");
   });
 
   test("keeps Homebrew's herdr while a server runs from it", () => {
@@ -99,7 +106,7 @@ describe("herdr-direct-install", () => {
     replies["ps -A"] = { status: 0, stdout: "/opt/homebrew/bin/herdr server\n/bin/zsh -l\n" };
 
     expect(() => withBrew(() => up(context()))).toThrow(/running from Homebrew's binary/);
-    expect(ran).not.toContain("brew uninstall");
+    expect(ran()).not.toContain("brew uninstall");
   });
 
   test("uninstalls Homebrew's herdr once the server runs the direct install", () => {
@@ -109,12 +116,12 @@ describe("herdr-direct-install", () => {
 
     withBrew(() => up(context()));
 
-    expect(ran).toContain("brew uninstall");
+    expect(ran()).toContain("brew uninstall");
   });
 
   test("touches no launchd job on Linux", () => {
     withBrew(() => up(context("linux")));
 
-    expect(ran).toEqual([]);
+    expect(ran()).toEqual([]);
   });
 });

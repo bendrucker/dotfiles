@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { sandbox, type Sandbox } from "#harness";
+import { join } from "node:path";
+import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { FORMULAE, up } from "./202610080002-pin-cli-tools-in-mise";
 
 let box: Sandbox;
-let commands: string[][];
+let io: FakeIo;
 const path = process.env.PATH;
 
 beforeEach(() => {
   box = sandbox("pin-cli-tools-in-mise");
-  commands = [];
   box.stub("brew", "exit 0");
   process.env.PATH = `${box.bin}:${path ?? ""}`;
 });
@@ -19,7 +19,12 @@ afterEach(() => {
   box.remove();
 });
 
-function context(uninstall: (name: string) => number = () => 0): Context {
+// Every brew command succeeds except an uninstall of a formula in `refused`.
+function context(refused: string[] = []): Context {
+  const brew = join(box.bin, "brew");
+  io = fakeIo({
+    answers: [...refused.map((name) => ({ argv: [brew, "uninstall", name], status: 1 })), { argv: [] }],
+  });
   return {
     root: box.dir,
     home: box.mkdir("home"),
@@ -28,19 +33,12 @@ function context(uninstall: (name: string) => number = () => 0): Context {
     applications: box.path("Applications"),
     installed: [box.mkdir("installed")],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        commands.push(cmd);
-        return cmd[1] === "uninstall" ? uninstall(cmd.at(-1) ?? "") : 0;
-      },
-      read: () => ({ status: 0, stdout: "" }),
-    },
+    io,
   };
 }
 
 function uninstalled(): string[] {
-  return commands.filter((cmd) => cmd[1] === "uninstall").map((cmd) => cmd.at(-1) ?? "");
+  return io.calls.filter((call) => call.argv[1] === "uninstall").map((call) => call.argv.at(-1) ?? "");
 }
 
 describe("pin-cli-tools-in-mise", () => {
@@ -55,10 +53,10 @@ describe("pin-cli-tools-in-mise", () => {
   });
 
   test("keeps a formula brew refuses to remove and carries on with the rest", () => {
-    up(context((name) => (name === "jq" ? 1 : 0)));
+    up(context(["jq"]));
 
     expect(uninstalled()).toEqual(FORMULAE);
-    const warnings = commands.filter((cmd) => cmd[0] === "gum" && cmd.includes("warn"));
-    expect(warnings.map((cmd) => cmd.at(-1))).toEqual(["kept jq: brew uninstall jq failed"]);
+    const warnings = io.logs.filter((line) => line.level === "warn");
+    expect(warnings.map((line) => line.message)).toEqual(["kept jq: brew uninstall jq failed"]);
   });
 });

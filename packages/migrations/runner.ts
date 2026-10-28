@@ -17,7 +17,6 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { log } from "#jobs/output";
 import { contains, type Context, linkTarget, type Migration, missing, type Platform } from "#migrations/migration";
 
 export const MIGRATIONS_DIR = "migrations";
@@ -202,14 +201,14 @@ export async function run(options: RunOptions): Promise<number> {
   try {
     return await migrate(options);
   } catch (error) {
-    log(options.context.out, "error", message(error));
+    options.context.io.log("error", message(error));
     return 1;
   }
 }
 
 async function migrate(options: RunOptions): Promise<number> {
   const context = options.context;
-  const { home, out } = context;
+  const { home, io } = context;
   const file = options.version;
 
   const found = discover(options.root);
@@ -219,7 +218,7 @@ async function migrate(options: RunOptions): Promise<number> {
     if (!previouslyInstalled(home, context.config, context.installed)) {
       const latest = latestVersion(found);
       stampVersion(file, latest, current);
-      log(out, "info", `fresh machine, stamping migrations at ${latest}`);
+      io.log("info", `fresh machine, stamping migrations at ${latest}`);
       return 0;
     }
     // Installed before, but from a tree that predates the runner. Everything
@@ -235,7 +234,7 @@ async function migrate(options: RunOptions): Promise<number> {
     try {
       migration = await load(entry);
     } catch (error) {
-      log(out, "error", `migration ${entry.version} ${entry.name}: ${message(error)}`);
+      io.log("error", `migration ${entry.version} ${entry.name}: ${message(error)}`);
       return 1;
     }
 
@@ -247,14 +246,14 @@ async function migrate(options: RunOptions): Promise<number> {
       continue;
     }
 
-    log(out, "info", `running migration ${entry.version} ${entry.name}`);
+    io.log("info", `running migration ${entry.version} ${entry.name}`);
     try {
       await migration.up(context);
     } catch (error) {
       // The stamp stays where it was, so the next install retries this one and
       // the ones behind it. Stopping rather than carrying on keeps the order a
       // promise: a later migration may assume this one finished.
-      log(out, "error", `migration ${entry.version} ${entry.name} failed: ${message(error)}`);
+      io.log("error", `migration ${entry.version} ${entry.name} failed: ${message(error)}`);
       return 1;
     }
 

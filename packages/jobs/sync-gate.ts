@@ -23,7 +23,7 @@ import {
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { log, type Output } from "#jobs/output";
+import { type Io, NOT_RUN } from "#io";
 import { notify } from "#jobs/report";
 import { clearLatch, readLatch, writeLatch } from "#jobs/state";
 import { canonicalJson } from "#jobs/json";
@@ -34,7 +34,8 @@ const REPO = dirname(dirname(dirname(realpathSync(import.meta.path))));
 const SPIN = join(REPO, "bin", "spin");
 const GIT_SYNC = join(REPO, "bin", "git-sync");
 
-const NOT_RUN = 127;
+// The child's stdout is the answer, so its stdin and complaints are not wanted.
+const QUIET = { stdin: "ignore", stderr: "ignore" } as const;
 
 // The three statuses bin/git-sync sync reports, which are git_sync's own.
 const SYNC_UPDATED = 0;
@@ -60,7 +61,7 @@ export type SyncResult =
 // Run the sync and map its result. Callers own their own success messages and
 // post-update side effects, so only the failure notifies here.
 export function syncNotify(
-  out: Output,
+  out: Io,
   repoDir: string,
   title: string,
   branch = "",
@@ -73,18 +74,18 @@ export function syncNotify(
   if (sync.status === SYNC_UPDATED) return { status: "updated", rev: stripNewlines(sync.stdout) };
   if (sync.status === SYNC_CURRENT) return { status: "current" };
 
-  notify(title, "Failed: could not sync");
+  notify(out, title, "Failed: could not sync");
   return { status: "failed" };
 }
 
 // Print the diff of tracked changes against HEAD, then every untracked file as a
 // new-file diff. JSON is normalized so cosmetic key reordering does not show as
 // noise; everything else falls back to plain `git diff HEAD`.
-export function renderDiff(repoDir: string): string {
+export function renderDiff(out: Io, repoDir: string): string {
   const rendered: string[] = [];
 
-  for (const file of lines(gitQuiet(["diff", "HEAD", "--name-only"], repoDir).stdout)) {
-    const json = file.endsWith(".json") ? jsonDiff(repoDir, file) : undefined;
+  for (const file of lines(gitQuiet(out, ["diff", "HEAD", "--name-only"], repoDir).stdout)) {
+    const json = file.endsWith(".json") ? jsonDiff(out, repoDir, file) : undefined;
     if (json !== undefined) {
       rendered.push(json);
       continue;
@@ -92,15 +93,15 @@ export function renderDiff(repoDir: string): string {
     // A path that is no longer a regular file is a deletion, and the gate lists
     // it as blocking. Rendering nothing for it leaves the report naming a path
     // with no evidence attached, so it takes the plain diff like anything else.
-    rendered.push(gitQuiet(["diff", "HEAD", "--", file], repoDir).stdout);
+    rendered.push(gitQuiet(out, ["diff", "HEAD", "--", file], repoDir).stdout);
   }
 
   // `git diff HEAD` never names an untracked file, while the gate calls one
   // dirty, so a tree dirty only in untracked paths rendered an empty diff -
   // which was all the report of that block had to go on.
-  for (const file of lines(gitQuiet(["ls-files", "--others", "--exclude-standard"], repoDir).stdout)) {
+  for (const file of lines(gitQuiet(out, ["ls-files", "--others", "--exclude-standard"], repoDir).stdout)) {
     if (!isFile(join(repoDir, file))) continue;
-    rendered.push(gitQuiet(["diff", "--no-index", "--", "/dev/null", file], repoDir).stdout);
+    rendered.push(gitQuiet(out, ["diff", "--no-index", "--", "/dev/null", file], repoDir).stdout);
   }
 
   return rendered.join("");
@@ -108,12 +109,12 @@ export function renderDiff(repoDir: string): string {
 
 // Everything `git add -A` would capture: the tracked diff against HEAD, plus the
 // name and contents of every untracked file.
-export function* capturableContent(repoDir: string): Generator<string> {
-  yield gitQuiet(["diff", "HEAD"], repoDir).stdout;
+export function* capturableContent(out: Io, repoDir: string): Generator<string> {
+  yield gitQuiet(out, ["diff", "HEAD"], repoDir).stdout;
 
   // Untracked files are staged too, so they are as publishable as the tracked
   // diff. Their names carry as much as their contents.
-  for (const file of lines(gitQuiet(["ls-files", "--others", "--exclude-standard"], repoDir).stdout)) {
+  for (const file of lines(gitQuiet(out, ["ls-files", "--others", "--exclude-standard"], repoDir).stdout)) {
     yield `${file}\n`;
     const path = join(repoDir, file);
     if (isFile(path)) yield* fileChunks(path);
@@ -158,35 +159,29 @@ function* fileChunks(path: string): Generator<string> {
 // scutil covers the ones macOS keeps separately: an app asking Cocoa for the
 // computer's name gets ComputerName, which a user can set to something the POSIX
 // hostname does not contain. Duplicates are harmless, so they are not filtered.
-export function hostNames(): string[] {
-  const names: string[] = [];
+export function hostNames(out: Io): string[] {
+  // Not guarded by a platform check: a Linux run that has neither command
+  // cannot run it, and a command that cannot run contributes nothing.
+  const names = [
+    ...lines(out.read(["hostname", "-s"], QUIET).stdout),
+    ...lines(out.read(["hostname"], QUIET).stdout),
+  ];
 
-  // Resolved rather than guarded by a platform check, so a test can put its own
-  // on PATH and a Linux run that has neither contributes nothing.
-  const hostname = Bun.which("hostname", { PATH: process.env.PATH });
-  if (hostname !== null) {
-    names.push(...lines(commandOutput([hostname, "-s"])));
-    names.push(...lines(commandOutput([hostname])));
-  }
-
-  const scutil = Bun.which("scutil", { PATH: process.env.PATH });
-  if (scutil !== null) {
-    for (const key of ["ComputerName", "LocalHostName", "HostName"]) {
-      names.push(...lines(commandOutput([scutil, "--get", key])));
-    }
+  for (const key of ["ComputerName", "LocalHostName", "HostName"]) {
+    names.push(...lines(out.read(["scutil", "--get", key], QUIET).stdout));
   }
 
   // A blank name would match every line and refuse every sync.
   return names.map((name) => name.trim()).filter((name) => name !== "");
 }
 
-export function changesNameHost(repoDir: string): boolean {
-  const names = hostNames();
+export function changesNameHost(out: Io, repoDir: string): boolean {
+  const names = hostNames(out);
   // No names at all - a machine with neither hostname nor scutil - is no
   // refusal. There is nothing here to leak.
   if (names.length === 0) return false;
 
-  for (const chunk of capturableContent(repoDir)) {
+  for (const chunk of capturableContent(out, repoDir)) {
     if (names.some((name) => wholeWord(name).test(chunk))) return true;
   }
   return false;
@@ -196,26 +191,26 @@ export function changesNameHost(repoDir: string): boolean {
 // draft PR, then return the base branch to a clean state so the caller can
 // fast-forward it. Refuses before touching the tree when what it would capture
 // names this machine, and again once it is staged.
-export function openPr(out: Output, repoDir: string, title: string): boolean {
+export function openPr(out: Io, repoDir: string, title: string): boolean {
   // The repos this serves are public deploy checkouts, and what lands in them
   // without being written by hand is whatever an app decided to configure,
   // which can include the machine's own name in a hook command. Refuse the
   // whole sync, leaving the tree for inspection.
-  if (changesNameHost(repoDir)) return refuseNamedHost(out, title);
+  if (changesNameHost(out, repoDir)) return refuseNamedHost(out, title);
 
-  const symbolic = stripNewlines(gitQuiet(["symbolic-ref", "--short", "HEAD"], repoDir).stdout);
-  const base = symbolic === "" ? defaultBranch(repoDir) : symbolic;
+  const symbolic = stripNewlines(gitQuiet(out, ["symbolic-ref", "--short", "HEAD"], repoDir).stdout);
+  const base = symbolic === "" ? defaultBranch(out, repoDir) : symbolic;
   const branch = `sync/local-changes-${branchTimestamp()}`;
 
-  log(out, "info", `Opening a PR for local changes on ${branch}...`);
+  out.log("info", `Opening a PR for local changes on ${branch}...`);
 
   if (out.run(["git", "-C", repoDir, "checkout", "-b", branch]) !== 0) {
-    log(out, "error", `Failed to create ${branch}`);
+    out.log("error", `Failed to create ${branch}`);
     return false;
   }
 
   if (out.run(["git", "-C", repoDir, "add", "-A"]) !== 0) {
-    log(out, "error", "Failed to stage local changes");
+    out.log("error", "Failed to stage local changes");
     out.run(["git", "-C", repoDir, "checkout", base]);
     return false;
   }
@@ -223,11 +218,11 @@ export function openPr(out: Output, repoDir: string, title: string): boolean {
   // Checked again now that the tree is staged. An app writes on its own
   // schedule, so a write that landed after the first check would otherwise ride
   // out on this commit.
-  if (changesNameHost(repoDir)) {
+  if (changesNameHost(out, repoDir)) {
     refuseNamedHost(out, title);
     // Unstaged, not discarded: the working tree is left as it was for
     // inspection.
-    gitQuiet(["reset"], repoDir);
+    gitQuiet(out, ["reset"], repoDir);
     out.run(["git", "-C", repoDir, "checkout", base]);
     return false;
   }
@@ -237,7 +232,7 @@ export function openPr(out: Output, repoDir: string, title: string): boolean {
   // already dates the run. It goes unsigned because the signing key lives in
   // Secretive, which refuses to sign while the Mac is locked.
   if (out.run(["git", "-C", repoDir, "commit", "--no-gpg-sign", "-m", "sync: local changes captured"]) !== 0) {
-    log(out, "error", "Failed to commit local changes");
+    out.log("error", "Failed to commit local changes");
     out.run(["git", "-C", repoDir, "checkout", base]);
     return false;
   }
@@ -257,59 +252,66 @@ export function openPr(out: Output, repoDir: string, title: string): boolean {
     branch,
   ]);
   if (pushed !== 0) {
-    log(out, "error", `Failed to push ${branch} - change is committed locally on ${branch}`);
+    out.log("error", `Failed to push ${branch} - change is committed locally on ${branch}`);
     out.run(["git", "-C", repoDir, "checkout", base]);
     return false;
   }
 
   // Both streams, so gh's own complaint reaches the error log.
-  const pr = mergedOutput(["gh", "pr", "create", "--draft", "--base", base, "--head", branch, "--fill"], repoDir);
+  const created = out.read(["gh", "pr", "create", "--draft", "--base", base, "--head", branch, "--fill"], {
+    cwd: repoDir,
+    stdin: "ignore",
+    stderr: "pipe",
+  });
+  // A gh that could not start leaves the tail empty, as the latch fingerprint expects.
+  const output = created.status === NOT_RUN ? "" : stripNewlines(`${created.stdout}${created.stderr}`);
+  const pr = { status: created.status, output };
   if (pr.status !== 0) {
-    log(out, "error", `Failed to create PR: ${pr.output}`);
+    out.log("error", `Failed to create PR: ${pr.output}`);
     out.run(["git", "-C", repoDir, "checkout", base]);
     return false;
   }
 
   if (out.run(["git", "-C", repoDir, "checkout", base]) !== 0) {
-    log(out, "error", `Failed to return to ${base} - change is safe on ${branch}`);
+    out.log("error", `Failed to return to ${base} - change is safe on ${branch}`);
     return false;
   }
 
-  log(out, "info", `PR opened: ${pr.output}`);
-  notify(title, "Opened PR for local changes");
+  out.log("info", `PR opened: ${pr.output}`);
+  notify(out, title, "Opened PR for local changes");
   return true;
 }
 
 // Refresh origin/<branch> once, so the gate can read the incoming .gitignore.
 // Best effort: bin/git-sync retries properly a moment later, and a failure here
 // only costs the gate the incoming rules.
-export function reviewFetch(out: Output, repoDir: string, branch: string): number {
+export function reviewFetch(out: Io, repoDir: string, branch: string): number {
   // The shell moved origin's fetch URL to HTTPS here, because an SSH fetch dies
   // on "agent refused operation" while the Mac is locked. bin/git-sync exposes
   // no such subcommand, so the same rewrite reaches this one fetch as an
   // insteadOf rule in its environment instead. The persistent rewrite still
   // happens in bin/git-sync sync, once the gate lets the sync through.
   return out.run([SPIN, "--title", `Fetching origin/${branch}`, "--", "git", "-C", repoDir, "fetch", "origin", branch], {
-    env: { ...process.env, ...httpsEnv() },
+    env: { ...process.env, ...httpsEnv(out) },
   });
 }
 
 // The paths that still block a sync, one per line. Tracked changes always block.
 // Untracked paths are judged against origin/<branch>'s .gitignore when that
 // resolves; with no branch, or no such file, the local rules decide.
-export function reviewBlocking(repoDir: string, branch = ""): string[] {
+export function reviewBlocking(out: Io, repoDir: string, branch = ""): string[] {
   // .gitignore has no say over a path git already tracks, so a tracked change
   // blocks whatever is arriving. The porcelain XY-plus-space prefix is fixed
   // width, and a rename arrives as the single entry `old -> new`.
-  const tracked = lines(gitQuiet(["status", "--porcelain", "--untracked-files=no"], repoDir).stdout).map(
+  const tracked = lines(gitQuiet(out, ["status", "--porcelain", "--untracked-files=no"], repoDir).stdout).map(
     (line) => line.slice(3),
   );
 
-  const exclude = incomingExclude(repoDir, branch);
+  const exclude = incomingExclude(out, repoDir, branch);
   const others = ["ls-files", "--others", "--exclude-standard"];
   if (exclude !== "") others.push(`--exclude-from=${exclude}`);
 
-  const untracked = lines(gitQuiet(others, repoDir).stdout);
+  const untracked = lines(gitQuiet(out, others, repoDir).stdout);
   if (exclude !== "") rmSync(exclude, { force: true });
 
   return tracked.concat(untracked);
@@ -321,13 +323,13 @@ export function reviewBlocking(repoDir: string, branch = ""): string[] {
 // scheduling. The git dir holds it: writable wherever the pull this gate guards
 // would be, and private to the repo. The pid keeps a hand run overlapping the
 // 3am job from deleting the file the other is about to read.
-function incomingExclude(repoDir: string, branch: string): string {
+function incomingExclude(out: Io, repoDir: string, branch: string): string {
   if (branch === "") return "";
 
-  const gitDir = stripNewlines(gitQuiet(["rev-parse", "--absolute-git-dir"], repoDir).stdout);
+  const gitDir = stripNewlines(gitQuiet(out, ["rev-parse", "--absolute-git-dir"], repoDir).stdout);
   if (gitDir === "") return "";
 
-  const incoming = gitQuiet(["show", `origin/${branch}:.gitignore`], repoDir);
+  const incoming = gitQuiet(out, ["show", `origin/${branch}:.gitignore`], repoDir);
   if (incoming.status !== 0) return "";
 
   const path = join(gitDir, `incoming-exclude-${process.pid}`);
@@ -342,7 +344,7 @@ function incomingExclude(repoDir: string, branch: string): string {
 // Returns true to continue syncing (nothing blocking, discard, or PR), false to
 // abort.
 export function reviewDirty(
-  out: Output,
+  out: Io,
   repoDir: string,
   title: string,
   options: ReviewOptions = {},
@@ -352,8 +354,8 @@ export function reviewDirty(
   return syncing;
 }
 
-function review(out: Output, repoDir: string, title: string, options: ReviewOptions): boolean {
-  const tree = stripNewlines(gitQuiet(["status", "--porcelain"], repoDir).stdout);
+function review(out: Io, repoDir: string, title: string, options: ReviewOptions): boolean {
+  const tree = stripNewlines(gitQuiet(out, ["status", "--porcelain"], repoDir).stdout);
   if (tree === "") return true;
 
   // A .gitignore rule reaches this checkout only through the pull the gate is
@@ -362,26 +364,26 @@ function review(out: Output, repoDir: string, title: string, options: ReviewOpti
   // no clean tree, so it happens first and the incoming rules get to answer for
   // the paths they were written for. A fetch that fails leaves the local rules
   // deciding, as before.
-  let branch = defaultBranch(repoDir);
+  let branch = defaultBranch(out, repoDir);
   if (reviewFetch(out, repoDir, branch) !== 0) branch = "";
 
-  const blocking = reviewBlocking(repoDir, branch);
+  const blocking = reviewBlocking(out, repoDir, branch);
   if (blocking.length === 0) {
-    log(out, "info", `Local changes in ${repoDir} are ignored by the incoming .gitignore - syncing`);
+    out.log("info", `Local changes in ${repoDir} are ignored by the incoming .gitignore - syncing`);
     return true;
   }
 
-  log(out, "info", `Local changes in ${repoDir}:`);
+  out.log("info", `Local changes in ${repoDir}:`);
   out.write(2, `${tree}\n`);
-  log(out, "info", "Diff:");
-  out.write(2, renderDiff(repoDir));
+  out.log("info", "Diff:");
+  out.write(2, renderDiff(out, repoDir));
 
   // The blocking paths get a log line to themselves, ahead of any error.
   // bin/claude-sync fingerprints on fields 2-4 of the WARN and ERRO lines,
   // and the error below reads identically whatever is dirty, so without this a
   // block that recurs over a different dirty set files nothing after the first
   // and the deadlock goes silent.
-  log(out, "warn", `${blocking.join(" ")} `);
+  out.log("warn", `${blocking.join(" ")} `);
 
   const interactive = options.interactive ?? (() => process.stdin.isTTY === true);
   if (!interactive()) {
@@ -389,9 +391,9 @@ function review(out: Output, repoDir: string, title: string, options: ReviewOpti
     return skipSync(out, title);
   }
 
-  switch (chooseAction()) {
+  switch (chooseAction(out)) {
     case DISCARD:
-      log(out, "info", "Discarding local changes...");
+      out.log("info", "Discarding local changes...");
       out.run(["git", "-C", repoDir, "reset", "--hard", "HEAD"]);
       // No -x, so ignored files survive.
       out.run(["git", "-C", repoDir, "clean", "-fd"]);
@@ -403,46 +405,15 @@ function review(out: Output, repoDir: string, title: string, options: ReviewOpti
   }
 }
 
-// gum draws its UI on stderr and takes the viewport size from the terminal
-// stderr points at. A caller that captures stderr, as bin/claude-sync does to
-// log the run, leaves that size at zero and every frame renders empty, while
-// stdin is still the terminal so the keys keep working: an invisible prompt that
-// answers the first Enter with whatever the cursor started on. Draw on the
-// controlling terminal instead. A gum that could not be run, or was interrupted,
-// reads as a skip.
-export function chooseAction(): string {
-  // Where /dev/tty cannot be opened the shell's redirect failed, gum never ran,
-  // and its `||` took the skip. The fallback here runs gum on the inherited
-  // stderr instead, which is what lets the interactive path be exercised off a
-  // terminal at all. Reaching it in production takes a caller that answers
-  // interactive() true with no controlling terminal, and neither job does.
-  let tty: number | undefined;
-  try {
-    tty = openSync("/dev/tty", "w");
-  } catch {
-    tty = undefined;
-  }
-
-  try {
-    const chosen = Bun.spawnSync({
-      cmd: ["gum", "choose", "--header", "Local changes present. What now?", DISCARD, OPEN_PR, SKIP],
-      env: process.env,
-      stdin: "inherit",
-      stdout: "pipe",
-      stderr: tty ?? "inherit",
-    });
-    if (chosen.exitCode !== 0) return SKIP;
-    return stripNewlines(chosen.stdout.toString());
-  } catch {
-    return SKIP;
-  } finally {
-    if (tty !== undefined) closeSync(tty);
-  }
+// A prompt that was dismissed, interrupted, or could not run reads as a skip.
+export function chooseAction(out: Io): string {
+  const chosen = out.choose([DISCARD, OPEN_PR, SKIP], { header: "Local changes present. What now?" });
+  return chosen[0] ?? SKIP;
 }
 
-function skipSync(out: Output, title: string): boolean {
-  log(out, "error", "Local changes present - skipping sync");
-  notify(title, "Skipped: local changes present");
+function skipSync(out: Io, title: string): boolean {
+  out.log("error", "Local changes present - skipping sync");
+  notify(out, title, "Skipped: local changes present");
   return false;
 }
 
@@ -454,7 +425,7 @@ function skipSync(out: Output, title: string): boolean {
 // fingerprint, so a deadlock left standing files again on a lengthening
 // cadence rather than nightly or never. A skip chosen at the prompt is not
 // counted: someone was watching.
-function recordSkip(out: Output, repoDir: string): void {
+function recordSkip(out: Io, repoDir: string): void {
   const job = skipJob(repoDir);
   const skips = (Number.parseInt(readLatch(job), 10) || 0) + 1;
   // The count only paces the notifications, so state that cannot be stored
@@ -462,7 +433,7 @@ function recordSkip(out: Output, repoDir: string): void {
   // readLatch already swallows its own end of this.
   bestEffort(() => writeLatch(job, String(skips)));
   if (skips < 2) return;
-  log(out, "warn", skipMessage(skipBucket(skips)));
+  out.log("warn", skipMessage(skipBucket(skips)));
 }
 
 // bin/dotfiles-upgrade keys its sync-step latch on this line, so the wording
@@ -494,23 +465,23 @@ function skipJob(repoDir: string): string {
 
 const LEADING_DOTS = /^\.+/;
 
-function refuseNamedHost(out: Output, title: string): boolean {
-  log(out, "error", "Local changes name this machine - refusing to push them to a public remote");
-  notify(title, "Skipped: local changes name this machine");
+function refuseNamedHost(out: Io, title: string): boolean {
+  out.log("error", "Local changes name this machine - refusing to push them to a public remote");
+  notify(out, title, "Skipped: local changes name this machine");
   return false;
 }
 
-export function defaultBranch(repoDir: string): string {
-  const branch = stripNewlines(commandOutput([GIT_SYNC, "default-branch", repoDir]));
+export function defaultBranch(out: Io, repoDir: string): string {
+  const branch = stripNewlines(out.read([GIT_SYNC, "default-branch", repoDir], QUIET).stdout);
   return branch === "" ? "main" : branch;
 }
 
 // The insteadOf rewrite bin/git-sync would export, as an environment to hand a
 // single child. The rule outranks a pushurl, so it is never taken on
 // process-wide.
-export function httpsEnv(): Record<string, string> {
+export function httpsEnv(out: Io): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const line of lines(commandOutput([GIT_SYNC, "https-env"]))) {
+  for (const line of lines(out.read([GIT_SYNC, "https-env"], QUIET).stdout)) {
     const separator = line.indexOf("=");
     if (separator === -1) continue;
     env[line.slice(0, separator)] = line.slice(separator + 1);
@@ -535,21 +506,21 @@ function escapeRegExp(value: string): string {
 // its sorted form now, so a key reorder shows as nothing. Anything that does not
 // parse on both sides - a file that is no longer valid JSON, or a path that does
 // not exist at HEAD - falls back to the plain diff.
-function jsonDiff(repoDir: string, file: string): string | undefined {
+function jsonDiff(out: Io, repoDir: string, file: string): string | undefined {
   const path = join(repoDir, file);
   if (!isFile(path)) return undefined;
 
-  const head = gitQuiet(["show", `HEAD:${file}`], repoDir);
+  const head = gitQuiet(out, ["show", `HEAD:${file}`], repoDir);
   if (head.status !== 0) return undefined;
 
-  const headSorted = canonicalJson(head.stdout);
-  const workingSorted = canonicalJson(readText(path));
+  const headSorted = canonicalJson(out, head.stdout);
+  const workingSorted = canonicalJson(out, readText(path));
   if (headSorted === undefined || workingSorted === undefined) return undefined;
 
-  return unifiedDiff(file, headSorted, workingSorted);
+  return unifiedDiff(out, file, headSorted, workingSorted);
 }
 
-function unifiedDiff(file: string, before: string, after: string): string {
+function unifiedDiff(out: Io, file: string, before: string, after: string): string {
   const scratch = mkdtempSync(join(tmpdir(), "sync-gate-"));
   try {
     const left = join(scratch, "before");
@@ -557,63 +528,16 @@ function unifiedDiff(file: string, before: string, after: string): string {
     writeFileSync(left, `${before}\n`);
     writeFileSync(right, `${after}\n`);
     // A difference exits 1, which says nothing this caller acts on.
-    return commandOutput(["diff", "-u", "--label", `a/${file}`, "--label", `b/${file}`, left, right]);
+    return out.read(["diff", "-u", "--label", `a/${file}`, "--label", `b/${file}`, left, right], QUIET).stdout;
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
 }
 
-// A git command whose stdout is the answer and whose complaints the shell
-// discarded. A repo_dir that does not exist yields nothing, as the failed `cd`
-// did.
-function gitQuiet(args: string[], cwd: string): { status: number; stdout: string } {
-  try {
-    const run = Bun.spawnSync({
-      cmd: ["git", ...args],
-      cwd,
-      env: process.env,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    return { status: run.exitCode, stdout: run.stdout.toString() };
-  } catch {
-    return { status: NOT_RUN, stdout: "" };
-  }
-}
-
-function commandOutput(cmd: string[]): string {
-  try {
-    const run = Bun.spawnSync({
-      cmd,
-      env: process.env,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    return run.stdout.toString();
-  } catch {
-    return "";
-  }
-}
-
-function mergedOutput(cmd: string[], cwd: string): { status: number; output: string } {
-  try {
-    const run = Bun.spawnSync({
-      cmd,
-      cwd,
-      env: process.env,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    return {
-      status: run.exitCode,
-      output: stripNewlines(`${run.stdout.toString()}${run.stderr.toString()}`),
-    };
-  } catch {
-    return { status: NOT_RUN, output: "" };
-  }
+// A git command whose stdout is the answer. A repo_dir that does not exist
+// yields nothing, as the failed `cd` did.
+export function gitQuiet(out: Io, args: string[], cwd: string): { status: number; stdout: string } {
+  return out.read(["git", ...args], { cwd, ...QUIET });
 }
 
 function branchTimestamp(at = new Date()): string {

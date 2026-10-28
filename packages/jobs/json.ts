@@ -14,6 +14,8 @@
 // Where it cannot run, every function here answers undefined, which every
 // caller reads as "cannot compare" and none reads as "equal".
 
+import type { Io } from "#io";
+
 // A byte order mark decodes to U+FEFF, which both jq and JSON.parse report as a
 // stray token. An editor that saved a settings file with one left valid JSON
 // behind it, so the mark is not a reason to call the file unreadable.
@@ -34,22 +36,13 @@ export function parseJson(text: string): unknown {
 // every scalar spelled as jq spells it. The filter defaults to the identity,
 // and a caller comparing everything outside one key passes `del(.hooks)` rather
 // than deleting it from a parsed object and re-encoding.
-export function canonicalJson(text: string, filter = "."): string | undefined {
-  try {
-    const run = Bun.spawnSync({
-      cmd: ["jq", "-S", filter],
-      env: process.env,
-      stdin: new TextEncoder().encode(text.replace(BYTE_ORDER_MARK, "")),
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    if (run.exitCode !== 0) return undefined;
-    return run.stdout.toString();
-  } catch {
-    // Bun throws where the shell reported 127. A machine without jq compares
-    // nothing rather than comparing wrongly.
-    return undefined;
-  }
+export function canonicalJson(io: Io, text: string, filter = "."): string | undefined {
+  const result = io.read(["jq", "-S", filter], {
+    stdin: { input: text.replace(BYTE_ORDER_MARK, "") },
+    stderr: "ignore",
+  });
+  // A machine without jq compares nothing rather than comparing wrongly.
+  return result.status === 0 ? result.stdout : undefined;
 }
 
 export function byCodeUnit(a: string, b: string): number {

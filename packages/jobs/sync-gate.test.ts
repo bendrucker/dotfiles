@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  appendFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -27,23 +27,19 @@ import {
   stripNewlines,
   syncNotify,
 } from "#jobs/sync-gate";
-import { repoRoot, writeStub } from "#harness";
+import { type FakeIo, fakeIo, writeStub } from "#harness";
 import { fixture } from "#harness/fixture";
 import { landCommit } from "#harness/git";
-import type { Capture, SpawnOptions } from "#jobs/output";
+import type { Io } from "#io";
 
 let sandbox: string;
 let stubs: string;
 let repo: string;
 let origin: string;
-let out: Capture;
-
-// The path the gate spawns spin by, which it resolves through any symlink.
-const SPIN = join(realpathSync(repoRoot), "bin", "spin");
+let out: FakeIo;
 
 const environment = {
   PATH: process.env.PATH,
-  GUM_CHOICE: process.env.GUM_CHOICE,
   XDG_STATE_HOME: process.env.XDG_STATE_HOME,
 };
 
@@ -55,70 +51,33 @@ function gitConfigKeys(): string[] {
   return Object.keys(process.env).filter((key) => key.startsWith("GIT_CONFIG_"));
 }
 
-// Every branch under test is a sequence of real git commands, so the children run
-// for real. What they write is kept rather than let through to the test runner's
-// own streams, which is also how an example reads the log the job produced.
-function recording(): Capture {
-  const chunks: string[] = [];
-  const keep = (text: string): void => {
-    if (text !== "") chunks.push(text);
-  };
-
-  const spawn = (
-    cmd: string[],
-    options?: SpawnOptions,
-  ): { status: number; stdout: string; stderr: string } => {
-    // gum log and spin are most of what a gate run spawns, and neither is under
-    // test here.
-    if (cmd[0] === "gum" && cmd[1] === "log") return { status: 0, stdout: "", stderr: `${cmd.at(-1)}\n` };
-    if (cmd[0] === SPIN) {
-      const separator = cmd.indexOf("--");
-      const title = cmd[cmd.indexOf("--title") + 1];
-      const inner = spawn(cmd.slice(separator + 1), options);
-      return { ...inner, stderr: `${title}\n${inner.stderr}` };
-    }
-    try {
-      const run = Bun.spawnSync({
-        cmd,
-        cwd: options?.cwd,
-        env: options?.env ?? process.env,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      return {
-        status: run.exitCode,
-        stdout: run.stdout.toString(),
-        stderr: run.stderr.toString(),
-      };
-    } catch {
-      return { status: 127, stdout: "", stderr: "" };
-    }
-  };
-
-  return {
-    write(_fd, text) {
-      keep(text);
-    },
-    run(cmd, options) {
-      const result = spawn(cmd, options);
-      keep(result.stdout);
-      keep(result.stderr);
-      return result.status;
-    },
-    read(cmd, options) {
-      const result = spawn(cmd, options);
-      keep(result.stderr);
-      return { status: result.status, stdout: result.stdout };
-    },
-    captured() {
-      return chunks.join("");
-    },
-  };
-}
-
 function stub(name: string, body: string): void {
   writeStub(join(stubs, name), body);
+}
+
+// Every branch under test is a sequence of real git commands, so what the fake
+// has no answer for runs for real. `hostname`, `scutil`, `gh` and the
+// notification banner are answered, since they reach outside the sandbox.
+// `choices` is what each successive prompt picks.
+function newIo(choices: string[][] = []): FakeIo {
+  return fakeIo({
+    passthrough: true,
+    choices,
+    answers: [
+      // `hostname -s` and `hostname` differ on a real machine, and the guard has
+      // to cover both.
+      { argv: ["hostname", "-s"], stdout: "spechost\n" },
+      { argv: ["hostname"], stdout: "spechost.example.test\n" },
+      // macOS keeps the Cocoa-facing name separately, and a user can set it to
+      // something the POSIX hostname does not contain. HostName is commonly
+      // unset, which scutil reports as a failure with nothing on stdout.
+      { argv: ["scutil", "--get", "ComputerName"], stdout: "Spec Machine\n" },
+      { argv: ["scutil", "--get", "LocalHostName"], stdout: "spechost\n" },
+      { argv: ["scutil", "--get"], status: 1 },
+      { argv: ["osascript"] },
+      { argv: ["gh", "pr", "create"], stdout: "https://example.test/pr/1\n" },
+    ],
+  });
 }
 
 function git(...args: string[]): { status: number; stdout: string } {
@@ -132,20 +91,19 @@ function git(...args: string[]): { status: number; stdout: string } {
   return { status: run.exitCode, stdout: run.stdout.toString() };
 }
 
+// The banners the gate raised, as the AppleScript each one was handed.
 function notifications(): string {
-  try {
-    return readFileSync(join(sandbox, "notifications"), "utf8");
-  } catch {
-    return "";
-  }
+  return out.calls
+    .filter((call) => call.argv[0] === "osascript")
+    .map((call) => call.argv[2])
+    .join("\n");
 }
 
 function ghLog(): string {
-  try {
-    return readFileSync(join(sandbox, "gh.log"), "utf8");
-  } catch {
-    return "";
-  }
+  return out.calls
+    .filter((call) => call.argv[0] === "gh")
+    .map((call) => call.argv.slice(1).join(" "))
+    .join("\n");
 }
 
 // Land a commit on origin the clone has not pulled, so origin/<branch> carries a
@@ -187,85 +145,17 @@ beforeEach(() => {
   mkdirSync(stubs);
   process.env.XDG_STATE_HOME = join(sandbox, "state");
 
-  // choose answers with whatever the example wants picked, standing in for the
-  // keypress.
-  stub(
-    "gum",
-    [
-      'case "$1" in',
-      "  choose)",
-      "    shift",
-      "    # An option gum was never offered cannot be chosen. Without this the",
-      "    # stub answers with whatever the example asked for and the assertion",
-      "    # holds even against a prompt that offered nothing of the kind.",
-      '    if [ -n "${GUM_CHOICE:-}" ]; then',
-      '      for arg in "$@"; do',
-      '        [ "$arg" = "$GUM_CHOICE" ] && { printf "%s\\n" "$GUM_CHOICE"; exit 0; }',
-      "      done",
-      '      printf "gum choose: %s was not offered\\n" "$GUM_CHOICE" >&2',
-      "      exit 1",
-      "    fi",
-      '    printf "\\n"',
-      "    ;;",
-      "esac",
-      "exit 0",
-    ].join("\n"),
-  );
-
-  stub(
-    "gh",
-    [
-      `printf '%s\\n' "$*" >>"${join(sandbox, "gh.log")}"`,
-      "printf 'https://example.test/pr/1\\n'",
-    ].join("\n"),
-  );
-
-  // `hostname -s` and `hostname` differ on a real machine, and the guard has to
-  // cover both.
-  stub(
-    "hostname",
-    ['[ "$1" = "-s" ] && { printf "spechost\\n"; exit 0; }', 'printf "spechost.example.test\\n"'].join(
-      "\n",
-    ),
-  );
-
-  // macOS keeps the Cocoa-facing name separately, and a user can set it to
-  // something the POSIX hostname does not contain. HostName is commonly unset,
-  // which scutil reports as a failure with nothing on stdout.
-  stub(
-    "scutil",
-    [
-      'case "$2" in',
-      '  ComputerName)  printf "Spec Machine\\n" ;;',
-      '  LocalHostName) printf "spechost\\n" ;;',
-      "  *)             exit 1 ;;",
-      "esac",
-    ].join("\n"),
-  );
-
-  stub("osascript", `printf '%s\\n' "$2" >>"${join(sandbox, "notifications")}"`);
-  stub("open", `printf 'todo\\n' >>"${join(sandbox, "todos")}"`);
-
+  // bin/git-sync and bin/spin are real shell scripts that log through gum.
+  stub("gum", "exit 0");
   process.env.PATH = `${stubs}:${environment.PATH}`;
-  delete process.env.GUM_CHOICE;
   gitConfigEnvironment = gitConfigKeys().map((key) => [key, process.env[key] ?? ""]);
 
   copyRepo(sandbox);
-
-  // A stub that failed to shadow the real command would reach this machine's own
-  // hostname and the real gh, so every example after it would be asserting
-  // against the runner. Prove the shadowing before each one.
-  if (!hostNames().includes("spechost")) {
-    throw new Error(`hostname resolved to ${JSON.stringify(hostNames())}`);
-  }
-
-  out = recording();
+  out = newIo();
 });
 
 afterEach(() => {
   process.env.PATH = environment.PATH;
-  if (environment.GUM_CHOICE === undefined) delete process.env.GUM_CHOICE;
-  else process.env.GUM_CHOICE = environment.GUM_CHOICE;
   if (environment.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
   else process.env.XDG_STATE_HOME = environment.XDG_STATE_HOME;
   for (const key of gitConfigKeys()) delete process.env[key];
@@ -330,24 +220,20 @@ describe("openPr against changes that name this machine", () => {
 });
 
 // An app writes on its own schedule, so the tree can gain the machine's name
-// after the first check has already passed. The git stub writes it in on the
-// `add`, standing in for that timing.
+// after the first check has already passed. The write lands as the `add` runs,
+// standing in for that timing.
 test("openPr refuses a change that arrives once the tree is staged", () => {
   writeFileSync(join(repo, "file.txt"), "unremarkable\n");
 
-  const realGit = Bun.which("git", { PATH: environment.PATH });
-  if (realGit === null) throw new Error("git is not on PATH");
-  stub(
-    "git",
-    [
-      'for a in "$@"; do',
-      `  [ "$a" = add ] && printf "ran on spechost\\n" >>"${join(repo, "file.txt")}"`,
-      "done",
-      `exec ${realGit} "$@"`,
-    ].join("\n"),
-  );
+  const racing: Io = {
+    ...out,
+    run(cmd, options) {
+      if (cmd.includes("add")) appendFileSync(join(repo, "file.txt"), "ran on spechost\n");
+      return out.run(cmd, options);
+    },
+  };
 
-  expect(openPr(out, repo, "Title")).toBe(false);
+  expect(openPr(racing, repo, "Title")).toBe(false);
   expect(out.captured()).toContain("refusing to push");
   expect(notifications()).toContain("name this machine");
   expect(ghLog()).toBe("");
@@ -399,19 +285,13 @@ describe("hostNames", () => {
   // A machine with neither hostname nor scutil contributes no names, and there is
   // nothing there to leak, so nothing is refused over it.
   test("finds nothing, and refuses nothing, where neither command exists", () => {
-    const empty = join(sandbox, "empty");
-    mkdirSync(empty);
-    process.env.PATH = empty;
-    try {
-      expect(hostNames()).toEqual([]);
-      expect(changesNameHost(repo)).toBe(false);
-    } finally {
-      process.env.PATH = `${stubs}:${environment.PATH}`;
-    }
+    const bare = fakeIo();
+    expect(hostNames(bare)).toEqual([]);
+    expect(changesNameHost(bare, repo)).toBe(false);
   });
 
   test("carries every form the machine answers to", () => {
-    expect(hostNames()).toEqual([
+    expect(hostNames(out)).toEqual([
       "spechost",
       "spechost.example.test",
       "Spec Machine",
@@ -424,7 +304,7 @@ describe("capturableContent", () => {
   test("carries the tracked diff and every untracked file's name and contents", () => {
     writeFileSync(join(repo, "file.txt"), "edited\n");
     writeFileSync(join(repo, "dropped.txt"), "secret\n");
-    const content = [...capturableContent(repo)].join("");
+    const content = [...capturableContent(out, repo)].join("");
     expect(content).toContain("+edited");
     expect(content).toContain("dropped.txt");
     expect(content).toContain("secret");
@@ -435,7 +315,7 @@ describe("capturableContent", () => {
   // arrives in chunks and the guard stops at the first one that matches.
   test("chunks a file larger than one read", () => {
     writeFileSync(join(repo, "big.txt"), "a".repeat(3 << 20));
-    const chunks = [...capturableContent(repo)];
+    const chunks = [...capturableContent(out, repo)];
     expect(chunks.length).toBeGreaterThan(3);
   });
 });
@@ -443,7 +323,7 @@ describe("capturableContent", () => {
 describe("changesNameHost", () => {
   test("refuses an untracked file naming this machine", () => {
     writeFileSync(join(repo, "hook.txt"), "runs as spechost\n");
-    expect(changesNameHost(repo)).toBe(true);
+    expect(changesNameHost(out, repo)).toBe(true);
   });
 
   // Each chunk carries the tail of the one before it, or a name landing on the
@@ -452,7 +332,7 @@ describe("changesNameHost", () => {
     const boundary = 1 << 20;
     const padding = "a".repeat(boundary - 4);
     writeFileSync(join(repo, "big.txt"), `${padding} spechost ${"a".repeat(1024)}`);
-    expect(changesNameHost(repo)).toBe(true);
+    expect(changesNameHost(out, repo)).toBe(true);
   });
 });
 
@@ -482,14 +362,14 @@ describe("renderDiff", () => {
   // used to carry an empty diff.
   test("renders an untracked file as a new-file diff", () => {
     writeFileSync(join(repo, "stray.txt"), "stray\n");
-    const rendered = renderDiff(repo);
+    const rendered = renderDiff(out, repo);
     expect(rendered).toContain("+++ b/stray.txt");
     expect(rendered).toContain("+stray");
   });
 
   test("renders a tracked modification", () => {
     writeFileSync(join(repo, "file.txt"), "edited\n");
-    expect(renderDiff(repo)).toContain("+edited");
+    expect(renderDiff(out, repo)).toContain("+edited");
   });
 
   // An app that rewrote a settings file without changing anything in it is noise
@@ -500,7 +380,7 @@ describe("renderDiff", () => {
     run(["git", "-C", repo, "commit", "-q", "-m", "settings"]);
 
     writeFileSync(join(repo, "settings.json"), '{\n  "b": 2,\n  "a": 1\n}\n');
-    expect(renderDiff(repo)).toBe("");
+    expect(renderDiff(out, repo)).toBe("");
   });
 
   test("renders a JSON file whose values changed", () => {
@@ -509,7 +389,7 @@ describe("renderDiff", () => {
     run(["git", "-C", repo, "commit", "-q", "-m", "settings"]);
 
     writeFileSync(join(repo, "settings.json"), '{"a":1,"b":3}\n');
-    const rendered = renderDiff(repo);
+    const rendered = renderDiff(out, repo);
     expect(rendered).toContain("a/settings.json");
     expect(rendered).toContain('+  "b": 3');
   });
@@ -518,7 +398,7 @@ describe("renderDiff", () => {
   // nothing in it to act on.
   test("renders a deleted tracked file", () => {
     rmSync(join(repo, "file.txt"));
-    expect(renderDiff(repo)).toContain("-tracked");
+    expect(renderDiff(out, repo)).toContain("-tracked");
   });
 });
 
@@ -531,7 +411,7 @@ describe("reviewBlocking", () => {
     mkdirSync(join(repo, "scratch"));
     writeFileSync(join(repo, "scratch", "note.txt"), "note\n");
 
-    expect(reviewBlocking(repo, "main")).toEqual([]);
+    expect(reviewBlocking(out, repo, "main")).toEqual([]);
   });
 
   // .gitignore says nothing about a path git already tracks, so nothing the pull
@@ -541,7 +421,7 @@ describe("reviewBlocking", () => {
     run(["git", "-C", repo, "fetch", "-q", "origin", "main"]);
     writeFileSync(join(repo, "file.txt"), "edited\n");
 
-    expect(reviewBlocking(repo, "main")).toEqual(["file.txt"]);
+    expect(reviewBlocking(out, repo, "main")).toEqual(["file.txt"]);
   });
 
   test("keeps an untracked path neither .gitignore covers blocking", () => {
@@ -549,7 +429,7 @@ describe("reviewBlocking", () => {
     run(["git", "-C", repo, "fetch", "-q", "origin", "main"]);
     writeFileSync(join(repo, "stray.txt"), "stray\n");
 
-    expect(reviewBlocking(repo, "main")).toEqual(["stray.txt"]);
+    expect(reviewBlocking(out, repo, "main")).toEqual(["stray.txt"]);
   });
 
   // With no branch to read, only the rules already on disk have a say.
@@ -559,7 +439,7 @@ describe("reviewBlocking", () => {
     mkdirSync(join(repo, "scratch"));
     writeFileSync(join(repo, "scratch", "note.txt"), "note\n");
 
-    expect(reviewBlocking(repo)).toEqual([join("scratch", "note.txt")]);
+    expect(reviewBlocking(out, repo)).toEqual([join("scratch", "note.txt")]);
   });
 
   // The exclude file is written into the git dir, and a run that left it behind
@@ -569,7 +449,7 @@ describe("reviewBlocking", () => {
   test("leaves no exclude file behind", () => {
     pushIgnoreRule("scratch/");
     run(["git", "-C", repo, "fetch", "-q", "origin", "main"]);
-    reviewBlocking(repo, "main");
+    reviewBlocking(out, repo, "main");
 
     const gitDir = stripNewlines(git("rev-parse", "--absolute-git-dir").stdout);
     const leftovers = readdirSync(gitDir).filter((name) => name.startsWith("incoming-exclude"));
@@ -626,7 +506,7 @@ describe("reviewDirty", () => {
   test("escalates on a lengthening cadence while the skips continue", () => {
     writeFileSync(join(repo, "stray.txt"), "stray\n");
     const skip = (): string => {
-      out = recording();
+      out = newIo();
       reviewDirty(out, repo, "Title", { interactive: () => false });
       return out.captured().match(/Sync skipped (\d+) runs in a row/)?.[1] ?? "";
     };
@@ -645,7 +525,7 @@ describe("reviewDirty", () => {
     expect(reviewDirty(out, repo, "Title")).toBe(true);
 
     writeFileSync(join(repo, "stray.txt"), "stray\n");
-    out = recording();
+    out = newIo();
     reviewDirty(out, repo, "Title", { interactive: () => false });
     expect(out.captured()).not.toContain("runs in a row");
   });
@@ -669,10 +549,10 @@ describe("reviewDirty", () => {
   // Someone was watching, so the skip needs no escalation to reach them.
   test("leaves a skip chosen at the prompt uncounted", () => {
     writeFileSync(join(repo, "file.txt"), "edited\n");
-    process.env.GUM_CHOICE = SKIP;
+    out = newIo([[SKIP]]);
     reviewDirty(out, repo, "Title", { interactive: () => true });
 
-    out = recording();
+    out = newIo();
     reviewDirty(out, repo, "Title", { interactive: () => true });
     expect(out.captured()).not.toContain("runs in a row");
   });
@@ -680,7 +560,7 @@ describe("reviewDirty", () => {
   test("discards the changes and continues when asked to", () => {
     writeFileSync(join(repo, "file.txt"), "edited\n");
     writeFileSync(join(repo, "stray.txt"), "stray\n");
-    process.env.GUM_CHOICE = DISCARD;
+    out = newIo([[DISCARD]]);
 
     expect(reviewDirty(out, repo, "Title", { interactive: () => true })).toBe(true);
     expect(stripNewlines(git("status", "--porcelain").stdout)).toBe("");
@@ -689,7 +569,7 @@ describe("reviewDirty", () => {
 
   test("opens a PR and continues when asked to", () => {
     writeFileSync(join(repo, "file.txt"), "edited\n");
-    process.env.GUM_CHOICE = OPEN_PR;
+    out = newIo([[OPEN_PR]]);
 
     expect(reviewDirty(out, repo, "Title", { interactive: () => true })).toBe(true);
     expect(ghLog()).toContain("pr create");
@@ -697,7 +577,7 @@ describe("reviewDirty", () => {
 
   test("skips when asked to", () => {
     writeFileSync(join(repo, "file.txt"), "edited\n");
-    process.env.GUM_CHOICE = SKIP;
+    out = newIo([[SKIP]]);
 
     expect(reviewDirty(out, repo, "Title", { interactive: () => true })).toBe(false);
     expect(notifications()).toContain("Skipped: local changes present");
@@ -706,7 +586,7 @@ describe("reviewDirty", () => {
   // A prompt that could not be answered is not consent to throw the tree away.
   test("skips when the prompt answers with nothing", () => {
     writeFileSync(join(repo, "file.txt"), "edited\n");
-    process.env.GUM_CHOICE = "";
+    out = newIo([[]]);
 
     expect(reviewDirty(out, repo, "Title", { interactive: () => true })).toBe(false);
     expect(readFileSync(join(repo, "file.txt"), "utf8")).toBe("edited\n");
@@ -716,7 +596,7 @@ describe("reviewDirty", () => {
   // rather than discarded or carried out on a branch.
   test("refuses a PR whose changes name this machine and leaves the tree alone", () => {
     writeFileSync(join(repo, "file.txt"), "ran on spechost\n");
-    process.env.GUM_CHOICE = OPEN_PR;
+    out = newIo([[OPEN_PR]]);
 
     expect(reviewDirty(out, repo, "Title", { interactive: () => true })).toBe(false);
     expect(readFileSync(join(repo, "file.txt"), "utf8")).toBe("ran on spechost\n");
@@ -726,7 +606,7 @@ describe("reviewDirty", () => {
 
 describe("defaultBranch", () => {
   test("reads the branch origin/HEAD points at", () => {
-    expect(defaultBranch(repo)).toBe("main");
+    expect(defaultBranch(out, repo)).toBe("main");
   });
 
   // A directory that is not a repo answers nothing, and main is the fallback
@@ -734,7 +614,7 @@ describe("defaultBranch", () => {
   test("falls back to main", () => {
     const missing = join(sandbox, "not-a-repo");
     mkdirSync(missing);
-    expect(defaultBranch(missing)).toBe("main");
+    expect(defaultBranch(out, missing)).toBe("main");
   });
 });
 
@@ -745,7 +625,7 @@ describe("httpsEnv", () => {
   // process-wide.
   test("carries the insteadOf rewrite as git config environment entries", () => {
     delete process.env.GIT_CONFIG_COUNT;
-    const env = httpsEnv();
+    const env = httpsEnv(out);
     expect(env.GIT_CONFIG_COUNT).toBe("2");
     expect(env.GIT_CONFIG_KEY_0).toBe("url.https://github.com/.insteadOf");
     expect(env.GIT_CONFIG_VALUE_0).toBe("git@github.com:");
@@ -760,7 +640,7 @@ describe("httpsEnv", () => {
     process.env.GIT_CONFIG_KEY_0 = "core.pager";
     process.env.GIT_CONFIG_VALUE_0 = "cat";
 
-    const env = httpsEnv();
+    const env = httpsEnv(out);
     expect(env.GIT_CONFIG_COUNT).toBe("3");
     expect(env.GIT_CONFIG_KEY_1).toBe("url.https://github.com/.insteadOf");
     expect(env.GIT_CONFIG_VALUE_1).toBe("git@github.com:");

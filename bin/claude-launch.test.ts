@@ -11,7 +11,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addDirs, agentId, launchCommand, launchDirs, seedFrom, slugify } from "./claude-launch";
+import { fakeIo } from "#harness";
+import { addDirs, agentId, launchCommand, launchDirs, main, seedFrom, slugify } from "./claude-launch";
 
 // Every stub records its arguments tab-joined, one call per line, so a message
 // carrying spaces survives as one field.
@@ -404,5 +405,62 @@ describe("the executable", () => {
     const outcome = run(["--here"], { CLAUDE_EXIT: "3" });
     expect(outcome.status).toBe(3);
     expect(read("GUM_LOG")).toContain("log\t--level\terror\tlaunch failed\n");
+  });
+});
+
+describe("main", () => {
+  const dispatch = { argv: ["claude", "--bg"], stdout: "backgrounded · abc123 · fix\n" };
+  const prompt = { argv: ["gum", "write"], stdout: "Fix the parser bug\n" };
+
+  test("dispatches with the picked mode and model, in the current directory", () => {
+    const io = fakeIo({ choices: [["plan"], ["opus"]], answers: [prompt, dispatch] });
+
+    expect(main(io, ["--here"])).toBe(0);
+
+    const launched = io.calls.find((call) => call.argv[0] === "claude");
+    expect(launched?.argv).toEqual([
+      "claude",
+      "--bg",
+      "--name",
+      "fix-the-parser-bug",
+      "--permission-mode",
+      "plan",
+      "--model",
+      "opus",
+      "Fix the parser bug",
+    ]);
+    expect(launched?.options).toEqual({ cwd: process.cwd(), stdin: "ignore" });
+    expect(io.logs).toEqual([
+      { level: "info", message: `Launching in ${process.cwd()}` },
+      { level: "info", message: "agent abc123 · attach with: claude attach abc123" },
+    ]);
+  });
+
+  test("leaves the flags off when both pickers are dismissed", () => {
+    const io = fakeIo({ answers: [prompt, dispatch] });
+
+    expect(main(io, ["--here"])).toBe(0);
+    expect(io.calls.find((call) => call.argv[0] === "claude")?.argv).toEqual([
+      "claude",
+      "--bg",
+      "--name",
+      "fix-the-parser-bug",
+      "Fix the parser bug",
+    ]);
+  });
+
+  test("answers with the status a refused launch exited on", () => {
+    const io = fakeIo({ answers: [prompt, { ...dispatch, status: 3 }] });
+
+    expect(main(io, ["--here"])).toBe(3);
+    expect(io.logs.at(-1)).toEqual({ level: "error", message: "launch failed" });
+  });
+
+  test("stops when the task is left empty", () => {
+    const io = fakeIo({ answers: [{ argv: ["gum", "write"] }, dispatch] });
+
+    expect(main(io, ["--here"])).toBe(1);
+    expect(io.logs).toEqual([{ level: "warn", message: "no prompt entered" }]);
+    expect(io.calls.some((call) => call.argv[0] === "claude")).toBe(false);
   });
 });

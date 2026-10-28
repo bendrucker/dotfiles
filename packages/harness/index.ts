@@ -6,6 +6,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
+export { type Answer, type Call, type FakeIo, type FakeIoOptions, fakeIo, type LogLine, type Prompt } from "./io";
+
 export interface Run {
   status: number;
   stdout: string;

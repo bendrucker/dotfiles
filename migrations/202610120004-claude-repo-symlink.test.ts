@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, symlinkSync } from "node:fs";
-import { sandbox, type Sandbox } from "#harness";
+import { fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { up } from "./202610120004-claude-repo-symlink";
 
@@ -26,7 +26,7 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [],
     platform: "darwin",
-    out: { write() {}, run: () => 0, read: () => ({ status: 0, stdout: "" }) },
+    io: fakeIo({ answers: [{ argv: [] }] }),
   };
 }
 

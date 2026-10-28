@@ -1,20 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { up } from "./202610120001-mise-confd-link";
 
 let box: Sandbox;
 let confd: string;
-let logged: string;
+let io: FakeIo;
 
 beforeEach(() => {
   box = sandbox("mise-confd-link");
   box.mkdir("installed", "go");
   box.write("installed/go/mise.toml", "");
   confd = box.mkdir("home", ".config", "mise", "conf.d");
-  logged = "";
+  io = fakeIo({ answers: [{ argv: [] }] });
 });
 
 afterEach(() => {
@@ -30,14 +30,7 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [box.path("installed")],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        logged += cmd.join(" ");
-        return 0;
-      },
-      read: () => ({ status: 0, stdout: "" }),
-    },
+    io,
   };
 }
 
@@ -58,7 +51,7 @@ describe("mise-confd-link", () => {
 
     expect(existsSync(confd)).toBe(false);
     expect(readdirSync(`${confd}.pre-link`)).toEqual(["work.toml"]);
-    expect(logged).toContain(".pre-link");
+    expect(io.captured()).toContain(".pre-link");
   });
 
   test("keeps an earlier backup", () => {

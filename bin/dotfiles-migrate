@@ -28,7 +28,7 @@
 
 import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { streamOutput } from "#jobs/output";
+import { streamIo } from "#io";
 import { APPLICATIONS, type Platform } from "#migrations/migration";
 import { configHome, dataHome, defaultHome, devRoot, installedRoot, run, versionFile } from "#migrations/runner";
 
@@ -40,7 +40,7 @@ function platform(): Platform {
 
 if (import.meta.main) {
   const home = defaultHome();
-  const out = streamOutput();
+  const io = streamIo();
   const root = resolve(process.argv[2] ?? realpathSync(resolve(import.meta.dir, "..")));
 
   const context = {
@@ -52,7 +52,7 @@ if (import.meta.main) {
     // The [dotfiles] links point through conf.d rather than into a tree.
     installed: [...new Set([installedRoot(home), devRoot(home), root, confd(home)].filter((tree) => tree !== undefined))],
     platform: platform(),
-    out,
+    io,
   };
 
   process.exit(await run({ root, version: versionFile(home), context }));

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fakeIo, type FakeIo } from "#harness";
 import { alignColumns } from "#worktree/table";
 import { parseDuration } from "#worktree/state";
 import {
@@ -44,21 +45,11 @@ fi
 exit 0
 `;
 
-// $GUM_CHOOSE picks the offered lines it matches, and nothing when it is unset,
-// which is what escape or an empty selection produces. $GUM_CONFIRM_RC is the
-// answer to the local-only confirm. Present on the non-interactive path too, so
-// an accidental call cannot escape to the real binary and draw a checklist at
-// whoever is running these.
+// Present on the non-interactive path, so an accidental call cannot escape to
+// the real binary and draw a checklist at whoever is running these.
 const GUM_STUB = `#!/usr/bin/env bash
 [ "$1" = "--stub-check" ] && { echo "gum stub"; exit 0; }
 printf 'gum %s\\n' "$*" >>"$GUM_LOG"
-case "$1" in
-  choose)
-    offered="$(cat)"
-    [ -n "\${GUM_CHOOSE:-}" ] && printf '%s\\n' "$offered" | grep -F "$GUM_CHOOSE"
-    ;;
-  confirm) exit "\${GUM_CONFIRM_RC:-0}" ;;
-esac
 exit 0
 `;
 
@@ -109,8 +100,6 @@ beforeEach(() => {
 afterEach(() => {
   process.env.PATH = environment.PATH;
   for (const name of [
-    "GUM_CHOOSE",
-    "GUM_CONFIRM_RC",
     "WT_LIST_JSON",
     "WT_REMOVE_LOG",
     "WT_STEP_LOG",
@@ -557,50 +546,86 @@ describe("interactive checklist", () => {
     };
   }
 
-  function pick(candidates: Candidate[], choice?: string, confirmRc?: string): Report {
-    if (choice !== undefined) process.env.GUM_CHOOSE = choice;
-    if (confirmRc !== undefined) process.env.GUM_CONFIRM_RC = confirmRc;
+  // The offered label that contains the choice, as gum would return it.
+  function offered(candidates: Candidate[], choice: string | undefined): string[][] {
+    if (choice === undefined) return [];
+    const labels = alignColumns(candidates.map((entry) => entry.row));
+    return [labels.filter((label) => label.includes(choice))];
+  }
+
+  function scripted(candidates: Candidate[], choice?: string, confirmStatus = 0): FakeIo {
+    return fakeIo({
+      choices: offered(candidates, choice),
+      answers: [
+        { argv: ["gum", "confirm"], status: confirmStatus },
+        { argv: ["wt", "remove"] },
+      ],
+    });
+  }
+
+  function removals(io: FakeIo): string[] {
+    return io.calls.filter((call) => call.argv[1] === "remove").map((call) => call.argv.join(" "));
+  }
+
+  function confirms(io: FakeIo): string[] {
+    return io.calls.filter((call) => call.argv[1] === "confirm").map((call) => call.argv.join(" "));
+  }
+
+  function pick(candidates: Candidate[], choice?: string, confirmStatus?: number): { report: Report; io: FakeIo } {
+    const io = scripted(candidates, choice, confirmStatus);
     const report: Report = { worktrees: 0, branches: 0, reasons: [] };
-    checklist(candidates, options, report);
-    return report;
+    checklist(io, candidates, options, report);
+    return { report, io };
   }
 
   test("selecting nothing removes nothing", () => {
-    const report = pick([candidate("feature-x", true)]);
+    const { report, io } = pick([candidate("feature-x", true)]);
     expect(report.worktrees).toBe(0);
-    expect(log("WT_REMOVE_LOG")).toBe("");
+    expect(removals(io)).toEqual([]);
   });
 
   test("a selection is removed by its own handle", () => {
-    const report = pick([candidate("feature-x", true), candidate("feature-y", true)], "feature-x");
+    const { report, io } = pick([candidate("feature-x", true), candidate("feature-y", true)], "feature-x");
     expect(report.worktrees).toBe(1);
-    expect(log("WT_REMOVE_LOG")).toContain("--foreground --force --force-delete feature-x");
-    expect(log("WT_REMOVE_LOG")).not.toContain("feature-y");
+    expect(removals(io)).toEqual(["wt remove --foreground --force --force-delete feature-x"]);
   });
 
   test("a selection with a remote copy is not gated on a confirm", () => {
-    pick([candidate("feature-x", true)], "feature-x");
-    expect(log("GUM_LOG")).not.toContain("confirm");
+    const { io } = pick([candidate("feature-x", true)], "feature-x");
+    expect(confirms(io)).toEqual([]);
   });
 
   test("declining the local-only confirm removes nothing", () => {
-    const report = pick([candidate("feature-x", false)], "feature-x", "1");
+    const { report, io } = pick([candidate("feature-x", false)], "feature-x", 1);
     expect(report.worktrees).toBe(0);
-    expect(log("GUM_LOG")).toContain("no remote copy");
-    expect(log("WT_REMOVE_LOG")).toBe("");
+    expect(confirms(io)).toEqual(["gum confirm Remove 1 worktrees — 1 have no remote copy?"]);
+    expect(removals(io)).toEqual([]);
   });
 
   test("a confirmed local-only selection is removed", () => {
-    const report = pick([candidate("feature-x", false)], "feature-x", "0");
+    const { report, io } = pick([candidate("feature-x", false)], "feature-x", 0);
     expect(report.worktrees).toBe(1);
-    expect(log("WT_REMOVE_LOG")).toContain("feature-x");
+    expect(removals(io)).toEqual(["wt remove --foreground --force --force-delete feature-x"]);
   });
 
   test("a dry run counts the selection without removing it", () => {
+    const candidates = [candidate("feature-x", true)];
+    const io = scripted(candidates, "feature-x");
     const report: Report = { worktrees: 0, branches: 0, reasons: [] };
-    process.env.GUM_CHOOSE = "feature-x";
-    checklist([candidate("feature-x", true)], { ...options, dryRun: true }, report);
+    checklist(io, candidates, { ...options, dryRun: true }, report);
     expect(report.worktrees).toBe(1);
-    expect(log("WT_REMOVE_LOG")).toBe("");
+    expect(removals(io)).toEqual([]);
+  });
+
+  test("offers the picker its labels with the header and no selection limit", () => {
+    const candidates = [candidate("feature-x", true)];
+    const io = scripted(candidates);
+    checklist(io, candidates, options, { worktrees: 0, branches: 0, reasons: [] });
+    expect(io.prompts).toEqual([
+      {
+        items: alignColumns(candidates.map((entry) => entry.row)),
+        options: { limit: "none", header: "Select worktrees to remove (esc/none keeps all)" },
+      },
+    ]);
   });
 });

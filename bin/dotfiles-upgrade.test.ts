@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { writeStub } from "#harness";
+import { fakeIo, writeStub } from "#harness";
 import { skipMessage } from "#jobs/sync-gate";
 import {
   credentialFindings,
@@ -895,7 +895,14 @@ describe("the run as a whole", () => {
 });
 
 describe("currentRevision", () => {
-  test("falls back to a literal where the tree is not a checkout", () => {
-    expect(currentRevision(join(sandbox, "nowhere"))).toBe("unknown");
+  test.each<{ name: string; answer: { status?: number; stdout?: string }; expected: string }>([
+    { name: "git names the revision", answer: { stdout: "abc1234\n" }, expected: "abc1234" },
+    { name: "the tree is not a checkout", answer: { status: 128 }, expected: "unknown" },
+    { name: "git prints nothing", answer: { stdout: "\n" }, expected: "unknown" },
+    { name: "git is not installed", answer: { status: 127 }, expected: "unknown" },
+  ])("is $expected where $name", ({ answer, expected }) => {
+    const io = fakeIo({ answers: [{ argv: ["git", "-C", "/tree"], ...answer }] });
+    expect(currentRevision(io, "/tree")).toBe(expected);
+    expect(io.calls[0].options).toEqual({ stdin: "ignore", stderr: "ignore" });
   });
 });

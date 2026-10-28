@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { up } from "./202609060001-remove-tmux";
@@ -9,13 +9,11 @@ import { up } from "./202609060001-remove-tmux";
 let box: Sandbox;
 let home: string;
 let installed: string;
-let uninstalled: string[];
 
 beforeEach(() => {
   box = sandbox("remove-tmux");
   home = box.mkdir("home");
   installed = box.mkdir("installed");
-  uninstalled = [];
 });
 
 afterEach(() => {
@@ -34,14 +32,7 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [installed],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        uninstalled.push(cmd.join(" "));
-        return 0;
-      },
-      read: () => ({ status: 1, stdout: "" }),
-    },
+    io: fakeIo(),
   };
 }
 

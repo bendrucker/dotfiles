@@ -10,13 +10,12 @@
 // packages/worktree/forge.ts holds everything below the query, which is what
 // bin/wt-mr shares with this.
 
+import { type Io, readOk, streamIo } from "#io";
 import {
   type Bucket,
-  capture,
   choose,
   count,
   isRecord,
-  log,
   missingTool,
   ordered,
   parseOptions,
@@ -24,6 +23,7 @@ import {
   switchTo,
   text,
 } from "#worktree/forge";
+import { QUIET } from "#worktree/state";
 
 const USAGE = [
   "usage: wt pr [--mine|--review] [wt switch options]",
@@ -40,8 +40,8 @@ const USAGE = [
 
 // Undefined when gh could not answer, which every caller treats as a reason to
 // stop rather than to show the other half of the results as the whole picture.
-function search(filter: string, bucket: Bucket): Request[] | undefined {
-  const captured = capture([
+function search(io: Io, filter: string, bucket: Bucket): Request[] | undefined {
+  const captured = readOk(io, [
     "gh",
     "search",
     "prs",
@@ -51,7 +51,7 @@ function search(filter: string, bucket: Bucket): Request[] | undefined {
     "50",
     "--json",
     "number,title,repository,url",
-  ]);
+  ], QUIET);
   if (captured === undefined) return undefined;
 
   let parsed: unknown;
@@ -80,20 +80,20 @@ function search(filter: string, bucket: Bucket): Request[] | undefined {
   });
 }
 
-function main(args: string[]): number {
+function main(io: Io, args: string[]): number {
   const parsed = parseOptions(args);
   if (!parsed.ok) {
     if (parsed.message === "") {
-      process.stdout.write(`${USAGE}\n`);
+      io.write(1, `${USAGE}\n`);
       return 0;
     }
-    process.stderr.write(`wt pr: ${parsed.message}\n${USAGE}\n`);
+    io.write(2, `wt pr: ${parsed.message}\n${USAGE}\n`);
     return 2;
   }
 
   const missing = missingTool(["gh", "fzf", "clone-repo", "wt"]);
   if (missing !== undefined) {
-    log("error", `${missing} is required`);
+    io.log("error", `${missing} is required`);
     return 1;
   }
 
@@ -104,9 +104,9 @@ function main(args: string[]): number {
     [parsed.options.review, "--review-requested", "review"],
   ] as const) {
     if (!wanted) continue;
-    const results = search(filter, bucket);
+    const results = search(io, filter, bucket);
     if (results === undefined) {
-      log("error", `gh search prs ${filter}=@me failed`);
+      io.log("error", `gh search prs ${filter}=@me failed`);
       return 1;
     }
     found.push(...results);
@@ -114,14 +114,14 @@ function main(args: string[]): number {
 
   const requests = ordered(found);
   if (requests.length === 0) {
-    log("warn", "no open pull requests");
+    io.log("warn", "no open pull requests");
     return 1;
   }
 
-  const chosen = choose(requests, { prompt: "pr> ", preview: "gh pr view {4}" });
+  const chosen = choose(io, requests, { prompt: "pr> ", preview: "gh pr view {4}" });
   if (chosen === undefined) return 1;
 
-  return switchTo(chosen, parsed.options.rest);
+  return switchTo(io, chosen, parsed.options.rest);
 }
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+if (import.meta.main) process.exit(main(streamIo(), process.argv.slice(2)));

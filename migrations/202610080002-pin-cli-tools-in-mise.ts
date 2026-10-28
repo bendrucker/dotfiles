@@ -7,7 +7,6 @@
 //
 // EXPIRES: 2027-04-08 every machine has run scripts/install since the move to mise
 
-import { log } from "#jobs/output";
 import { type Context, removeFormula } from "#migrations/migration";
 
 // actionlint before shellcheck, which the Homebrew actionlint depends on.
@@ -33,7 +32,7 @@ export function up(context: Context): void {
       removeFormula(context, name);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      log(context.out, "warn", `kept ${name}: ${reason}`);
+      context.io.log("warn", `kept ${name}: ${reason}`);
     }
   }
 }

@@ -13,8 +13,7 @@
 
 import { lstatSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import type { Output } from "#jobs/output";
-import { log } from "#jobs/output";
+import type { Io } from "#io";
 
 // node:os platform values, which is what `process.platform` reports.
 export type Platform = "darwin" | "linux";
@@ -44,7 +43,7 @@ export interface Context {
   installed: string[];
   platform: Platform;
   // Where the migration's own output goes, so it lands in the install log.
-  out: Output;
+  io: Io;
 }
 
 export interface Migration {
@@ -79,12 +78,12 @@ function removePackage(context: Context, name: string, scope: string[]): void {
   const env = { ...process.env, ...HOMEBREW_ENV };
   // --versions rather than plain `list`, which prints every file the package
   // owns and would bury the log it shares with the rest of the install.
-  if (context.out.read([brew, "list", ...scope, "--versions", name], { env, stdin: "ignore" }).status !== 0) {
+  if (context.io.read([brew, "list", ...scope, "--versions", name], { env, stdin: "ignore" }).status !== 0) {
     return;
   }
 
-  log(context.out, "info", `uninstalling ${name}`);
-  if (context.out.run([brew, "uninstall", ...scope, name], { env, stdin: "ignore" }) !== 0) {
+  context.io.log("info", `uninstalling ${name}`);
+  if (context.io.run([brew, "uninstall", ...scope, name], { env, stdin: "ignore" }) !== 0) {
     throw new Error(`brew uninstall ${name} failed`);
   }
 }
@@ -111,7 +110,7 @@ export function removeTree(context: Context, path: string): void {
   }
 
   if (!exists(target)) return;
-  log(context.out, "info", `removing ${target}`);
+  context.io.log("info", `removing ${target}`);
   rmSync(target, { recursive: true, force: true });
 }
 

@@ -8,7 +8,6 @@
 // EXPIRES: 2027-03-27 every machine has run scripts/install since the removal
 
 import { join } from "node:path";
-import { log } from "#jobs/output";
 import { type Context, contains, exists, isEmpty, linkTarget, nodeInstalls, removeTree } from "#migrations/migration";
 
 // The cask is macOS-only. On Linux an npm install may be the only `claude`.
@@ -44,8 +43,8 @@ function reshim(context: Context, mise: string): void {
   const bin = Bun.which("mise", { PATH: process.env.PATH });
   if (bin === null) return;
 
-  log(context.out, "info", "reshimming mise");
-  if (context.out.run([bin, "reshim"], { stdin: "ignore" }) !== 0) {
+  context.io.log("info", "reshimming mise");
+  if (context.io.run([bin, "reshim"], { stdin: "ignore" }) !== 0) {
     throw new Error("mise reshim failed");
   }
 }

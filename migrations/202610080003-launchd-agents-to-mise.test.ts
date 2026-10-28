@@ -1,17 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { RETIRED, up } from "./202610080003-launchd-agents-to-mise";
 
 let box: Sandbox;
-let launchctl: string[][];
+let io: FakeIo;
 
 beforeEach(() => {
   box = sandbox("launchd-agents-to-mise");
   box.mkdir("home", "Library", "LaunchAgents");
-  launchctl = [];
+  io = fakeIo({ answers: [{ argv: [] }] });
 });
 
 afterEach(() => {
@@ -27,15 +27,12 @@ function context(): Context {
     applications: box.mkdir("Applications"),
     installed: [box.mkdir("installed")],
     platform: "darwin",
-    out: {
-      write() {},
-      run: () => 0,
-      read(cmd) {
-        if (cmd[0] === "launchctl") launchctl.push(cmd.slice(1, 2));
-        return { status: 0, stdout: "" };
-      },
-    },
+    io,
   };
+}
+
+function launchctl(): string[][] {
+  return io.calls.filter((call) => call.argv[0] === "launchctl").map((call) => call.argv.slice(1, 2));
 }
 
 function plist(label: string): string {
@@ -49,7 +46,7 @@ describe("launchd-agents-to-mise", () => {
     up(context());
 
     for (const label of RETIRED) expect(exists(plist(label))).toBe(false);
-    expect(launchctl).toEqual(RETIRED.map(() => ["bootout"]));
+    expect(launchctl()).toEqual(RETIRED.map(() => ["bootout"]));
   });
 
   // The nightly job runs this migration, and nothing replaces it until

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { up } from "./202610120005-default-packages-to-mise";
@@ -27,7 +27,7 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [box.mkdir("installed")],
     platform: "darwin",
-    out: { write() {}, run: () => 0, read: () => ({ status: 1, stdout: "" }) },
+    io: fakeIo(),
   };
 }
 

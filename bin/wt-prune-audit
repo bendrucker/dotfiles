@@ -30,7 +30,7 @@
 // A worktree holding the default branch is excluded outright, since no prune
 // pass can remove it.
 
-import { writeSync } from "node:fs";
+import { type Io, streamIo } from "#io";
 import {
   defaultBranch,
   listWorktrees,
@@ -110,7 +110,7 @@ function isCandidate(worktree: Worktree): boolean {
   );
 }
 
-export function audit(): Outcome {
+export function audit(io: Io): Outcome {
   const grace = graceSeconds();
   // A misconfigured duration returns nonzero, which flags the repo as failed
   // under `wt all` and puts the reason in front of someone. Every other exit
@@ -126,11 +126,11 @@ export function audit(): Outcome {
 
   // Skip the forge entirely when no candidate survives, matching the pruner's
   // gating so most repos in a fan-out cost nothing.
-  const candidates = (listWorktrees() ?? []).filter(isCandidate);
+  const candidates = (listWorktrees(io) ?? []).filter(isCandidate);
   if (candidates.length === 0) return { status: 0, stdout: "", stderr: "" };
 
-  const host = remoteHost();
-  const defaultName = defaultBranch();
+  const host = remoteHost(io);
+  const defaultName = defaultBranch(io);
 
   const findings: Finding[] = [];
   for (const worktree of candidates) {
@@ -142,8 +142,8 @@ export function audit(): Outcome {
     const reason = classify({
       mainState: worktree.mainState,
       grace,
-      age: () => worktreeAgeSecs(worktree.path),
-      forge: () => prState(worktree.branch, host)?.state ?? "",
+      age: () => worktreeAgeSecs(io, worktree.path),
+      forge: () => prState(io, worktree.branch, host)?.state ?? "",
     });
     if (reason !== undefined) {
       findings.push({ branch: worktree.branch, reason, path: worktree.path });
@@ -160,17 +160,10 @@ export function audit(): Outcome {
   };
 }
 
-// A write followed by process.exit delivers only one pipe buffer, and `wt all`
-// reads this through a pipe.
-function writeAll(fd: number, text: string): void {
-  const bytes = Buffer.from(text);
-  let written = 0;
-  while (written < bytes.length) written += writeSync(fd, bytes, written);
-}
-
 if (import.meta.main) {
-  const outcome = audit();
-  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
-  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
+  const io = streamIo();
+  const outcome = audit(io);
+  if (outcome.stdout !== "") io.write(1, outcome.stdout);
+  if (outcome.stderr !== "") io.write(2, outcome.stderr);
   process.exit(outcome.status);
 }

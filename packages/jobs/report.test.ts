@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Answer, type FakeIo, fakeIo } from "#harness";
 import {
   ESCALATE_AFTER,
   appendBlock,
@@ -24,54 +25,41 @@ import { readLatch, statusFile } from "#jobs/state";
 import { THINGS_NOTES_LIMIT } from "#jobs/things";
 
 let sandbox: string;
+let io: FakeIo;
 const environment = {
-  PATH: process.env.PATH,
   XDG_STATE_HOME: process.env.XDG_STATE_HOME,
   THINGS_DATABASE: process.env.THINGS_DATABASE,
 };
 
-function writeStub(path: string, body: string): void {
-  writeFileSync(path, `#!/bin/sh\n${body}\n`);
-  chmodSync(path, 0o755);
-}
-
-function stub(name: string): string {
-  return join(sandbox, "stub", name);
+// Replaces what the fake answers for one command, as a test swaps a stub.
+function answer(command: string, reply: Omit<Answer, "argv">): void {
+  const index = io.answers.findIndex((candidate) => candidate.argv[0] === command);
+  io.answers[index] = { argv: [command], ...reply };
 }
 
 beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), "jobs-report-"));
-  const stubs = join(sandbox, "stub");
-  mkdirSync(stubs);
 
-  // `open` is the only way a to-do is created or changed, so recording the URL it
-  // was handed is the whole observation. `-g` puts the URL in the second
-  // argument.
-  writeStub(join(stubs, "open"), `printf '%s\\n' "$2" >> "${join(sandbox, "urls")}"`);
-  writeStub(join(stubs, "osascript"), `printf '%s\\n' "$2" >> "${join(sandbox, "notifications")}"`);
-  writeStub(join(stubs, "gum"), "exit 0");
-  // Nothing can be appended without the token, so the default is the machine that has one.
-  writeStub(join(stubs, "security"), 'printf "token-abc\\n"');
+  // `open` is the only way a to-do is created or changed, so the URL it was
+  // handed is the whole observation. Nothing else is answered, so a call that
+  // reaches for another command gets 127 instead of Things or the notification
+  // centre.
+  io = fakeIo({
+    answers: [
+      { argv: ["open"] },
+      { argv: ["osascript"] },
+      // Nothing can be appended without the token, so the default is the machine that has one.
+      { argv: ["security"], stdout: "token-abc\n" },
+    ],
+  });
 
-  // Nothing but the stubs is reachable, so a call that escapes one fails loudly
-  // instead of reaching Things or the notification centre.
-  process.env.PATH = stubs;
   process.env.XDG_STATE_HOME = join(sandbox, "state");
   // Pointed at nothing by default, which is a machine where Things cannot be
   // read: the latch alone decides.
   process.env.THINGS_DATABASE = join(sandbox, "absent.sqlite");
-
-  // A stub that failed to shadow the real command would file real Things to-dos
-  // and raise real notifications, so prove the shadowing before every example
-  // rather than discovering it from the Today list.
-  Bun.spawnSync({ cmd: ["open", "-g", "stub-probe"], env: process.env });
-  const probed = readFileSync(join(sandbox, "urls"), "utf8");
-  if (!probed.startsWith("stub-probe")) throw new Error(`open resolved to ${probed}`);
-  rmSync(join(sandbox, "urls"));
 });
 
 afterEach(() => {
-  process.env.PATH = environment.PATH;
   for (const key of ["XDG_STATE_HOME", "THINGS_DATABASE"] as const) {
     if (environment[key] === undefined) delete process.env[key];
     else process.env[key] = environment[key];
@@ -80,7 +68,7 @@ afterEach(() => {
 });
 
 function fail(output: string, fingerprint = ""): number {
-  return reportFailure({
+  return reportFailure(io, {
     job: "drift",
     title: "Stale",
     command: "audit",
@@ -92,12 +80,9 @@ function fail(output: string, fingerprint = ""): number {
   });
 }
 
+// Every URL handed to `open`, refused or not.
 function urls(): string[] {
-  try {
-    return readFileSync(join(sandbox, "urls"), "utf8").split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
+  return io.calls.filter((call) => call.argv[0] === "open").map((call) => call.argv[2]);
 }
 
 function added(): string[] {
@@ -114,11 +99,7 @@ function field(url: string, name: string): string {
 }
 
 function notifications(): string[] {
-  try {
-    return readFileSync(join(sandbox, "notifications"), "utf8").split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
+  return io.calls.filter((call) => call.argv[0] === "osascript").map((call) => call.argv[2]);
 }
 
 function filedNotes(): string {
@@ -181,7 +162,7 @@ describe("reportFailure latch", () => {
   // later night the store cannot be read, which is every night on a machine
   // without Things.
   test("puts the latch back when the filing itself fails", () => {
-    writeStub(stub("open"), "exit 3");
+    answer("open", { status: 3 });
     // The filer's own status, which is what tells a refused filing apart from a
     // failure that was filed.
     expect(fail("one plugin stale")).toBe(3);
@@ -305,7 +286,7 @@ describe("reportFailure append", () => {
   test("leaves the standing to-do alone where the append cannot be made", () => {
     fail("boom");
     standInThings();
-    writeStub(stub("security"), "exit 1");
+    answer("security", { status: 1 });
 
     fail("boom");
     fail("boom");
@@ -318,14 +299,15 @@ describe("reportFailure append", () => {
   // A later night that cannot read the store would otherwise read the latch as a
   // to-do standing and leave the failure unreported for good.
   test("puts the latch back where the filing was refused", () => {
-    writeStub(stub("open"), "exit 1");
+    answer("open", { status: 1 });
     fail("boom");
-    expect(added()).toHaveLength(0);
-
-    writeStub(stub("open"), `printf '%s\\n' "$2" >> "${join(sandbox, "urls")}"`);
-    fail("boom");
-
     expect(added()).toHaveLength(1);
+
+    answer("open", {});
+    fail("boom");
+
+    // Refused once, then filed again because the latch was put back.
+    expect(added()).toHaveLength(2);
   });
 
   // A recovery clears the latch while the to-do it filed stays standing, so the
@@ -345,7 +327,7 @@ describe("reportFailure append", () => {
 
   // A to-do standing for a different cause is not one this failure can append to.
   test("still files where nothing stands for this cause", () => {
-    writeStub(stub("security"), "exit 1");
+    answer("security", { status: 1 });
     fail("fatal: could not resolve host\n");
     standInThings();
     fail("error: cannot lock ref 'HEAD'\n");
@@ -400,11 +382,11 @@ describe("reportFailure escalation", () => {
   // landed leaves the cause in Anytime for good.
   test("keeps the escalation where the update carrying it fails", () => {
     repeat(ESCALATE_AFTER - 1);
-    writeStub(stub("security"), "exit 1");
+    answer("security", { status: 1 });
     standInThings();
     fail("boom");
 
-    writeStub(stub("security"), 'printf "token-abc\\n"');
+    answer("security", { stdout: "token-abc\n" });
     standInThings();
     fail("boom");
 
@@ -455,7 +437,7 @@ function finding(row: string): Finding {
 // One night of a findings job: what stands, and what it could not reach a
 // verdict on.
 function night(standing: string[], held: string[] = []): number {
-  return reportFindings({
+  return reportFindings(io, {
     job: "drift",
     title: "Stale",
     command: "audit",
@@ -483,7 +465,7 @@ describe("reportFindings latch", () => {
   test("leaves the standing to-do alone where the append cannot be made", () => {
     night(["alpha stale"]);
     standInThings();
-    writeStub(stub("security"), "exit 1");
+    answer("security", { status: 1 });
 
     night([]);
     night(["alpha stale"]);
@@ -494,13 +476,14 @@ describe("reportFindings latch", () => {
   // A latch claiming a to-do that was never created leaves the finding quiet
   // however long it stands.
   test("puts the findings back where the filing was refused", () => {
-    writeStub(stub("open"), "exit 3");
+    answer("open", { status: 3 });
     expect(night(["alpha stale"])).toBe(3);
 
-    writeStub(stub("open"), `printf '%s\\n' "$2" >> "${join(sandbox, "urls")}"`);
+    answer("open", {});
     night(["alpha stale"]);
 
-    expect(added()).toHaveLength(1);
+    // Refused once, then filed again because the findings were put back.
+    expect(added()).toHaveLength(2);
   });
 
   test("stays quiet while the same finding stands", () => {
@@ -541,7 +524,7 @@ describe("reportFindings latch", () => {
   });
 
   test("puts the latch back when the filing itself fails", () => {
-    writeStub(stub("open"), "exit 3");
+    answer("open", { status: 3 });
     expect(night(["alpha stale"])).toBe(3);
     expect(readLatch("drift")).toBe("");
   });
@@ -688,41 +671,41 @@ describe("buildNotes", () => {
   };
 
   test("opens with the machine, time and revision", () => {
-    expect(buildNotes(note)).toStartWith(
+    expect(buildNotes(io, note)).toStartWith(
       "- **Machine:** Mac Studio\n- **First seen:** 2026-09-05 03:00:12 PDT\n- **Revision:** abc123\n",
     );
   });
 
   test("names the cause it was filed against and where every run is kept", () => {
-    expect(buildNotes(note)).toContain("- **Cause:** fatal: could not resolve host");
-    expect(buildNotes(note)).toContain("- **Every run:** /state/dotfiles/runs/drift-9f8e.log");
+    expect(buildNotes(io, note)).toContain("- **Cause:** fatal: could not resolve host");
+    expect(buildNotes(io, note)).toContain("- **Every run:** /state/dotfiles/runs/drift-9f8e.log");
   });
 
   // The marker is what the next run finds the to-do by, so its absence would make
   // every repeat file a second to-do.
   test("carries the marker", () => {
-    expect(buildNotes(note)).toContain("`dotfiles-job a1b2c3d4/drift/9f8e`");
+    expect(buildNotes(io, note)).toContain("`dotfiles-job a1b2c3d4/drift/9f8e`");
   });
 
   test("appends extra metadata to the header only when there is some", () => {
-    expect(buildNotes(note)).not.toContain("- **Claude:**");
-    expect(buildNotes({ ...note, extraMeta: "- **Claude:** 2.0" })).toContain(
+    expect(buildNotes(io, note)).not.toContain("- **Claude:**");
+    expect(buildNotes(io, { ...note, extraMeta: "- **Claude:** 2.0" })).toContain(
       "- **Revision:** abc123\n- **Claude:** 2.0\n",
     );
   });
 
   test("fences the reproduction command and names the output section", () => {
-    expect(buildNotes(note)).toContain("```sh\nbrew bundle\n```\n\n## Error Output\n```\nboom\n```");
+    expect(buildNotes(io, note)).toContain("```sh\nbrew bundle\n```\n\n## Error Output\n```\nboom\n```");
   });
 
   test("closes the fence on the line after the last log line", () => {
-    expect(buildNotes({ ...note, output: "boom\n\n\n" })).toEndWith("boom\n```");
+    expect(buildNotes(io, { ...note, output: "boom\n\n\n" })).toEndWith("boom\n```");
   });
 
   // The regression: the error is the last line, and it was the part Things cut.
   test("keeps the note within what Things stores and keeps the error that ended the run", () => {
     const big = `${" plugins/some/path.ts | 12 ++++\n".repeat(400)}WARN the actual failure\n`;
-    const notes = buildNotes({ ...note, output: big });
+    const notes = buildNotes(io, { ...note, output: big });
     expect(notes.length).toBeLessThanOrEqual(THINGS_NOTES_LIMIT);
     expect(notes).toContain("WARN the actual failure");
   });
@@ -763,7 +746,7 @@ describe("appendBlock", () => {
 // leave the runs after this one unrecorded and unexplained.
 describe("missing auth token", () => {
   test("says so in the note it files", () => {
-    writeStub(stub("security"), "exit 1");
+    answer("security", { status: 1 });
     fail("boom");
     expect(filedNotes()).toContain("things-auth-token");
   });
@@ -795,22 +778,21 @@ describe("notificationScript", () => {
 // broken call would go unnoticed on the one platform that has it.
 describe("notify", () => {
   test("hands osascript the script for the notification", () => {
-    notify("Dotfiles Sync", "Updated to abc123", "Glass");
+    notify(io, "Dotfiles Sync", "Updated to abc123", "Glass");
     expect(notifications()).toEqual([
       'display notification "Updated to abc123" with title "Dotfiles Sync" sound name "Glass"',
     ]);
   });
 
   test("defaults the sound", () => {
-    notify("Dotfiles Sync", "Updated to abc123");
+    notify(io, "Dotfiles Sync", "Updated to abc123");
     expect(notifications()[0]).toContain('sound name "Basso"');
   });
 
   // Every Linux run reaches this, CI included, under callers that abort on a
   // nonzero status.
   test("does nothing where osascript is absent", () => {
-    rmSync(stub("osascript"));
-    expect(() => notify("Dotfiles Sync", "Updated")).not.toThrow();
-    expect(notifications()).toEqual([]);
+    answer("osascript", { status: 127 });
+    expect(() => notify(io, "Dotfiles Sync", "Updated")).not.toThrow();
   });
 });

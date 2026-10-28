@@ -1,9 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
+import { fakeIo } from "#harness";
 import {
-  capture,
   choose,
   count,
   isRecord,
@@ -16,109 +13,7 @@ import {
   text,
 } from "./forge.ts";
 
-// Keeps the rows it was offered so a case can assert what the picker saw, and
-// echoes the line FZF_PICK names. No pick is a dismissal, which real fzf
-// reports as 130 with nothing on stdout.
-const FZF_STUB = `#!/usr/bin/env bash
-[ "$1" = "--stub-check" ] && { echo "fzf stub"; exit 0; }
-printf '%s\\n' "$*" >"$FZF_ARGS"
-cat >"$FZF_STDIN"
-[ -n "$FZF_PICK" ] || exit 130
-sed -n "\${FZF_PICK}p" "$FZF_STDIN"
-`;
-
-// A missing CLONE_PATH is the resolution failing, an empty one the answer that
-// named no directory.
-const CLONE_STUB = `#!/usr/bin/env bash
-[ "$1" = "--stub-check" ] && { echo "clone-repo stub"; exit 0; }
-printf '%s\\n' "$*" >>"$CLONE_LOG"
-[ -f "$CLONE_PATH" ] || exit 1
-cat "$CLONE_PATH"
-`;
-
-const WT_STUB = `#!/usr/bin/env bash
-[ "$1" = "--stub-check" ] && { echo "wt stub"; exit 0; }
-printf '%s\\n' "$*" >>"$WT_LOG"
-exit "\${WT_EXIT:-0}"
-`;
-
-const GUM_STUB = `#!/usr/bin/env bash
-[ "$1" = "--stub-check" ] && { echo "gum stub"; exit 0; }
-printf '%s\\n' "$*" >>"$GUM_LOG"
-`;
-
-const STUBBED = ["fzf", "clone-repo", "wt", "gum"];
 const PICKER = { prompt: "pr> ", preview: "gh pr view {4}" };
-const environment = { PATH: process.env.PATH };
-
-let sandbox: string;
-
-beforeEach(() => {
-  sandbox = mkdtempSync(join(tmpdir(), "worktree-forge-"));
-
-  const stubs = join(sandbox, "stub");
-  mkdirSync(stubs);
-  writeStub(join(stubs, "fzf"), FZF_STUB);
-  writeStub(join(stubs, "clone-repo"), CLONE_STUB);
-  writeStub(join(stubs, "wt"), WT_STUB);
-  writeStub(join(stubs, "gum"), GUM_STUB);
-
-  process.env.PATH = `${stubs}:${environment.PATH}`;
-  process.env.FZF_ARGS = join(sandbox, "fzf.args");
-  process.env.FZF_STDIN = join(sandbox, "fzf.stdin");
-  process.env.CLONE_LOG = join(sandbox, "clone.log");
-  process.env.CLONE_PATH = join(sandbox, "clone.path");
-  process.env.WT_LOG = join(sandbox, "wt.log");
-  process.env.GUM_LOG = join(sandbox, "gum.log");
-  delete process.env.FZF_PICK;
-  delete process.env.WT_EXIT;
-
-  for (const log of ["CLONE_LOG", "WT_LOG", "GUM_LOG"]) {
-    writeFileSync(process.env[log] as string, "");
-  }
-  writeFileSync(process.env.CLONE_PATH, "/checkouts/repo\n");
-
-  proveStubs();
-});
-
-afterEach(() => {
-  process.env.PATH = environment.PATH;
-  for (const name of [
-    "FZF_ARGS",
-    "FZF_STDIN",
-    "FZF_PICK",
-    "CLONE_LOG",
-    "CLONE_PATH",
-    "WT_LOG",
-    "WT_EXIT",
-    "GUM_LOG",
-  ]) {
-    delete process.env[name];
-  }
-  rmSync(sandbox, { recursive: true, force: true });
-});
-
-function writeStub(path: string, script: string): void {
-  writeFileSync(path, script);
-  chmodSync(path, 0o755);
-}
-
-// The PATH edit above is the whole isolation these cases have. A stub that did
-// not shadow its real binary would let a case reach the forge, open a picker on
-// the terminal, or clone a repository and still look like it passed.
-function proveStubs(): void {
-  for (const name of STUBBED) {
-    const run = Bun.spawnSync({ cmd: [name, "--stub-check"], env: process.env, stdin: "ignore" });
-    const said = run.stdout.toString().trim();
-    if (said !== `${name} stub`) {
-      throw new Error(`the ${name} stub is not on PATH: --stub-check said ${JSON.stringify(said)}`);
-    }
-  }
-}
-
-function read(name: "FZF_ARGS" | "FZF_STDIN" | "CLONE_LOG" | "WT_LOG" | "GUM_LOG"): string {
-  return readFileSync(process.env[name] as string, "utf8");
-}
 
 function makeRequest(overrides: Partial<Request> = {}): Request {
   return {
@@ -234,80 +129,84 @@ describe("choose", () => {
   test("returns the request behind the chosen row", () => {
     const first = makeRequest({ number: 1, url: "first" });
     const second = makeRequest({ number: 2, url: "second" });
-    process.env.FZF_PICK = "2";
+    const io = fakeIo({ answers: [{ argv: ["fzf"], stdout: `${pickerRow(second)}\n` }] });
 
-    expect(choose([first, second], PICKER)).toBe(second);
-    expect(read("FZF_STDIN")).toBe(`${pickerRow(first)}\n${pickerRow(second)}\n`);
+    expect(choose(io, [first, second], PICKER)).toBe(second);
+    expect(io.calls[0]?.options?.stdin).toEqual({
+      input: `${pickerRow(first)}\n${pickerRow(second)}\n`,
+    });
   });
 
   test("shows the prompt and the preview command it was given", () => {
-    process.env.FZF_PICK = "1";
-    choose([makeRequest()], PICKER);
+    const io = fakeIo({ answers: [{ argv: ["fzf"] }] });
+    choose(io, [makeRequest()], PICKER);
 
-    expect(read("FZF_ARGS")).toContain("--prompt=pr> ");
-    expect(read("FZF_ARGS")).toContain("--preview=gh pr view {4}");
+    expect(io.calls[0]?.argv).toContain("--prompt=pr> ");
+    expect(io.calls[0]?.argv).toContain("--preview=gh pr view {4}");
   });
 
+  // Real fzf reports a dismissal as 130 with nothing on stdout.
   test("returns nothing when the picker is dismissed", () => {
-    expect(choose([makeRequest()], PICKER)).toBeUndefined();
+    const io = fakeIo({ answers: [{ argv: ["fzf"], status: 130 }] });
+    expect(choose(io, [makeRequest()], PICKER)).toBeUndefined();
+  });
+
+  test("returns nothing when fzf is not installed", () => {
+    expect(choose(fakeIo(), [makeRequest()], PICKER)).toBeUndefined();
   });
 });
 
 describe("switchTo", () => {
+  const CLONED = { argv: ["clone-repo"], stdout: "/checkouts/repo\n" };
+
   test("opens the checkout clone-repo resolved and forwards the rest", () => {
-    expect(switchTo(makeRequest(), ["-x", "claude"])).toBe(0);
-    expect(read("CLONE_LOG")).toBe("owner/repo\n");
-    expect(read("WT_LOG")).toBe(
-      "-C /checkouts/repo switch https://github.com/owner/repo/pull/1 -x claude\n",
-    );
+    const io = fakeIo({ answers: [CLONED, { argv: ["wt"] }] });
+
+    expect(switchTo(io, makeRequest(), ["-x", "claude"])).toBe(0);
+    expect(io.calls.map((call) => call.argv)).toEqual([
+      ["clone-repo", "owner/repo"],
+      ["wt", "-C", "/checkouts/repo", "switch", "https://github.com/owner/repo/pull/1", "-x", "claude"],
+    ]);
+  });
+
+  test("hands the switch the terminal's stdin", () => {
+    const io = fakeIo({ answers: [CLONED, { argv: ["wt"] }] });
+    switchTo(io, makeRequest(), []);
+
+    const [, wt] = io.calls;
+    expect(wt?.method).toBe("run");
+    expect(wt?.options?.stdin).toBeUndefined();
   });
 
   test("answers with the status the switch exited on", () => {
-    process.env.WT_EXIT = "3";
-    expect(switchTo(makeRequest(), [])).toBe(3);
+    const io = fakeIo({ answers: [CLONED, { argv: ["wt"], status: 3 }] });
+    expect(switchTo(io, makeRequest(), [])).toBe(3);
   });
 
-  test.each<{ name: string; setup: () => void }>([
-    { name: "clone-repo failed", setup: () => rmSync(process.env.CLONE_PATH as string) },
-    {
-      name: "clone-repo named no directory",
-      setup: () => writeFileSync(process.env.CLONE_PATH as string, ""),
-    },
-  ])("reports the checkout it could not resolve when $name", ({ setup }) => {
-    setup();
+  test.each<{ name: string; answer: { argv: string[]; status?: number; stdout?: string } }>([
+    { name: "clone-repo failed", answer: { argv: ["clone-repo"], status: 1 } },
+    { name: "clone-repo named no directory", answer: { argv: ["clone-repo"], stdout: "" } },
+    { name: "clone-repo is not installed", answer: { argv: ["clone-repo"], status: 127 } },
+  ])("reports the checkout it could not resolve when $name", ({ answer }) => {
+    const io = fakeIo({ answers: [answer, { argv: ["wt"] }] });
 
-    expect(switchTo(makeRequest(), [])).toBe(1);
-    expect(read("WT_LOG")).toBe("");
-    expect(read("GUM_LOG")).toBe("log --level error could not resolve a checkout for owner/repo\n");
+    expect(switchTo(io, makeRequest(), [])).toBe(1);
+    expect(io.calls.map((call) => call.argv[0])).toEqual(["clone-repo"]);
+    expect(io.logs).toEqual([
+      { level: "error", message: "could not resolve a checkout for owner/repo" },
+    ]);
   });
 });
 
 describe("missingTool", () => {
   test("names the first tool that is absent", () => {
-    expect(missingTool(["wt", "not-installed-here", "also-not-installed"])).toBe(
+    expect(missingTool(["sh", "not-installed-here", "also-not-installed"])).toBe(
       "not-installed-here",
     );
   });
 
   test("answers with nothing when every tool is on PATH", () => {
-    expect(missingTool(STUBBED)).toBeUndefined();
-  });
-});
-
-describe("capture", () => {
-  test("trims the trailing newlines off what the command printed", () => {
-    expect(capture(["clone-repo", "owner/repo"])).toBe("/checkouts/repo");
-  });
-
-  // A forge query that failed is not an empty result set. Reporting "none open"
-  // for a network error would quietly show half of what is waiting on you.
-  test("answers with nothing when the command exited nonzero", () => {
-    rmSync(process.env.CLONE_PATH as string);
-    expect(capture(["clone-repo", "owner/repo"])).toBeUndefined();
-  });
-
-  test("answers with nothing when the command is not installed", () => {
-    expect(capture(["not-installed-here"])).toBeUndefined();
+    expect(missingTool(["sh", "ls"])).toBeUndefined();
   });
 });
 

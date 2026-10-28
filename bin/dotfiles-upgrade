@@ -20,8 +20,9 @@ import {
   realpathSync,
   writeSync,
 } from "node:fs";
-import { constants as osConstants, homedir } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { type Io, readOk, streamIo, type Teed, tee } from "#io";
 import { SKIP_ESCALATION } from "#jobs/sync-gate";
 import { logExcerpt, stripCsi } from "#jobs/excerpt";
 import { type Finding, reportFailure, reportFindings, reportSuccess } from "#jobs/report";
@@ -48,9 +49,6 @@ const RETIRED_LABEL = "com.user.dotfiles-upgrade";
 const LOG_TAIL_LINES = 100;
 
 const SYNC_TITLE = "Syncing dotfiles";
-
-const TRAILING_NEWLINES = /\n+$/;
-
 
 // Drift is a standing finding rather than a break, so the latch keys on the
 // package set. An unactioned to-do stays quiet while the same packages are
@@ -99,85 +97,12 @@ function byCodeUnit(a: string, b: string): number {
 
 // The revision the to-do names. Falls back to a literal where DOTFILES_HOME is
 // not a checkout, which is a state a fresh machine passes through.
-export function currentRevision(dotfilesHome: string): string {
-  const git = Bun.which("git", { PATH: process.env.PATH });
-  if (git === null) return "unknown";
-  try {
-    const rev = Bun.spawnSync({
-      cmd: [git, "-C", dotfilesHome, "rev-parse", "--short", "HEAD"],
-      env: process.env,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    const short = rev.stdout.toString().trim();
-    return rev.exitCode === 0 && short !== "" ? short : "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
-// Every message the job emits goes to stderr, where a caller capturing stdout
-// does not pick it up.
-//
-// A machine without gum cannot report anything either, because the reporting
-// library logs through gum too, so the run ends here rather than part way
-// through a filing whose latch would then claim a to-do that was never created.
-// Bun raises where the shell exited 127, and the status is what launchd records.
-function log(level: "info" | "warn" | "error", message: string): void {
-  let status: number | null;
-  try {
-    status = Bun.spawnSync({
-      cmd: ["gum", "log", "--level", level, message],
-      env: process.env,
-      stdin: "ignore",
-      stdout: "inherit",
-      stderr: "inherit",
-    }).exitCode;
-  } catch {
-    writeAll(2, "dotfiles-upgrade: gum is not installed\n");
-    process.exit(127);
-  }
-
-  // A gum that runs but fails, as one left linked against a missing dylib does,
-  // ends the run the same way. Under set -e the shell's bare `gum log` aborted
-  // with gum's own status, and a job that cannot say anything cannot file a
-  // to-do either.
-  if (status !== 0) {
-    writeAll(2, "dotfiles-upgrade: gum log failed\n");
-    process.exit(127);
-  }
-}
-
-// Bun raises where the shell printed its own "no such file or directory" and
-// left it in the log and in the to-do filed from it. A step that could not be
-// started has to say why, or the failure arrives with nothing in it to act on.
-function spawnReason(cmd: string[], error: unknown): string {
-  const detail = error instanceof Error ? error.message : String(error);
-  return `dotfiles-upgrade: ${cmd[0]}: ${detail}\n`;
-}
-
-// A child killed by a signal has no exit code, and Bun reports null. Handed to
-// process.exit that would exit 0, so a step that died on SIGTERM would read as
-// a step that worked. 128 + the signal is what the shell reported.
-function exitStatus(run: { exitCode: number | null; signalCode: string | null }): number {
-  if (run.exitCode !== null) return run.exitCode;
-  return run.signalCode === null ? 0 : 128 + (osConstants.signals[run.signalCode] ?? 0);
-}
-
-function spawnTeed(cmd: string[]) {
-  return Bun.spawn({
-    cmd,
-    env: process.env,
-    stdin: "inherit",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-}
-
-interface Step {
-  status: number;
-  output: string;
+export function currentRevision(io: Io, dotfilesHome: string): string {
+  const short = readOk(io, ["git", "-C", dotfilesHome, "rev-parse", "--short", "HEAD"], {
+    stdin: "ignore",
+    stderr: "ignore",
+  })?.trim();
+  return short || "unknown";
 }
 
 // A step whose output is both the progress report and the body of the to-do a
@@ -187,72 +112,29 @@ interface Step {
 // Piping the child's stderr is also what keeps bin/spin on its plain path: the
 // terminal test it makes is on the stderr it inherits, and a spinner rendered
 // into a captured log rides into the to-do as raw control characters.
-async function runTeed(cmd: string[]): Promise<Step> {
-  let child: ReturnType<typeof spawnTeed>;
-  // Bun raises where the shell exited 127, and a step that could not be run is
-  // a step that failed.
-  try {
-    child = spawnTeed(cmd);
-  } catch (error) {
-    // Into the teed output as well as onto the stream, because this is the text
-    // the to-do's Error Output section is built from.
-    const reason = spawnReason(cmd, error);
-    writeAll(1, reason);
-    return { status: 127, output: reason };
-  }
+function runTeed(io: Io, cmd: string[]): Promise<Teed> {
+  return tee(io, cmd, { label: "dotfiles-upgrade" });
+}
 
-  const chunks: Uint8Array[] = [];
-  const pump = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
-    for await (const chunk of stream) {
-      chunks.push(chunk);
-      writeAll(1, chunk);
-    }
+// A machine without gum cannot report anything, because the reporting library
+// logs through gum too, so the run ends rather than part way through a filing
+// whose latch would then claim a to-do that was never created. A gum that runs
+// but fails, as one linked against a missing dylib does, ends it the same way.
+// The status is what launchd records.
+function reportingIo(io: Io): Io {
+  return {
+    ...io,
+    log(level, message) {
+      if (Bun.which("gum", { PATH: process.env.PATH }) === null) {
+        io.write(2, "dotfiles-upgrade: gum is not installed\n");
+        process.exit(127);
+      }
+      if (io.run(["gum", "log", "--level", level, message], { stdin: "ignore" }) !== 0) {
+        io.write(2, "dotfiles-upgrade: gum log failed\n");
+        process.exit(127);
+      }
+    },
   };
-  await Promise.all([pump(child.stdout), pump(child.stderr)]);
-
-  const status = await child.exited;
-  return { status, output: Buffer.concat(chunks).toString() };
-}
-
-function runInherited(cmd: string[]): number {
-  try {
-    return exitStatus(
-      Bun.spawnSync({
-        cmd,
-        env: process.env,
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      }),
-    );
-  } catch (error) {
-    writeAll(2, spawnReason(cmd, error));
-    return 127;
-  }
-}
-
-// stdout is captured and stderr is not. scripts/brew-drift leaves stdout empty
-// when it has nothing to report and says why on stderr, precisely because
-// anything printed here is filed as a package listing.
-function runCapturingStdout(cmd: string[]): Step {
-  try {
-    const child = Bun.spawnSync({
-      cmd,
-      env: process.env,
-      stdin: "inherit",
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    return {
-      status: exitStatus(child),
-      output: child.stdout.toString().replace(TRAILING_NEWLINES, ""),
-    };
-  } catch (error) {
-    // Onto stderr, never stdout: anything on stdout here is filed as a package
-    // listing.
-    writeAll(2, spawnReason(cmd, error));
-    return { status: 127, output: "" };
-  }
 }
 
 // The sync gate counts the unattended skips in a row and, from the second on,
@@ -284,7 +166,7 @@ const WARN = "WARN ";
 // first break: a sync that stays broken has to hold its to-do while the install
 // behind it reports its own state, and one latch between them would have each
 // night's second failure overwrite what the first stored.
-function reportStepFailure(step: {
+function reportStepFailure(io: Io, step: {
   job: string;
   home: string;
   fingerprint: string;
@@ -292,12 +174,12 @@ function reportStepFailure(step: {
   command: string;
   output: string;
 }): number {
-  const status = reportFailure({
+  const status = reportFailure(io, {
     job: step.job,
     title: step.title,
     command: step.command,
     output: logExcerpt(step.output, LOG_TAIL_LINES),
-    revision: currentRevision(step.home),
+    revision: currentRevision(io, step.home),
     extraMeta: "",
     outputHeading: "Error Output",
     fingerprint: step.fingerprint,
@@ -307,13 +189,13 @@ function reportStepFailure(step: {
   return status !== 0 ? status : 1;
 }
 
-function reportDrift(home: string, listing: string): number {
-  return reportFailure({
+function reportDrift(io: Io, home: string, listing: string): number {
+  return reportFailure(io, {
     job: DRIFT_JOB,
     title: "Undeclared Homebrew packages",
     command: join(home, "scripts", "brew-drift"),
     output: listing,
-    revision: currentRevision(home),
+    revision: currentRevision(io, home),
     extraMeta: "",
     // This output is a finding list rather than an error.
     outputHeading: "Undeclared Packages",
@@ -324,25 +206,25 @@ function reportDrift(home: string, listing: string): number {
 // A shim for a tool active only inside some project falls through to the copy
 // behind it everywhere else, at mise's startup cost on every spawn. Latched on
 // the shim names, as drift is on its package set.
-function checkShimShadows(home: string): number {
-  const check = runCapturingStdout([join(home, "scripts", "mise-shim-shadows")]);
-  if (check.status !== 0) {
-    log("warn", "mise shim check could not run");
+function checkShimShadows(io: Io, home: string): number {
+  const listing = readOk(io, [join(home, "scripts", "mise-shim-shadows")]);
+  if (listing === undefined) {
+    io.log("warn", "mise shim check could not run");
     return 0;
   }
-  if (check.output === "") {
+  if (listing === "") {
     reportSuccess(SHIM_SHADOWS_JOB);
     return 0;
   }
 
-  log("warn", "mise shims shadow other commands");
-  const names = check.output.split("\n").map((line) => line.split(/\s+/)[0]);
-  return reportFailure({
+  io.log("warn", "mise shims shadow other commands");
+  const names = listing.split("\n").map((line) => line.split(/\s+/)[0]);
+  return reportFailure(io, {
     job: SHIM_SHADOWS_JOB,
     title: "mise shims shadow other commands",
     command: join(home, "scripts", "mise-shim-shadows"),
-    output: check.output,
-    revision: currentRevision(home),
+    output: listing,
+    revision: currentRevision(io, home),
     extraMeta:
       "- **Fix:** `mise uninstall <tool> --all && mise reshim` for a leftover, or add the command to `shims.exclude`",
     outputHeading: "Shim and Shadowed Command",
@@ -352,15 +234,15 @@ function checkShimShadows(home: string): number {
 
 // Latched one credential at a time, so a leftover nobody has dealt with stays
 // quiet while the rest of the set churns around it.
-function reportCredentials(home: string, listing: string): number {
-  return reportFindings({
+function reportCredentials(io: Io, home: string, listing: string): number {
+  return reportFindings(io, {
     job: CREDENTIALS_JOB,
     // The report mixes a secret in the clear with a file anyone can read, so a
     // title naming only the first misdirects on a finding about a mode.
     title: "Credentials exposed on disk",
     command: join(home, "credentials", "bin", "credential-audit"),
     output: listing,
-    revision: currentRevision(home),
+    revision: currentRevision(io, home),
     extraMeta: "",
     outputHeading: "Exposed Credentials",
     ...credentialFindings(listing),
@@ -369,30 +251,30 @@ function reportCredentials(home: string, listing: string): number {
 
 // Holding back the upgrades that need sudo, since 3am has no terminal to read a
 // password from. The latch keys on the cask set, as drift's does.
-function holdBackRootCasks(home: string): number {
-  const check = runCapturingStdout([join(home, "scripts", "brew-root-casks")]);
-  if (check.status !== 0) {
-    log("warn", "could not check which cask upgrades need sudo");
+function holdBackRootCasks(io: Io, home: string): number {
+  const listing = readOk(io, [join(home, "scripts", "brew-root-casks")]);
+  if (listing === undefined) {
+    io.log("warn", "could not check which cask upgrades need sudo");
     return 0;
   }
-  if (check.output === "") {
+  if (listing === "") {
     reportSuccess(ROOT_CASKS_JOB);
     return 0;
   }
 
-  const tokens = check.output.split("\n").map((line) => line.trim().split(/\s+/)[0]).filter(Boolean);
+  const tokens = listing.split("\n").map((line) => line.trim().split(/\s+/)[0]).filter(Boolean);
   // A Brewfile may name a tap's cask either way, and bundle matches it as written.
   const names = tokens.flatMap((token) => [token, token.split("/").at(-1)]);
   process.env.HOMEBREW_BUNDLE_CASK_SKIP = [process.env.HOMEBREW_BUNDLE_CASK_SKIP, ...new Set(names)]
     .filter(Boolean)
     .join(" ");
-  log("warn", `Holding back cask upgrades that need sudo: ${tokens.join(" ")}`);
-  return reportFailure({
+  io.log("warn", `Holding back cask upgrades that need sudo: ${tokens.join(" ")}`);
+  return reportFailure(io, {
     job: ROOT_CASKS_JOB,
     title: "Cask upgrades need sudo",
     command: `brew upgrade --cask ${tokens.join(" ")}`,
-    output: check.output,
-    revision: currentRevision(home),
+    output: listing,
+    revision: currentRevision(io, home),
     extraMeta: "",
     outputHeading: "Held Back",
     fingerprint: driftFingerprint(tokens.join("\n")),
@@ -431,24 +313,24 @@ function acquireLock(): string | null {
 }
 
 // Booting itself out ends this process, so nothing else may run first.
-function retire(): number {
-  log("warn", `Retiring ${RETIRED_LABEL}, which dev.mise.dotfiles-upgrade replaced`);
-  return runInherited(["launchctl", "bootout", `gui/${process.getuid?.() ?? 0}/${RETIRED_LABEL}`]);
+function retire(io: Io): number {
+  io.log("warn", `Retiring ${RETIRED_LABEL}, which dev.mise.dotfiles-upgrade replaced`);
+  return io.run(["launchctl", "bootout", `gui/${process.getuid?.() ?? 0}/${RETIRED_LABEL}`]);
 }
 
-export async function run(): Promise<number> {
-  if (process.env.XPC_SERVICE_NAME === RETIRED_LABEL) return retire();
+export async function run(io: Io): Promise<number> {
+  if (process.env.XPC_SERVICE_NAME === RETIRED_LABEL) return retire(io);
 
   const holder = acquireLock();
   if (holder !== null) {
-    log("warn", `Another upgrade is already running (pid ${holder})`);
+    io.log("warn", `Another upgrade is already running (pid ${holder})`);
     return 0;
   }
-  return upgrade(process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles"));
+  return upgrade(io, process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles"));
 }
 
-async function upgrade(home: string): Promise<number> {
-  const sync = await runTeed([
+async function upgrade(io: Io, home: string): Promise<number> {
+  const sync = await runTeed(io, [
     SPIN,
     "--show-output",
     "--show-error",
@@ -470,8 +352,8 @@ async function upgrade(home: string): Promise<number> {
   // retries the update on every run until it takes.
   let syncFailure = 0;
   if (sync.status !== 0) {
-    log("error", "sync failed");
-    syncFailure = reportStepFailure({
+    io.log("error", "sync failed");
+    syncFailure = reportStepFailure(io, {
       job: SYNC_JOB,
       home,
       fingerprint: syncFingerprint(sync.output),
@@ -479,22 +361,22 @@ async function upgrade(home: string): Promise<number> {
       command: "dotfiles-sync",
       output: sync.output,
     });
-    log("warn", "Installing from the checkout as it stands");
+    io.log("warn", "Installing from the checkout as it stands");
   } else {
     reportSuccess(SYNC_JOB);
   }
 
-  const heldBack = holdBackRootCasks(home);
+  const heldBack = holdBackRootCasks(io, home);
 
-  log("info", "Running install");
+  io.log("info", "Running install");
   const installer = join(home, "scripts", "install");
-  const install = await runTeed([installer]);
+  const install = await runTeed(io, [installer]);
   if (install.status !== 0) {
-    log("error", "install failed");
+    io.log("error", "install failed");
     // The installer, not `brew bundle`: that is the first of its six steps, and
     // a run failing at symlinks, mise or a topic install.sh reproduces nothing
     // from it.
-    return reportStepFailure({
+    return reportStepFailure(io, {
       job: JOB,
       home,
       fingerprint: "",
@@ -504,7 +386,7 @@ async function upgrade(home: string): Promise<number> {
     });
   }
 
-  const cleanup = runInherited([
+  const cleanup = io.run([
     SPIN,
     "--show-output",
     "--show-error",
@@ -516,36 +398,34 @@ async function upgrade(home: string): Promise<number> {
   ]);
   // Housekeeping after an install that already succeeded, so it changes no exit
   // code and files nothing.
-  if (cleanup !== 0) log("warn", "brew cleanup had issues");
+  if (cleanup !== 0) io.log("warn", "brew cleanup had issues");
 
   // Undeclared packages are reported and left installed. Nothing here removes
   // them: the install above already succeeded, a package no Brewfile names breaks
   // nothing tonight, and at 3am the difference between a leftover and something
   // installed deliberately an hour ago is not one this job can tell.
-  const drift = runCapturingStdout([join(home, "scripts", "brew-drift")]);
-  if (drift.status !== 0) {
-    log("warn", "brew drift check could not run");
-  } else if (drift.output !== "") {
-    log("warn", "undeclared packages installed");
-    const filed = reportDrift(home, drift.output);
+  const drift = readOk(io, [join(home, "scripts", "brew-drift")]);
+  if (drift === undefined) {
+    io.log("warn", "brew drift check could not run");
+  } else if (drift !== "") {
+    io.log("warn", "undeclared packages installed");
+    const filed = reportDrift(io, home, drift);
     if (filed !== 0) return filed;
   } else {
     reportSuccess(DRIFT_JOB);
   }
 
-  const shadowed = checkShimShadows(home);
+  const shadowed = checkShimShadows(io, home);
   if (shadowed !== 0) return shadowed;
 
   // After the install, which ran credentials/install.sh and tightened every
   // mode it could. What is left is what a chmod cannot fix.
-  const credentials = runCapturingStdout([
-    join(home, "credentials", "bin", "credential-audit"),
-  ]);
-  if (credentials.status !== 0) {
-    log("warn", "credential audit could not run");
-  } else if (credentials.output !== "") {
-    log("warn", "credentials in plaintext");
-    const filed = reportCredentials(home, credentials.output);
+  const credentials = readOk(io, [join(home, "credentials", "bin", "credential-audit")]);
+  if (credentials === undefined) {
+    io.log("warn", "credential audit could not run");
+  } else if (credentials !== "") {
+    io.log("warn", "credentials in plaintext");
+    const filed = reportCredentials(io, home, credentials);
     if (filed !== 0) return filed;
   } else {
     reportSuccess(CREDENTIALS_JOB);
@@ -555,22 +435,14 @@ async function upgrade(home: string): Promise<number> {
 
   reportSuccess(JOB);
   if (syncFailure !== 0) {
-    log("warn", "Upgrades completed against a checkout the sync could not move");
+    io.log("warn", "Upgrades completed against a checkout the sync could not move");
     return syncFailure;
   }
 
-  log("info", "All upgrades completed successfully");
+  io.log("info", "All upgrades completed successfully");
   return 0;
 }
 
-// A write followed by process.exit delivers one pipe buffer and drops the rest.
-// The launchd log is a redirect, but a hand run pipes this into a pager or tee.
-function writeAll(fd: number, data: Uint8Array | string): void {
-  const bytes = typeof data === "string" ? Buffer.from(data) : data;
-  let written = 0;
-  while (written < bytes.length) written += writeSync(fd, bytes, written);
-}
-
 if (import.meta.main) {
-  process.exit(await run());
+  process.exit(await run(reportingIo(streamIo())));
 }

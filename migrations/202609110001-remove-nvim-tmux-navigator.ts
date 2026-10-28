@@ -12,7 +12,6 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { log } from "#jobs/output";
 import { type Context, removeTree } from "#migrations/migration";
 
 const PLUGIN = "vim-tmux-navigator";
@@ -33,7 +32,7 @@ function removeLockEntry(context: Context, path: string): void {
   if (!isObject(plugins) || !(PLUGIN in plugins)) return;
 
   delete plugins[PLUGIN];
-  log(context.out, "info", `removing ${PLUGIN} from ${path}`);
+  context.io.log("info", `removing ${PLUGIN} from ${path}`);
   writeFileSync(path, `${JSON.stringify(sortKeys(lock), null, 2)}\n`);
 }
 

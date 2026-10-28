@@ -1,32 +1,33 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
 import { type Context, exists, isEmpty, ownedLink, removeCask, removeFormula, removeTree } from "#migrations/migration";
 
 let box: Sandbox;
 let home: string;
 let installed: string;
-// What the context's Output was asked to run, so a case can say which brew
+// What the context's Io was asked to run, so a case can say which brew
 // command the helper reached for.
-let commands: string[][];
+let io: FakeIo;
 
 function brewCalls(): string[][] {
-  return commands.filter((cmd) => cmd[0]?.endsWith("brew") === true).map((cmd) => cmd.slice(1));
+  return io.calls.map((call) => call.argv).filter((cmd) => cmd[0]?.endsWith("brew") === true).map((cmd) => cmd.slice(1));
 }
 
 beforeEach(() => {
   box = sandbox("migration");
   home = box.mkdir("home");
   installed = box.mkdir("installed");
-  commands = [];
 });
 
 afterEach(() => {
   box.remove();
 });
 
-function context(read: (cmd: string[]) => number = () => 0): Context {
+// `listed` answers `brew list --versions`. Every other command succeeds.
+function context(listed = true): Context {
+  io = fakeIo({ answers: [{ argv: [join(box.bin, "brew"), "list"], status: listed ? 0 : 1 }, { argv: [] }] });
   return {
     root: box.dir,
     home,
@@ -35,17 +36,7 @@ function context(read: (cmd: string[]) => number = () => 0): Context {
     applications: join(box.dir, "Applications"),
     installed: [installed],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        commands.push(cmd);
-        return 0;
-      },
-      read(cmd) {
-        commands.push(cmd);
-        return { status: read(cmd), stdout: "" };
-      },
-    },
+    io,
   };
 }
 
@@ -124,7 +115,7 @@ describe("removeFormula", () => {
 
   test("leaves a formula that is not installed alone", () => {
     stubBrew();
-    removeFormula(context(() => 1), "tmux");
+    removeFormula(context(false), "tmux");
     expect(brewCalls()).toEqual([["list", "--versions", "tmux"]]);
   });
 
@@ -154,7 +145,7 @@ describe("removeCask", () => {
 
   test("leaves a cask that is not installed alone", () => {
     stubBrew();
-    removeCask(context(() => 1), "wispr-flow");
+    removeCask(context(false), "wispr-flow");
     expect(brewCalls()).toEqual([["list", "--cask", "--versions", "wispr-flow"]]);
   });
 

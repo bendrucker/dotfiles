@@ -5,7 +5,7 @@ import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { canonicalJson } from "#jobs/json";
-import { log, type Output } from "#jobs/output";
+import type { Io } from "#io";
 import { managedOutranked } from "./user-tier";
 
 export const SETTINGS = "user/settings.json";
@@ -32,37 +32,41 @@ function isRegularFile(path: string): boolean {
 // What the replacement changed goes into the working copy, where the gate and
 // the reverts can see it, before relinking discards the file. A working copy
 // that already differs from HEAD is not overwritten.
-export function adoptReplacedSettings(out: Output, repoDir: string): void {
+export function adoptReplacedSettings(out: Io, repoDir: string): void {
   // There the file is user-tier.ts's own output, regenerated on relink.
   if (!settingsReplaced() || managedOutranked()) return;
   const link = settingsLink();
 
   const working = join(repoDir, SETTINGS);
   const replaced = readText(link);
-  const canonical = canonicalJson(replaced);
+  const canonical = canonicalJson(out, replaced);
   if (canonical === undefined) {
-    log(out, "warn", "Discarding the replaced ~/.claude/settings.json: it is not readable JSON");
+    out.log("warn", "Discarding the replaced ~/.claude/settings.json: it is not readable JSON");
     return;
   }
-  if (canonical === canonicalJson(readText(working))) return;
+  if (canonical === canonicalJson(out, readText(working))) return;
 
   // A status that could not run is read as dirty, since adopting overwrites.
-  const status = gitStatus(repoDir);
+  const status = out.read(["git", "status", "--porcelain", "--", SETTINGS], {
+    cwd: repoDir,
+    stdin: "ignore",
+    stderr: "ignore",
+  });
   if (status.status !== 0 || status.stdout !== "") {
-    log(out, "warn", `Discarding the replaced ~/.claude/settings.json: ${SETTINGS} already has local changes`);
+    out.log("warn", `Discarding the replaced ~/.claude/settings.json: ${SETTINGS} already has local changes`);
     return;
   }
 
-  log(out, "warn", `Moving the replaced ~/.claude/settings.json into ${SETTINGS}`);
+  out.log("warn", `Moving the replaced ~/.claude/settings.json into ${SETTINGS}`);
   try {
     writeFileSync(working, replaced);
   } catch (error) {
-    log(out, "warn", `Could not write ${SETTINGS}: ${String(error)}`);
+    out.log("warn", `Could not write ${SETTINGS}: ${String(error)}`);
   }
 }
 
 export function relinkClaudeHome(
-  out: Output,
+  out: Io,
   repoDir: string,
   env: Record<string, string | undefined> = process.env,
 ): boolean {
@@ -71,26 +75,10 @@ export function relinkClaudeHome(
     { env: { ...env, CLAUDE_REPO_HOME: repoDir }, stdin: "ignore" },
   );
   if (status !== 0) {
-    log(out, "warn", "Could not relink ~/.claude");
+    out.log("warn", "Could not relink ~/.claude");
     return false;
   }
   return true;
-}
-
-function gitStatus(repoDir: string): { status: number; stdout: string } {
-  try {
-    const run = Bun.spawnSync({
-      cmd: ["git", "status", "--porcelain", "--", SETTINGS],
-      cwd: repoDir,
-      env: process.env,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    return { status: run.exitCode, stdout: run.stdout.toString() };
-  } catch {
-    return { status: 127, stdout: "" };
-  }
 }
 
 function readText(path: string): string {

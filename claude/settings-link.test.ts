@@ -1,38 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { must, run, sandbox, stubGum, type Sandbox } from "#harness";
-import type { Capture } from "#jobs/output";
+import { type FakeIo, fakeIo, must, run, sandbox, stubGum, type Sandbox } from "#harness";
 import { adoptReplacedSettings, relinkClaudeHome } from "./settings-link";
 
 const FILE = "user/settings.json";
 
 let box: Sandbox;
 let repo: string;
-let out: Capture;
+let out: FakeIo;
 const environment = { HOME: process.env.HOME, PATH: process.env.PATH };
 
-function recording(): Capture {
-  const chunks: string[] = [];
-  return {
-    write(_fd, text) {
-      chunks.push(text);
-    },
-    run(cmd, options) {
-      const result = run(cmd, { env: options?.env, cwd: options?.cwd });
-      chunks.push(result.stdout, result.stderr);
-      return result.status;
-    },
-    read(cmd, options) {
-      const result = run(cmd, { env: options?.env, cwd: options?.cwd });
-      chunks.push(result.stderr);
-      return { status: result.status, stdout: result.stdout };
-    },
-    captured() {
-      return chunks.join("");
-    },
-  };
-}
 
 function settings(example: string): unknown {
   return { env: { EXAMPLE: example }, enabledPlugins: { "alpha@first": true } };
@@ -78,7 +56,7 @@ beforeEach(() => {
 
   box.mkdir(".claude");
   symlinkSync(join(repo, FILE), settingsLink());
-  out = recording();
+  out = fakeIo({ passthrough: true });
 });
 
 afterEach(() => {

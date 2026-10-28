@@ -8,7 +8,6 @@
 
 import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { log } from "#jobs/output";
 import { type Context, contains, exists, linkTarget } from "#migrations/migration";
 
 export function up(context: Context): void {
@@ -33,7 +32,7 @@ export function up(context: Context): void {
 
     if (!existsSync(target)) {
       rmSync(link);
-      log(context.out, "info", `removed ${link}, whose ${target} is gone`);
+      context.io.log("info", `removed ${link}, whose ${target} is gone`);
       continue;
     }
 

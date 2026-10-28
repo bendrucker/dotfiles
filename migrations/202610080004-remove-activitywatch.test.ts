@@ -1,20 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { AGENTS, LINKS, up } from "./202610080004-remove-activitywatch";
 
 let box: Sandbox;
 let installed: string;
-let launchctl: string[][];
+let io: FakeIo;
 
 beforeEach(() => {
   box = sandbox("remove-activitywatch");
   box.mkdir("home", "Library", "LaunchAgents");
   installed = box.mkdir("installed");
-  launchctl = [];
+  io = fakeIo({ answers: [{ argv: [] }] });
 });
 
 afterEach(() => {
@@ -30,15 +30,12 @@ function context(): Context {
     applications: box.mkdir("Applications"),
     installed: [installed],
     platform: "darwin",
-    out: {
-      write() {},
-      run: () => 0,
-      read(cmd) {
-        if (cmd[0] === "launchctl") launchctl.push(cmd.slice(1));
-        return { status: 0, stdout: "" };
-      },
-    },
+    io,
   };
+}
+
+function launchctl(): string[][] {
+  return io.calls.filter((call) => call.argv[0] === "launchctl").map((call) => call.argv.slice(1));
 }
 
 // No brew or uv on PATH, so the package removals return before running anything.
@@ -65,7 +62,7 @@ describe("remove-activitywatch", () => {
     for (const label of AGENTS) {
       expect(exists(box.path("home", "Library", "LaunchAgents", `${label}.plist`))).toBe(false);
     }
-    expect(launchctl.map((cmd) => cmd[1]?.split("/").at(-1))).toEqual(AGENTS);
+    expect(launchctl().map((cmd) => cmd[1]?.split("/").at(-1))).toEqual(AGENTS);
   });
 
   test("removes the config links and keeps the captured data", () => {

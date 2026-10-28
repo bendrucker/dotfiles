@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { sandbox, type Sandbox } from "#harness";
+import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { CRATE, up } from "./202610120003-rm-cargo-worktrunk-sync";
 
 let box: Sandbox;
-let commands: string[][];
+let io: FakeIo;
 const path = process.env.PATH;
 
 beforeEach(() => {
   box = sandbox("rm-cargo-worktrunk-sync");
-  commands = [];
 });
 
 afterEach(() => {
@@ -18,7 +17,9 @@ afterEach(() => {
   box.remove();
 });
 
+// Every command the migration runs exits with `status`.
 function context(status = 0): Context {
+  io = fakeIo({ answers: [{ argv: [], status }] });
   return {
     root: box.dir,
     home: box.path("home"),
@@ -27,17 +28,7 @@ function context(status = 0): Context {
     applications: box.path("Applications"),
     installed: [box.path("installed")],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        commands.push(cmd);
-        return status;
-      },
-      read(cmd) {
-        commands.push(cmd);
-        return { status: 0, stdout: "" };
-      },
-    },
+    io,
   };
 }
 
@@ -47,7 +38,7 @@ function installCargoCopy(): void {
 }
 
 function cargoCalls(): string[][] {
-  return commands.filter((cmd) => cmd[0]?.endsWith("cargo") === true).map((cmd) => cmd.slice(1));
+  return io.calls.map((call) => call.argv).filter((cmd) => cmd[0]?.endsWith("cargo") === true).map((cmd) => cmd.slice(1));
 }
 
 // The migration resolves cargo off PATH, so a case that wants it found puts a stub there.
@@ -75,7 +66,7 @@ describe("rm-cargo-worktrunk-sync", () => {
     process.env.PATH = box.mkdir("empty");
     up(context());
     expect(cargoCalls()).toEqual([]);
-    expect(commands.flat().join(" ")).toContain("remove ~/.cargo/bin/wt-sync by hand");
+    expect(io.captured()).toContain("remove ~/.cargo/bin/wt-sync by hand");
   });
 
   test("throws when the uninstall fails", () => {

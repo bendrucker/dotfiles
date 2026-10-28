@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ignoresModes, sandbox, type Sandbox } from "#harness";
+import { type FakeIo, fakeIo, ignoresModes, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { up } from "./202609100001-remove-utc-bar-wispr-flow";
@@ -10,14 +10,14 @@ let box: Sandbox;
 let home: string;
 let installed: string;
 let applications: string;
-let logged: string[];
+let io: FakeIo;
 
 beforeEach(() => {
   box = sandbox("remove-utc-bar-wispr-flow");
   home = box.mkdir("home");
   installed = box.mkdir("installed");
   applications = box.mkdir("Applications");
-  logged = [];
+  io = fakeIo();
 });
 
 afterEach(() => {
@@ -34,15 +34,12 @@ function context(): Context {
     applications,
     installed: [installed],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        if (cmd[0] === "gum") logged.push(cmd.slice(1).join(" "));
-        return 0;
-      },
-      read: () => ({ status: 1, stdout: "" }),
-    },
+    io,
   };
+}
+
+function messages(): string {
+  return io.logs.map((line) => line.message).join("\n");
 }
 
 function withoutBrew(body: () => void): void {
@@ -81,7 +78,7 @@ describe("remove-utc-bar-wispr-flow", () => {
     withoutBrew(() => up(context()));
 
     expect(exists(app)).toBe(false);
-    expect(logged.join("\n")).toContain("removed");
+    expect(messages()).toContain("removed");
   });
 
   // The unwritable bundle is what the OS refuses, and root is refused nothing,
@@ -94,7 +91,7 @@ describe("remove-utc-bar-wispr-flow", () => {
       withoutBrew(() => up(context()));
 
       expect(exists(app)).toBe(true);
-      expect(logged.join("\n")).toContain("sudo rm -rf");
+      expect(messages()).toContain("sudo rm -rf");
     } finally {
       restore(app);
     }
@@ -103,7 +100,7 @@ describe("remove-utc-bar-wispr-flow", () => {
   test("a machine the app is already gone from is quiet", () => {
     withoutBrew(() => up(context()));
 
-    expect(logged).toEqual([]);
+    expect(io.logs).toEqual([]);
   });
 
   test("leaves another app in the same directory alone", () => {

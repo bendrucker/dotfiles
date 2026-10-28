@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ignoresModes, repoRoot, sandbox, type Sandbox } from "#harness";
+import { fakeIo, ignoresModes, repoRoot, sandbox, type Sandbox } from "#harness";
 import type { Context, Platform } from "#migrations/migration";
 import {
   devRoot,
@@ -49,7 +49,7 @@ function root(): string {
   return box.path("root");
 }
 
-// The runner logs through gum, and nothing here asserts on what it said.
+// Nothing here asserts on what the runner logged.
 function context(platform: Platform = "darwin"): Context {
   return {
     root: root(),
@@ -59,7 +59,7 @@ function context(platform: Platform = "darwin"): Context {
     applications: join(box.dir, "Applications"),
     installed: [installed],
     platform,
-    out: { write() {}, run: () => 0, read: () => ({ status: 0, stdout: "" }) },
+    io: fakeIo({ answers: [{ argv: [] }] }),
   };
 }
 

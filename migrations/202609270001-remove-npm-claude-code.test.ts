@@ -1,20 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sandbox, type Sandbox } from "#harness";
+import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { up } from "./202609270001-remove-npm-claude-code";
 
 let box: Sandbox;
 let home: string;
-let ran: string[][];
+let io: FakeIo;
 let reshimStatus: number;
 
 beforeEach(() => {
   box = sandbox("remove-npm-claude-code");
   home = box.mkdir("home");
-  ran = [];
+  io = fakeIo();
   reshimStatus = 0;
 });
 
@@ -23,6 +23,7 @@ afterEach(() => {
 });
 
 function context(): Context {
+  io = fakeIo({ answers: [{ argv: [join(box.bin, "mise"), "reshim"], status: reshimStatus }] });
   return {
     root: box.dir,
     home,
@@ -31,14 +32,7 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [box.mkdir("installed")],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        ran.push(cmd);
-        return cmd.at(-1) === "reshim" ? reshimStatus : 0;
-      },
-      read: () => ({ status: 1, stdout: "" }),
-    },
+    io,
   };
 }
 
@@ -72,7 +66,7 @@ function withPath(path: string, body: () => void): void {
 }
 
 function reshims(): string[][] {
-  return ran.filter((cmd) => cmd.at(-1) === "reshim");
+  return io.calls.map((call) => call.argv).filter((cmd) => cmd.at(-1) === "reshim");
 }
 
 describe("remove-npm-claude-code", () => {

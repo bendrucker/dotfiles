@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { sandbox, type Sandbox } from "#harness";
+import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { TAP, up } from "./202610080006-rm-graphite";
 
 let box: Sandbox;
-let commands: string[][];
+let io: FakeIo;
 const path = process.env.PATH;
 
 beforeEach(() => {
   box = sandbox("rm-graphite");
-  commands = [];
 });
 
 afterEach(() => {
@@ -18,11 +17,19 @@ afterEach(() => {
 });
 
 function brewCalls(): string[][] {
-  return commands.filter((cmd) => cmd[0]?.endsWith("brew") === true).map((cmd) => cmd.slice(1));
+  return io.calls.map((call) => call.argv).filter((cmd) => cmd[0]?.endsWith("brew") === true).map((cmd) => cmd.slice(1));
 }
 
 // `installed` answers `brew list --versions`, and `taps` is what `brew tap` prints.
 function context({ installed = true, taps = [TAP] }: { installed?: boolean; taps?: string[] } = {}): Context {
+  const brew = `${box.bin}/brew`;
+  io = fakeIo({
+    answers: [
+      { argv: [brew, "tap"], stdout: taps.map((tap) => `${tap}\n`).join("") },
+      { argv: [brew, "list"], status: installed ? 0 : 1 },
+      { argv: [] },
+    ],
+  });
   return {
     root: box.dir,
     home: box.path("home"),
@@ -31,18 +38,7 @@ function context({ installed = true, taps = [TAP] }: { installed?: boolean; taps
     applications: box.path("Applications"),
     installed: [box.path("installed")],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        commands.push(cmd);
-        return 0;
-      },
-      read(cmd) {
-        commands.push(cmd);
-        if (cmd[1] === "tap") return { status: 0, stdout: taps.map((tap) => `${tap}\n`).join("") };
-        return { status: installed ? 0 : 1, stdout: "" };
-      },
-    },
+    io,
   };
 }
 

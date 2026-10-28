@@ -11,13 +11,12 @@
 // packages/worktree/forge.ts holds everything below the query, which is what
 // bin/wt-pr shares with this.
 
+import { type Io, readOk, streamIo } from "#io";
 import {
   type Bucket,
-  capture,
   choose,
   count,
   isRecord,
-  log,
   missingTool,
   ordered,
   parseOptions,
@@ -25,6 +24,7 @@ import {
   switchTo,
   text,
 } from "#worktree/forge";
+import { QUIET } from "#worktree/state";
 
 const USAGE = [
   "usage: wt mr [--mine|--review] [wt switch options]",
@@ -46,14 +46,14 @@ const MERGE_REQUEST_PATH = /\/-\/merge_requests\/[0-9]+$/;
 
 // Undefined when glab could not answer, which the caller treats as a reason to
 // stop rather than to show the other half of the results as the whole picture.
-function search(query: string, bucket: Bucket): Request[] | undefined {
-  const captured = capture([
+function search(io: Io, query: string, bucket: Bucket): Request[] | undefined {
+  const captured = readOk(io, [
     "glab",
     "api",
     `/merge_requests?state=opened&per_page=50&${query}`,
     "--output",
     "ndjson",
-  ]);
+  ], QUIET);
   if (captured === undefined) return undefined;
 
   const requests: Request[] = [];
@@ -90,8 +90,8 @@ function search(query: string, bucket: Bucket): Request[] | undefined {
 
 // GitLab has no @me alias for reviewer, unlike scope=created_by_me, so the
 // review query has to name the user.
-function username(): string | undefined {
-  const captured = capture(["glab", "api", "/user"]);
+function username(io: Io): string | undefined {
+  const captured = readOk(io, ["glab", "api", "/user"], QUIET);
   if (captured === undefined) return undefined;
 
   let parsed: unknown;
@@ -106,20 +106,20 @@ function username(): string | undefined {
   return name === "" ? undefined : name;
 }
 
-function main(args: string[]): number {
+function main(io: Io, args: string[]): number {
   const parsed = parseOptions(args);
   if (!parsed.ok) {
     if (parsed.message === "") {
-      process.stdout.write(`${USAGE}\n`);
+      io.write(1, `${USAGE}\n`);
       return 0;
     }
-    process.stderr.write(`wt mr: ${parsed.message}\n${USAGE}\n`);
+    io.write(2, `wt mr: ${parsed.message}\n${USAGE}\n`);
     return 2;
   }
 
   const missing = missingTool(["glab", "fzf", "clone-repo", "wt"]);
   if (missing !== undefined) {
-    log("error", `${missing} is required`);
+    io.log("error", `${missing} is required`);
     return 1;
   }
 
@@ -127,9 +127,9 @@ function main(args: string[]): number {
   // Authored first, so a merge request that is both keeps the authored bucket.
   if (parsed.options.mine) queries.push(["mine", "scope=created_by_me"]);
   if (parsed.options.review) {
-    const me = username();
+    const me = username(io);
     if (me === undefined) {
-      log("error", "glab could not name the current user");
+      io.log("error", "glab could not name the current user");
       return 1;
     }
     queries.push(["review", `scope=all&reviewer_username=${encodeURIComponent(me)}`]);
@@ -137,9 +137,9 @@ function main(args: string[]): number {
 
   const found: Request[] = [];
   for (const [bucket, query] of queries) {
-    const results = search(query, bucket);
+    const results = search(io, query, bucket);
     if (results === undefined) {
-      log("error", `glab api /merge_requests?${query} failed`);
+      io.log("error", `glab api /merge_requests?${query} failed`);
       return 1;
     }
     found.push(...results);
@@ -147,14 +147,14 @@ function main(args: string[]): number {
 
   const requests = ordered(found);
   if (requests.length === 0) {
-    log("warn", "no open merge requests");
+    io.log("warn", "no open merge requests");
     return 1;
   }
 
-  const chosen = choose(requests, { prompt: "mr> ", preview: "glab mr view {4}" });
+  const chosen = choose(io, requests, { prompt: "mr> ", preview: "glab mr view {4}" });
   if (chosen === undefined) return 1;
 
-  return switchTo(chosen, parsed.options.rest);
+  return switchTo(io, chosen, parsed.options.rest);
 }
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+if (import.meta.main) process.exit(main(streamIo(), process.argv.slice(2)));

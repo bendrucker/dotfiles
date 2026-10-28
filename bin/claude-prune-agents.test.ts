@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { streamIo } from "#io";
 import {
   agentPrs,
   type Candidate,
@@ -626,7 +627,7 @@ afterEach(() => {
 
 describe("run --dry-run", () => {
   test("classifies each completed agent and removes nothing", async () => {
-    const outcome = await run(["--dry-run"], false);
+    const outcome = await run(streamIo(), ["--dry-run"], false);
 
     expect(outcome.status).toBe(0);
     expect(outcome.stdout).toContain("DECISION");
@@ -644,18 +645,18 @@ describe("run --dry-run", () => {
   // A failed branch query is empty output, same as a branch with no PR. Reading
   // it as "no PRs" would let the agent's merged summary ref carry it to stale.
   test("keeps an agent whose branch query failed", async () => {
-    const outcome = await run(["--dry-run"], false);
+    const outcome = await run(streamIo(), ["--dry-run"], false);
 
     expect(outcome.stdout).toContain("lookup failed, #77 merged");
     expect(outcome.stdout).toMatch(/flaky001 +flaky agent +\S+ +lookup failed, #77 merged +keep/);
   });
 
   test("resolves a bare PR ref against the agent's own repo", async () => {
-    expect((await run(["--dry-run"], false)).stdout).toContain("#77 merged");
+    expect((await run(streamIo(), ["--dry-run"], false)).stdout).toContain("#77 merged");
   });
 
   test("leaves agents that are not done alone", async () => {
-    const outcome = await run(["--dry-run"], false);
+    const outcome = await run(streamIo(), ["--dry-run"], false);
 
     expect(outcome.stdout).not.toContain("working1");
     expect(outcome.stdout).not.toContain("live session");
@@ -664,7 +665,7 @@ describe("run --dry-run", () => {
   // Every discovered PR is terminal only for merged01 and bare0001, and both
   // keep and skip agents stay out of the removable count.
   test("counts only the stale agents as removable", async () => {
-    expect((await run(["-n"], false)).stdout.trimEnd().split("\n").at(-1)).toBe(
+    expect((await run(streamIo(), ["-n"], false)).stdout.trimEnd().split("\n").at(-1)).toBe(
       "2 agents removable (2 kept, 1 skipped: no PRs)",
     );
   });
@@ -672,7 +673,7 @@ describe("run --dry-run", () => {
   // The table is the whole point of the flag, so a run that meant to force sees
   // a report rather than a removal.
   test("wins over --force", async () => {
-    const outcome = await run(["--dry-run", "--force"], false);
+    const outcome = await run(streamIo(), ["--dry-run", "--force"], false);
 
     expect(outcome.stdout).toContain("DECISION");
     expect(outcome.stdout).toContain("2 agents removable");
@@ -682,7 +683,7 @@ describe("run --dry-run", () => {
 
 describe("run --force", () => {
   test("removes every stale agent and nothing else", async () => {
-    const outcome = await run(["--force"], false);
+    const outcome = await run(streamIo(), ["--force"], false);
 
     expect(outcome.status).toBe(0);
     expect(outcome.stdout).toContain("2 agents removed");
@@ -694,7 +695,7 @@ describe("run --force", () => {
   });
 
   test("prints no table", async () => {
-    expect((await run(["--force"], false)).stdout).not.toContain("DECISION");
+    expect((await run(streamIo(), ["--force"], false)).stdout).not.toContain("DECISION");
   });
 
   // A removal that failed is reported and counted, and the run still completes:
@@ -703,7 +704,7 @@ describe("run --force", () => {
   test("reports a failed removal and still completes", async () => {
     process.env.CLAUDE_RM_EXIT = "1";
 
-    const outcome = await run(["--force"], false);
+    const outcome = await run(streamIo(), ["--force"], false);
 
     expect(outcome.status).toBe(0);
     expect(outcome.stdout).toContain("0 agents removed (2 kept, 1 skipped: no PRs, 2 failed)");
@@ -718,7 +719,7 @@ describe("run --force", () => {
     process.env.CLAUDE_RM_EXIT = "1";
     process.env.PATH = nogum;
 
-    const outcome = await run(["--force"], false);
+    const outcome = await run(streamIo(), ["--force"], false);
 
     expect(outcome.status).toBe(0);
     expect(outcome.stderr).toContain("claude rm merged01 failed, likely unpushed commits");
@@ -730,7 +731,7 @@ describe("run interactive", () => {
   test("offers the stale agents preselected and removes what comes back", async () => {
     process.env.GUM_PICK = ".";
 
-    const outcome = await run([], true);
+    const outcome = await run(streamIo(), [], true);
 
     const offered = readFileSync(join(sandbox, "choose.in"), "utf8");
     expect(offered).toContain("merged01");
@@ -755,7 +756,7 @@ describe("run interactive", () => {
     );
     process.env.GUM_PICK = "merged01";
 
-    const outcome = await run([], true);
+    const outcome = await run(streamIo(), [], true);
 
     const offered = readFileSync(join(sandbox, "choose.in"), "utf8").split("\n").filter(Boolean);
     expect(offered.length).toBe(2);
@@ -770,7 +771,7 @@ describe("run interactive", () => {
   test("spins over the candidate count while the scan runs", async () => {
     process.env.GUM_PICK = ".";
 
-    await run([], true);
+    await run(streamIo(), [], true);
 
     expect(gumLog()).toContain("Resolving PRs for 5 agents");
   });
@@ -778,7 +779,7 @@ describe("run interactive", () => {
   // gum 2 writes its frames to stderr whether or not a terminal can interpret
   // them, so an unattended run would capture them as control characters.
   test("shows no progress where nothing renders it", async () => {
-    await run(["--dry-run"], false);
+    await run(streamIo(), ["--dry-run"], false);
 
     expect(gumLog()).toBe("");
   });
@@ -786,7 +787,7 @@ describe("run interactive", () => {
   test("removes only the rows that came back selected", async () => {
     process.env.GUM_PICK = "merged01";
 
-    const outcome = await run([], true);
+    const outcome = await run(streamIo(), [], true);
 
     expect(outcome.stdout).toContain("1 agent removed");
     expect(removalLog()).toContain("rm merged01");
@@ -796,7 +797,7 @@ describe("run interactive", () => {
   // Escaping the checklist, and a gum that could not render one, both come back
   // as no selection, so nothing is removed and the run still succeeds.
   test("removes nothing when the checklist comes back empty", async () => {
-    const outcome = await run([], true);
+    const outcome = await run(streamIo(), [], true);
 
     expect(outcome.status).toBe(0);
     expect(outcome.stdout).toContain("0 agents removed (2 kept, 1 skipped: no PRs)");
@@ -808,7 +809,7 @@ describe("run interactive", () => {
   test("fails loudly when gum is absent", async () => {
     process.env.PATH = nogum;
 
-    const outcome = await run([], true);
+    const outcome = await run(streamIo(), [], true);
 
     expect(outcome.status).toBe(1);
     expect(outcome.stderr).toContain("gum is required");
@@ -816,7 +817,7 @@ describe("run interactive", () => {
   });
 
   test("fails loudly when there is no terminal to render the checklist", async () => {
-    const outcome = await run([], false);
+    const outcome = await run(streamIo(), [], false);
 
     expect(outcome.status).toBe(1);
     expect(outcome.stderr).toContain("interactive selection needs a terminal");
@@ -831,7 +832,7 @@ describe("run interactive", () => {
     ]);
     process.env.PATH = nogum;
 
-    const outcome = await run([], false);
+    const outcome = await run(streamIo(), [], false);
 
     expect(outcome.status).toBe(0);
     expect(outcome.stdout).toBe("0 agents removed (1 kept)\n");
@@ -844,7 +845,7 @@ describe("run", () => {
     { name: "an empty list", agents: "[]" },
   ])("reports no agents for $name", async ({ agents }) => {
     writeAgents(agents);
-    expect(await run(["--dry-run"], false)).toEqual({
+    expect(await run(streamIo(), ["--dry-run"], false)).toEqual({
       status: 0,
       stdout: "no agents\n",
       stderr: "",
@@ -857,7 +858,7 @@ describe("run", () => {
     process.env.PATH = join(sandbox, "empty");
     mkdirSync(process.env.PATH);
 
-    expect(await run(["--dry-run"], false)).toEqual({
+    expect(await run(streamIo(), ["--dry-run"], false)).toEqual({
       status: 0,
       stdout: "no agents\n",
       stderr: "",
@@ -869,7 +870,7 @@ describe("run", () => {
       { id: "working1", cwd: repo, kind: "background", startedAt: 1, name: "busy", state: "working" },
     ]);
 
-    expect(await run(["--dry-run"], false)).toEqual({
+    expect(await run(streamIo(), ["--dry-run"], false)).toEqual({
       status: 0,
       stdout: "no completed agents\n",
       stderr: "",
@@ -879,7 +880,7 @@ describe("run", () => {
   test("says so on stderr when the agent list cannot be read", async () => {
     writeAgents("{not json");
 
-    const outcome = await run(["--dry-run"], false);
+    const outcome = await run(streamIo(), ["--dry-run"], false);
 
     expect(outcome.status).toBe(0);
     expect(outcome.stdout).toBe("no completed agents\n");
@@ -890,7 +891,7 @@ describe("run", () => {
     process.env.PATH = join(sandbox, "empty");
     mkdirSync(process.env.PATH);
 
-    const outcome = await run(["--force", "--help"], false);
+    const outcome = await run(streamIo(), ["--force", "--help"], false);
 
     expect(outcome.status).toBe(0);
     expect(outcome.stdout).toContain("Usage: claude-prune-agents [-f|--force] [-n|--dry-run]");
@@ -898,7 +899,7 @@ describe("run", () => {
   });
 
   test("refuses an unknown option without scanning anything", async () => {
-    const outcome = await run(["--nope"], false);
+    const outcome = await run(streamIo(), ["--nope"], false);
 
     expect(outcome).toEqual({
       status: 1,
@@ -912,7 +913,7 @@ describe("run", () => {
   // The scan hits the same handful of repos repeatedly and each lookup is a
   // subprocess, so the answer is memoized for the life of the run.
   test("resolves a repo slug once per repo root", async () => {
-    await run(["--dry-run"], false);
+    await run(streamIo(), ["--dry-run"], false);
 
     expect(ghCalls().filter((call) => call.startsWith("repo view"))).toHaveLength(1);
   });
@@ -921,7 +922,7 @@ describe("run", () => {
   // bare-ref resolution are both skipped and the agent only ever reaches the
   // table.
   test("skips an agent whose repo root is gone", async () => {
-    const outcome = await run(["--dry-run"], false);
+    const outcome = await run(streamIo(), ["--dry-run"], false);
 
     expect(outcome.stdout).toMatch(/lost0001 +lost agent +\S+ +- +skip +no PRs/);
   });
@@ -931,7 +932,7 @@ describe("run", () => {
   test("removes nothing when no repo slug resolves", async () => {
     process.env.GH_NO_SLUG = "1";
 
-    const outcome = await run(["--dry-run"], false);
+    const outcome = await run(streamIo(), ["--dry-run"], false);
 
     expect(outcome.stdout).toContain("0 agents removable (5 skipped: no PRs)");
   });

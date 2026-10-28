@@ -14,7 +14,7 @@ export const platform = "darwin";
 
 export function up(context: Context): void {
   const install = join(context.root, "claude", "install-native");
-  if (context.out.run([install], { stdin: "ignore" }) !== 0) {
+  if (context.io.run([install], { stdin: "ignore" }) !== 0) {
     throw new Error("installing native Claude Code failed, so the cask stays");
   }
   removeCask(context, "claude-code@latest");

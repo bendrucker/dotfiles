@@ -7,7 +7,6 @@
 
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { log } from "#jobs/output";
 import { type Context, exists } from "#migrations/migration";
 
 export const platform = "darwin";
@@ -28,11 +27,11 @@ export function up(context: Context): void {
   const domain = `gui/${process.getuid?.() ?? 0}`;
 
   for (const label of RETIRED) {
-    context.out.read(["launchctl", "bootout", `${domain}/${label}`]);
+    context.io.read(["launchctl", "bootout", `${domain}/${label}`]);
 
     const plist = join(context.home, "Library", "LaunchAgents", `${label}.plist`);
     if (!exists(plist)) continue;
     rmSync(plist);
-    log(context.out, "info", `retired ${label}`);
+    context.io.log("info", `retired ${label}`);
   }
 }
