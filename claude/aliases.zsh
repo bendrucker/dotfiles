@@ -2,22 +2,20 @@
 
 # Injected into Claude sessions launched in a Worktrunk worktree so the agent
 # knows it has a dedicated branch to work on.
-_claude_worktree_prompt='This is a dedicated git worktree that Worktrunk (the wt CLI) created for you. Do your work here directly: make changes, commit, and open a PR from this branch.'
+_claude_worktree_prompt="This is a dedicated git worktree that Worktrunk (the wt CLI) created for you. Do your work here directly: make changes, commit, and open a PR from this branch."
 
-# Runs `wt switch -x claude`. Arguments before the first `--` are wt options,
-# and arguments after it are appended to claude's.
-_claude_worktree_switch() {
-  local mode=$1
-  shift
-  local split=${argv[(i)--]}
-  local -a claude=(--name='{{ branch }}' --append-system-prompt="$_claude_worktree_prompt")
-  [[ -n $mode ]] && claude+=(--permission-mode="$mode")
-  wt switch "${(@)argv[1,split-1]}" -x claude -- "${claude[@]}" "${(@)argv[split+1,-1]}"
+# Arguments before `--` go to `wt switch`, the rest to `claude`. Claude runs
+# under the shell after wt's shell integration has moved it into the worktree.
+cw() {
+  local split=${@[(i)--]}
+  wt switch "${@[1,split-1]}" || return
+  claude --name="$(git branch --show-current)" --append-system-prompt="$_claude_worktree_prompt" "${@[split+1,-1]}"
 }
+alias ccw='cw --create'
 
-cw() { _claude_worktree_switch '' "$@" }
-ccw() { _claude_worktree_switch '' --create "$@" }
-cwp() { _claude_worktree_switch plan --create "$@" -- "$(pbpaste)" }
+cwp() {
+  cw --create "$@" -- --permission-mode=plan "$(pbpaste)"
+}
 
 # Open the background-agent view (`claude agents`). Launch new agents with the
 # claude-launch command; logs, stop, and attach live inside the view.
