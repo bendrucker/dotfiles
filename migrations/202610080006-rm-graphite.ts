@@ -1,25 +1,27 @@
 // EXPIRES: 2027-04-08 every machine has run scripts/install since the removal
 
-import { type Context, removeFormula } from "#migrations/migration";
+import { $ } from "bun";
+import { log } from "#gum";
+import { removeFormula } from "#migrations/migration";
 
 export const TAP = "withgraphite/tap";
 
 // The formula first: brew refuses to untap a tap with an installed formula.
-export function up(context: Context): void {
-  removeFormula(context, `${TAP}/graphite`);
-  untap(context, TAP);
+export async function up(): Promise<void> {
+  await removeFormula(`${TAP}/graphite`);
+  await untap(TAP);
 }
 
-function untap(context: Context, tap: string): void {
+async function untap(tap: string): Promise<void> {
   const brew = Bun.which("brew", { PATH: process.env.PATH });
   if (brew === null) return;
 
   const env = { ...process.env, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ENV_HINTS: "1" };
-  const tapped = context.io.read([brew, "tap"], { env, stdin: "ignore" });
-  if (tapped.status !== 0 || !tapped.stdout.split("\n").includes(tap)) return;
+  const tapped = await $`cat /dev/null | ${brew} tap 2>>/dev/stderr`.env(env).nothrow().quiet();
+  if (tapped.exitCode !== 0 || !tapped.stdout.toString().split("\n").includes(tap)) return;
 
-  context.io.log("info", `untapping ${tap}`);
-  if (context.io.run([brew, "untap", tap], { env, stdin: "ignore" }) !== 0) {
+  await log("info", `untapping ${tap}`);
+  if ((await $`${brew} untap ${tap} < /dev/null`.env(env).nothrow()).exitCode !== 0) {
     throw new Error(`brew untap ${tap} failed`);
   }
 }

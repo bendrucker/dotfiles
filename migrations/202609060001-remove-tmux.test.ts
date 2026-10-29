@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fakeIo, sandbox, type Sandbox } from "#harness";
+import { sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { up } from "./202609060001-remove-tmux";
@@ -32,72 +32,71 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [installed],
     platform: "darwin",
-    io: fakeIo(),
   };
 }
 
-function withoutBrew(body: () => void): void {
+async function withoutBrew(body: () => Promise<void>): Promise<void> {
   const path = process.env.PATH;
   process.env.PATH = "";
   try {
-    body();
+    await body();
   } finally {
     process.env.PATH = path;
   }
 }
 
 describe("remove-tmux", () => {
-  test("removes what the deleted tmux/install.sh created", () => {
+  test("removes what the deleted tmux/install.sh created", async () => {
     const plugins = box.mkdir("home", ".local", "share", "tmux", "plugins", "tpm");
     const dotTmux = box.mkdir("home", ".tmux");
 
-    withoutBrew(() => up(context()));
+    await withoutBrew(() => up(context()));
 
     expect(exists(plugins)).toBe(false);
     expect(exists(box.path("home", ".local", "share", "tmux"))).toBe(false);
     expect(exists(dotTmux)).toBe(false);
   });
 
-  test("leaves a ~/.tmux holding something the installer never put there", () => {
+  test("leaves a ~/.tmux holding something the installer never put there", async () => {
     const dotTmux = box.mkdir("home", ".tmux");
     writeFileSync(join(dotTmux, "notes"), "");
 
-    withoutBrew(() => up(context()));
+    await withoutBrew(() => up(context()));
 
     expect(exists(join(dotTmux, "notes"))).toBe(true);
   });
 
-  test("removes the config link the deleted tmux/symlinks.conf made", () => {
+  test("removes the config link the deleted tmux/symlinks.conf made", async () => {
     const config = box.mkdir("home", ".config");
     const link = join(config, "tmux");
     symlinkSync(join(installed, "tmux"), link);
 
-    withoutBrew(() => up(context()));
+    await withoutBrew(() => up(context()));
 
     expect(exists(link)).toBe(false);
   });
 
-  test("leaves a config link pointing somewhere other than a dotfiles tree", () => {
+  test("leaves a config link pointing somewhere other than a dotfiles tree", async () => {
     const config = box.mkdir("home", ".config");
     const link = join(config, "tmux");
     symlinkSync(box.mkdir("elsewhere", "tmux"), link);
 
-    withoutBrew(() => up(context()));
+    await withoutBrew(() => up(context()));
 
     expect(exists(link)).toBe(true);
   });
 
-  test("leaves a real config directory someone put back by hand", () => {
+  test("leaves a real config directory someone put back by hand", async () => {
     const config = box.mkdir("home", ".config", "tmux");
     writeFileSync(join(config, "tmux.conf"), "");
 
-    withoutBrew(() => up(context()));
+    await withoutBrew(() => up(context()));
 
     expect(exists(join(config, "tmux.conf"))).toBe(true);
   });
 
-  test("a machine with none of it left is not an error", () => {
+  test("a machine with none of it left is not an error", async () => {
     mkdirSync(join(home, ".config"), { recursive: true });
-    expect(() => withoutBrew(() => up(context()))).not.toThrow();
+    await expect(withoutBrew(() => up(context()))).resolves.toBeUndefined();
   });
 });

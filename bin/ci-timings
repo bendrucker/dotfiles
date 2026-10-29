@@ -4,11 +4,12 @@
 // fetch replaces the database with every job and step from the last N days.
 // report prints p50/p90 queue and run time per job, then the slowest steps.
 
+import { $ } from "bun";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
-import { type Io, streamIo } from "#io";
+import { writeAll } from "#pipe";
 
 const USAGE = [
   "Usage: ci-timings fetch [--days N] OWNER/REPO...",
@@ -38,41 +39,40 @@ select repo, job, step, count(*) as n,
 from steps where conclusion = 'success'
 group by all having seconds[2] >= 10 order by seconds[2] desc limit 25;`;
 
-async function gh(io: Io, path: string, jq: string): Promise<Record<string, unknown>[]> {
-  const result = await io.readAsync(["gh", "api", "--paginate", path, "--jq", jq], { stdin: "ignore" });
-  if (result.status !== 0) throw new Error(`gh api ${path} failed`);
-  return result.stdout.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+async function gh(path: string, jq: string): Promise<Record<string, unknown>[]> {
+  const result = await $`gh api --paginate ${path} --jq ${jq} < /dev/null`.nothrow().quiet();
+  writeAll(2, result.stderr.toString());
+  if (result.exitCode !== 0) throw new Error(`gh api ${path} failed`);
+  const out = result.stdout.toString();
+  return out.split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }
 
-async function fetchJobs(io: Io, repo: string, from: string): Promise<Record<string, unknown>[]> {
-  const runs = await gh(
-    io,
-    `repos/${repo}/actions/runs?per_page=100&status=completed&created=>=${from}`,
-    ".workflow_runs[]",
-  );
+async function fetchJobs(repo: string, from: string): Promise<Record<string, unknown>[]> {
+  const runs = await gh(`repos/${repo}/actions/runs?per_page=100&status=completed&created=>=${from}`, ".workflow_runs[]");
   const jobs = [];
   // Eight runs at a time keeps gh's process count and the API's rate in check.
   for (let i = 0; i < runs.length; i += 8) {
     const batch = runs.slice(i, i + 8).map(async (run) =>
-      (await gh(io, `repos/${repo}/actions/runs/${run.id}/jobs?per_page=100&filter=all`, ".jobs[]")).map(
+      (await gh(`repos/${repo}/actions/runs/${run.id}/jobs?per_page=100&filter=all`, ".jobs[]")).map(
         (job) => ({ ...job, repo, event: run.event }),
       ),
     );
     jobs.push(...(await Promise.all(batch)).flat());
   }
-  io.write(2, `${repo}: ${runs.length} runs\n`);
+  console.error(`${repo}: ${runs.length} runs`);
   return jobs;
 }
 
-function duckdb(io: Io, db: string, sql: string, stdin?: string): void {
+async function duckdb(db: string, sql: string, stdin?: string): Promise<void> {
   mkdirSync(dirname(db), { recursive: true });
-  const status = io.run(["duckdb", "-box", db, "-c", sql], {
-    stdin: stdin === undefined ? "ignore" : { input: stdin },
-  });
-  if (status !== 0) throw new Error("duckdb failed");
+  const input = stdin === undefined ? undefined : new Response(stdin);
+  const result = input
+    ? await $`duckdb -box ${db} -c ${sql} < ${input}`.nothrow()
+    : await $`duckdb -box ${db} -c ${sql} < /dev/null`.nothrow();
+  if (result.exitCode !== 0) throw new Error("duckdb failed");
 }
 
-export async function main(io: Io, argv: string[]): Promise<number> {
+export async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
@@ -85,26 +85,23 @@ export async function main(io: Io, argv: string[]): Promise<number> {
   const days = Number(values.days);
   if (command === "fetch" && repos.length > 0 && Number.isInteger(days) && days > 0) {
     const from = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-    const jobs = (await Promise.all(repos.map((repo) => fetchJobs(io, repo, from)))).flat();
-    duckdb(io, values.db, LOAD, jobs.map((job) => JSON.stringify(job)).join("\n"));
+    const jobs = (await Promise.all(repos.map((repo) => fetchJobs(repo, from)))).flat();
+    await duckdb(values.db, LOAD, jobs.map((job) => JSON.stringify(job)).join("\n"));
     return 0;
   }
   if (command === "report") {
-    duckdb(io, values.db, REPORT);
+    await duckdb(values.db, REPORT);
     return 0;
   }
-  io.write(2, `${USAGE}\n`);
+  console.error(USAGE);
   return 2;
 }
 
 if (import.meta.main) {
-  const io = streamIo();
-  let status: number;
-  try {
-    status = await main(io, process.argv.slice(2));
-  } catch (error) {
-    io.write(2, `ci-timings: ${error instanceof Error ? error.message : String(error)}\n`);
-    status = 1;
-  }
-  process.exit(status);
+  process.exit(
+    await main(process.argv.slice(2)).catch((error: Error) => {
+      console.error(`ci-timings: ${error.message}`);
+      return 1;
+    }),
+  );
 }

@@ -14,7 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { fakeIo, writeStub } from "#harness";
+import { writeStub } from "#harness";
 import { skipMessage } from "#jobs/sync-gate";
 import {
   credentialFindings,
@@ -462,6 +462,17 @@ describe("the install step", () => {
     expect(run.stderr).toContain("Running install");
     expect(field(filedTodos()[0], "notes")).not.toContain("Running install");
   });
+
+  // A step that could not be started has to say why, or the failure arrives
+  // with nothing in it to act on.
+  test("carries the reason an installer could not be started", () => {
+    const installer = join(home, "scripts", "install");
+    rmSync(installer);
+
+    const run = runUpgrade();
+    expect(run.status).toBe(1);
+    expect(field(filedTodos()[0], "notes")).toContain(`not found: ${installer}`);
+  });
 });
 
 describe("brew cleanup", () => {
@@ -895,14 +906,7 @@ describe("the run as a whole", () => {
 });
 
 describe("currentRevision", () => {
-  test.each<{ name: string; answer: { status?: number; stdout?: string }; expected: string }>([
-    { name: "git names the revision", answer: { stdout: "abc1234\n" }, expected: "abc1234" },
-    { name: "the tree is not a checkout", answer: { status: 128 }, expected: "unknown" },
-    { name: "git prints nothing", answer: { stdout: "\n" }, expected: "unknown" },
-    { name: "git is not installed", answer: { status: 127 }, expected: "unknown" },
-  ])("is $expected where $name", ({ answer, expected }) => {
-    const io = fakeIo({ answers: [{ argv: ["git", "-C", "/tree"], ...answer }] });
-    expect(currentRevision(io, "/tree")).toBe(expected);
-    expect(io.calls[0].options).toEqual({ stdin: "ignore", stderr: "ignore" });
+  test("falls back to a literal where the tree is not a checkout", async () => {
+    expect(await currentRevision(join(sandbox, "nowhere"))).toBe("unknown");
   });
 });

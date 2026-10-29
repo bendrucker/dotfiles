@@ -1,16 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
-import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
-import type { Context } from "#migrations/migration";
+import { sandbox, type Sandbox } from "#harness";
+import { recorded, recordingStub } from "#harness/recorder";
 import { FORMULAE, up } from "./202610080002-pin-cli-tools-in-mise";
 
 let box: Sandbox;
-let io: FakeIo;
 const path = process.env.PATH;
 
 beforeEach(() => {
   box = sandbox("pin-cli-tools-in-mise");
-  box.stub("brew", "exit 0");
+  recordingStub(box, "gum");
   process.env.PATH = `${box.bin}:${path ?? ""}`;
 });
 
@@ -19,44 +17,37 @@ afterEach(() => {
   box.remove();
 });
 
-// Every brew command succeeds except an uninstall of a formula in `refused`.
-function context(refused: string[] = []): Context {
-  const brew = join(box.bin, "brew");
-  io = fakeIo({
-    answers: [...refused.map((name) => ({ argv: [brew, "uninstall", name], status: 1 })), { argv: [] }],
-  });
-  return {
-    root: box.dir,
-    home: box.mkdir("home"),
-    config: box.path("home", ".config"),
-    data: box.path("home", ".local", "share"),
-    applications: box.path("Applications"),
-    installed: [box.mkdir("installed")],
-    platform: "darwin",
-    io,
-  };
+// `refused` names a formula brew will not uninstall.
+function stubBrew(refused?: string): void {
+  recordingStub(box, "brew", refused === undefined ? "" : `[ "$1" = uninstall ] && [ "$2" = ${refused} ] && exit 1
+exit 0`);
 }
 
 function uninstalled(): string[] {
-  return io.calls.filter((call) => call.argv[1] === "uninstall").map((call) => call.argv.at(-1) ?? "");
+  return recorded(box)
+    .filter((call) => call[0] === "brew" && call[1] === "uninstall")
+    .map((call) => call.at(-1) ?? "");
 }
 
 describe("pin-cli-tools-in-mise", () => {
-  test("uninstalls every formula system/mise.toml now pins", () => {
-    up(context());
+  test("uninstalls every formula system/mise.toml now pins", async () => {
+    stubBrew();
+    await up();
     expect(uninstalled()).toEqual(FORMULAE);
   });
 
-  test("uninstalls actionlint before the shellcheck it depends on", () => {
-    up(context());
+  test("uninstalls actionlint before the shellcheck it depends on", async () => {
+    stubBrew();
+    await up();
     expect(uninstalled().indexOf("actionlint")).toBeLessThan(uninstalled().indexOf("shellcheck"));
   });
 
-  test("keeps a formula brew refuses to remove and carries on with the rest", () => {
-    up(context(["jq"]));
+  test("keeps a formula brew refuses to remove and carries on with the rest", async () => {
+    stubBrew("jq");
+    await up();
 
     expect(uninstalled()).toEqual(FORMULAE);
-    const warnings = io.logs.filter((line) => line.level === "warn");
-    expect(warnings.map((line) => line.message)).toEqual(["kept jq: brew uninstall jq failed"]);
+    const warnings = recorded(box).filter((call) => call[0] === "gum" && call.includes("warn"));
+    expect(warnings.map((call) => call.at(-1))).toEqual(["kept jq: brew uninstall jq failed"]);
   });
 });

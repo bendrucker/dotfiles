@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
+import { sandbox, type Sandbox } from "#harness";
+import { recorded, recordingStub } from "#harness/recorder";
 import type { Context } from "#migrations/migration";
 import { CRATE, up } from "./202610120003-rm-cargo-worktrunk-sync";
 
 let box: Sandbox;
-let io: FakeIo;
 const path = process.env.PATH;
 
 beforeEach(() => {
   box = sandbox("rm-cargo-worktrunk-sync");
+  recordingStub(box, "gum");
 });
 
 afterEach(() => {
@@ -17,9 +18,7 @@ afterEach(() => {
   box.remove();
 });
 
-// Every command the migration runs exits with `status`.
-function context(status = 0): Context {
-  io = fakeIo({ answers: [{ argv: [], status }] });
+function context(): Context {
   return {
     root: box.dir,
     home: box.path("home"),
@@ -28,7 +27,6 @@ function context(status = 0): Context {
     applications: box.path("Applications"),
     installed: [box.path("installed")],
     platform: "darwin",
-    io,
   };
 }
 
@@ -38,40 +36,42 @@ function installCargoCopy(): void {
 }
 
 function cargoCalls(): string[][] {
-  return io.calls.map((call) => call.argv).filter((cmd) => cmd[0]?.endsWith("cargo") === true).map((cmd) => cmd.slice(1));
+  return recorded(box)
+    .filter((call) => call[0] === "cargo")
+    .map((call) => call.slice(1));
 }
 
 // The migration resolves cargo off PATH, so a case that wants it found puts a stub there.
-function stubCargo(): void {
-  box.stub("cargo", "exit 0");
+function stubCargo(status = 0): void {
+  recordingStub(box, "cargo", `exit ${status}`);
   process.env.PATH = `${box.bin}:${path ?? ""}`;
 }
 
 describe("rm-cargo-worktrunk-sync", () => {
-  test("uninstalls the cargo copy", () => {
+  test("uninstalls the cargo copy", async () => {
     installCargoCopy();
     stubCargo();
-    up(context());
+    await up(context());
     expect(cargoCalls()).toEqual([["uninstall", CRATE]]);
   });
 
-  test("leaves cargo alone when there is no cargo copy", () => {
+  test("leaves cargo alone when there is no cargo copy", async () => {
     stubCargo();
-    up(context());
+    await up(context());
     expect(cargoCalls()).toEqual([]);
   });
 
-  test("warns rather than fails without cargo", () => {
+  test("warns rather than fails without cargo", async () => {
     installCargoCopy();
-    process.env.PATH = box.mkdir("empty");
-    up(context());
+    process.env.PATH = box.bin;
+    await up(context());
     expect(cargoCalls()).toEqual([]);
-    expect(io.captured()).toContain("remove ~/.cargo/bin/wt-sync by hand");
+    expect(recorded(box).flat().join(" ")).toContain("remove ~/.cargo/bin/wt-sync by hand");
   });
 
-  test("throws when the uninstall fails", () => {
+  test("throws when the uninstall fails", async () => {
     installCargoCopy();
-    stubCargo();
-    expect(() => up(context(101))).toThrow(`cargo uninstall ${CRATE} failed`);
+    stubCargo(101);
+    await expect(up(context())).rejects.toThrow(`cargo uninstall ${CRATE} failed`);
   });
 });

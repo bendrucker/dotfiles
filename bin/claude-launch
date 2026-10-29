@@ -11,7 +11,9 @@
 // dispatch via repeated --add-dir. Pass --here to skip the picker and launch in
 // the current directory.
 
-import { type Io, type Result, streamIo } from "#io";
+import { $ } from "bun";
+import { realpathSync } from "node:fs";
+import { choose as gumChoose, log } from "#gum";
 
 const USAGE = [
   "usage: claude-launch [--here]",
@@ -96,10 +98,11 @@ export function agentId(dispatched: string): string {
 
 // The three lookups that seed the launch are advisory, so their complaints are
 // dropped rather than shown above a picker that works without them. A command
-// that is not installed answers 127 with no output, which every caller here
+// that is not installed answers nonzero with no output, which every caller here
 // already handles.
-function lookup(io: Io, cmd: string[]): Result {
-  return io.read(cmd, { stdin: "ignore", stderr: "ignore" });
+async function lookup(cmd: string[]): Promise<{ status: number; stdout: string }> {
+  const child = await $`${cmd} < /dev/null`.nothrow().quiet();
+  return { status: child.exitCode, stdout: child.stdout.toString() };
 }
 
 function lines(text: string): string[] {
@@ -108,16 +111,16 @@ function lines(text: string): string[] {
 
 // Taking the leading "default" option, or dismissing the picker, both leave the
 // flag off so Claude applies its own default.
-function choose(io: Io, header: string, options: string[]): string {
-  return io.choose(options, { header })[0] ?? "";
+async function choose(header: string, options: string[]): Promise<string> {
+  return (await gumChoose(options, { header }))[0] ?? "";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function agentDirs(io: Io): string[] {
-  const agents = lookup(io, ["claude", "agents", "--json"]);
+async function agentDirs(): Promise<string[]> {
+  const agents = await lookup(["claude", "agents", "--json"]);
   if (agents.status !== 0) return [];
 
   let parsed: unknown;
@@ -136,58 +139,52 @@ function agentDirs(io: Io): string[] {
 
 // fzf draws its interface on stderr and reads the terminal, so stderr stays
 // inherited. Dismissing it exits nonzero with nothing on stdout.
-function pickDir(io: Io): string | undefined {
-  const frecent = lookup(io, ["zoxide", "query", "-l"]);
-  const dirs = launchDirs(agentDirs(io), lines(frecent.stdout));
+async function pickDir(): Promise<string | undefined> {
+  const frecent = await lookup(["zoxide", "query", "-l"]);
+  const dirs = launchDirs(await agentDirs(), lines(frecent.stdout));
   if (dirs.length === 0) {
-    io.log("error", "no directories from zoxide");
+    await log("error", "no directories from zoxide");
     return undefined;
   }
 
-  const picked = io
-    .read(
-      ["fzf", "--no-sort", "--border", "--border-label", " claude · launch dir ", "--prompt", "  "],
-      { stdin: { input: `${dirs.join("\n")}\n` } },
-    )
-    .stdout.replace(/\n+$/, "");
+  const input = new Response(`${dirs.join("\n")}\n`);
+  const picked = (
+    await $`cat < ${input} | fzf --no-sort --border --border-label ${" claude · launch dir "} --prompt ${"  "} 2>>/dev/stderr`
+      .nothrow()
+      .quiet()
+  ).stdout
+    .toString()
+    .replace(/\n+$/, "");
   if (picked === "") {
-    io.log("warn", "no directory selected");
+    await log("warn", "no directory selected");
     return undefined;
   }
   return picked;
 }
 
-export function main(io: Io, args: string[]): number {
+async function main(args: string[]): Promise<number> {
   if (args.includes("-h") || args.includes("--help")) {
-    io.write(1, `${USAGE}\n`);
+    process.stdout.write(`${USAGE}\n`);
     return 0;
   }
 
-  const repo = args[0] === "--here" ? process.cwd() : pickDir(io);
+  const repo = args[0] === "--here" ? process.cwd() : await pickDir();
   if (repo === undefined) return 1;
 
-  const permission = choose(io, "permission-mode", PERMISSION_MODES);
-  const model = choose(io, "model", MODELS);
-  const seed = seedFrom(lookup(io, ["pbpaste"]).stdout);
+  const permission = await choose("permission-mode", PERMISSION_MODES);
+  const model = await choose("model", MODELS);
+  const seed = seedFrom((await lookup(["pbpaste"])).stdout);
 
-  const prompt = io
-    .read(
-      [
-        "gum",
-        "write",
-        "--placeholder",
-        "Task for the agent…",
-        "--value",
-        seed,
-        "--width",
-        "80",
-        "--height",
-        "12",
-      ],
-    )
-    .stdout.replace(/\n+$/, "");
+  // gum draws on stderr and reads the terminal, so both stay inherited.
+  const prompt = (
+    await $`gum write --placeholder ${"Task for the agent…"} --value ${seed} --width 80 --height 12 2>>/dev/stderr`
+      .nothrow()
+      .quiet()
+  ).stdout
+    .toString()
+    .replace(/\n+$/, "");
   if (prompt === "") {
-    io.log("warn", "no prompt entered");
+    await log("warn", "no prompt entered");
     return 1;
   }
 
@@ -199,18 +196,29 @@ export function main(io: Io, args: string[]): number {
     prompt,
   });
 
-  io.log("info", `Launching in ${repo}`);
-  // The dispatch keeps its stderr, which is where a refused launch says why.
-  const dispatched = io.read(cmd, { cwd: repo, stdin: "ignore" });
-  io.write(1, `${dispatched.stdout.replace(/\n+$/, "")}\n`);
-  if (dispatched.status !== 0) {
-    io.log("error", "launch failed");
-    return dispatched.status;
+  await log("info", `Launching in ${repo}`);
+  const dispatched = await dispatch(cmd, repo);
+  process.stdout.write(`${dispatched.stdout.replace(/\n+$/, "")}\n`);
+  if (dispatched.exitCode !== 0) {
+    await log("error", "launch failed");
+    return dispatched.exitCode;
   }
 
   const id = agentId(dispatched.stdout);
-  if (id !== "") io.log("info", `agent ${id} · attach with: claude attach ${id}`);
+  if (id !== "") await log("info", `agent ${id} · attach with: claude attach ${id}`);
   return 0;
 }
 
-if (import.meta.main) process.exit(main(streamIo(), process.argv.slice(2)));
+// The dispatch keeps its stderr, which is where a refused launch says why. A
+// picked directory that no longer exists makes the cwd throw, which is a failed
+// launch rather than a crash.
+async function dispatch(cmd: string[], repo: string): Promise<{ exitCode: number; stdout: string }> {
+  try {
+    const run = await $`cat /dev/null | ${cmd} 2>>/dev/stderr`.cwd(realpathSync(repo)).nothrow().quiet();
+    return { exitCode: run.exitCode, stdout: run.stdout.toString() };
+  } catch {
+    return { exitCode: 1, stdout: "" };
+  }
+}
+
+if (import.meta.main) process.exit(await main(process.argv.slice(2)));

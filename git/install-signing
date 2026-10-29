@@ -7,7 +7,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { readOk, streamIo } from "#io";
 import { machineName } from "#jobs/machine";
 
 const { values } = parseArgs({ options: { name: { type: "string", default: "Git Signing" } } });
@@ -18,10 +17,9 @@ const local = join(configDir, "config.local");
 const allowedSigners = join(configDir, "allowed_signers");
 const socket = join(home, "Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh");
 
-const io = streamIo();
-
 function output(cmd: string[], env: Record<string, string> = {}): string | undefined {
-  return readOk(io, cmd, { stdin: "ignore", stderr: "ignore", env: { ...process.env, ...env } })?.trim();
+  const r = Bun.spawnSync({ cmd, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
+  return r.exitCode === 0 ? r.stdout.toString().trim() : undefined;
 }
 
 if (!Bun.which("ssh-add")) {
@@ -60,12 +58,14 @@ if (previous === signingKey) process.exit(0);
 
 // A new key goes to GitHub once, when it is first configured, so a missing
 // scope reports here instead of on every install after.
-const title = `${values.name} (${machineName(io)})`;
-const added = io.read(["gh", "ssh-key", "add", "-", "--type", "signing", "--title", title], {
-  stdin: { input: publicKey },
+const title = `${values.name} (${await machineName()})`;
+const added = Bun.which("gh") && Bun.spawnSync({
+  cmd: ["gh", "ssh-key", "add", "-", "--type", "signing", "--title", title],
+  stdin: new TextEncoder().encode(publicKey),
+  stdout: "ignore",
   stderr: "pipe",
 });
-if (added.status !== 0) {
+if (!added || added.exitCode !== 0) {
   console.error(`Could not add the signing key to GitHub. Grant the scope and add it:
   gh auth refresh -h github.com -s admin:ssh_signing_key
   echo '${publicKey}' | gh ssh-key add - --type signing --title '${title}'`);

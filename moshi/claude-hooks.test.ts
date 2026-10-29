@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { fakeIo, sandbox, type Sandbox } from "#harness";
-import { installClaudeHooks } from "./claude-hooks";
+import { join } from "node:path";
+import { sandbox, stubGum, type Sandbox } from "#harness";
+import { call } from "#harness/call";
 
 let box: Sandbox;
 
 beforeEach(() => {
   box = sandbox("moshi-claude-hooks");
+  stubGum(box);
 });
 
 afterEach(() => {
@@ -16,30 +18,35 @@ function env(): Record<string, string | undefined> {
   return { ...process.env, PATH: `${box.bin}:/usr/bin:/bin` };
 }
 
+// Called in a child bun, since what Bun Shell writes never reaches this process's spies.
+function install() {
+  return call<boolean>(join(import.meta.dir, "claude-hooks.ts"), "installClaudeHooks", [env()], env());
+}
+
 describe("installClaudeHooks", () => {
-  test("installs the claude target", () => {
-    box.stub("moshi-hook", "exit 0");
-    const io = fakeIo({ answers: [{ argv: ["moshi-hook"] }] });
+  test("installs the claude target", async () => {
+    box.stub("moshi-hook", `printf '%s\\n' "$*" >>"${box.path("calls")}"`);
 
-    expect(installClaudeHooks(io, env())).toBe(true);
-    expect(io.calls.map((call) => call.argv)).toEqual([["moshi-hook", "install", "--target", "claude"]]);
-    expect(io.calls[0].options?.stdin).toBe("ignore");
-    expect(io.logs).toEqual([{ level: "info", message: "Installing moshi claude hooks..." }]);
+    const { value, output } = await install();
+
+    expect(value).toBe(true);
+    expect(box.read("calls")).toBe("install --target claude\n");
+    expect(output).toContain("Installing moshi claude hooks");
   });
 
-  test("reports a failed install", () => {
-    box.stub("moshi-hook", "exit 0");
-    const io = fakeIo({ answers: [{ argv: ["moshi-hook"], status: 1 }] });
+  test("reports a failed install", async () => {
+    box.stub("moshi-hook", "exit 1");
 
-    expect(installClaudeHooks(io, env())).toBe(false);
-    expect(io.logs.at(-1)).toEqual({ level: "warn", message: "moshi-hook install failed" });
+    const { value, output } = await install();
+
+    expect(value).toBe(false);
+    expect(output).toContain("moshi-hook install failed");
   });
 
-  test("skips when moshi-hook is not on PATH", () => {
-    const io = fakeIo();
+  test("skips when moshi-hook is not on PATH", async () => {
+    const { value, output } = await install();
 
-    expect(installClaudeHooks(io, env())).toBe(true);
-    expect(io.calls).toEqual([]);
-    expect(io.captured()).toBe("");
+    expect(value).toBe(true);
+    expect(output).toBe("");
   });
 });

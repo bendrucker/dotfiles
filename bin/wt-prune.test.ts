@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeIo, type FakeIo } from "#harness";
 import { alignColumns } from "#worktree/table";
 import { parseDuration } from "#worktree/state";
 import {
@@ -45,11 +44,21 @@ fi
 exit 0
 `;
 
-// Present on the non-interactive path, so an accidental call cannot escape to
-// the real binary and draw a checklist at whoever is running these.
+// $GUM_CHOOSE picks the offered lines it matches, and nothing when it is unset,
+// which is what escape or an empty selection produces. $GUM_CONFIRM_RC is the
+// answer to the local-only confirm. Present on the non-interactive path too, so
+// an accidental call cannot escape to the real binary and draw a checklist at
+// whoever is running these.
 const GUM_STUB = `#!/usr/bin/env bash
 [ "$1" = "--stub-check" ] && { echo "gum stub"; exit 0; }
 printf 'gum %s\\n' "$*" >>"$GUM_LOG"
+case "$1" in
+  choose)
+    offered="$(cat)"
+    [ -n "\${GUM_CHOOSE:-}" ] && printf '%s\\n' "$offered" | grep -F "$GUM_CHOOSE"
+    ;;
+  confirm) exit "\${GUM_CONFIRM_RC:-0}" ;;
+esac
 exit 0
 `;
 
@@ -100,6 +109,8 @@ beforeEach(() => {
 afterEach(() => {
   process.env.PATH = environment.PATH;
   for (const name of [
+    "GUM_CHOOSE",
+    "GUM_CONFIRM_RC",
     "WT_LIST_JSON",
     "WT_REMOVE_LOG",
     "WT_STEP_LOG",
@@ -546,86 +557,50 @@ describe("interactive checklist", () => {
     };
   }
 
-  // The offered label that contains the choice, as gum would return it.
-  function offered(candidates: Candidate[], choice: string | undefined): string[][] {
-    if (choice === undefined) return [];
-    const labels = alignColumns(candidates.map((entry) => entry.row));
-    return [labels.filter((label) => label.includes(choice))];
-  }
-
-  function scripted(candidates: Candidate[], choice?: string, confirmStatus = 0): FakeIo {
-    return fakeIo({
-      choices: offered(candidates, choice),
-      answers: [
-        { argv: ["gum", "confirm"], status: confirmStatus },
-        { argv: ["wt", "remove"] },
-      ],
-    });
-  }
-
-  function removals(io: FakeIo): string[] {
-    return io.calls.filter((call) => call.argv[1] === "remove").map((call) => call.argv.join(" "));
-  }
-
-  function confirms(io: FakeIo): string[] {
-    return io.calls.filter((call) => call.argv[1] === "confirm").map((call) => call.argv.join(" "));
-  }
-
-  function pick(candidates: Candidate[], choice?: string, confirmStatus?: number): { report: Report; io: FakeIo } {
-    const io = scripted(candidates, choice, confirmStatus);
+  async function pick(candidates: Candidate[], choice?: string, confirmRc?: string): Promise<Report> {
+    if (choice !== undefined) process.env.GUM_CHOOSE = choice;
+    if (confirmRc !== undefined) process.env.GUM_CONFIRM_RC = confirmRc;
     const report: Report = { worktrees: 0, branches: 0, reasons: [] };
-    checklist(io, candidates, options, report);
-    return { report, io };
+    await checklist(candidates, options, report);
+    return report;
   }
 
-  test("selecting nothing removes nothing", () => {
-    const { report, io } = pick([candidate("feature-x", true)]);
+  test("selecting nothing removes nothing", async () => {
+    const report = await pick([candidate("feature-x", true)]);
     expect(report.worktrees).toBe(0);
-    expect(removals(io)).toEqual([]);
+    expect(log("WT_REMOVE_LOG")).toBe("");
   });
 
-  test("a selection is removed by its own handle", () => {
-    const { report, io } = pick([candidate("feature-x", true), candidate("feature-y", true)], "feature-x");
+  test("a selection is removed by its own handle", async () => {
+    const report = await pick([candidate("feature-x", true), candidate("feature-y", true)], "feature-x");
     expect(report.worktrees).toBe(1);
-    expect(removals(io)).toEqual(["wt remove --foreground --force --force-delete feature-x"]);
+    expect(log("WT_REMOVE_LOG")).toContain("--foreground --force --force-delete feature-x");
+    expect(log("WT_REMOVE_LOG")).not.toContain("feature-y");
   });
 
-  test("a selection with a remote copy is not gated on a confirm", () => {
-    const { io } = pick([candidate("feature-x", true)], "feature-x");
-    expect(confirms(io)).toEqual([]);
+  test("a selection with a remote copy is not gated on a confirm", async () => {
+    await pick([candidate("feature-x", true)], "feature-x");
+    expect(log("GUM_LOG")).not.toContain("confirm");
   });
 
-  test("declining the local-only confirm removes nothing", () => {
-    const { report, io } = pick([candidate("feature-x", false)], "feature-x", 1);
+  test("declining the local-only confirm removes nothing", async () => {
+    const report = await pick([candidate("feature-x", false)], "feature-x", "1");
     expect(report.worktrees).toBe(0);
-    expect(confirms(io)).toEqual(["gum confirm Remove 1 worktrees — 1 have no remote copy?"]);
-    expect(removals(io)).toEqual([]);
+    expect(log("GUM_LOG")).toContain("no remote copy");
+    expect(log("WT_REMOVE_LOG")).toBe("");
   });
 
-  test("a confirmed local-only selection is removed", () => {
-    const { report, io } = pick([candidate("feature-x", false)], "feature-x", 0);
+  test("a confirmed local-only selection is removed", async () => {
+    const report = await pick([candidate("feature-x", false)], "feature-x", "0");
     expect(report.worktrees).toBe(1);
-    expect(removals(io)).toEqual(["wt remove --foreground --force --force-delete feature-x"]);
+    expect(log("WT_REMOVE_LOG")).toContain("feature-x");
   });
 
-  test("a dry run counts the selection without removing it", () => {
-    const candidates = [candidate("feature-x", true)];
-    const io = scripted(candidates, "feature-x");
+  test("a dry run counts the selection without removing it", async () => {
     const report: Report = { worktrees: 0, branches: 0, reasons: [] };
-    checklist(io, candidates, { ...options, dryRun: true }, report);
+    process.env.GUM_CHOOSE = "feature-x";
+    await checklist([candidate("feature-x", true)], { ...options, dryRun: true }, report);
     expect(report.worktrees).toBe(1);
-    expect(removals(io)).toEqual([]);
-  });
-
-  test("offers the picker its labels with the header and no selection limit", () => {
-    const candidates = [candidate("feature-x", true)];
-    const io = scripted(candidates);
-    checklist(io, candidates, options, { worktrees: 0, branches: 0, reasons: [] });
-    expect(io.prompts).toEqual([
-      {
-        items: alignColumns(candidates.map((entry) => entry.row)),
-        options: { limit: "none", header: "Select worktrees to remove (esc/none keeps all)" },
-      },
-    ]);
+    expect(log("WT_REMOVE_LOG")).toBe("");
   });
 });

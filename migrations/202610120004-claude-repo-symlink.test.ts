@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, symlinkSync } from "node:fs";
-import { fakeIo, sandbox, type Sandbox } from "#harness";
+import { sandbox, type Sandbox } from "#harness";
 import type { Context } from "#migrations/migration";
 import { up } from "./202610120004-claude-repo-symlink";
 
@@ -26,7 +26,6 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [],
     platform: "darwin",
-    io: fakeIo({ answers: [{ argv: [] }] }),
   };
 }
 
@@ -34,27 +33,27 @@ describe("claude-repo-symlink", () => {
   test.each<{ name: string; target: () => string }>([
     { name: "dangling", target: () => box.path("gone") },
     { name: "pointing at a directory that is not a clone", target: () => box.mkdir("plain") },
-  ])("removes a symlink $name", ({ target }) => {
+  ])("removes a symlink $name", async ({ target }) => {
     symlinkSync(target(), repo);
 
-    up(context());
+    await up(context());
 
     expect(lstatSync(repo, { throwIfNoEntry: false })).toBeUndefined();
   });
 
-  test("keeps a symlink to a clone", () => {
+  test("keeps a symlink to a clone", async () => {
     box.mkdir("clone", ".git");
     symlinkSync(box.path("clone"), repo);
 
-    up(context());
+    await up(context());
 
     expect(lstatSync(repo).isSymbolicLink()).toBe(true);
   });
 
-  test("keeps a clone", () => {
+  test("keeps a clone", async () => {
     box.mkdir("home", ".claude-repo", ".git");
 
-    up(context());
+    await up(context());
 
     expect(existsSync(box.path("home", ".claude-repo", ".git"))).toBe(true);
   });

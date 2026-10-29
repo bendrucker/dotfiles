@@ -1,20 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
+import { sandbox, type Sandbox } from "#harness";
+import { recorded, recordingStub } from "#harness/recorder";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { AGENTS, LINKS, up } from "./202610080004-remove-activitywatch";
 
 let box: Sandbox;
 let installed: string;
-let io: FakeIo;
 
 beforeEach(() => {
   box = sandbox("remove-activitywatch");
   box.mkdir("home", "Library", "LaunchAgents");
   installed = box.mkdir("installed");
-  io = fakeIo({ answers: [{ argv: [] }] });
 });
 
 afterEach(() => {
@@ -30,20 +29,17 @@ function context(): Context {
     applications: box.mkdir("Applications"),
     installed: [installed],
     platform: "darwin",
-    io,
   };
 }
 
-function launchctl(): string[][] {
-  return io.calls.filter((call) => call.argv[0] === "launchctl").map((call) => call.argv.slice(1));
-}
-
 // No brew or uv on PATH, so the package removals return before running anything.
-function withoutTools(body: () => void): void {
+async function withoutTools(body: () => Promise<void>): Promise<void> {
   const path = process.env.PATH;
-  process.env.PATH = "";
+  recordingStub(box, "launchctl");
+  recordingStub(box, "gum");
+  process.env.PATH = box.bin;
   try {
-    body();
+    await body();
   } finally {
     process.env.PATH = path;
   }
@@ -54,34 +50,35 @@ function support(...parts: string[]): string {
 }
 
 describe("remove-activitywatch", () => {
-  test("boots out and removes both agents", () => {
+  test("boots out and removes both agents", async () => {
     for (const label of AGENTS) box.write(`home/Library/LaunchAgents/${label}.plist`, "");
 
-    withoutTools(() => up(context()));
+    await withoutTools(() => up(context()));
 
     for (const label of AGENTS) {
       expect(exists(box.path("home", "Library", "LaunchAgents", `${label}.plist`))).toBe(false);
     }
-    expect(launchctl().map((cmd) => cmd[1]?.split("/").at(-1))).toEqual(AGENTS);
+    const bootouts = recorded(box).filter((call) => call[0] === "launchctl");
+    expect(bootouts.map((call) => call[2]?.split("/").at(-1))).toEqual(AGENTS);
   });
 
-  test("removes the config links and keeps the captured data", () => {
+  test("removes the config links and keeps the captured data", async () => {
     for (const link of LINKS) {
       box.mkdir("home", "Library", "Application Support", "activitywatch", join(link, ".."));
       symlinkSync(join(installed, "activitywatch", link), support(link));
     }
     box.write("home/Library/Application Support/activitywatch/aw-server-rust/sqlite.db", "");
 
-    withoutTools(() => up(context()));
+    await withoutTools(() => up(context()));
 
     for (const link of LINKS) expect(exists(support(link))).toBe(false);
     expect(exists(support("aw-server-rust", "sqlite.db"))).toBe(true);
   });
 
-  test("leaves a config file someone wrote in place of the link", () => {
+  test("leaves a config file someone wrote in place of the link", async () => {
     box.write("home/Library/Application Support/activitywatch/aw-qt/aw-qt.toml", "");
 
-    withoutTools(() => up(context()));
+    await withoutTools(() => up(context()));
 
     expect(exists(support("aw-qt", "aw-qt.toml"))).toBe(true);
   });

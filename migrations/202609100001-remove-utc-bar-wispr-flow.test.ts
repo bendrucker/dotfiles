@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type FakeIo, fakeIo, ignoresModes, sandbox, type Sandbox } from "#harness";
+import { ignoresModes, sandbox, type Sandbox } from "#harness";
+import { recorded, recordingStub } from "#harness/recorder";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { up } from "./202609100001-remove-utc-bar-wispr-flow";
@@ -10,14 +11,12 @@ let box: Sandbox;
 let home: string;
 let installed: string;
 let applications: string;
-let io: FakeIo;
 
 beforeEach(() => {
   box = sandbox("remove-utc-bar-wispr-flow");
   home = box.mkdir("home");
   installed = box.mkdir("installed");
   applications = box.mkdir("Applications");
-  io = fakeIo();
 });
 
 afterEach(() => {
@@ -25,6 +24,13 @@ afterEach(() => {
 });
 
 // No brew on PATH, so removeCask returns before it can run anything.
+function logged(): string {
+  return recorded(box)
+    .filter((call) => call[0] === "gum")
+    .map((call) => call.at(-1))
+    .join("\n");
+}
+
 function context(): Context {
   return {
     root: box.dir,
@@ -34,19 +40,15 @@ function context(): Context {
     applications,
     installed: [installed],
     platform: "darwin",
-    io,
   };
 }
 
-function messages(): string {
-  return io.logs.map((line) => line.message).join("\n");
-}
-
-function withoutBrew(body: () => void): void {
+async function withoutBrew(body: () => Promise<void>): Promise<void> {
   const path = process.env.PATH;
-  process.env.PATH = "";
+  recordingStub(box, "gum");
+  process.env.PATH = box.bin;
   try {
-    body();
+    await body();
   } finally {
     process.env.PATH = path;
   }
@@ -72,41 +74,41 @@ function restore(app: string): void {
 }
 
 describe("remove-utc-bar-wispr-flow", () => {
-  test("removes the UTC Bar bundle when it can", () => {
+  test("removes the UTC Bar bundle when it can", async () => {
     const app = bundle(true);
 
-    withoutBrew(() => up(context()));
+    await withoutBrew(() => up(context()));
 
     expect(exists(app)).toBe(false);
-    expect(messages()).toContain("removed");
+    expect(logged()).toContain("removed");
   });
 
   // The unwritable bundle is what the OS refuses, and root is refused nothing,
   // so as root the removal would succeed and the case would assert the wrong
   // half. CI runs as an ordinary user, which is where this means something.
-  test.skipIf(ignoresModes)("says what to run rather than escalating when the bundle is root's", () => {
+  test.skipIf(ignoresModes)("says what to run rather than escalating when the bundle is root's", async () => {
     const app = bundle(false);
 
     try {
-      withoutBrew(() => up(context()));
+      await withoutBrew(() => up(context()));
 
       expect(exists(app)).toBe(true);
-      expect(messages()).toContain("sudo rm -rf");
+      expect(logged()).toContain("sudo rm -rf");
     } finally {
       restore(app);
     }
   });
 
-  test("a machine the app is already gone from is quiet", () => {
-    withoutBrew(() => up(context()));
+  test("a machine the app is already gone from is quiet", async () => {
+    await withoutBrew(() => up(context()));
 
-    expect(io.logs).toEqual([]);
+    expect(logged()).toBe("");
   });
 
-  test("leaves another app in the same directory alone", () => {
+  test("leaves another app in the same directory alone", async () => {
     const other = box.mkdir("Applications", "Ice.app");
 
-    withoutBrew(() => up(context()));
+    await withoutBrew(() => up(context()));
 
     expect(exists(other)).toBe(true);
   });

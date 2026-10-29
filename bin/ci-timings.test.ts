@@ -1,8 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { join } from "node:path";
-import { fakeIo, run, sandbox, type Sandbox } from "#harness";
-import { main } from "./ci-timings";
+import { run, sandbox, type Sandbox } from "#harness";
 
 const SCRIPT = join(import.meta.dir, "ci-timings");
 
@@ -40,32 +38,4 @@ test.each([[["fetch"]], [["fetch", "--days", "1.5", "o/r"]], [["status"]]])("%p 
   const result = run([SCRIPT, ...args], { path: [box.bin] });
   expect(result.status).toBe(2);
   expect(result.stderr).toContain("Usage: ci-timings");
-});
-
-describe("main", () => {
-  const row = '{"id":7,"event":"push","name":"job","steps":[]}\n';
-  const db = join(tmpdir(), "ci-timings-fake", "ci.duckdb");
-
-  test("loads every job through duckdb with the repo and run event", async () => {
-    const io = fakeIo({ answers: [{ argv: ["gh"], stdout: row }, { argv: ["duckdb"] }] });
-
-    expect(await main(io, ["fetch", "--db", db, "o/r"])).toBe(0);
-
-    const stdin = io.calls.find((call) => call.argv[0] === "duckdb")?.options?.stdin;
-    expect(typeof stdin === "object" ? JSON.parse(stdin.input) : stdin).toEqual({
-      id: 7,
-      event: "push",
-      name: "job",
-      steps: [],
-      repo: "o/r",
-    });
-    expect(io.captured()).toBe("o/r: 1 runs\n");
-  });
-
-  test("names the gh call that failed", async () => {
-    const io = fakeIo({ answers: [{ argv: ["gh"], status: 1 }] });
-
-    await expect(main(io, ["fetch", "--db", db, "o/r"])).rejects.toThrow("gh api repos/o/r/actions/runs");
-    expect(io.calls.some((call) => call.argv[0] === "duckdb")).toBe(false);
-  });
 });

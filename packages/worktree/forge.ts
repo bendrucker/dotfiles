@@ -4,8 +4,8 @@
 // point supplies only its own two queries, so the two commands cannot drift
 // apart in how they sort, dedupe, or open what you picked.
 
-import { type Io, readOk } from "#io";
-import { QUIET } from "#worktree/state";
+import { $ } from "bun";
+import { log } from "#gum";
 
 export type Bucket = "mine" | "review";
 
@@ -94,47 +94,64 @@ export interface Picker {
 // The chosen request, or undefined when the picker was dismissed. Only the
 // first three columns are shown. The url and the checkout ride along so the
 // selection carries everything the switch needs.
-export function choose(io: Io, requests: Request[], picker: Picker): Request | undefined {
+export async function choose(requests: Request[], picker: Picker): Promise<Request | undefined> {
   const rows = new Map(requests.map((request) => [pickerRow(request), request]));
 
   // The rows go in over stdin and only stdout is read back. fzf opens the
   // terminal itself to draw on, which is why a piped stdin does not stop it
   // from being interactive.
-  const run = io.read(
-    [
-      "fzf",
-      "--delimiter=\t",
-      "--with-nth=1,2,3",
-      `--prompt=${picker.prompt}`,
-      `--preview=${picker.preview}`,
-      "--preview-window=right,60%,border-left",
-    ],
-    { stdin: { input: [...rows.keys()].map((row) => `${row}\n`).join("") }, stderr: "log" },
-  );
+  const input = new Response([...rows.keys()].map((row) => `${row}\n`).join(""));
+  const args = [
+    "--delimiter=\t",
+    "--with-nth=1,2,3",
+    `--prompt=${picker.prompt}`,
+    `--preview=${picker.preview}`,
+    "--preview-window=right,60%,border-left",
+  ];
+  // Bun Shell takes one redirect per command, so the rows arrive through cat.
+  const run = await $`cat < ${input} | fzf ${args} 2>>/dev/stderr`.nothrow().quiet();
 
-  return rows.get(run.stdout.replace(/\n+$/, ""));
+  return rows.get(run.stdout.toString().replace(/\n+$/, ""));
 }
 
 // clone-repo resolves the checkout, cloning it when this machine has never had
 // it, and `wt switch` opens a worktree for the branch behind the URL. The two
 // are one step because neither is useful here without the other.
-export function switchTo(io: Io, request: Request, rest: string[]): number {
-  const checkout = readOk(io, ["clone-repo", request.checkout], QUIET);
+export async function switchTo(request: Request, rest: string[]): Promise<number> {
+  const checkout = await capture(["clone-repo", request.checkout]);
   if (checkout === undefined || checkout === "") {
-    io.log("error", `could not resolve a checkout for ${request.checkout}`);
+    await log("error", `could not resolve a checkout for ${request.checkout}`);
     return 1;
   }
 
   // Inherited on all three streams: `wt switch -x claude` hands the terminal to
-  // whatever it launches. The shell exec'd here, so this leaves one more
-  // process in the tree than it used to, waiting on the same child.
-  return io.run(["wt", "-C", checkout, "switch", request.url, ...rest]);
+  // whatever it launches. Bun Shell would give the child sockets on stdout and
+  // stderr instead of the terminal.
+  try {
+    const run = Bun.spawn({
+      cmd: ["wt", "-C", checkout, "switch", request.url, ...rest],
+      env: process.env,
+      stdio: ["inherit", "inherit", "inherit"],
+    });
+    return await run.exited;
+  } catch {
+    return 1;
+  }
 }
 
 // The first tool that is missing, so the caller can name it rather than let the
 // failure surface as an empty picker.
 export function missingTool(tools: string[]): string | undefined {
   return tools.find((tool) => Bun.which(tool, { PATH: process.env.PATH }) === null);
+}
+
+// Undefined when the command could not be run or exited nonzero. A forge query
+// that failed is not an empty result set: reporting "none open" for a network
+// error would quietly show half of what is waiting on you.
+export async function capture(cmd: string[]): Promise<string | undefined> {
+  const run = await $`${cmd} < /dev/null`.nothrow().quiet();
+  if (run.exitCode !== 0) return undefined;
+  return run.stdout.toString().replace(/\n+$/, "");
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

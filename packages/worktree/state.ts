@@ -7,7 +7,7 @@
 
 import { statSync } from "node:fs";
 import { join } from "node:path";
-import type { Io, SpawnOptions } from "#io";
+import { $ } from "bun";
 
 // `wt step prune` refuses to remove a worktree younger than this, because a
 // worktree just branched off main points at main's commit and so reads as
@@ -59,8 +59,8 @@ export function parseDuration(spec: string): number | undefined {
 // `wt list` carries only the tip commit's timestamp, which is main's tip for a
 // worktree that has no commits of its own. Age derived from it says nothing
 // about when the worktree appeared.
-export function worktreeAgeSecs(io: Io, worktreePath: string): number | undefined {
-  const gitdir = quietOutput(io, ["git", "-C", worktreePath, "rev-parse", "--absolute-git-dir"]);
+export async function worktreeAgeSecs(worktreePath: string): Promise<number | undefined> {
+  const gitdir = await capture(["git", "-C", worktreePath, "rev-parse", "--absolute-git-dir"]);
   if (gitdir === "") return undefined;
 
   const created = birthSeconds(gitdir) ?? modifiedSeconds(join(gitdir, "commondir"));
@@ -101,8 +101,8 @@ function modifiedSeconds(path: string): number | undefined {
 // Asking worktrunk rather than reading git config is what makes the two agree:
 // the same resolution guards `wt remove`, and it detects and caches on a miss
 // instead of reporting nothing in a clone that has never been pruned.
-export function defaultBranch(io: Io): string {
-  return quietOutput(io, ["wt", "config", "state", "default-branch", "get"]);
+export async function defaultBranch(): Promise<string> {
+  return await capture(["wt", "config", "state", "default-branch", "get"]);
 }
 
 // The host of the origin remote, which decides whether gh or glab answers for
@@ -112,8 +112,8 @@ export function defaultBranch(io: Io): string {
 // resolves url.<base>.insteadOf rewrites, so an org-wide rule can report a host
 // the config never named, and a survivor routed to the wrong forge CLI comes
 // back with no state and is deferred forever.
-export function remoteHost(io: Io): string {
-  const url = quietOutput(io, ["git", "config", "--get", "remote.origin.url"]);
+export async function remoteHost(): Promise<string> {
+  const url = await capture(["git", "config", "--get", "remote.origin.url"]);
   // Drop any user@ prefix and any scheme, then keep everything up to the first
   // : or /, so git@github.com:o/r.git and https://github.com/o/r.git both name
   // github.com.
@@ -128,15 +128,15 @@ export interface PullRequest {
 
 // The exact PR/MR state for a branch on the forge, undefined when the branch
 // has none. gh is the tested path; glab mirrors it (newest MR wins).
-export function prState(io: Io, branch: string, host: string): PullRequest | undefined {
-  return host.includes("gitlab") ? mergeRequest(io, branch) : pullRequest(io, branch);
+export async function prState(branch: string, host: string): Promise<PullRequest | undefined> {
+  return host.includes("gitlab") ? mergeRequest(branch) : pullRequest(branch);
 }
 
-function pullRequest(io: Io, branch: string): PullRequest | undefined {
+async function pullRequest(branch: string): Promise<PullRequest | undefined> {
   // The extraction stays in gh's own --jq rather than moving here: gh answers
   // in one tab-separated line, and a branch with no PR exits nonzero and prints
   // nothing, which is the same empty answer as a gh that is not installed.
-  const captured = quietOutput(io, [
+  const captured = await capture([
     "gh",
     "pr",
     "view",
@@ -152,8 +152,8 @@ function pullRequest(io: Io, branch: string): PullRequest | undefined {
   return { state, number: number ?? "" };
 }
 
-function mergeRequest(io: Io, branch: string): PullRequest | undefined {
-  const captured = quietOutput(io, [
+async function mergeRequest(branch: string): Promise<PullRequest | undefined> {
+  const captured = await capture([
     "glab",
     "mr",
     "list",
@@ -202,8 +202,8 @@ export interface Worktree {
 // Undefined when wt could not be run or said nothing a caller can read, which
 // every caller treats as "no worktrees to consider" rather than as an empty
 // repo.
-export function listWorktrees(io: Io): Worktree[] | undefined {
-  const captured = quietOutput(io, ["wt", "list", "--format=json"]);
+export async function listWorktrees(): Promise<Worktree[] | undefined> {
+  const captured = await capture(["wt", "list", "--format=json"]);
   if (captured === "") return undefined;
   return readWorktrees(captured);
 }
@@ -244,14 +244,13 @@ export function nowSeconds(): number {
 }
 
 // stdin is closed so a prompting command cannot eat what the caller is reading.
-export const QUIET: SpawnOptions = { stdin: "ignore", stderr: "ignore" };
-
-// What a command printed, trailing newlines trimmed, whatever its status. A
-// binary that is not installed prints nothing: every caller was written to
+//
+// A binary that is not installed yields an empty string: every caller was written to
 // degrade to doing nothing when its forge CLI or worktrunk is absent, and a
 // prune that aborts is worse than one that removes nothing.
-export function quietOutput(io: Io, cmd: string[]): string {
-  return io.read(cmd, QUIET).stdout.replace(/\n+$/, "");
+export async function capture(cmd: string[]): Promise<string> {
+  const run = await $`${cmd} < /dev/null`.nothrow().quiet();
+  return run.stdout.toString().replace(/\n+$/, "");
 }
 
 function stat(path: string) {

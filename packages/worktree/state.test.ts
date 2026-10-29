@@ -1,59 +1,80 @@
-import { describe, expect, test } from "bun:test";
-import { fakeIo } from "#harness";
-import { defaultBranch, listWorktrees, prState, quietOutput, remoteHost } from "./state.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { sandbox, type Sandbox } from "#harness";
+import { capture, defaultBranch, listWorktrees, prState, remoteHost } from "./state.ts";
 
-describe("quietOutput", () => {
-  test("trims trailing newlines and closes stdin and stderr", () => {
-    const io = fakeIo({ answers: [{ argv: ["tool"], stdout: "value\n\n" }] });
+let box: Sandbox;
+let originalPath: string | undefined;
 
-    expect(quietOutput(io, ["tool"])).toBe("value");
-    expect(io.calls[0]?.options).toEqual({ stdin: "ignore", stderr: "ignore" });
+beforeEach(() => {
+  box = sandbox("state");
+  originalPath = process.env.PATH;
+  process.env.PATH = `${box.bin}:${originalPath}`;
+});
+
+afterEach(() => {
+  process.env.PATH = originalPath;
+  box.remove();
+});
+
+describe("capture", () => {
+  test("trims trailing newlines", async () => {
+    box.stub("tool", 'printf "value\\n\\n"');
+    expect(await capture(["tool"])).toBe("value");
   });
 
-  // A forge CLI that is missing or failing reads as no answer, never as a throw.
-  test.each<{ name: string; status: number; stdout: string }>([
-    { name: "a nonzero status keeps what was printed", status: 1, stdout: "partial\n" },
-    { name: "a command that cannot run prints nothing", status: 127, stdout: "" },
-  ])("$name", ({ status, stdout }) => {
-    const io = fakeIo({ answers: [{ argv: ["tool"], status, stdout }] });
-    expect(quietOutput(io, ["tool"])).toBe(stdout.replace(/\n+$/, ""));
+  test("closes stdin", async () => {
+    box.stub("tool", "cat; printf done");
+    expect(await capture(["tool"])).toBe("done");
+  });
+
+  test("keeps what a failing command printed", async () => {
+    box.stub("tool", 'printf "partial\\n"; exit 1');
+    expect(await capture(["tool"])).toBe("partial");
+  });
+
+  test("is empty for a command that is not installed", async () => {
+    expect(await capture(["not-installed-here"])).toBe("");
   });
 });
 
-describe("readers over Io", () => {
-  test("defaultBranch is empty when wt cannot be run", () => {
-    expect(defaultBranch(fakeIo())).toBe("");
+describe("readers over capture", () => {
+  test("defaultBranch is empty when wt cannot be run", async () => {
+    process.env.PATH = box.bin;
+    expect(await defaultBranch()).toBe("");
   });
 
-  test("remoteHost reads the host out of the configured url", () => {
-    const io = fakeIo({
-      answers: [{ argv: ["git", "config"], stdout: "git@github.com:o/r.git\n" }],
-    });
-    expect(remoteHost(io)).toBe("github.com");
+  test("remoteHost reads the host out of the configured url", async () => {
+    box.stub("git", 'printf "git@github.com:o/r.git\\n"');
+    expect(await remoteHost()).toBe("github.com");
   });
 
-  test("listWorktrees is undefined when wt says nothing", () => {
-    expect(listWorktrees(fakeIo({ answers: [{ argv: ["wt"] }] }))).toBeUndefined();
+  test("listWorktrees is undefined when wt says nothing", async () => {
+    box.stub("wt", "exit 0");
+    expect(await listWorktrees()).toBeUndefined();
   });
 
-  test.each<{ name: string; host: string; answer: { argv: string[]; stdout: string }; expected: unknown }>([
+  test.each<{ name: string; host: string; tool: string; stdout: string; expected: unknown }>([
     {
       name: "gh answers for a github host",
       host: "github.com",
-      answer: { argv: ["gh"], stdout: "MERGED\t12\n" },
+      tool: "gh",
+      stdout: "MERGED\\t12\\n",
       expected: { state: "MERGED", number: "12" },
     },
     {
       name: "glab answers for a gitlab host, and OPENED reads as OPEN",
       host: "gitlab.example.com",
-      answer: { argv: ["glab"], stdout: '[{"state":"opened","iid":7}]' },
+      tool: "glab",
+      stdout: '[{"state":"opened","iid":7}]',
       expected: { state: "OPEN", number: "7" },
     },
-  ])("prState: $name", ({ host, answer, expected }) => {
-    expect(prState(fakeIo({ answers: [answer] }), "feature", host)).toEqual(expected);
+  ])("prState: $name", async ({ host, tool, stdout, expected }) => {
+    box.stub(tool, `printf '${stdout}'`);
+    expect(await prState("feature", host)).toEqual(expected);
   });
 
-  test("prState is undefined when the forge CLI is absent", () => {
-    expect(prState(fakeIo(), "feature", "github.com")).toBeUndefined();
+  test("prState is undefined when the forge CLI is absent", async () => {
+    process.env.PATH = box.bin;
+    expect(await prState("feature", "github.com")).toBeUndefined();
   });
 });

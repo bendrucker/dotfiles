@@ -9,6 +9,7 @@
 
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "#gum";
 import { type Context, exists, removeCask } from "#migrations/migration";
 
 export const platform = "darwin";
@@ -17,9 +18,9 @@ export const platform = "darwin";
 // throw leaves the stamp where it was and stops the migrations behind this one.
 // Ordering the cleanup that cannot throw ahead of it keeps one flaky brew run
 // from holding the other back for a night.
-export function up(context: Context): void {
-  removeApplication(context, "UTC Bar.app");
-  removeCask(context, "wispr-flow");
+export async function up(context: Context): Promise<void> {
+  await removeApplication(context, "UTC Bar.app");
+  await removeCask("wispr-flow");
 }
 
 // `mas uninstall` needs root, so the bundle goes directly. An App Store install
@@ -28,16 +29,16 @@ export function up(context: Context): void {
 // this normally cannot succeed as the user and says so instead. Escalating is
 // what a migration running unattended at 3am must not do, and the leftover is
 // harmless until it is dealt with awake.
-function removeApplication(context: Context, name: string): void {
+async function removeApplication(context: Context, name: string): Promise<void> {
   const app = join(context.applications, name);
   if (!exists(app)) return;
 
   try {
     rmSync(app, { recursive: true, force: true });
-    context.io.log("info", `removed ${app}`);
+    await log("info", `removed ${app}`);
   } catch (error) {
     if (!denied(error)) throw error;
-    context.io.log("warn", `${app} needs root to remove: sudo rm -rf ${quote(app)}`);
+    await log("warn", `${app} needs root to remove: sudo rm -rf ${quote(app)}`);
   }
 }
 

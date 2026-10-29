@@ -6,29 +6,29 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { type Io, streamIo } from "#io";
+import { $ } from "bun";
 import { reportFailure, reportSuccess } from "#jobs/report";
 import { claudeRepoHome, repoRevision } from "./claude-sync";
 
 const JOB = "session-index-compact";
 const REFRESH = join("plugins", "observability", "skills", "session", "scripts", "refresh.ts");
 
-export function main(io: Io = streamIo()): number {
+export async function main(): Promise<number> {
   const repoDir = claudeRepoHome();
   const script = join(repoDir, REFRESH);
   if (!existsSync(script)) return 0;
 
-  const run = io.read([process.execPath, script, "--compact"], { cwd: repoDir, stdin: "ignore", stderr: "pipe" });
-  const output = `${run.stdout}${run.stderr}`;
-  io.write(1, output);
+  const run = await $`${process.execPath} ${script} --compact < /dev/null`.cwd(repoDir).nothrow().quiet();
+  const output = `${run.stdout.toString()}${run.stderr.toString()}`;
+  process.stdout.write(output);
 
-  if (run.status !== 0) {
-    reportFailure(io, {
+  if (run.exitCode !== 0) {
+    await reportFailure({
       job: JOB,
       title: "Session index compaction failed",
       command: `${REFRESH} --compact`,
       output,
-      revision: repoRevision(io, repoDir),
+      revision: await repoRevision(repoDir),
       extraMeta: "",
       outputHeading: "Output",
       fingerprint: "",
@@ -39,4 +39,4 @@ export function main(io: Io = streamIo()): number {
   return 0;
 }
 
-if (import.meta.main) process.exit(main());
+if (import.meta.main) process.exit(await main());

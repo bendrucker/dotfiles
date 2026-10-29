@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { type FakeIo, fakeIo, sandbox, type Sandbox } from "#harness";
-import type { Context } from "#migrations/migration";
+import { sandbox, type Sandbox } from "#harness";
+import { recorded, recordingStub } from "#harness/recorder";
 import { up } from "./202610080005-remove-shellspec";
 
 let box: Sandbox;
-let io: FakeIo;
 const path = process.env.PATH;
 
 beforeEach(() => {
   box = sandbox("remove-shellspec");
-  io = fakeIo({ answers: [{ argv: [] }] });
-  box.stub("brew", "exit 0");
+  recordingStub(box, "brew");
+  recordingStub(box, "gum");
   process.env.PATH = `${box.bin}:${path ?? ""}`;
 });
 
@@ -19,28 +18,10 @@ afterEach(() => {
   box.remove();
 });
 
-function context(): Context {
-  const home = box.mkdir("home");
-  return {
-    root: box.dir,
-    home,
-    config: box.path("home", ".config"),
-    data: box.path("home", ".local", "share"),
-    applications: box.path("Applications"),
-    installed: [box.mkdir("installed")],
-    platform: "darwin",
-    io,
-  };
-}
-
-function commands(): string[][] {
-  return io.calls.map((call) => call.argv);
-}
-
 describe("remove-shellspec", () => {
-  test("uninstalls the formula no Brewfile declares any more", () => {
-    up(context());
-    expect(commands().filter((cmd) => cmd[0]?.endsWith("brew") === true).map((cmd) => cmd.slice(1))).toEqual([
+  test("uninstalls the formula no Brewfile declares any more", async () => {
+    await up();
+    expect(recorded(box).filter((call) => call[0] === "brew").map((call) => call.slice(1))).toEqual([
       ["list", "--versions", "shellspec"],
       ["uninstall", "shellspec"],
     ]);

@@ -7,44 +7,46 @@
 //
 // EXPIRES: 2027-03-27 every machine has run scripts/install since the removal
 
+import { $ } from "bun";
 import { join } from "node:path";
+import { log } from "#gum";
 import { type Context, contains, exists, isEmpty, linkTarget, nodeInstalls, removeTree } from "#migrations/migration";
 
 // The cask is macOS-only. On Linux an npm install may be the only `claude`.
 export const platform = "darwin";
 
-export function up(context: Context): void {
+export async function up(context: Context): Promise<void> {
   const mise = join(context.data, "mise");
-  for (const install of nodeInstalls(context)) removePackage(context, install);
-  reshim(context, mise);
+  for (const install of nodeInstalls(context)) await removePackage(context, install);
+  await reshim(context, mise);
 }
 
 // What `npm uninstall -g` would remove, done directly so it doesn't depend on
 // that version's node still running.
-function removePackage(context: Context, install: string): void {
+async function removePackage(context: Context, install: string): Promise<void> {
   const scope = join(install, "lib", "node_modules", "@anthropic-ai");
   const pkg = join(scope, "claude-code");
 
   // Only the link npm made. A `claude` pointing anywhere else is someone's own.
   const bin = join(install, "bin", "claude");
   const target = linkTarget(bin);
-  if (target !== undefined && contains(pkg, target)) removeTree(context, bin);
+  if (target !== undefined && contains(pkg, target)) await removeTree(context, bin);
 
-  removeTree(context, pkg);
-  if (isEmpty(scope)) removeTree(context, scope);
+  await removeTree(context, pkg);
+  if (isEmpty(scope)) await removeTree(context, scope);
 }
 
 // Keyed on the shim rather than on having removed something, so a reshim that
 // fails tonight is retried after the package is already gone. When no other
 // install provides `claude`, reshim deletes the shim.
-function reshim(context: Context, mise: string): void {
+async function reshim(context: Context, mise: string): Promise<void> {
   if (!exists(join(mise, "shims", "claude"))) return;
 
   const bin = Bun.which("mise", { PATH: process.env.PATH });
   if (bin === null) return;
 
-  context.io.log("info", "reshimming mise");
-  if (context.io.run([bin, "reshim"], { stdin: "ignore" }) !== 0) {
+  await log("info", "reshimming mise");
+  if ((await $`${bin} reshim < /dev/null`.nothrow()).exitCode !== 0) {
     throw new Error("mise reshim failed");
   }
 }

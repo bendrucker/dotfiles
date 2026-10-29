@@ -30,7 +30,7 @@
 // A worktree holding the default branch is excluded outright, since no prune
 // pass can remove it.
 
-import { type Io, streamIo } from "#io";
+import { writeAll } from "#pipe";
 import {
   defaultBranch,
   listWorktrees,
@@ -79,27 +79,27 @@ export interface Facts {
   grace: number;
   // Seconds since the worktree was created. Resolved only when the integration
   // rule applies, since it costs a git call per worktree.
-  age: () => number | undefined;
+  age: () => Promise<number | undefined>;
   // The branch's PR/MR state, empty when the forge has none. Resolved only when
   // the integration rule did not already answer, since it costs a network round
   // trip per survivor and most repos in a fan-out have no survivors at all.
-  forge: () => string;
+  forge: () => Promise<string>;
 }
 
 // The reason this worktree is drift, or undefined when a healthy prune had no
 // call to remove it. Pure given its two resolvers, which is what lets the rules
 // be exercised without a repo, a clock, or a forge.
-export function classify(facts: Facts): string | undefined {
+export async function classify(facts: Facts): Promise<string | undefined> {
   if (INTEGRATED.has(facts.mainState)) {
     // An age the filesystem cannot report counts as old enough, so an
     // unreadable clock never hides drift.
-    if ((facts.age() ?? facts.grace) >= facts.grace) return `integrated (${facts.mainState})`;
+    if (((await facts.age()) ?? facts.grace) >= facts.grace) return `integrated (${facts.mainState})`;
     // Still inside grace on the integration rule. Fall through to the forge: a
     // merged PR is removed at any age, so grace does not apply to it and a
     // young merged worktree that survived the prune is still a real miss.
   }
 
-  return facts.forge() === "MERGED" ? "merged PR survived" : undefined;
+  return (await facts.forge()) === "MERGED" ? "merged PR survived" : undefined;
 }
 
 // Linked, non-current worktrees with a branch. Everything else is either the
@@ -110,7 +110,7 @@ function isCandidate(worktree: Worktree): boolean {
   );
 }
 
-export function audit(io: Io): Outcome {
+export async function audit(): Promise<Outcome> {
   const grace = graceSeconds();
   // A misconfigured duration returns nonzero, which flags the repo as failed
   // under `wt all` and puts the reason in front of someone. Every other exit
@@ -126,11 +126,11 @@ export function audit(io: Io): Outcome {
 
   // Skip the forge entirely when no candidate survives, matching the pruner's
   // gating so most repos in a fan-out cost nothing.
-  const candidates = (listWorktrees(io) ?? []).filter(isCandidate);
+  const candidates = ((await listWorktrees()) ?? []).filter(isCandidate);
   if (candidates.length === 0) return { status: 0, stdout: "", stderr: "" };
 
-  const host = remoteHost(io);
-  const defaultName = defaultBranch(io);
+  const host = await remoteHost();
+  const defaultName = await defaultBranch();
 
   const findings: Finding[] = [];
   for (const worktree of candidates) {
@@ -139,11 +139,11 @@ export function audit(io: Io): Outcome {
     // so reporting it files the same to-do every night forever.
     if (defaultName !== "" && worktree.branch === defaultName) continue;
 
-    const reason = classify({
+    const reason = await classify({
       mainState: worktree.mainState,
       grace,
-      age: () => worktreeAgeSecs(io, worktree.path),
-      forge: () => prState(io, worktree.branch, host)?.state ?? "",
+      age: () => worktreeAgeSecs(worktree.path),
+      forge: async () => (await prState(worktree.branch, host))?.state ?? "",
     });
     if (reason !== undefined) {
       findings.push({ branch: worktree.branch, reason, path: worktree.path });
@@ -161,9 +161,8 @@ export function audit(io: Io): Outcome {
 }
 
 if (import.meta.main) {
-  const io = streamIo();
-  const outcome = audit(io);
-  if (outcome.stdout !== "") io.write(1, outcome.stdout);
-  if (outcome.stderr !== "") io.write(2, outcome.stderr);
+  const outcome = await audit();
+  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
+  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
   process.exit(outcome.status);
 }

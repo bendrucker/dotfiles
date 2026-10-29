@@ -21,7 +21,9 @@
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { type Io, streamIo } from "#io";
+import { $ } from "bun";
+import { log } from "#gum";
+import { writeAll } from "#pipe";
 import { alignColumns } from "#worktree/table";
 
 const USAGE = [
@@ -206,8 +208,6 @@ async function pool<T, R>(items: T[], limit: number, work: (item: T) => Promise<
   return results;
 }
 
-// Bun otherwise resolves a bare command name against the PATH it captured at
-// startup, so the environment goes over explicitly on every spawn.
 function environment(): Record<string, string | undefined> {
   // Sibling wt-* subcommands (e.g. wt-prune) stay resolvable by `wt` even when
   // this script is run by path, before install has put bin/ on PATH.
@@ -215,38 +215,29 @@ function environment(): Record<string, string | undefined> {
   return { ...process.env, PATH: path, WT_ALL: "1" };
 }
 
-// Io spawns synchronously, and the sweep runs `jobs()` repos at once, so this
-// one spawn stays async rather than serializing the fan-out.
 async function runRepo(repo: string, base: string, cmd: string[]): Promise<Result> {
-  const spawned = Bun.spawn({
-    cmd: ["wt", "-C", repo, ...cmd],
-    env: environment(),
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr] = await Promise.all([
-    new Response(spawned.stdout).text(),
-    new Response(spawned.stderr).text(),
-  ]);
-
-  return { display: display(repo, base), stdout, stderr, ok: (await spawned.exited) === 0 };
+  const run = await $`wt -C ${repo} ${cmd} < /dev/null`.env(environment()).nothrow().quiet();
+  return {
+    display: display(repo, base),
+    stdout: run.stdout.toString(),
+    stderr: run.stderr.toString(),
+    ok: run.exitCode === 0,
+  };
 }
 
 // One line redrawn in place as results arrive. Off without a terminal, which is
 // how the nightly job runs: there the summary is the whole report.
-function progress(io: Io, scanned: number, total: number, cmd: string[]): void {
+function progress(scanned: number, total: number, cmd: string[]): void {
   if (!process.stderr.isTTY) return;
   const label = `${frame(scanned)}  ${scanned}/${total}  wt ${cmd.join(" ")}`;
-  io.write(2, `${ERASE_LINE}${label}`);
+  process.stderr.write(`${ERASE_LINE}${label}`);
 }
 
-function clearProgress(io: Io): void {
-  if (process.stderr.isTTY) io.write(2, ERASE_LINE);
+function clearProgress(): void {
+  if (process.stderr.isTTY) process.stderr.write(ERASE_LINE);
 }
 
-function report(io: Io, results: Result[], cmd: string[]): number {
+async function report(results: Result[], cmd: string[]): Promise<number> {
   const raw = setting("WT_ALL_RAW") !== undefined;
   const totals: Totals = {
     scanned: results.length,
@@ -299,15 +290,15 @@ function report(io: Io, results: Result[], cmd: string[]): number {
   // The spacer separates the table from the summary for a reader. Raw output is
   // parsed field by field, so it gets rows and nothing else.
   if (!raw) lines.push("");
-  if (lines.length > 0) io.write(1, `${lines.join("\n")}\n`);
+  if (lines.length > 0) writeAll(1, `${lines.join("\n")}\n`);
 
-  io.log("info", summarize(totals));
+  await log("info", summarize(totals));
   if (failed.length > 0) {
-    io.log("warn", `failed: ${failed.join(", ")}`);
+    await log("warn", `failed: ${failed.join(", ")}`);
     // Diagnostics go to stderr, alongside the gum summary they belong to. On
     // stdout this free-form text would land in a raw consumer's field parser as
     // rows that are not rows.
-    if (blocks.length > 0) io.write(2, `${blocks.join("\n")}\n`);
+    if (blocks.length > 0) writeAll(2, `${blocks.join("\n")}\n`);
   }
 
   return failed.length === 0 ? 0 : 1;
@@ -317,16 +308,16 @@ function missing(tool: string): boolean {
   return Bun.which(tool, { PATH: environment().PATH }) === null;
 }
 
-async function main(io: Io, args: string[]): Promise<number> {
+async function main(args: string[]): Promise<number> {
   if (args[0] === "-h" || args[0] === "--help") {
-    io.write(1, `${USAGE}\n`);
+    writeAll(1, `${USAGE}\n`);
     return 0;
   }
 
   // The shell ran a bare `wt` in every repo here, fanning worktrunk's own usage
   // text across the machine and reporting it as a finding per repo.
   if (args.length === 0) {
-    io.write(2, `wt all: no command given\n${USAGE}\n`);
+    writeAll(2, `wt all: no command given\n${USAGE}\n`);
     return 2;
   }
 
@@ -334,7 +325,7 @@ async function main(io: Io, args: string[]): Promise<number> {
   // worktrunk would otherwise look like across a whole sweep.
   for (const tool of ["wt", "gum"]) {
     if (missing(tool)) {
-      io.write(2, `wt all: ${tool} is required\n`);
+      writeAll(2, `wt all: ${tool} is required\n`);
       return 1;
     }
   }
@@ -346,14 +337,14 @@ async function main(io: Io, args: string[]): Promise<number> {
   const results = await pool(repos, jobs(), async (repo) => {
     const result = await runRepo(repo, base, args);
     scanned += 1;
-    progress(io, scanned, repos.length, args);
+    progress(scanned, repos.length, args);
     return result;
   });
-  clearProgress(io);
+  clearProgress();
 
-  return report(io, results, args);
+  return await report(results, args);
 }
 
 if (import.meta.main) {
-  process.exit(await main(streamIo(), process.argv.slice(2)));
+  process.exit(await main(process.argv.slice(2)));
 }

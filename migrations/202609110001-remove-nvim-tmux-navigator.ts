@@ -12,19 +12,20 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "#gum";
 import { type Context, removeTree } from "#migrations/migration";
 
 const PLUGIN = "vim-tmux-navigator";
 
-export function up(context: Context): void {
-  removeTree(context, join(context.data, "nvim", "site", "pack", "core", "opt", PLUGIN));
-  removeLockEntry(context, join(context.config, "nvim", "nvim-pack-lock.json"));
+export async function up(context: Context): Promise<void> {
+  await removeTree(context, join(context.data, "nvim", "site", "pack", "core", "opt", PLUGIN));
+  await removeLockEntry(context, join(context.config, "nvim", "nvim-pack-lock.json"));
 }
 
 // Written back the way vim.pack writes it - keys sorted at every depth,
 // two-space indent, trailing newline - so a lockfile differing from the tracked
 // one only by this entry comes back byte-identical to it.
-function removeLockEntry(context: Context, path: string): void {
+async function removeLockEntry(context: Context, path: string): Promise<void> {
   const lock = readLock(path);
   if (lock === undefined) return;
 
@@ -32,7 +33,7 @@ function removeLockEntry(context: Context, path: string): void {
   if (!isObject(plugins) || !(PLUGIN in plugins)) return;
 
   delete plugins[PLUGIN];
-  context.io.log("info", `removing ${PLUGIN} from ${path}`);
+  await log("info", `removing ${PLUGIN} from ${path}`);
   writeFileSync(path, `${JSON.stringify(sortKeys(lock), null, 2)}\n`);
 }
 

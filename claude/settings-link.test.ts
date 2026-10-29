@@ -1,16 +1,28 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type FakeIo, fakeIo, must, run, sandbox, stubGum, type Sandbox } from "#harness";
-import { adoptReplacedSettings, relinkClaudeHome } from "./settings-link";
+import { must, run, sandbox, stubGum, type Sandbox } from "#harness";
+import { call } from "#harness/call";
 
 const FILE = "user/settings.json";
 
 let box: Sandbox;
 let repo: string;
-let out: FakeIo;
+let output: string;
 const environment = { HOME: process.env.HOME, PATH: process.env.PATH };
 
+const MODULE = join(import.meta.dir, "settings-link.ts");
+
+// Called in a child bun, since what Bun Shell writes never reaches this process's spies.
+async function relink(): Promise<boolean> {
+  const called = await call<boolean>(MODULE, "relinkClaudeHome", [repo]);
+  output = called.output;
+  return called.value;
+}
+
+async function adopt(): Promise<void> {
+  output = (await call<null>(MODULE, "adoptReplacedSettings", [repo])).output;
+}
 
 function settings(example: string): unknown {
   return { env: { EXAMPLE: example }, enabledPlugins: { "alpha@first": true } };
@@ -56,7 +68,7 @@ beforeEach(() => {
 
   box.mkdir(".claude");
   symlinkSync(join(repo, FILE), settingsLink());
-  out = fakeIo({ passthrough: true });
+  output = "";
 });
 
 afterEach(() => {
@@ -66,97 +78,97 @@ afterEach(() => {
 });
 
 describe("relinkClaudeHome", () => {
-  test("relinks a file that replaced its link and names it", () => {
+  test("relinks a file that replaced its link and names it", async () => {
     replaceLink({ replaced: 1 });
 
-    expect(relinkClaudeHome(out, repo)).toBe(true);
-    expect(out.captured()).toContain("Relinked ~/.claude/settings.json");
+    expect(await relink()).toBe(true);
+    expect(output).toContain("Relinked ~/.claude/settings.json");
     expect(linked()).toBe(true);
   });
 
-  test("links what the repo holds and stays quiet about links already there", () => {
+  test("links what the repo holds and stays quiet about links already there", async () => {
     writeFileSync(join(repo, "user", "CLAUDE.md"), "# Claude\n");
 
-    expect(relinkClaudeHome(out, repo)).toBe(true);
+    expect(await relink()).toBe(true);
     expect(lstatSync(box.path(".claude", "CLAUDE.md")).isSymbolicLink()).toBe(true);
-    expect(out.captured()).not.toContain("Relinked");
+    expect(output).not.toContain("Relinked");
   });
 
-  test("fails when a directory sits where a link belongs", () => {
+  test("fails when a directory sits where a link belongs", async () => {
     rmSync(settingsLink());
     mkdirSync(settingsLink());
 
-    expect(relinkClaudeHome(out, repo)).toBe(false);
-    expect(out.captured()).toContain("Could not relink ~/.claude");
+    expect(await relink()).toBe(false);
+    expect(output).toContain("Could not relink ~/.claude");
   });
 });
 
 describe("adoptReplacedSettings", () => {
-  test("carries a replaced file's change into the working copy", () => {
+  test("carries a replaced file's change into the working copy", async () => {
     replaceLink(settings("changed"));
-    adoptReplacedSettings(out, repo);
+    await adopt();
 
     expect(git("diff", "--", FILE)).toContain("changed");
   });
 
-  test("leaves the working copy alone when the replacement changed nothing", () => {
+  test("leaves the working copy alone when the replacement changed nothing", async () => {
     replaceLink(settings("bar"));
-    adoptReplacedSettings(out, repo);
+    await adopt();
 
     expect(settingsStatus()).toBe("clean");
-    expect(out.captured()).toBe("");
+    expect(output).toBe("");
   });
 
-  test("leaves the working copy alone where user-tier.ts generates the file", () => {
+  test("leaves the working copy alone where user-tier.ts generates the file", async () => {
     box.write(".claude/remote-settings.json", "{}");
     replaceLink(settings("generated"));
-    adoptReplacedSettings(out, repo);
+    await adopt();
 
     expect(settingsStatus()).toBe("clean");
   });
 
-  test("leaves the working copy alone while the link is intact", () => {
+  test("leaves the working copy alone while the link is intact", async () => {
     writeRepoSettings(settings("local"));
-    adoptReplacedSettings(out, repo);
+    await adopt();
 
     expect(git("diff", "--", FILE)).toContain("local");
-    expect(out.captured()).toBe("");
+    expect(output).toBe("");
   });
 
-  test("does not overwrite a working copy that already has local changes", () => {
+  test("does not overwrite a working copy that already has local changes", async () => {
     writeRepoSettings(settings("local"));
     replaceLink(settings("replaced"));
-    adoptReplacedSettings(out, repo);
+    await adopt();
 
     expect(git("diff", "--", FILE)).toContain("local");
-    expect(out.captured()).toContain("already has local changes");
+    expect(output).toContain("already has local changes");
   });
 
-  test("discards a replacement that is not JSON", () => {
+  test("discards a replacement that is not JSON", async () => {
     replaceLink(settings("replaced"));
     writeFileSync(settingsLink(), "{ truncated");
-    adoptReplacedSettings(out, repo);
+    await adopt();
 
     expect(settingsStatus()).toBe("clean");
-    expect(out.captured()).toContain("not readable JSON");
+    expect(output).toContain("not readable JSON");
   });
 
-  test("does not overwrite a working copy git cannot read the status of", () => {
+  test("does not overwrite a working copy git cannot read the status of", async () => {
     writeRepoSettings(settings("local"));
     replaceLink(settings("replaced"));
     writeFileSync(join(repo, ".git", "index"), "corrupt");
-    adoptReplacedSettings(out, repo);
+    await adopt();
 
     expect(readFileSync(join(repo, FILE), "utf8")).toContain("local");
   });
 
-  test("reports a working copy it cannot write", () => {
+  test("reports a working copy it cannot write", async () => {
     replaceLink(settings("replaced"));
     rmSync(join(repo, FILE));
     mkdirSync(join(repo, FILE));
     must(["git", "update-index", "--assume-unchanged", FILE], { cwd: repo });
-    adoptReplacedSettings(out, repo);
+    await adopt();
 
-    expect(out.captured()).toContain(`Could not write ${FILE}`);
+    expect(output).toContain(`Could not write ${FILE}`);
   });
 });

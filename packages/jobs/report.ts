@@ -6,7 +6,8 @@
 // They land in Anytime rather than Today, which is the working list Ben builds
 // each morning. A cause that survives ESCALATE_AFTER runs moves to Today.
 
-import type { Io } from "#io";
+import { $ } from "bun";
+import { log } from "#gum";
 import { causeFingerprint, causeOf, distinctiveLine } from "#jobs/cause";
 import { machineKey, machineName } from "#jobs/machine";
 import {
@@ -102,7 +103,7 @@ export interface FailureNote {
   output: string;
 }
 
-export function buildNotes(io: Io, note: FailureNote): string {
+export async function buildNotes(note: FailureNote): Promise<string> {
   let notes =
     `- **Machine:** ${note.machine}\n` +
     `- **First seen:** ${note.time}\n` +
@@ -112,7 +113,7 @@ export function buildNotes(io: Io, note: FailureNote): string {
   notes += `\n- **Every run:** ${note.logPath}`;
   // Without the token nothing can be appended here, so the note says so once
   // rather than the runs after this one going unrecorded and unexplained.
-  if (!authToken(io)) notes += `\n- **Appends are off:** ${TOKEN_REMEDY}`;
+  if (!(await authToken())) notes += `\n- **Appends are off:** ${TOKEN_REMEDY}`;
   notes += `\n\n\`${note.marker}\``;
 
   const suffix = "\n```";
@@ -204,12 +205,12 @@ export interface FailureReport {
 // File a Things to-do for the failure, or append this run to the one already
 // standing for it. Returns the exit status the CLI should carry: nonzero only
 // when Things refused the URL.
-export function reportFailure(io: Io, report: FailureReport): number {
+export async function reportFailure(report: FailureReport): Promise<number> {
   const cause = report.fingerprint
     ? causeOf([report.fingerprint])
     : causeFingerprint(report.command, report.output);
 
-  return file(io, {
+  return file({
     report,
     cause,
     causeLine: distinctiveLine(report.output),
@@ -227,9 +228,9 @@ interface Filing {
   latchJob?: string;
 }
 
-function file(io: Io, { report, cause, causeLine, latchJob }: Filing): number {
-  const machine = machineName(io);
-  const marker = causeMarker(machineKeyOf(io), report.job, cause);
+async function file({ report, cause, causeLine, latchJob }: Filing): Promise<number> {
+  const machine = await machineName();
+  const marker = causeMarker(await machineKeyOf(), report.job, cause);
   const at = timestamp();
   const runs = recordRun(report.job, cause, { at, output: report.output });
 
@@ -238,8 +239,8 @@ function file(io: Io, { report, cause, causeLine, latchJob }: Filing): number {
   if (standing) {
     // A refused append leaves the standing to-do alone. It already names this
     // cause and the log holding every run, so a second one only adds noise.
-    const appended = appendRun(io, standing, { report, machine }, { at, runs, cause });
-    io.log(
+    const appended = await appendRun(standing, { report, machine }, { at, runs, cause });
+    await log(
       "info",
       appended
         ? `${report.job} still failing on the same cause - appended run ${runs}`
@@ -253,15 +254,15 @@ function file(io: Io, { report, cause, causeLine, latchJob }: Filing): number {
 
   const priorLatch = latchJob ? readLatch(latchJob) : "";
   if (latchJob && !filesAgainst(latchJob, cause, lookup.readable, priorLatch)) {
-    io.log("info", `${report.job} still failing - to-do already filed, staying quiet`);
+    await log("info", `${report.job} still failing - to-do already filed, staying quiet`);
     return 0;
   }
 
-  io.log("info", `Creating Things to-do for ${report.job} failure`);
+  await log("info", `Creating Things to-do for ${report.job} failure`);
   // The new to-do counts from its own first run. Everything the finished one
   // carried stays in the archive, where it is history rather than this to-do's.
   resetRuns(report.job, cause);
-  const notes = buildNotes(io, {
+  const notes = await buildNotes({
     machine,
     time: at,
     revision: report.revision,
@@ -275,7 +276,7 @@ function file(io: Io, { report, cause, causeLine, latchJob }: Filing): number {
   });
 
   const title = todoTitle(report.title, machine, FIRST_RUN);
-  const filed = addTodo(io, { title, notes, when: LANDING, tags: TAG });
+  const filed = await addTodo({ title, notes, when: LANDING, tags: TAG });
   if (filed !== 0) {
     // Nothing was filed, so the latch goes back where it was. A later night that
     // cannot read the store would otherwise read it as a to-do standing and
@@ -284,7 +285,7 @@ function file(io: Io, { report, cause, causeLine, latchJob }: Filing): number {
     return filed;
   }
 
-  notify(io, title, `${report.job} failed - see Things`);
+  await notify(title, `${report.job} failed - see Things`);
   return 0;
 }
 
@@ -299,12 +300,11 @@ function filesAgainst(job: string, cause: string, finished: boolean, prior: stri
   return finished || prior !== latch;
 }
 
-function appendRun(
-  io: Io,
+async function appendRun(
   standing: { id: string; notesLength: number },
   from: { report: FailureReport; machine: string },
   run: { at: string; runs: number; cause: string },
-): boolean {
+): Promise<boolean> {
   const block = appendBlock(
     run.runs,
     run.at,
@@ -317,7 +317,7 @@ function appendRun(
   // steps over the threshold instead of landing on it.
   const escalating = run.runs >= ESCALATE_AFTER && claimEscalation(from.report.job, run.cause);
 
-  const edited = editTodo(io, {
+  const edited = await editTodo({
     id: standing.id,
     appendNotes: block,
     title: todoTitle(from.report.title, from.machine, run.runs),
@@ -333,8 +333,8 @@ function appendRun(
 // Cached for the run: it costs two subprocesses and cannot change underneath one.
 let machineKeyCache: string | undefined;
 
-function machineKeyOf(io: Io): string {
-  machineKeyCache ??= machineKey(io);
+async function machineKeyOf(): Promise<string> {
+  machineKeyCache ??= await machineKey();
   return machineKeyCache;
 }
 
@@ -417,20 +417,20 @@ function freshMeta(fresh: Finding[]): string {
 // failure, for the newly standing findings alone. A finding already latched stays
 // quiet however much the rest of the set churns around it. The cause is that
 // fresh set, so the same set reappearing appends and a different one files.
-export function reportFindings(io: Io, report: FindingsReport): number {
+export async function reportFindings(report: FindingsReport): Promise<number> {
   const prior = readLatch(report.job);
   const decision = decideFindings(decodeFindings(prior), report.standing, report.held);
   // Moves before anything is filed, so a second run tonight cannot outrun it.
   writeLatch(report.job, encodeFindings(decision.latched));
 
   if (decision.fresh.length === 0) {
-    io.log("info", `${report.job} has nothing newly standing - staying quiet`);
+    await log("info", `${report.job} has nothing newly standing - staying quiet`);
     return 0;
   }
 
-  io.log("info", `Reporting new ${report.job} findings`);
+  await log("info", `Reporting new ${report.job} findings`);
   const cause = causeOf(decision.fresh.map(findingKey));
-  const filed = file(io, {
+  const filed = await file({
     report: {
       ...report,
       extraMeta: [report.extraMeta, freshMeta(decision.fresh)].filter(Boolean).join("\n"),
@@ -462,6 +462,6 @@ function appleScriptString(value: string): string {
 // Nothing notifies where osascript is absent, which is every Linux run and CI.
 // `display notification` sends no Apple event to another app, so unlike reading
 // Things it needs no Automation grant under launchd.
-export function notify(io: Io, title: string, message: string, sound = "Basso"): void {
-  io.read(["osascript", "-e", notificationScript(title, message, sound)], { stdin: "ignore", stderr: "ignore" });
+export async function notify(title: string, message: string, sound = "Basso"): Promise<void> {
+  await $`osascript -e ${notificationScript(title, message, sound)} < /dev/null`.nothrow().quiet();
 }

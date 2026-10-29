@@ -10,11 +10,12 @@
   "imports": {
     "#harness": "./packages/harness/index.ts",
     "#harness/*": "./packages/harness/*.ts",
+    "#gum": "./packages/gum.ts",
     "#history-secrets": "./packages/history-secrets.ts",
-    "#io": "./packages/io.ts",
     "#jobs/*": "./packages/jobs/*.ts",
     "#migrations/*": "./packages/migrations/*.ts",
     "#worktree/*": "./packages/worktree/*.ts",
+    "#pipe": "./packages/pipe.ts",
     "#plugins": "./packages/plugins.ts",
     "#trace/*": "./packages/trace/*.ts"
   }

@@ -32,7 +32,8 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { type Io, type SpawnOptions, streamIo } from "#io";
+import { $ } from "bun";
+import { writeAll } from "#pipe";
 import { minAge, parseDuration, pathAgeSecs } from "#worktree/state";
 import { alignColumns } from "#worktree/table";
 
@@ -170,9 +171,6 @@ export function classify(facts: Facts): string | undefined {
   return facts.metadata === "none" ? "no git metadata" : "git metadata gone";
 }
 
-// stdin is closed so a git that prompts cannot eat what the caller is reading.
-const GIT: SpawnOptions = { stdin: "ignore", stderr: "pipe" };
-
 interface Listing {
   paths: string[];
   problem?: string;
@@ -221,7 +219,7 @@ function errorCode(error: unknown): string {
   return typeof error.code === "string" ? error.code : "error";
 }
 
-export function sweep(io: Io, dryRun: boolean): Outcome {
+export async function sweep(dryRun: boolean): Promise<Outcome> {
   const floor = parseDuration(minAge());
   // A misconfigured duration returns nonzero, which flags the repo as failed
   // under `wt all` and puts the reason in front of someone, rather than
@@ -231,14 +229,14 @@ export function sweep(io: Io, dryRun: boolean): Outcome {
     return { status: 1, stdout: "", stderr: said };
   }
 
-  const listed = io.read(["git", "worktree", "list", "--porcelain"], GIT);
+  const listed = await capture(["git", "worktree", "list", "--porcelain"]);
   if (listed.status !== 0) return notListed(listed.stderr);
 
   const registered = parseWorktrees(listed.stdout);
   const repo = registered[0];
   if (repo === undefined) return { status: 0, stdout: "", stderr: "" };
 
-  const commonDir = io.read(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], GIT);
+  const commonDir = await capture(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const context: Context = {
     common: commonDir.stdout.trim() || join(repo, ".git"),
     known: new Set(registered.map(real)),
@@ -319,7 +317,7 @@ function render(rows: Row[]): string {
   return `${alignColumns([["VERDICT", "DETAIL", "PATH"], ...cells]).join("\n")}\n`;
 }
 
-export function run(io: Io, args: string[]): Outcome {
+export async function run(args: string[]): Promise<Outcome> {
   let values;
   try {
     ({ values } = parseArgs({
@@ -336,7 +334,7 @@ export function run(io: Io, args: string[]): Outcome {
   }
 
   if (values.help) return { status: 0, stdout: `${USAGE}\n`, stderr: "" };
-  return sweep(io, values["dry-run"]);
+  return await sweep(values["dry-run"]);
 }
 
 // A path that cannot be resolved is compared as it stands: git reports real
@@ -365,10 +363,22 @@ function read(path: string): string | undefined {
   }
 }
 
+interface Captured {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
+
+// stdin is closed so a git that prompts cannot eat what the caller is reading.
+// A git that is not installed exits nonzero and reads here as the failure it is.
+async function capture(cmd: string[]): Promise<Captured> {
+  const run = await $`${cmd} < /dev/null`.nothrow().quiet();
+  return { status: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() };
+}
+
 if (import.meta.main) {
-  const io = streamIo();
-  const outcome = run(io, process.argv.slice(2));
-  if (outcome.stdout !== "") io.write(1, outcome.stdout);
-  if (outcome.stderr !== "") io.write(2, outcome.stderr);
+  const outcome = await run(process.argv.slice(2));
+  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
+  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
   process.exit(outcome.status);
 }

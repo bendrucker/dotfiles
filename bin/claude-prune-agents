@@ -17,7 +17,9 @@
 import { readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { type Io, type Result, streamIo } from "#io";
+import { $ } from "bun";
+import { choose, log } from "#gum";
+import { writeAll } from "#pipe";
 
 const USAGE = [
   "Usage: claude-prune-agents [-f|--force] [-n|--dry-run]",
@@ -256,12 +258,16 @@ export function parseAgentState(text: string): AgentState {
   };
 }
 
-// A command that could not be run answers 127 with no output, which resolved
-// nothing, the failure every caller here already handles.
-type Lookup = Pick<Result, "status" | "stdout">;
+interface Capture {
+  status: number;
+  stdout: string;
+}
 
-function lookup(io: Io, cmd: string[], cwd?: string): Lookup {
-  return io.read(cmd, { cwd, stdin: "ignore", stderr: "ignore" });
+// A command that could not be run answers nonzero with no output, which
+// resolved nothing, the failure every caller here already handles.
+async function lookup(cmd: string[], cwd?: string): Promise<Capture> {
+  const child = await $`${cmd} < /dev/null`.cwd(cwd ?? process.cwd()).nothrow().quiet();
+  return { status: child.exitCode, stdout: child.stdout.toString() };
 }
 
 function lines(text: string): string[] {
@@ -278,23 +284,22 @@ function isDirectory(path: string): boolean {
 
 export interface Forge {
   // The <owner>/<repo> slug for a repo root, empty when there is none.
-  slug(root: string): string;
-  branchPrs(slug: string, branch: string): Lookup;
-  refState(slug: string, number: string): string;
+  slug(root: string): Promise<string>;
+  branchPrs(slug: string, branch: string): Promise<Capture>;
+  refState(slug: string, number: string): Promise<string>;
 }
 
 // Slug lookups are memoized for the life of one run, negative results included:
 // the scan hits the same handful of repos repeatedly and each lookup is a
 // subprocess.
-export function ghForge(io: Io): Forge {
+export function ghForge(): Forge {
   const slugs = new Map<string, string>();
   return {
-    slug(root: string): string {
+    async slug(root: string): Promise<string> {
       if (root === "" || !isDirectory(root)) return "";
       const cached = slugs.get(root);
       if (cached !== undefined) return cached;
-      const view = lookup(
-        io,
+      const view = await lookup(
         ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
         root,
       );
@@ -302,8 +307,8 @@ export function ghForge(io: Io): Forge {
       slugs.set(root, slug);
       return slug;
     },
-    branchPrs(slug: string, branch: string): Lookup {
-      return lookup(io, [
+    branchPrs(slug: string, branch: string): Promise<Capture> {
+      return lookup([
         "gh",
         "pr",
         "list",
@@ -319,8 +324,8 @@ export function ghForge(io: Io): Forge {
         '.[] | "\\(.number)\\t\\(.state)"',
       ]);
     },
-    refState(slug: string, number: string): string {
-      const view = lookup(io, [
+    async refState(slug: string, number: string): Promise<string> {
+      const view = await lookup([
         "gh", "pr", "view", number, "--repo", slug, "--json", "state", "--jq", ".state",
       ]);
       return view.stdout.trim();
@@ -331,7 +336,7 @@ export function ghForge(io: Io): Forge {
 // Every PR an agent produced, in discovery order: the branch query first, then
 // the summary references. Refs that fail to resolve (issue numbers, another
 // repo's numbering) are dropped rather than treated as blocking.
-export function agentPrs(forge: Forge, slug: string, branch: string, summary: string): Pr[] {
+export async function agentPrs(forge: Forge, slug: string, branch: string, summary: string): Promise<Pr[]> {
   const seen = new Set<string>();
   const prs: Pr[] = [];
 
@@ -339,7 +344,7 @@ export function agentPrs(forge: Forge, slug: string, branch: string, summary: st
     // The query's exit status is what separates a failed lookup from a branch
     // that genuinely has no PR. Both are empty output, and treating the failure
     // as "no PRs" would hide an open PR and let the agent classify as stale.
-    const listing = forge.branchPrs(slug, branch);
+    const listing = await forge.branchPrs(slug, branch);
     if (listing.status !== 0) {
       prs.push({ number: "-", state: "ERROR" });
     } else {
@@ -356,7 +361,7 @@ export function agentPrs(forge: Forge, slug: string, branch: string, summary: st
     const key = `${ref.slug}#${ref.number}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const state = forge.refState(ref.slug, ref.number);
+    const state = await forge.refState(ref.slug, ref.number);
     if (state === "") continue;
     prs.push({ number: ref.number, state });
   }
@@ -377,7 +382,7 @@ function readAgentState(id: string): AgentState {
   }
 }
 
-export function classifyCandidate(forge: Forge, agent: Candidate, now: number): Row {
+export async function classifyCandidate(forge: Forge, agent: Candidate, now: number): Promise<Row> {
   const state = readAgentState(agent.id);
 
   // The worktree path is the branch signal, not cwd: a finished agent reports
@@ -386,7 +391,7 @@ export function classifyCandidate(forge: Forge, agent: Candidate, now: number): 
   const root = worktree ? worktree.root : agent.cwd;
   const branch = worktree ? worktree.branch : "";
 
-  const prs = agentPrs(forge, forge.slug(root), branch, state.summary);
+  const prs = await agentPrs(forge, await forge.slug(root), branch, state.summary);
   const decision = classifyAgent(prs.map((pr) => pr.state));
 
   return {
@@ -465,11 +470,11 @@ function startSpinner(title: string, sentinel: string): Promise<number> | undefi
   }
 }
 
-async function withSpinner<T>(title: string, scan: () => T): Promise<T> {
+async function withSpinner<T>(title: string, scan: () => Promise<T>): Promise<T> {
   const sentinel = join(tmpdir(), `claude-prune-agents.${process.pid}.spin`);
   const spinner = startSpinner(title, sentinel);
   try {
-    return scan();
+    return await scan();
   } finally {
     // Progress is the only thing at stake, so a spinner that never started
     // leaves the scan to run without one.
@@ -481,11 +486,11 @@ async function withSpinner<T>(title: string, scan: () => T): Promise<T> {
 // The stale set as a preselected checklist: enter accepts the batch, individual
 // rows can be deselected, and esc removes nothing. An escape and a gum that
 // could not run both come back as no selection.
-function chooseStale(io: Io, rows: Row[]): string[] {
+async function chooseStale(rows: Row[]): Promise<string[]> {
   const labels = columnize(rows.map((row) => [row.id, row.name, row.age, row.prs]));
   const idByLabel = new Map(labels.map((label, index) => [label, rows[index].id]));
 
-  const chosen = io.choose(labels, { limit: "none", selected: "*", header: "Select agents to remove" });
+  const chosen = await choose(labels, { limit: "none", selected: "*", header: "Select agents to remove" });
 
   const ids: string[] = [];
   for (const line of chosen) {
@@ -504,13 +509,12 @@ interface Removal {
 // `claude rm` owns the worktree and refuses when there are unpushed commits, so
 // it is the guard against destroying work. Its stdin is closed so it cannot
 // consume the caller's input or block on a prompt.
-function removeAgents(io: Io, ids: string[]): Removal {
+async function removeAgents(ids: string[]): Promise<Removal> {
   const removal: Removal = { removed: 0, failed: 0, warnings: [] };
   const gum = haveGum();
 
   for (const id of ids) {
-    // read keeps the child's stdout out of the table, where run would inherit it.
-    const { status } = io.read(["claude", "rm", id], { stdin: "ignore", stderr: "ignore" });
+    const { exitCode: status } = await $`claude rm ${id} < /dev/null`.nothrow().quiet();
     if (status === 0) {
       removal.removed += 1;
       continue;
@@ -521,7 +525,7 @@ function removeAgents(io: Io, ids: string[]): Removal {
     // The warning belongs on stderr whether or not gum is installed. Calling gum
     // unconditionally answers a failed removal with `command not found` on a
     // machine that has none.
-    if (gum) io.log("warn", warning);
+    if (gum) await log("warn", warning);
     else removal.warnings.push(warning);
   }
   return removal;
@@ -562,7 +566,6 @@ export function parseArguments(args: string[]): Arguments {
 }
 
 export async function run(
-  io: Io,
   args: string[],
   terminal = process.stderr.isTTY === true,
 ): Promise<Outcome> {
@@ -577,7 +580,7 @@ export async function run(
   }
   const { dryRun, force } = parsed.flags;
 
-  const listing = lookup(io, ["claude", "agents", "--json", "--all"]).stdout.replace(/\n+$/, "");
+  const listing = (await lookup(["claude", "agents", "--json", "--all"])).stdout.replace(/\n+$/, "");
   // A claude that is missing, broken, or unauthenticated produces empty output,
   // which is indistinguishable here from a machine with no agents.
   if (listing === "" || listing === "[]") return { status: 0, stdout: "no agents\n", stderr: "" };
@@ -592,13 +595,17 @@ export async function run(
   }
   if (candidates.length === 0) return { status: 0, stdout: "no completed agents\n", stderr: "" };
 
-  const forge = ghForge(io);
+  const forge = ghForge();
   const now = Math.floor(Date.now() / 1000);
-  const scan = () => candidates.map((agent) => classifyCandidate(forge, agent, now));
+  const scan = async () => {
+    const scanned: Row[] = [];
+    for (const agent of candidates) scanned.push(await classifyCandidate(forge, agent, now));
+    return scanned;
+  };
   const rows =
     terminal && haveGum()
       ? await withSpinner(`Resolving PRs for ${candidates.length} agents`, scan)
-      : scan();
+      : await scan();
 
   const stale = rows.filter((row) => row.action === "stale");
   const kept = rows.filter((row) => row.action === "keep").length;
@@ -631,10 +638,10 @@ export async function run(
           "claude-prune-agents: interactive selection needs a terminal; use --force or --dry-run\n",
       };
     }
-    removeIds = chooseStale(io, stale);
+    removeIds = await chooseStale(stale);
   }
 
-  const removal = removeAgents(io, removeIds);
+  const removal = await removeAgents(removeIds);
 
   stdout += `${
     dryRun
@@ -650,9 +657,8 @@ export async function run(
 }
 
 if (import.meta.main) {
-  const io = streamIo();
-  const outcome = await run(io, process.argv.slice(2));
-  if (outcome.stdout !== "") io.write(1, outcome.stdout);
-  if (outcome.stderr !== "") io.write(2, outcome.stderr);
+  const outcome = await run(process.argv.slice(2));
+  if (outcome.stdout !== "") writeAll(1, outcome.stdout);
+  if (outcome.stderr !== "") writeAll(2, outcome.stderr);
   process.exit(outcome.status);
 }

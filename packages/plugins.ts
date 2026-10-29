@@ -2,10 +2,10 @@
 // marketplace says it comes from. bin/claude-sync prunes and updates the
 // plugins.
 
+import { $ } from "bun";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type Io, NOT_RUN, type Result } from "#io";
 
 export interface InstalledPlugin {
   id: string;
@@ -55,10 +55,10 @@ export function claudePluginsDir(): string {
   return join(home(), ".claude", "plugins");
 }
 
-export function pluginInventory(io: Io): Inventory {
+export async function pluginInventory(): Promise<Inventory> {
   let rows: InstalledPlugin[];
   try {
-    rows = listedPlugins(io).concat(enabledPlugins());
+    rows = (await listedPlugins()).concat(enabledPlugins());
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
@@ -69,11 +69,11 @@ interface ListedPlugin extends InstalledPlugin {
   scope: string;
 }
 
-function listedRows(io: Io): ListedPlugin[] {
-  const run = runList(io);
-  if (run.status !== 0) throw new Error("claude plugin list failed");
+async function listedRows(): Promise<ListedPlugin[]> {
+  const run = await runList();
+  if (run.exitCode !== 0) throw new Error("claude plugin list failed");
 
-  const captured = run.stdout.replace(TRAILING_NEWLINES, "");
+  const captured = run.stdout.toString().replace(TRAILING_NEWLINES, "");
   // No output at all is a machine with no plugins. Anything else, whitespace
   // included, has to parse.
   const listed = captured === "" ? [] : parse(captured, "claude plugin list");
@@ -96,21 +96,21 @@ function listedRows(io: Io): ListedPlugin[] {
 
 // `claude plugin update` works at user scope, so a project's plugin is not this
 // job's to update.
-function listedPlugins(io: Io): InstalledPlugin[] {
-  return listedRows(io)
+async function listedPlugins(): Promise<InstalledPlugin[]> {
+  return (await listedRows())
     .filter((row) => row.scope === "user")
     .map(({ id, installPath }) => ({ id, installPath }));
 }
 
-function runList(io: Io): Result {
-  // A prompt-happy CLI handed the caller's stdin would swallow whatever the
-  // caller is iterating. Its stderr is piped so only a binary that could not
-  // run says anything, and that reason goes into the failure.
-  const run = io.read(["claude", "plugin", "list", "--json"], { stdin: "ignore", stderr: "pipe" });
-  if (run.status === NOT_RUN) {
-    throw new Error(`claude plugin list could not be run: ${run.stderr.trim()}`);
+async function runList() {
+  // Bun Shell reports a missing binary as an ordinary exit 1.
+  if (Bun.which("claude", { PATH: process.env.PATH }) === null) {
+    throw new Error("claude plugin list could not be run: claude is not on PATH");
   }
-  return run;
+  // A prompt-happy CLI handed the caller's stdin would swallow whatever the
+  // caller is iterating. Its own complaints say nothing the failure this
+  // raises does not.
+  return await $`cat /dev/null | claude plugin list --json 2>/dev/null`.nothrow().quiet();
 }
 
 // The absent case is the caller's to interpret. Enabling nothing and declaring
@@ -178,10 +178,10 @@ export function declaredPlugins(): Declaration {
 // declared-but-never-installed rows pluginInventory folds in. Those rows carry
 // no payload, so a caller deciding what to uninstall has nothing to do with
 // them.
-export function installedPlugins(io: Io): Inventory {
+export async function installedPlugins(): Promise<Inventory> {
   let rows: InstalledPlugin[];
   try {
-    rows = listedPlugins(io);
+    rows = await listedPlugins();
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
@@ -322,10 +322,10 @@ function marketplaceManifest(marketplace: string): string {
 
 // At every scope: a project's plugin gets no user-scope key, so a prune reading
 // the declaration alone would remove its marketplace out from under it.
-export function pluginMarketplaces(io: Io): MarketplaceUse {
+export async function pluginMarketplaces(): Promise<MarketplaceUse> {
   let rows: ListedPlugin[];
   try {
-    rows = listedRows(io);
+    rows = await listedRows();
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }

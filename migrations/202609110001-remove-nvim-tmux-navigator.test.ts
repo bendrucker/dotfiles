@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { fakeIo, sandbox, type Sandbox } from "#harness";
+import { sandbox, type Sandbox } from "#harness";
 import { exists, type Context } from "#migrations/migration";
 import { up } from "./202609110001-remove-nvim-tmux-navigator";
 
@@ -25,7 +25,6 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [box.mkdir("installed")],
     platform: "darwin",
-    io: fakeIo(),
   };
 }
 
@@ -62,59 +61,59 @@ const TRACKED = `${JSON.stringify(
 )}\n`;
 
 describe("remove-nvim-tmux-navigator", () => {
-  test("removes the plugin directory the tmux removal left installed", () => {
+  test("removes the plugin directory the tmux removal left installed", async () => {
     box.mkdir("home", ".local", "share", "nvim", "site", "pack", "core", "opt", "vim-tmux-navigator", ".git");
 
-    up(context());
+    await up(context());
 
     expect(exists(pluginDir("vim-tmux-navigator"))).toBe(false);
   });
 
-  test("leaves the plugins init.lua still declares", () => {
+  test("leaves the plugins init.lua still declares", async () => {
     box.mkdir("home", ".local", "share", "nvim", "site", "pack", "core", "opt", "gitsigns.nvim");
 
-    up(context());
+    await up(context());
 
     expect(exists(pluginDir("gitsigns.nvim"))).toBe(true);
   });
 
   // Removing only the directory would leave an entry vim.pack reinstalls from
   // on the next startup.
-  test("restores a repaired lockfile to what the repo tracks", () => {
+  test("restores a repaired lockfile to what the repo tracks", async () => {
     box.write(LOCK, lockWith("https://github.com/christoomey/vim-tmux-navigator"));
 
-    up(context());
+    await up(context());
 
     expect(box.read(LOCK)).toBe(TRACKED);
   });
 
   // The src vim.pack repaired in reads back off the clone's remote, so a
   // machine with an insteadOf rule recorded the SSH form of the same URL.
-  test("restores it whatever form of the URL the machine recorded", () => {
+  test("restores it whatever form of the URL the machine recorded", async () => {
     box.write(LOCK, lockWith("git@github.com:christoomey/vim-tmux-navigator"));
 
-    up(context());
+    await up(context());
 
     expect(box.read(LOCK)).toBe(TRACKED);
   });
 
-  test("leaves a lockfile that never carried the entry untouched", () => {
+  test("leaves a lockfile that never carried the entry untouched", async () => {
     box.write(LOCK, TRACKED);
 
-    up(context());
+    await up(context());
 
     expect(box.read(LOCK)).toBe(TRACKED);
   });
 
-  test("leaves a lockfile it cannot parse for nvim to repair", () => {
+  test("leaves a lockfile it cannot parse for nvim to repair", async () => {
     box.write(LOCK, "{ not json");
 
-    up(context());
+    await up(context());
 
     expect(box.read(LOCK)).toBe("{ not json");
   });
 
-  test("a machine with neither the plugin nor a lockfile is not an error", () => {
-    expect(() => up(context())).not.toThrow();
+  test("a machine with neither the plugin nor a lockfile is not an error", async () => {
+    await expect(up(context())).resolves.toBeUndefined();
   });
 });

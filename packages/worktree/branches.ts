@@ -1,8 +1,8 @@
 // Prunes branches no worktree holds. An archived branch is recoverable with
 // `git branch <name> refs/archive/<name>` until EXPIRY.
 
-import type { Io } from "#io";
-import { nowSeconds, parseDuration, QUIET, quietOutput } from "#worktree/state";
+import { $ } from "bun";
+import { capture, nowSeconds, parseDuration } from "#worktree/state";
 
 export const EXPIRY = 90 * 86400;
 
@@ -34,32 +34,32 @@ export function decideBranch(backedUp: boolean): Decision {
     : { action: "archive", reason: "local-only" };
 }
 
-function isBackedUp(io: Io, tip: string, defaultName: string): boolean {
-  return quietOutput(io, ["git", "rev-list", "--count", tip, "--not", "--remotes", defaultName]) === "0";
+async function isBackedUp(tip: string, defaultName: string): Promise<boolean> {
+  return (await capture(["git", "rev-list", "--count", tip, "--not", "--remotes", defaultName])) === "0";
 }
 
 // Reflog time, not commit time: `wt switch --create` branches from an old tip.
-function isStale(io: Io, name: string, floor: number): boolean {
-  const times = reflogTimes(io, `refs/heads/${name}`);
+async function isStale(name: string, floor: number): Promise<boolean> {
+  const times = await reflogTimes(`refs/heads/${name}`);
   if (times.length === 0) return true;
   return nowSeconds() - Math.max(...times) >= floor;
 }
 
-function archiveTarget(io: Io, name: string, tip: string): string {
+async function archiveTarget(name: string, tip: string): Promise<string> {
   const target = `refs/archive/${name}`;
-  const existing = quietOutput(io, ["git", "rev-parse", "--verify", "-q", target]);
+  const existing = await capture(["git", "rev-parse", "--verify", "-q", target]);
   if (existing === "" || existing === tip) return target;
-  const short = quietOutput(io, ["git", "rev-parse", "--short", tip]) || tip;
+  const short = (await capture(["git", "rev-parse", "--short", tip])) || tip;
   return `${target}-${short}`;
 }
 
-function archive(io: Io, name: string, tip: string): boolean {
-  const target = archiveTarget(io, name, tip);
+async function archive(name: string, tip: string): Promise<boolean> {
+  const target = await archiveTarget(name, tip);
   // A same-value update-ref writes no reflog entry, so recreate to restart expiry.
-  const held = quietOutput(io, ["git", "rev-parse", "--verify", "-q", target]) === tip;
-  if (held && !git(io, ["update-ref", "-d", target])) return false;
-  if (!git(io, ["update-ref", "--create-reflog", target, tip])) return false;
-  return git(io, ["branch", "-D", name]);
+  const held = (await capture(["git", "rev-parse", "--verify", "-q", target])) === tip;
+  if (held && !(await git(["update-ref", "-d", target]))) return false;
+  if (!(await git(["update-ref", "--create-reflog", target, tip]))) return false;
+  return await git(["branch", "-D", name]);
 }
 
 export interface BranchReport {
@@ -67,65 +67,60 @@ export interface BranchReport {
   reasons: string[][];
 }
 
-export interface PruneMode {
-  dryRun: boolean;
-  explaining: boolean;
-}
-
 // Without a parseable floor or a named default branch, touch no branch.
-export function pruneBranches(
-  io: Io,
+export async function pruneBranches(
   defaultName: string,
   minAge: string,
-  { dryRun, explaining }: PruneMode,
+  dryRun: boolean,
+  explaining: boolean,
   report: BranchReport,
-): void {
+): Promise<void> {
   const floor = parseDuration(minAge);
-  const captured = floor === undefined || defaultName === "" ? "" : quietOutput(io, [
+  const captured = floor === undefined || defaultName === "" ? undefined : await capture([
     "git",
     "for-each-ref",
     "refs/heads",
     "--format=%(refname:short)%09%(objectname)%09%(worktreepath)",
   ]);
 
-  for (const branch of readBranches(captured, defaultName)) {
-    if (!isStale(io, branch.name, floor ?? 0)) continue;
+  for (const branch of readBranches(captured ?? "", defaultName)) {
+    if (!(await isStale(branch.name, floor ?? 0))) continue;
 
-    const decision = decideBranch(isBackedUp(io, branch.tip, defaultName));
+    const decision = decideBranch(await isBackedUp(branch.tip, defaultName));
     if (explaining) report.reasons.push(["-", branch.name, "-", decision.action, decision.reason]);
 
     const done = dryRun
       ? true
       : decision.action === "delete"
-        ? git(io, ["branch", "-D", branch.name])
-        : archive(io, branch.name, branch.tip);
+        ? await git(["branch", "-D", branch.name])
+        : await archive(branch.name, branch.tip);
     if (done) report.branches += 1;
   }
 
-  expireArchives(io, dryRun, explaining, report);
+  await expireArchives(dryRun, explaining, report);
 }
 
 // Keyed on the reflog's own date, since the archived commit is often already old.
-function expireArchives(io: Io, dryRun: boolean, explaining: boolean, report: BranchReport): void {
-  const captured = quietOutput(io, ["git", "for-each-ref", "refs/archive", "--format=%(refname)"]);
+async function expireArchives(dryRun: boolean, explaining: boolean, report: BranchReport): Promise<void> {
+  const captured = await capture(["git", "for-each-ref", "refs/archive", "--format=%(refname)"]);
   if (captured === "") return;
 
   for (const ref of captured.split("\n").filter((line) => line !== "")) {
-    const times = reflogTimes(io, ref);
+    const times = await reflogTimes(ref);
     if (times.length === 0) continue;
     if (nowSeconds() - Math.max(...times) < EXPIRY) continue;
 
     if (explaining) {
       report.reasons.push(["-", ref.replace(/^refs\/archive\//, ""), "-", "delete", "archive expired"]);
     }
-    if (dryRun || git(io, ["update-ref", "-d", ref])) report.branches += 1;
+    if (dryRun || (await git(["update-ref", "-d", ref]))) report.branches += 1;
   }
 }
 
 const REFLOG_DATE = /@\{(\d+)\}/;
 
-function reflogTimes(io: Io, ref: string): number[] {
-  const captured = quietOutput(io, ["git", "reflog", "show", "--date=unix", "--format=%gd", ref]);
+async function reflogTimes(ref: string): Promise<number[]> {
+  const captured = await capture(["git", "reflog", "show", "--date=unix", "--format=%gd", ref]);
   if (captured === "") return [];
 
   const times: number[] = [];
@@ -136,6 +131,6 @@ function reflogTimes(io: Io, ref: string): number[] {
   return times;
 }
 
-function git(io: Io, args: string[]): boolean {
-  return io.read(["git", ...args], QUIET).status === 0;
+async function git(args: string[]): Promise<boolean> {
+  return (await $`git ${args} < /dev/null`.nothrow().quiet()).exitCode === 0;
 }

@@ -4,22 +4,24 @@
 //
 // EXPIRES: 2027-04-12 every machine has run scripts/install since the move
 
+import { $ } from "bun";
 import { join } from "node:path";
+import { log } from "#gum";
 import { type Context, exists } from "#migrations/migration";
 
 export const CRATE = "worktrunk-sync";
 
-export function up(context: Context): void {
+export async function up(context: Context): Promise<void> {
   if (!exists(join(context.home, ".cargo", "bin", "wt-sync"))) return;
 
   const cargo = Bun.which("cargo", { PATH: process.env.PATH });
   if (cargo === null) {
-    context.io.log("warn", `no cargo to run \`cargo uninstall ${CRATE}\`; remove ~/.cargo/bin/wt-sync by hand`);
+    await log("warn", `no cargo to run \`cargo uninstall ${CRATE}\`; remove ~/.cargo/bin/wt-sync by hand`);
     return;
   }
 
-  context.io.log("info", `cargo uninstall ${CRATE}`);
-  if (context.io.run([cargo, "uninstall", CRATE], { stdin: "ignore" }) !== 0) {
+  await log("info", `cargo uninstall ${CRATE}`);
+  if ((await $`${cargo} uninstall ${CRATE} < /dev/null`.nothrow()).exitCode !== 0) {
     throw new Error(`cargo uninstall ${CRATE} failed`);
   }
 }

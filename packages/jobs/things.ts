@@ -10,11 +10,12 @@
 // nobody is there to make. `open` and a file in the user's own group container
 // need no grant.
 
+import { $ } from "bun";
 import { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type Io, NOT_RUN, readOk } from "#io";
+import { writeAll } from "#pipe";
 
 // Things stores 10,000 characters of notes and silently drops the rest from the
 // tail, which is the wrong end to lose when a job fails at the end of its log.
@@ -147,8 +148,8 @@ export interface NewTodo {
 
 // `open`'s own exit status, so a refused filing takes the run down with the
 // status that says why rather than the 1 a reported failure already carries.
-export function addTodo(io: Io, todo: NewTodo): number {
-  return openUrl(io, thingsUrl("add", { ...todo }));
+export function addTodo(todo: NewTodo): Promise<number> {
+  return openUrl(thingsUrl("add", { ...todo }));
 }
 
 export interface TodoEdit {
@@ -160,8 +161,8 @@ export interface TodoEdit {
 
 // `update` is the one Things command needing the token from the app's settings,
 // which lives in the login keychain so a launchd job reads it without a prompt.
-export function editTodo(io: Io, edit: TodoEdit): boolean {
-  const token = authToken(io);
+export async function editTodo(edit: TodoEdit): Promise<boolean> {
+  const token = await authToken();
   if (!token) return false;
 
   const url = thingsUrl("update", {
@@ -171,14 +172,12 @@ export function editTodo(io: Io, edit: TodoEdit): boolean {
     title: edit.title ?? "",
     when: edit.when ?? "",
   });
-  return openUrl(io, url) === 0;
+  return (await openUrl(url)) === 0;
 }
 
-export function authToken(io: Io): string | undefined {
-  const token = readOk(io, ["security", "find-generic-password", "-a", user(), "-s", KEYCHAIN_SERVICE, "-w"], {
-    stdin: "ignore",
-    stderr: "ignore",
-  })?.trim();
+export async function authToken(): Promise<string | undefined> {
+  const found = await $`security find-generic-password -a ${user()} -s ${KEYCHAIN_SERVICE} -w < /dev/null`.nothrow().quiet();
+  const token = found.exitCode === 0 ? found.stdout.toString().trim() : "";
   return token ? token : undefined;
 }
 
@@ -188,8 +187,13 @@ function user(): string {
 
 // `open`'s own status, which is 127 where it is not installed. Off macOS that is
 // every filing, so the reason it could not start is not repeated each time.
-function openUrl(io: Io, url: string): number {
-  const opened = io.read(["open", "-g", url], { stdin: "ignore", stderr: "pipe" });
-  if (opened.status !== NOT_RUN) io.write(2, opened.stderr);
-  return opened.status;
+async function openUrl(url: string): Promise<number> {
+  if (!Bun.which("open", { PATH: process.env.PATH })) return NOT_FOUND;
+
+  const opened = await $`open -g ${url} < /dev/null`.nothrow().quiet();
+  writeAll(2, opened.stderr.toString());
+  return opened.exitCode;
 }
+
+// What a shell exits with for a command it could not find.
+const NOT_FOUND = 127;

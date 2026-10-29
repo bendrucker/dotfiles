@@ -10,10 +10,10 @@
 // is keyed on, so it is derived from the hardware, which no rename touches: the
 // to-dos already filed against a machine have to keep matching it afterwards.
 
+import { $ } from "bun";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { type Io, readOk } from "#io";
 
 // Long enough that two machines will not collide, short enough to sit in a marker
 // line a human reads past.
@@ -26,22 +26,22 @@ const PLATFORM_UUID = /"IOPlatformUUID"\s*=\s*"([^"]+)"/;
 // a key derived from a hostname CI reassigns per runner is not a key.
 const MACHINE_ID = "/etc/machine-id";
 
-export function machineName(io: Io): string {
-  return capture(io, ["scutil", "--get", "ComputerName"]) || shortHostname();
+export async function machineName(): Promise<string> {
+  return (await capture(["scutil", "--get", "ComputerName"])) || shortHostname();
 }
 
 // Hashed rather than used raw so the marker it lands in stays short and carries
 // nothing about the hardware.
-export function machineKey(io: Io): string {
-  return createHash("sha1").update(machineIdentity(io)).digest("hex").slice(0, KEY_LENGTH);
+export async function machineKey(): Promise<string> {
+  return createHash("sha1").update(await machineIdentity()).digest("hex").slice(0, KEY_LENGTH);
 }
 
-function machineIdentity(io: Io): string {
-  return platformUuid(io) || linuxMachineId() || shortHostname();
+async function machineIdentity(): Promise<string> {
+  return (await platformUuid()) || linuxMachineId() || shortHostname();
 }
 
-function platformUuid(io: Io): string {
-  const ioreg = capture(io, ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]);
+async function platformUuid(): Promise<string> {
+  const ioreg = await capture(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]);
   return ioreg.match(PLATFORM_UUID)?.[1] ?? "";
 }
 
@@ -59,6 +59,7 @@ function shortHostname(): string {
 
 // An absent or failing command yields the empty string, which every caller here
 // reads as "ask the next source".
-function capture(io: Io, cmd: string[]): string {
-  return readOk(io, cmd, { stdin: "ignore", stderr: "ignore" })?.trim() ?? "";
+async function capture(cmd: string[]): Promise<string> {
+  const result = await $`${cmd} < /dev/null`.nothrow().quiet();
+  return result.exitCode === 0 ? result.stdout.toString().trim() : "";
 }
