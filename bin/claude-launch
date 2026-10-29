@@ -149,7 +149,7 @@ async function pickDir(): Promise<string | undefined> {
 
   const input = new Response(`${dirs.join("\n")}\n`);
   const picked = (
-    await $`cat < ${input} | fzf --no-sort --border --border-label ${" claude · launch dir "} --prompt ${"  "} 2>>/dev/stderr`
+    await $`cat < ${input} | fzf --no-sort --border --border-label ${" claude · launch dir "} --prompt ${"  "} 2> ${Bun.stderr}`
       .nothrow()
       .quiet()
   ).stdout
@@ -177,7 +177,7 @@ async function main(args: string[]): Promise<number> {
 
   // gum draws on stderr and reads the terminal, so both stay inherited.
   const prompt = (
-    await $`gum write --placeholder ${"Task for the agent…"} --value ${seed} --width 80 --height 12 2>>/dev/stderr`
+    await $`gum write --placeholder ${"Task for the agent…"} --value ${seed} --width 80 --height 12 2> ${Bun.stderr}`
       .nothrow()
       .quiet()
   ).stdout
@@ -214,7 +214,7 @@ async function main(args: string[]): Promise<number> {
 // launch rather than a crash.
 async function dispatch(cmd: string[], repo: string): Promise<{ exitCode: number; stdout: string }> {
   try {
-    const run = await $`cat /dev/null | ${cmd} 2>>/dev/stderr`.cwd(realpathSync(repo)).nothrow().quiet();
+    const run = await $`cat /dev/null | ${cmd} 2> ${Bun.stderr}`.cwd(realpathSync(repo)).nothrow().quiet();
     return { exitCode: run.exitCode, stdout: run.stdout.toString() };
   } catch {
     return { exitCode: 1, stdout: "" };

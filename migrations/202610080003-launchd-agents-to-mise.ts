@@ -30,7 +30,7 @@ export async function up(context: Context): Promise<void> {
 
   for (const label of RETIRED) {
     const target = `${domain}/${label}`;
-    await $`launchctl bootout ${target} 2>>/dev/stderr`.nothrow().quiet();
+    await $`launchctl bootout ${target} 2> ${Bun.stderr}`.nothrow().quiet();
 
     const plist = join(context.home, "Library", "LaunchAgents", `${label}.plist`);
     if (!exists(plist)) continue;

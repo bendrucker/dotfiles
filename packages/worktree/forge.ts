@@ -109,7 +109,7 @@ export async function choose(requests: Request[], picker: Picker): Promise<Reque
     "--preview-window=right,60%,border-left",
   ];
   // Bun Shell takes one redirect per command, so the rows arrive through cat.
-  const run = await $`cat < ${input} | fzf ${args} 2>>/dev/stderr`.nothrow().quiet();
+  const run = await $`cat < ${input} | fzf ${args} 2> ${Bun.stderr}`.nothrow().quiet();
 
   return rows.get(run.stdout.toString().replace(/\n+$/, ""));
 }

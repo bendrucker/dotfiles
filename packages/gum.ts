@@ -32,10 +32,7 @@ export async function choose(items: string[], options: ChooseOptions = {}): Prom
   ];
   // Bun Shell takes one redirect per command, so the items arrive through cat.
   const terminal = options.terminal === undefined ? openTerminal() : options.terminal;
-  const result = terminal !== null
-    ? await $`cat < ${input} | gum choose ${flags} 2>${terminal}`.nothrow().quiet()
-    : await $`cat < ${input} | gum choose ${flags}`.nothrow().quiet();
-  if (terminal === null) writeAll(2, result.stderr.toString());
+  const result = await $`cat < ${input} | gum choose ${flags} 2> ${terminal ?? Bun.stderr}`.nothrow().quiet();
   return result.exitCode === 0 ? result.stdout.toString().split("\n").filter((line) => line !== "") : [];
 }
 

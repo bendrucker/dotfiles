@@ -48,7 +48,7 @@ export async function run(args: string[]): Promise<number> {
   // when some submodule is missing or off its pinned revision.
   const submodules = (await submodulesPinned(home))
     ? 0
-    : (await $`${SPIN} --show-error --title ${"Updating submodules"} -- git -C ${home} submodule update --init 2>>/dev/stderr`.nothrow())
+    : (await $`${SPIN} --show-error --title ${"Updating submodules"} -- git -C ${home} submodule update --init 2> ${Bun.stderr}`.nothrow())
         .exitCode;
   if (submodules !== 0) {
     await log("error", "Submodule update failed");
@@ -85,13 +85,13 @@ const GITLINK = /^160000 ([0-9a-f]+) 0\t(.+)$/;
 // uninitialized submodule is an empty directory, where rev-parse answers with
 // the superproject's HEAD, which never matches a pin.
 async function submodulesPinned(home: string): Promise<boolean> {
-  const staged = await $`git -C ${home} ls-files --stage -z 2>>/dev/stderr`.nothrow().quiet();
+  const staged = await $`git -C ${home} ls-files --stage -z 2> ${Bun.stderr}`.nothrow().quiet();
   if (staged.exitCode !== 0) return false;
 
   for (const entry of staged.stdout.toString().split("\0")) {
     const gitlink = GITLINK.exec(entry);
     if (gitlink === null) continue;
-    const head = await $`git -C ${join(home, gitlink[2] ?? "")} rev-parse HEAD 2>>/dev/stderr`.nothrow().quiet();
+    const head = await $`git -C ${join(home, gitlink[2] ?? "")} rev-parse HEAD 2> ${Bun.stderr}`.nothrow().quiet();
     if (head.exitCode !== 0 || head.stdout.toString().trim() !== gitlink[1]) return false;
   }
   return true;
@@ -108,7 +108,7 @@ async function bootstrap(home: string): Promise<number> {
   }
 
   await log("info", "Running bootstrap...");
-  return (await $`${script} --no-prompt 2>>/dev/stderr`.nothrow()).exitCode;
+  return (await $`${script} --no-prompt 2> ${Bun.stderr}`.nothrow()).exitCode;
 }
 
 function isExecutable(path: string): boolean {

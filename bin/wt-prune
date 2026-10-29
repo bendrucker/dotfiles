@@ -526,7 +526,7 @@ function remove(args: string[]): Promise<boolean> {
 // gum draws on the terminal's stderr and answers through its exit status. An
 // absent gum declines, which removes nothing.
 async function confirm(question: string): Promise<boolean> {
-  return (await $`gum confirm ${question} 2>>/dev/stderr`.nothrow()).exitCode === 0;
+  return (await $`gum confirm ${question} 2> ${Bun.stderr}`.nothrow()).exitCode === 0;
 }
 
 if (import.meta.main) {

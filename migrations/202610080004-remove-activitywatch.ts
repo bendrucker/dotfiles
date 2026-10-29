@@ -33,7 +33,7 @@ async function retireAgents(context: Context): Promise<void> {
 
   for (const label of AGENTS) {
     const target = `${domain}/${label}`;
-    await $`launchctl bootout ${target} 2>>/dev/stderr`.nothrow().quiet();
+    await $`launchctl bootout ${target} 2> ${Bun.stderr}`.nothrow().quiet();
 
     const plist = join(context.home, "Library", "LaunchAgents", `${label}.plist`);
     if (!exists(plist)) continue;
@@ -58,7 +58,7 @@ async function removeImporter(context: Context): Promise<void> {
   const uv = Bun.which("uv", { PATH: process.env.PATH });
   if (uv === null) return;
 
-  if ((await $`${uv} tool uninstall aw-import-screentime 2>>/dev/stderr`.nothrow().quiet()).exitCode === 0) {
+  if ((await $`${uv} tool uninstall aw-import-screentime 2> ${Bun.stderr}`.nothrow().quiet()).exitCode === 0) {
     await log("info", "uninstalled aw-import-screentime");
   } else {
     await log("warn", "could not uninstall aw-import-screentime: uv tool uninstall aw-import-screentime");

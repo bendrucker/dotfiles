@@ -64,7 +64,7 @@ export async function syncNotify(repoDir: string, title: string, branch = ""): P
   // The rev travels on stdout and the outcome in the status, which is why
   // bin/git-sync keeps every log line and git's own output on stderr. Bun Shell
   // takes one redirect per command, so stdin closes through a pipe.
-  const sync = await $`cat /dev/null | ${GIT_SYNC} sync ${args} 2>>/dev/stderr`.nothrow().quiet();
+  const sync = await $`cat /dev/null | ${GIT_SYNC} sync ${args} 2> ${Bun.stderr}`.nothrow().quiet();
 
   if (sync.exitCode === SYNC_UPDATED) return { status: "updated", rev: stripNewlines(sync.stdout.toString()) };
   if (sync.exitCode === SYNC_CURRENT) return { status: "current" };
@@ -241,7 +241,7 @@ export async function openPr(repoDir: string, title: string): Promise<boolean> {
   }
 
   const pushing = `Pushing ${branch}`;
-  const pushed = await $`${SPIN} --show-error --title ${pushing} -- git -C ${repoDir} push -u origin ${branch} 2>>/dev/stderr`.nothrow();
+  const pushed = await $`${SPIN} --show-error --title ${pushing} -- git -C ${repoDir} push -u origin ${branch} 2> ${Bun.stderr}`.nothrow();
   if (pushed.exitCode !== 0) {
     await log("error", `Failed to push ${branch} - change is committed locally on ${branch}`);
     await returnToBase();
@@ -276,7 +276,7 @@ export async function reviewFetch(repoDir: string, branch: string): Promise<numb
   // insteadOf rule in its environment instead. The persistent rewrite still
   // happens in bin/git-sync sync, once the gate lets the sync through.
   const env = { ...process.env, ...(await httpsEnv()) };
-  const fetched = await $`${SPIN} --title ${`Fetching origin/${branch}`} -- git -C ${repoDir} fetch origin ${branch} 2>>/dev/stderr`
+  const fetched = await $`${SPIN} --title ${`Fetching origin/${branch}`} -- git -C ${repoDir} fetch origin ${branch} 2> ${Bun.stderr}`
     .env(env)
     .nothrow();
   return fetched.exitCode;

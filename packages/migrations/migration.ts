@@ -77,7 +77,7 @@ async function removePackage(name: string, scope: string[]): Promise<void> {
   const env = { ...process.env, ...HOMEBREW_ENV };
   // --versions rather than plain `list`, which prints every file the package
   // owns and would bury the log it shares with the rest of the install.
-  const listed = await $`cat /dev/null | ${brew} list ${scope} --versions ${name} 2>>/dev/stderr`.env(env).nothrow().quiet();
+  const listed = await $`cat /dev/null | ${brew} list ${scope} --versions ${name} 2> ${Bun.stderr}`.env(env).nothrow().quiet();
   if (listed.exitCode !== 0) return;
 
   await log("info", `uninstalling ${name}`);

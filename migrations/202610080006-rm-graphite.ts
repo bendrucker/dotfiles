@@ -17,7 +17,7 @@ async function untap(tap: string): Promise<void> {
   if (brew === null) return;
 
   const env = { ...process.env, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ENV_HINTS: "1" };
-  const tapped = await $`cat /dev/null | ${brew} tap 2>>/dev/stderr`.env(env).nothrow().quiet();
+  const tapped = await $`cat /dev/null | ${brew} tap 2> ${Bun.stderr}`.env(env).nothrow().quiet();
   if (tapped.exitCode !== 0 || !tapped.stdout.toString().split("\n").includes(tap)) return;
 
   await log("info", `untapping ${tap}`);
