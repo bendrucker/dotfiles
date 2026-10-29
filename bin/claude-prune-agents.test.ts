@@ -56,7 +56,7 @@ describe("classifyAgent", () => {
 });
 
 describe("splitWorktreePath", () => {
-  test.each<{ path: string; root: string; branch: string }>([
+  test.each<{ path: string; root: string; branch: string; slug?: string }>([
     { path: "/src/repo/.worktrees/feature-x", root: "/src/repo", branch: "feature-x" },
     { path: "/src/repo/.claude/worktrees/feature-x", root: "/src/repo", branch: "feature-x" },
     // Only the first component after the marker is the branch, so a branch name
@@ -68,8 +68,21 @@ describe("splitWorktreePath", () => {
       root: "/a/.worktrees/x",
       branch: "y",
     },
-  ])("$path splits into $root and $branch", ({ path, root, branch }) => {
-    expect(splitWorktreePath(path)).toEqual({ root, branch });
+    // Worktrunk's central layout names the repo in the path.
+    {
+      path: "/src/.worktrees/owner/repo/feature-x",
+      root: "/src",
+      branch: "feature-x",
+      slug: "owner/repo",
+    },
+    {
+      path: "/src/.worktrees/owner/repo/feature-x/",
+      root: "/src",
+      branch: "feature-x",
+      slug: "owner/repo",
+    },
+  ])("$path splits into $root and $branch", ({ path, root, branch, slug }) => {
+    expect(splitWorktreePath(path)).toStrictEqual(slug ? { root, branch, slug } : { root, branch });
   });
 
   test.each(["/src/repo", "", "/src/repo/.worktrees", "/src/repo/worktrees/feature-x"])(

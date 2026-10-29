@@ -74,6 +74,8 @@ export interface Row {
 export interface Worktree {
   root: string;
   branch: string;
+  // Set when the path itself names the repo, so no lookup in root is needed.
+  slug?: string;
 }
 
 // Worktrunk uses .worktrees/, the built-in harness uses .claude/worktrees/. The
@@ -82,7 +84,16 @@ export interface Worktree {
 // record of its branch.
 const WORKTREE = /^(.+)\/(?:\.worktrees|\.claude\/worktrees)\/([^/]+)/;
 
+// Worktrunk's central layout, <base>/.worktrees/<owner>/<repo>/<branch>.
+// Worktrunk sanitizes the slashes out of branch names, so exactly three
+// components after the marker separate it from a per-repo path.
+const CENTRAL_WORKTREE = /^(.+)\/\.worktrees\/([^/]+)\/([^/]+)\/([^/]+)\/?$/;
+
 export function splitWorktreePath(path: string): Worktree | undefined {
+  const central = CENTRAL_WORKTREE.exec(path);
+  if (central) {
+    return { root: central[1], branch: central[4], slug: `${central[2]}/${central[3]}` };
+  }
   const match = WORKTREE.exec(path);
   return match ? { root: match[1], branch: match[2] } : undefined;
 }
@@ -391,7 +402,8 @@ export async function classifyCandidate(forge: Forge, agent: Candidate, now: num
   const root = worktree ? worktree.root : agent.cwd;
   const branch = worktree ? worktree.branch : "";
 
-  const prs = await agentPrs(forge, await forge.slug(root), branch, state.summary);
+  const slug = worktree?.slug ?? (await forge.slug(root));
+  const prs = await agentPrs(forge, slug, branch, state.summary);
   const decision = classifyAgent(prs.map((pr) => pr.state));
 
   return {
