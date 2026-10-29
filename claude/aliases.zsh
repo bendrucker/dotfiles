@@ -6,9 +6,12 @@ _claude_worktree_prompt="This is a dedicated git worktree that Worktrunk (the wt
 
 # Arguments before `--` go to `wt switch`, the rest to `claude`. Claude runs
 # under the shell after wt's shell integration has moved it into the worktree.
+# A cancelled picker exits 0 without moving, so an unchanged directory stops
+# claude from starting in place.
 cw() {
-  local split=${@[(i)--]}
+  local split=${@[(i)--]} from=$PWD
   wt switch "${@[1,split-1]}" || return
+  [[ $PWD != "$from" ]] || return 1
   claude --name="$(git branch --show-current)" --append-system-prompt="$_claude_worktree_prompt" "${@[split+1,-1]}"
 }
 alias ccw='cw --create'

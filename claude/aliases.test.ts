@@ -4,7 +4,12 @@ import { quote, repoRoot, shell } from "#harness";
 
 const stubs = `
 source ${quote(join(repoRoot, "claude", "aliases.zsh"))}
-wt() { print -r -- "wt \${(j:|:)@}"; [[ \${@[-1]} != cancel ]]; }
+wt() {
+  print -r -- "wt \${(j:|:)@}"
+  [[ \${@[-1]} == fail ]] && return 1
+  [[ \${@[-1]} == cancel ]] || cd /
+}
+cd "$TMPDIR"
 claude() { print -r -- "claude \${(j:|:)\${@:#--append-system-prompt=*}}"; }
 git() { print feature; }
 pbpaste() { print "the prompt"; }
@@ -30,6 +35,10 @@ describe("cw", () => {
   });
 
   test("starts no claude when the switch fails", () => {
+    expect(launch("cw fail || print stopped")).toEqual(["wt switch|fail", "stopped"]);
+  });
+
+  test("starts no claude when the switch exits 0 without moving, as a cancelled picker does", () => {
     expect(launch("cw cancel || print stopped")).toEqual(["wt switch|cancel", "stopped"]);
   });
 });
