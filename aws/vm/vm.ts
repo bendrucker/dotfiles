@@ -4,7 +4,7 @@
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import { aws, EXPIRES_TAG, type Instance, instances, InstanceInformation, KIND_TAG, Launched, NAME_TAG, runCommand, toInstance } from "./aws.ts";
+import { aws, EXPIRES_TAG, type Instance, instances, InstanceInformation, KIND_TAG, Launched, NAME_TAG, rootVolume, runCommand, toInstance } from "./aws.ts";
 import { formatMinutes, isoSeconds, parseDuration } from "./duration.ts";
 import { guestTools, miseRelease, toolLines, TOOLS_LOG, TOOLS_STATUS } from "./guest.ts";
 import { HERDR, herdrRelease, knownMachines, type Machine, registerHerdr, unregisterHerdr } from "./herdr.ts";
@@ -17,10 +17,10 @@ import { rejoinTailnet, tailnetAddress, tailnetKey, upCommand } from "./tailscal
 function usage(): string {
   return `Usage: vm <command> [options]
 
-  launch [--kind KIND] [--name NAME] [--type TYPE] [--ttl DURATION]
+  launch [--kind KIND] [--name NAME] [--type TYPE] [--ttl DURATION] [--disk GB]
       Start a VM and wait until it is reachable. KIND picks the account and
-      launch template. TYPE defaults to the template's, and DURATION to the
-      kind's default time limit.
+      launch template. TYPE and GB, the root volume size, default to the
+      template's, and DURATION to the kind's default time limit.
   connect NAME [COMMAND...]
       Open a shell on the VM, or run COMMAND there.
   copy NAME SRC [DEST]
@@ -34,6 +34,8 @@ function usage(): string {
       Stop the VM, keeping its disk, SSH entry, and herdr machine.
   resume NAME [--ttl DURATION]
       Start a paused VM with a fresh time limit.
+  register NAME
+      Add the VM as a herdr machine again, after launch or resume could not.
   list [--json]
       Show each VM with its kind, type, and remaining time.
   destroy NAME
@@ -42,8 +44,9 @@ function usage(): string {
 DURATION is minutes and hours: 30m, 2h, 1h30m. The time limit stops the VM,
 which resume can start again. Kinds come from ${SHIPPED_KINDS_PATH}
 and ${localKindsPath()}. Each VM answers to ssh vm-NAME, over the tailnet
-when it joined one, and to vm-NAME-ssm through Session Manager. vm-NAME is also
-its herdr machine label: herdr --machine vm-NAME ...`;
+when a connection opens there and through Session Manager otherwise, and to
+vm-NAME-ssm through Session Manager always. vm-NAME is also its herdr machine
+label: herdr --machine vm-NAME ...`;
 }
 
 export function validateName(name: string): string {
@@ -146,6 +149,7 @@ interface LaunchOptions {
   kind: Kind;
   type?: string;
   ttlMinutes: number;
+  diskGb?: number;
 }
 
 function parseFlags(command: string, args: string[], flags: string[]): Map<string, string> {
@@ -158,6 +162,11 @@ function parseFlags(command: string, args: string[], flags: string[]): Map<strin
   return values;
 }
 
+function parseDisk(text: string): number {
+  if (!/^[1-9]\d*$/.test(text)) throw new UsageError(`disk size is whole GiB, like 200: ${text}`);
+  return Number(text);
+}
+
 function parseTtl(text: string | undefined, kind: Kind): number {
   const minutes = text === undefined ? kind.defaultTtl : parseDuration(text);
   if (minutes > kind.maxTtl) {
@@ -168,10 +177,11 @@ function parseTtl(text: string | undefined, kind: Kind): number {
 
 // The account's own policy decides which instance types it allows.
 export function parseLaunch(args: string[], kinds: Kinds): LaunchOptions {
-  const flags = parseFlags("launch", args, ["--kind", "--name", "--type", "--ttl"]);
+  const flags = parseFlags("launch", args, ["--kind", "--name", "--type", "--ttl", "--disk"]);
   const kind = kindNamed(kinds, flags.get("--kind") ?? kinds.default);
   const name = flags.has("--name") ? validateName(flags.get("--name") ?? "") : randomName();
-  return { name, kind, type: flags.get("--type"), ttlMinutes: parseTtl(flags.get("--ttl"), kind) };
+  const disk = flags.get("--disk");
+  return { name, kind, type: flags.get("--type"), ttlMinutes: parseTtl(flags.get("--ttl"), kind), diskGb: disk === undefined ? kind.diskGb : parseDisk(disk) };
 }
 
 function startInstance(options: LaunchOptions, expiresAt: Date, extras: Extras): Instance {
@@ -188,6 +198,7 @@ function startInstance(options: LaunchOptions, expiresAt: Date, extras: Extras):
     "--launch-template",
     `LaunchTemplateName=${kind.template}`,
     ...(options.type ? ["--instance-type", options.type] : []),
+    ...(options.diskGb ? ["--block-device-mappings", JSON.stringify(rootVolume(kind, kind.template, options.diskGb))] : []),
     "--user-data",
     userData(expiresAt, publicKeys(), extras),
     "--tag-specifications",
@@ -421,6 +432,18 @@ function liveInstances(kinds: Kinds): { vms: Instance[]; complete: boolean } {
   return { vms: found.flatMap((vms) => vms ?? []), complete: found.every(Boolean) };
 }
 
+// The SSH entry and record stay after a failed herdr add, so neither needs redoing.
+function register(args: string[]): number {
+  const [name, ...rest] = args;
+  if (!name || rest.length > 0) throw new UsageError("register needs a VM name");
+  requireEntry(name);
+  instance(name, ["running"]);
+  log("registering with herdr");
+  const machine = registerHerdr(name);
+  console.log(`herdr-machine: ${machine ?? "not registered"}`);
+  return machine ? 0 : 1;
+}
+
 function list(args: string[]): number {
   const unknown = args.find((arg) => arg !== "--json");
   if (unknown) throw new UsageError(`unknown list option: ${unknown}`);
@@ -477,7 +500,7 @@ function removeFailure(path: string): { path: string; code: string }[] {
   }
 }
 
-const COMMANDS: Record<string, (args: string[]) => number | Promise<number>> = { launch, connect, copy, extend, pause, resume, list, destroy };
+const COMMANDS: Record<string, (args: string[]) => number | Promise<number>> = { launch, connect, copy, extend, pause, resume, register, list, destroy };
 
 const isHelp = (arg: string | undefined) => arg === "-h" || arg === "--help";
 

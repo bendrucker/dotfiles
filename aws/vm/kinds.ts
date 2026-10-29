@@ -15,6 +15,8 @@ export interface Kind extends Account {
   template: string;
   defaultTtl: number;
   maxTtl: number;
+  // Root volume size in GiB, replacing the template's.
+  diskGb?: number;
   tailnet?: Tailnet;
   // mise tools added to the shipped set, by backend and version.
   tools: Record<string, string>;
@@ -42,6 +44,7 @@ const KindFields = z.object({
   template: z.string(),
   default_ttl: z.string().default("4h"),
   max_ttl: z.string().default("12h"),
+  disk_gb: z.number().int().positive().optional(),
   tailnet: TailnetFields.optional(),
   tools: z.record(z.string(), z.string()).default({}),
 });
@@ -64,6 +67,7 @@ function toKind(name: string, fields: z.infer<typeof KindFields>): Kind {
     tools: fields.tools,
   };
   if (kind.defaultTtl > kind.maxTtl) throw new Error(`kind ${name}: default_ttl exceeds max_ttl`);
+  if (fields.disk_gb !== undefined) kind.diskGb = fields.disk_gb;
   if (fields.tailnet) {
     const { tag, role, client_id_parameter, audience_parameter } = fields.tailnet;
     kind.tailnet = { tag, role, clientIdParameter: client_id_parameter, audienceParameter: audience_parameter };

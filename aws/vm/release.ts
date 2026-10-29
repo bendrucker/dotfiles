@@ -14,6 +14,7 @@ export interface Source {
   target: string;
   tag(version: string): string;
   asset(version: string, arch: Arch): string;
+  versionEnv?: Record<string, string>;
 }
 
 export interface Asset {
@@ -49,7 +50,7 @@ export async function release(source: Source, version: string, api = "https://ap
 // Without a matching release, launch still starts a VM that SSH reaches.
 export async function localRelease(source: Source): Promise<Release | undefined> {
   if (!Bun.which(source.tool)) return undefined;
-  const version = /(\d+\.\d+\.\d+\S*)/.exec(spawn([source.tool, "--version"]).stdout)?.[1];
+  const version = /(\d+\.\d+\.\d+\S*)/.exec(spawn([source.tool, "--version"], source.versionEnv).stdout)?.[1];
   if (!version) {
     log(`could not read the local ${source.tool} version, so the VM gets no ${source.tool}`);
     return undefined;

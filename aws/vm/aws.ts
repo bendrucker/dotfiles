@@ -113,6 +113,27 @@ export function instances(account: Account, name?: string): Instance[] {
   return answer.Reservations.flatMap((reservation) => reservation.Instances.map(toInstance));
 }
 
+const TemplateVersions = z.object({
+  LaunchTemplateVersions: z.array(
+    z.object({
+      LaunchTemplateData: z.object({
+        BlockDeviceMappings: z.array(z.object({ DeviceName: z.string(), Ebs: z.record(z.string(), z.unknown()).optional() })).default([]),
+      }),
+    }),
+  ),
+});
+
+// A mapping in run-instances replaces the template's for that device, so the
+// template's own mapping is resubmitted with only the size changed, keeping
+// its encryption and volume type.
+export function rootVolume(account: Account, template: string, sizeGb: number): unknown[] {
+  const args = ["ec2", "describe-launch-template-versions", "--launch-template-name", template, "--versions", "$Default"];
+  const [version] = aws(account, args, TemplateVersions).LaunchTemplateVersions;
+  const ebs = (version?.LaunchTemplateData.BlockDeviceMappings ?? []).filter((mapping) => mapping.Ebs);
+  if (ebs.length !== 1) throw new Error(`launch template ${template} has ${ebs.length} EBS volumes; a disk size needs exactly one, its root`);
+  return [{ DeviceName: ebs[0].DeviceName, Ebs: { ...ebs[0].Ebs, VolumeSize: sizeGb } }];
+}
+
 export function runCommand(account: Account, instanceId: string, command: string): string {
   const sent = aws(account, [
     "ssm",

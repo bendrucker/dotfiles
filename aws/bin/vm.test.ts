@@ -54,6 +54,7 @@ region = "us-west-2"
 template = "ci"
 default_ttl = "1h"
 max_ttl = "2h"
+disk_gb = 200
 tools = { "aqua:x/y" = "1.0.0" }
 [kinds.performance]
 profile = "other"
@@ -63,7 +64,7 @@ template = "performance"
     );
     const kinds = loadKinds([shipped, box.path("local.toml")]);
     expect(kinds.default).toBe("ci");
-    expect(kinds.byName.get("ci")).toEqual({ name: "ci", profile: "ci-admin", region: "us-west-2", template: "ci", defaultTtl: 60, maxTtl: 120, tools: { "aqua:x/y": "1.0.0" } });
+    expect(kinds.byName.get("ci")).toEqual({ name: "ci", profile: "ci-admin", region: "us-west-2", template: "ci", defaultTtl: 60, maxTtl: 120, diskGb: 200, tools: { "aqua:x/y": "1.0.0" } });
     expect(kinds.byName.get("performance")).toEqual(makeKind({ profile: "other", template: "performance" }));
   });
 
@@ -134,6 +135,19 @@ describe("launch options", () => {
 
   test("passes the type through for the account to judge", () => {
     expect(parseLaunch(["--type=c7i.large"], kinds).type).toBe("c7i.large");
+  });
+
+  test.each<{ name: string; args: string[]; diskGb: number | undefined }>([
+    { name: "the template's size by default", args: [], diskGb: undefined },
+    { name: "the kind's size", args: ["--kind", "ci"], diskGb: 100 },
+    { name: "the flag over the kind's", args: ["--kind=ci", "--disk", "250"], diskGb: 250 },
+  ])("takes $name", ({ args, diskGb }) => {
+    const sized: Kinds = { ...kinds, byName: new Map([...kinds.byName, ["ci", makeKind({ name: "ci", defaultTtl: 30, maxTtl: 60, diskGb: 100 })]]) };
+    expect(parseLaunch(args, sized).diskGb).toBe(diskGb);
+  });
+
+  test.each(["0", "1.5", "200G", ""])("refuses disk size %p", (disk) => {
+    expect(() => parseLaunch(["--disk", disk], kinds)).toThrow(/whole GiB/);
   });
 
   test("refuses an unknown kind and a name ssh or herdr would mangle", () => {
@@ -277,14 +291,43 @@ describe("ssh entry", () => {
     expect(entry).toContain("'AWS_CONFIG_FILE=/c/aws config'");
   });
 
-  test("goes direct over the tailnet and keeps Session Manager under -ssm", () => {
-    const entry = sshEntry("h", "i-1", "100.64.0.9", "/k", tools);
-    const [direct, ssm] = entry.split("\n\n");
-    expect(direct).toStartWith("Host h\n  HostName 100.64.0.9\n  User ec2-user");
-    expect(direct).not.toContain("ProxyCommand");
-    expect(ssm).toStartWith("Host h-ssm\n  HostName i-1\n  ProxyCommand ");
-    expect(direct).toContain("HostKeyAlias h\n");
-    expect(ssm).toContain("HostKeyAlias h\n");
+  test("goes over the tailnet when it connects, Session Manager otherwise, and keeps Session Manager under -ssm", () => {
+    const saved = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = "/state";
+    try {
+      expect(sshEntry("h", "i-1", "100.64.0.9", "/k", tools)).toMatchInlineSnapshot(`
+        "Match originalhost h exec "nc -z -w 3 100.64.0.9 22 >/dev/null 2>&1"
+          HostName 100.64.0.9
+          ProxyCommand none
+        Host h
+          HostName i-1
+          ProxyCommand /usr/bin/env PATH=/p:/usr/bin:/bin /a ssm start-session --profile x --region us-east-1 --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p
+          User ec2-user
+          HostKeyAlias h
+          StrictHostKeyChecking accept-new
+          UserKnownHostsFile /k
+          ServerAliveInterval 30
+          ControlMaster auto
+          ControlPath /state/vm/%C
+          ControlPersist 10m
+
+        Host h-ssm
+          HostName i-1
+          ProxyCommand /usr/bin/env PATH=/p:/usr/bin:/bin /a ssm start-session --profile x --region us-east-1 --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p
+          User ec2-user
+          HostKeyAlias h
+          StrictHostKeyChecking accept-new
+          UserKnownHostsFile /k
+          ServerAliveInterval 30
+          ControlMaster auto
+          ControlPath /state/vm/%C
+          ControlPersist 10m
+        "
+      `);
+    } finally {
+      if (saved === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = saved;
+    }
   });
 });
 
@@ -363,6 +406,9 @@ case "$1 $2" in
   "ec2 run-instances")
     echo '{"InstanceId":"i-0abc","InstanceType":"c8g.medium","State":{"Name":"pending"},"LaunchTime":"2026-09-27T08:00:00Z","Tags":[{"Key":"vm-name","Value":"t1"},{"Key":"vm-kind","Value":"performance"},{"Key":"expires-at","Value":"2026-09-27T08:30:00Z"}]}' > ${state}
     printf '{"Instances":[%s]}' "$(cat ${state})" ;;
+  "ec2 describe-launch-template-versions")
+    if [ -f ${box.path("two-volumes")} ]; then echo '{"LaunchTemplateVersions":[{"LaunchTemplateData":{"BlockDeviceMappings":[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":30}},{"DeviceName":"/dev/xvdb","Ebs":{"VolumeSize":10}}]}}]}'
+    else echo '{"LaunchTemplateVersions":[{"LaunchTemplateData":{"BlockDeviceMappings":[{"DeviceName":"/dev/xvda","Ebs":{"Encrypted":true,"VolumeSize":30,"VolumeType":"gp3"}}]}}]}'; fi ;;
   "ec2 terminate-instances") rm -f ${state}; echo '{}' ;;
   "ec2 stop-instances") sed -i.bak 's/"pending"/"stopped"/' ${state}; echo '{}' ;;
   "ec2 start-instances") sed -i.bak 's/"stopped"/"running"/' ${state}; echo '{}' ;;
@@ -384,7 +430,7 @@ case "$1 $2" in
 esac`,
   );
   box.stub("session-manager-plugin", "exit 0");
-  box.stub("mise", `echo "2026.9.15 linux-arm64"`);
+  box.stub("mise", `echo "mise $* MISE_DISABLE_UPDATE_WARNING=\${MISE_DISABLE_UPDATE_WARNING:-unset}" >> ${log}; echo "2026.9.15 linux-arm64"`);
   box.stub("ssh-add", `echo "ssh-add $*" >> ${log}; echo "ecdsa-sha2-nistp256 AAAAfake test@example"`);
   box.stub("ssh", `echo "ssh $*" >> ${log}; [ "$1" = -G ] && echo "hostname i-0abc"; exit 0`);
   box.stub("rsync", `echo "rsync $*" >> ${log}`);
@@ -603,6 +649,36 @@ describe("commands", () => {
     const again = await perf("launch", "--name", "t1");
     expect(again.status).toBe(2);
     expect(again.stderr).toContain("already exists");
+  });
+
+  test("launch reads the local mise version without its update check", async () => {
+    await perf("launch", "--name", "t1");
+    expect(calls()).toContain("mise --version MISE_DISABLE_UPDATE_WARNING=1");
+  });
+
+  test("launch resubmits the template's root volume at the size --disk names", async () => {
+    const launched = await perf("launch", "--name", "t1", "--disk", "200");
+    expect(launched.status).toBe(0);
+    expect(calls()).toContain("aws ec2 describe-launch-template-versions --launch-template-name performance --versions $Default");
+    expect(calls()).toContain(`--block-device-mappings [{"DeviceName":"/dev/xvda","Ebs":{"Encrypted":true,"VolumeSize":200,"VolumeType":"gp3"}}]`);
+  });
+
+  test("launch refuses --disk for a template whose root it cannot tell", async () => {
+    box.write("two-volumes", "");
+    const launched = await perf("launch", "--name", "t1", "--disk", "200");
+    expect(launched.status).toBe(1);
+    expect(launched.stderr).toContain("launch template performance has 2 EBS volumes");
+    expect(calls()).not.toContain("run-instances");
+  });
+
+  test("register adds a VM herdr missed as a machine", async () => {
+    await perf("launch", "--name", "t1");
+    run(["sed", "-i.bak", 's/"pending"/"running"/', box.path("instance.json")]);
+    box.write("calls.log", "");
+    const registered = await perf("register", "t1");
+    expect(registered.status).toBe(0);
+    expect(registered.stdout).toBe("herdr-machine: vm-t1\n");
+    expect(calls()).toContain("herdr machine add --label vm-t1 vm-t1");
   });
 
   test("list shows type, remaining time, and the herdr label", async () => {
