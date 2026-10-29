@@ -405,4 +405,13 @@ describe("the executable", () => {
     expect(outcome.status).toBe(3);
     expect(read("GUM_LOG")).toContain("log\t--level\terror\tlaunch failed\n");
   });
+
+  test("reports a failed launch for a directory that no longer exists", () => {
+    writeFileSync(variables.CLAUDE_AGENTS as string, JSON.stringify([{ cwd: join(first, "gone") }]));
+
+    const outcome = run([], { FZF_PICK: "1" });
+    expect(outcome.status).toBe(1);
+    expect(read("GUM_LOG")).toContain("log\t--level\terror\tlaunch failed\n");
+    expect(read("CLAUDE_LOG")).toBe("");
+  });
 });

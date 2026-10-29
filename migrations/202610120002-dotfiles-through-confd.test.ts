@@ -38,17 +38,16 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [tree],
     platform: "darwin",
-    out: { write() {}, run: () => 0, read: () => ({ status: 0, stdout: "" }) },
   };
 }
 
 describe("dotfiles-through-confd", () => {
-  test("reroutes each link into the tree through conf.d", () => {
+  test("reroutes each link into the tree through conf.d", async () => {
     symlinkSync(join(tree, "zsh", ".zshenv"), join(home, ".zshenv"));
     symlinkSync(join(tree, "ssh", "config"), join(home, ".ssh", "config"));
     symlinkSync(join(tree, "neovim", "config"), join(config, "nvim"));
 
-    up(context());
+    await up(context());
 
     expect(readlinkSync(join(home, ".zshenv"))).toBe(join(confd, "zsh", ".zshenv"));
     expect(readlinkSync(join(home, ".ssh", "config"))).toBe(join(confd, "ssh", "config"));
@@ -56,48 +55,48 @@ describe("dotfiles-through-confd", () => {
     expect(readFileSync(join(config, "nvim", "init.lua"), "utf8")).toBe("init\n");
   });
 
-  test("removes a link whose file is gone", () => {
+  test("removes a link whose file is gone", async () => {
     box.mkdir("home", ".config", "retired");
     symlinkSync(join(tree, "retired", "config"), join(config, "retired", "config"));
 
-    up(context());
+    await up(context());
 
     expect(existsSync(join(config, "retired", "config"))).toBe(false);
   });
 
-  test("lays a missing conf.d before rerouting through it", () => {
+  test("lays a missing conf.d before rerouting through it", async () => {
     rmSync(confd);
     symlinkSync(join(tree, "zsh", ".zshenv"), join(home, ".zshenv"));
 
-    up({ ...context(), installed: [tree, confd] });
+    await up({ ...context(), installed: [tree, confd] });
 
     expect(readlinkSync(confd)).toBe(tree);
     expect(readFileSync(join(home, ".zshenv"), "utf8")).toBe("zshenv\n");
   });
 
-  test("leaves links into a tree conf.d does not point at", () => {
+  test("leaves links into a tree conf.d does not point at", async () => {
     const other = box.write("other/zsh/.zshenv", "other\n");
     symlinkSync(other, join(home, ".zshenv"));
 
-    up({ ...context(), installed: [tree, box.path("other")] });
+    await up({ ...context(), installed: [tree, box.path("other")] });
 
     expect(readlinkSync(join(home, ".zshenv"))).toBe(other);
   });
 
-  test("replaces a temporary link a killed run left behind", () => {
+  test("replaces a temporary link a killed run left behind", async () => {
     symlinkSync(join(tree, "zsh", ".zshenv"), join(home, ".zshenv"));
     symlinkSync(join(tree, "zsh", ".zshenv"), join(home, ".zshenv.dotfiles-migrate"));
 
-    up(context());
+    await up(context());
 
     expect(readlinkSync(join(home, ".zshenv"))).toBe(join(confd, "zsh", ".zshenv"));
   });
 
-  test("leaves links into other trees, and conf.d itself, alone", () => {
+  test("leaves links into other trees, and conf.d itself, alone", async () => {
     const elsewhere = box.write("elsewhere/file", "");
     symlinkSync(elsewhere, join(home, ".elsewhere"));
 
-    up(context());
+    await up(context());
 
     expect(readlinkSync(join(home, ".elsewhere"))).toBe(elsewhere);
     expect(readlinkSync(confd)).toBe(tree);

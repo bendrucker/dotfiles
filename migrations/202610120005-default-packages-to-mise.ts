@@ -18,13 +18,13 @@ const PACKAGES = ["@modelcontextprotocol/inspector", "ccusage", "typescript", "t
 // hand is left alone.
 const GENERATED = "# Auto-generated from dotfiles";
 
-export function up(context: Context): void {
+export async function up(context: Context): Promise<void> {
   for (const name of [".default-npm-packages", ".default-go-packages"]) {
     const list = join(context.home, name);
-    if (generated(list)) removeTree(context, list);
+    if (generated(list)) await removeTree(context, list);
   }
 
-  for (const install of nodeInstalls(context)) removePackages(context, install);
+  for (const install of nodeInstalls(context)) await removePackages(context, install);
 }
 
 function generated(path: string): boolean {
@@ -38,20 +38,20 @@ function generated(path: string): boolean {
 
 // What `npm uninstall -g` would remove, done directly so it doesn't depend on
 // that version's node still running. Other entries in bin are someone's own.
-function removePackages(context: Context, install: string): void {
+async function removePackages(context: Context, install: string): Promise<void> {
   const modules = join(install, "lib", "node_modules");
   const pkgs = PACKAGES.map((name) => join(modules, name));
   const bin = join(install, "bin");
 
   for (const entry of entries(bin)) {
     const target = linkTarget(join(bin, entry));
-    if (target !== undefined && pkgs.some((pkg) => contains(pkg, target))) removeTree(context, join(bin, entry));
+    if (target !== undefined && pkgs.some((pkg) => contains(pkg, target))) await removeTree(context, join(bin, entry));
   }
 
   for (const pkg of pkgs) {
-    removeTree(context, pkg);
+    await removeTree(context, pkg);
     const scope = dirname(pkg);
-    if (scope !== modules && isEmpty(scope)) removeTree(context, scope);
+    if (scope !== modules && isEmpty(scope)) await removeTree(context, scope);
   }
 }
 

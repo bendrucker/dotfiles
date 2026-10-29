@@ -21,8 +21,8 @@ describe("parseJson", () => {
 });
 
 describe("canonicalJson", () => {
-  test("orders the keys of every object, however deeply nested", () => {
-    expect(canonicalJson('{"b":{"d":1,"c":2},"a":[{"f":1,"e":2}]}')).toMatchInlineSnapshot(`
+  test("orders the keys of every object, however deeply nested", async () => {
+    expect(await canonicalJson('{"b":{"d":1,"c":2},"a":[{"f":1,"e":2}]}')).toMatchInlineSnapshot(`
       "{
         "a": [
           {
@@ -39,40 +39,40 @@ describe("canonicalJson", () => {
     `);
   });
 
-  test("leaves array order alone", () => {
-    expect(canonicalJson("[3,1,2]")).toBe("[\n  3,\n  1,\n  2\n]\n");
+  test("leaves array order alone", async () => {
+    expect(await canonicalJson("[3,1,2]")).toBe("[\n  3,\n  1,\n  2\n]\n");
   });
 
   // Two spellings of the same document reduce to one text, which is what lets a
   // reformat be told from an edit.
-  test("reduces a reformat to the same text", () => {
-    expect(canonicalJson('{"b":2,"a":1}')).toBe(canonicalJson('{\n  "a": 1,\n  "b": 2\n}\n'));
+  test("reduces a reformat to the same text", async () => {
+    expect(await canonicalJson('{"b":2,"a":1}')).toBe(await canonicalJson('{\n  "a": 1,\n  "b": 2\n}\n'));
   });
 
   // The reason this goes through jq at all. Both of these are 1700000000000000000
   // as a JavaScript double, and bin/claude-sync answers "the file did not
   // change" by comparing two canonical texts before running `git checkout HEAD --`
   // over the working copy.
-  test("keeps integers a double would collapse apart", () => {
-    expect(canonicalJson('{"stamp":1700000000000000001}')).not.toBe(
-      canonicalJson('{"stamp":1700000000000000002}'),
+  test("keeps integers a double would collapse apart", async () => {
+    expect(await canonicalJson('{"stamp":1700000000000000001}')).not.toBe(
+      await canonicalJson('{"stamp":1700000000000000002}'),
     );
   });
 
-  test("reads past a byte order mark", () => {
-    expect(canonicalJson('\uFEFF{"a":1}')).toBe(canonicalJson('{"a":1}'));
+  test("reads past a byte order mark", async () => {
+    expect(await canonicalJson('\uFEFF{"a":1}')).toBe(await canonicalJson('{"a":1}'));
   });
 
   // The comparison bin/claude-sync makes over everything outside one key,
   // rather than deleting it from a parsed object and re-encoding.
-  test("applies the filter it is given", () => {
-    expect(canonicalJson('{"hooks":{"x":1},"a":1}', "del(.hooks)")).toBe(canonicalJson('{"a":1}'));
+  test("applies the filter it is given", async () => {
+    expect(await canonicalJson('{"hooks":{"x":1},"a":1}', "del(.hooks)")).toBe(await canonicalJson('{"a":1}'));
   });
 
   // Undefined, never a text two of which could compare equal: every caller reads
   // it as "cannot compare" and none as "unchanged".
-  test("answers nothing for text that is not JSON", () => {
-    expect(canonicalJson("not json")).toBeUndefined();
+  test("answers nothing for text that is not JSON", async () => {
+    expect(await canonicalJson("not json")).toBeUndefined();
   });
 });
 

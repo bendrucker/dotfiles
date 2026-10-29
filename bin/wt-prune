@@ -35,12 +35,15 @@
 // discarded rather than inherited, so a wt subcommand's stray bookkeeping
 // cannot land in it.
 
-import { writeSync } from "node:fs";
 import { basename } from "node:path";
 import { parseArgs } from "node:util";
+import { $ } from "bun";
+import { choose } from "#gum";
+import { writeAll } from "#pipe";
 import { pruneBranches } from "#worktree/branches";
 import { alignColumns } from "#worktree/table";
 import {
+  capture,
   defaultBranch,
   listWorktrees,
   minAge,
@@ -244,7 +247,7 @@ export interface Report {
   reasons: string[][];
 }
 
-function prune(options: Options): Outcome {
+async function prune(options: Options): Promise<Outcome> {
   const report: Report = { worktrees: 0, branches: 0, reasons: [] };
   const fanOut = (process.env.WT_ALL ?? "") !== "";
   // A dry-run table is standalone detail. The fan-out keeps its terse count
@@ -258,7 +261,7 @@ function prune(options: Options): Outcome {
   // trades for is the current worktree, which the probe lists and the real run
   // refuses.
   const seen = new Set<string>();
-  const probe = capture([
+  const probe = await capture([
     "wt",
     "step",
     "prune",
@@ -267,7 +270,7 @@ function prune(options: Options): Outcome {
     "--dry-run",
     "--format=json",
   ]);
-  for (const entry of readPruned(probe ?? "") ?? []) {
+  for (const entry of readPruned(probe) ?? []) {
     seen.add(entry.branch);
     if (entry.kind === "worktree") report.worktrees += 1;
     else report.branches += 1;
@@ -277,20 +280,20 @@ function prune(options: Options): Outcome {
   // blocks until removal completes, both required under the non-interactive
   // parallel fan-out and the nightly job.
   if (!options.dryRun) {
-    silently(["wt", "step", "prune", "--min-age", options.minAge, "--yes", "--foreground"]);
+    await silently(["wt", "step", "prune", "--min-age", options.minAge, "--yes", "--foreground"]);
   }
 
-  const worktrees = listWorktrees() ?? [];
+  const worktrees = (await listWorktrees()) ?? [];
   // Only consult the forge (a network round-trip) when a linked worktree
   // survives the integration pass. Most repos in a fan-out have only their main
   // worktree, so this skips a gh/glab call per such repo across the sweep.
   const candidates = worktrees.some((entry) => entry.kind === "worktree" && !entry.isMain)
-    ? forgePass(worktrees, options, seen, report, explaining)
+    ? await forgePass(worktrees, options, seen, report, explaining)
     : [];
 
-  if (options.interactive) checklist(candidates, options, report);
+  if (options.interactive) await checklist(candidates, options, report);
 
-  pruneBranches(defaultBranch(), options.minAge, options.dryRun, explaining, report);
+  await pruneBranches(await defaultBranch(), options.minAge, options.dryRun, explaining, report);
 
   return finish(report, fanOut, explaining);
 }
@@ -303,15 +306,15 @@ function prune(options: Options): Outcome {
 // paths, so pulling an arm out separately would spread that table across call
 // sites rather than shrink it.
 // oxlint-disable-next-line complexity
-function forgePass(
+async function forgePass(
   worktrees: Worktree[],
   options: Options,
   seen: Set<string>,
   report: Report,
   explaining: boolean,
-): Candidate[] {
-  const host = remoteHost();
-  const defaultName = defaultBranch();
+): Promise<Candidate[]> {
+  const host = await remoteHost();
+  const defaultName = await defaultBranch();
   const now = nowSeconds();
 
   const recoverable: Candidate[] = [];
@@ -336,7 +339,7 @@ function forgePass(
     // already cleared branches merged into the local default. A squash-merged
     // PR still shows local commits ahead of main, so only the forge state
     // proves it landed. This runs once per survivor, not once per PR ever.
-    const pr = prState(worktree.branch, host);
+    const pr = await prState(worktree.branch, host);
 
     // FIXME: timestamp is the tip commit's, not the worktree's. A worktree
     // branched off an old main inherits that tip, so a checkout created minutes
@@ -372,7 +375,7 @@ function forgePass(
           : ["--foreground", "--force", "--force-delete"];
       // Only confirmed removals count, so the summary matches what was removed.
       // A dry run counts everything it lists, since it removes nothing.
-      if (options.dryRun || remove([...flags, worktree.branch])) {
+      if (options.dryRun || (await remove([...flags, worktree.branch]))) {
         report.worktrees += 1;
         seen.add(worktree.branch);
       }
@@ -425,7 +428,7 @@ function forgePass(
 // Present the ambiguous remainder as a multi-select checklist and remove only
 // the selections. Selecting nothing, or declining the local-only confirm,
 // removes nothing, so this doubles as a safe preview.
-export function checklist(candidates: Candidate[], options: Options, report: Report): void {
+export async function checklist(candidates: Candidate[], options: Options, report: Report): Promise<void> {
   if (candidates.length === 0) return;
 
   // Labels are unique because worktree directory names are, which is what lets
@@ -434,7 +437,9 @@ export function checklist(candidates: Candidate[], options: Options, report: Rep
   const handles = new Map<string, Candidate>();
   labels.forEach((label, index) => handles.set(label, candidates[index]));
 
-  const selected = choose(labels)
+  const selected = (
+    await choose(labels, { limit: "none", header: "Select worktrees to remove (esc/none keeps all)" })
+  )
     .map((label) => handles.get(label))
     .filter((candidate): candidate is Candidate => candidate !== undefined);
   if (selected.length === 0) return;
@@ -444,11 +449,11 @@ export function checklist(candidates: Candidate[], options: Options, report: Rep
   const exposed = selected.filter((candidate) => !candidate.onRemote).length;
   if (exposed > 0) {
     const question = `Remove ${selected.length} worktrees — ${exposed} have no remote copy?`;
-    if (!confirm(question)) return;
+    if (!(await confirm(question))) return;
   }
 
   for (const candidate of selected) {
-    if (options.dryRun || remove(["--foreground", "--force", "--force-delete", candidate.handle])) {
+    if (options.dryRun || (await remove(["--foreground", "--force", "--force-delete", candidate.handle]))) {
       report.worktrees += 1;
     }
   }
@@ -478,7 +483,7 @@ function finish(report: Report, fanOut: boolean, explaining: boolean): Outcome {
   return { status: 0, stdout: `${stdout}${parts.join(", ")}\n`, stderr: "" };
 }
 
-export function run(args: string[]): Outcome {
+export async function run(args: string[]): Promise<Outcome> {
   const parsed = parseOptions(args);
   if (!parsed.ok) {
     return parsed.message === ""
@@ -497,89 +502,35 @@ export function run(args: string[]): Outcome {
     };
   }
 
-  return prune(parsed.options);
+  return await prune(parsed.options);
 }
 
 function dir(worktree: Worktree): string {
   return basename(worktree.path);
 }
 
-// Every spawn hands the environment over explicitly, because Bun otherwise
-// resolves a bare command name against the PATH it captured at startup and a
-// caller that adjusted PATH would reach a different binary than it meant to.
-// A binary that is not installed throws here where the shell printed `command
-// not found` and carried on, so the throw reads as an empty answer: a machine
-// without worktrunk gets a prune that removes nothing rather than one that
-// aborts mid-sweep.
-function capture(cmd: string[]): string | undefined {
-  try {
-    const run = Bun.spawnSync({ cmd, env: process.env, stdin: "ignore", stderr: "ignore" });
-    return run.stdout.toString().replace(/\n+$/, "");
-  } catch {
-    return undefined;
-  }
-}
-
 // stdin is closed on every removal, so a `wt remove` that paused on a prompt
 // cannot consume the caller's stdin. Its own output says nothing the summary
-// does not, and a removal that fails is simply not counted.
-function silently(cmd: string[]): boolean {
-  try {
-    const run = Bun.spawnSync({
-      cmd,
-      env: process.env,
-      stdio: ["ignore", "ignore", "ignore"],
-    });
-    return run.exitCode === 0;
-  } catch {
-    return false;
-  }
+// does not, and a removal that fails is simply not counted. A binary that is
+// not installed exits nonzero, so a machine without worktrunk gets a prune that
+// removes nothing rather than one that aborts mid-sweep.
+async function silently(cmd: string[]): Promise<boolean> {
+  const run = await $`${cmd} < /dev/null`.nothrow().quiet();
+  return run.exitCode === 0;
 }
 
-function remove(args: string[]): boolean {
+function remove(args: string[]): Promise<boolean> {
   return silently(["wt", "remove", ...args]);
 }
 
-// gum draws its checklist on the terminal and prints the selection on stdout,
-// so the labels go in over stdin and only stdout is read back. An absent gum
-// selects nothing, which removes nothing.
-function choose(labels: string[]): string[] {
-  try {
-    const run = Bun.spawnSync({
-      cmd: ["gum", "choose", "--no-limit", "--header", "Select worktrees to remove (esc/none keeps all)"],
-      env: process.env,
-      stdin: Buffer.from(labels.map((label) => `${label}\n`).join("")),
-      stderr: "inherit",
-    });
-    return run.stdout.toString().split("\n").filter((label) => label !== "");
-  } catch {
-    return [];
-  }
-}
-
-function confirm(question: string): boolean {
-  try {
-    const run = Bun.spawnSync({
-      cmd: ["gum", "confirm", question],
-      env: process.env,
-      stdio: ["inherit", "inherit", "inherit"],
-    });
-    return run.exitCode === 0;
-  } catch {
-    return false;
-  }
-}
-
-// A write followed by process.exit delivers only one pipe buffer, and the
-// nightly job reads this through a pipe. The reasons table can outrun that.
-function writeAll(fd: number, text: string): void {
-  const bytes = Buffer.from(text);
-  let written = 0;
-  while (written < bytes.length) written += writeSync(fd, bytes, written);
+// gum draws on the terminal's stderr and answers through its exit status. An
+// absent gum declines, which removes nothing.
+async function confirm(question: string): Promise<boolean> {
+  return (await $`gum confirm ${question} 2> ${Bun.stderr}`.nothrow()).exitCode === 0;
 }
 
 if (import.meta.main) {
-  const outcome = run(process.argv.slice(2));
+  const outcome = await run(process.argv.slice(2));
   if (outcome.stdout !== "") writeAll(1, outcome.stdout);
   if (outcome.stderr !== "") writeAll(2, outcome.stderr);
   process.exit(outcome.status);

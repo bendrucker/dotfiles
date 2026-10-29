@@ -18,11 +18,13 @@
 // Raw mode keeps the fields of both passes intact, so the drift to-do can name
 // each worktree and build a command that jumps straight to it.
 
-import { writeSync } from "node:fs";
+import { $ } from "bun";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { log } from "#gum";
 import { logExcerpt, stripCsi } from "#jobs/excerpt";
 import { reportFailure, reportFindings, reportSuccess } from "#jobs/report";
+import { writeAll } from "#pipe";
 import { FAILED } from "./wt-orphans";
 
 // The leading blank line separates each block from the host/time/revision list
@@ -230,37 +232,10 @@ function dotfilesHome(): string {
   return process.env.DOTFILES_HOME || join(home(), ".dotfiles");
 }
 
-function revisionOf(repo: string): string {
-  try {
-    const rev = Bun.spawnSync({
-      cmd: ["git", "-C", repo, "rev-parse", "--short", "HEAD"],
-      env: process.env,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    if (rev.exitCode !== 0) return "unknown";
-    return rev.stdout.toString().replace(/\n+$/, "") || "unknown";
-  } catch {
-    // Spawning a git that is not installed raises rather than returning a
-    // status, and a machine with no git has no revision to report either way.
-    return "unknown";
-  }
-}
-
-function log(level: "info" | "warn" | "error", message: string): void {
-  Bun.spawnSync({
-    cmd: ["gum", "log", "--level", level, message],
-    env: process.env,
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-}
-
-// stdout is the launchd log, and a write that only takes what the buffer holds
-// loses the rest of a table this long.
-function writeAll(fd: number, bytes: Uint8Array): void {
-  let written = 0;
-  while (written < bytes.length) written += writeSync(fd, bytes, written);
+async function revisionOf(repo: string): Promise<string> {
+  const rev = await $`git -C ${repo} rev-parse --short HEAD < /dev/null`.nothrow().quiet();
+  if (rev.exitCode !== 0) return "unknown";
+  return rev.stdout.toString().replace(/\n+$/, "") || "unknown";
 }
 
 export interface Capture {
@@ -273,47 +248,9 @@ export interface Capture {
 // it arrives. Both streams are pipes: `wt all` redraws a spinner line only onto
 // a terminal, and those escapes would otherwise ride into the to-do.
 export async function runPrune(wtAll: string): Promise<Capture> {
-  const started = startPrune(wtAll);
-  if ("failure" in started) {
-    // Onto stdout as well, because /tmp/worktree-prune.log is where someone
-    // looks first and a status alone leaves it with no stated reason. The
-    // shell's pipeline carried zsh's own complaint into both.
-    writeAll(1, Buffer.from(started.failure.output));
-    return started.failure;
-  }
-  const child = started.child;
-
-  const chunks: Uint8Array[] = [];
-  const drain = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
-    const reader = stream.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) return;
-      chunks.push(value);
-      writeAll(1, value);
-    }
-  };
-
-  await Promise.all([drain(child.stdout), drain(child.stderr)]);
-  return { status: await child.exited, output: Buffer.concat(chunks).toString() };
-}
-
-function startPrune(wtAll: string) {
-  try {
-    return {
-      child: Bun.spawn({
-        cmd: [wtAll, "prune", "--before"],
-        env: process.env,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      }),
-    };
-  } catch (error) {
-    // A wt-all that cannot be run has to reach the to-do as text: a status
-    // alone leaves the nightly failure with no stated reason.
-    return { failure: spawnFailure(wtAll, error) };
-  }
+  // Bun Shell takes one redirect per command, so sh applies both.
+  const prune = await $`/bin/sh -c ${'exec "$@" 2>&1 < /dev/null'} sh ${wtAll} prune --before`.nothrow();
+  return { status: prune.exitCode, output: prune.stdout.toString() };
 }
 
 export interface AuditCapture {
@@ -323,61 +260,30 @@ export interface AuditCapture {
 }
 
 // The streams are kept apart here, unlike the prune's: stdout is parsed as
-// findings and anything the audit said about itself would parse as one.
-export function runAudit(wtAll: string): AuditCapture {
-  try {
-    const audit = Bun.spawnSync({
-      cmd: [wtAll, "prune-audit"],
-      env: { ...process.env, WT_ALL_RAW: "1" },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    return {
-      status: audit.exitCode,
-      stdout: audit.stdout.toString(),
-      stderr: audit.stderr.toString(),
-    };
-  } catch (error) {
-    const failure = spawnFailure(wtAll, error);
-    return { status: failure.status, stdout: "", stderr: failure.output };
-  }
+// findings and anything the pass said about itself would parse as one.
+async function runRaw(wtAll: string, pass: string): Promise<AuditCapture> {
+  const run = await $`${wtAll} ${pass} < /dev/null`
+    .env({ ...process.env, WT_ALL_RAW: "1" })
+    .nothrow()
+    .quiet();
+  return { status: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() };
 }
 
-function spawnFailure(wtAll: string, error: unknown): Capture {
-  const reason = error instanceof Error ? error.message : String(error);
-  return { status: 127, output: `worktree-prune: ${wtAll}: ${reason}\n` };
+export function runAudit(wtAll: string): Promise<AuditCapture> {
+  return runRaw(wtAll, "prune-audit");
 }
 
-// The streams are kept apart for the same reason the audit's are: stdout is
-// parsed as rows and anything the sweep said about itself would parse as one.
-export function runSweep(wtAll: string): AuditCapture {
-  try {
-    const sweep = Bun.spawnSync({
-      cmd: [wtAll, "orphans"],
-      env: { ...process.env, WT_ALL_RAW: "1" },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    return {
-      status: sweep.exitCode,
-      stdout: sweep.stdout.toString(),
-      stderr: sweep.stderr.toString(),
-    };
-  } catch (error) {
-    const failure = spawnFailure(wtAll, error);
-    return { status: failure.status, stdout: "", stderr: failure.output };
-  }
+export function runSweep(wtAll: string): Promise<AuditCapture> {
+  return runRaw(wtAll, "orphans");
 }
 
 const STUCK_VERDICT = "could not be removed";
 
-function sweepOrphans(wtAll: string, revision: string): number {
-  const sweep = runSweep(wtAll);
+async function sweepOrphans(wtAll: string, revision: string): Promise<number> {
+  const sweep = await runSweep(wtAll);
   // Echoed rather than only parsed. These rows are the whole record of what the
   // sweep deleted, and /tmp/worktree-prune.log is where it is kept.
-  if (sweep.stdout !== "") writeAll(1, Buffer.from(stripCsi(sweep.stdout)));
+  if (sweep.stdout !== "") writeAll(1, stripCsi(sweep.stdout));
 
   // A nonzero status means repos failed outright, so their roots were never
   // swept. Reported on its own, because a repo nothing looked at is the blind
@@ -385,8 +291,8 @@ function sweepOrphans(wtAll: string, revision: string): number {
   // repos that did answer still emitted their rows, so the run carries on.
   let failed = 0;
   if (sweep.status !== 0) {
-    log("error", "orphan sweep failed");
-    failed = reportFailure({
+    await log("error", "orphan sweep failed");
+    failed = await reportFailure({
       job: "wt-orphan-sweep-failed",
       title: "Orphan sweep could not run",
       command: "wt all orphans",
@@ -404,11 +310,11 @@ function sweepOrphans(wtAll: string, revision: string): number {
     .map(parseOrphan)
     .filter((orphan): orphan is Orphan => orphan !== undefined);
   const stuck = orphans.filter((orphan) => orphan.verdict === FAILED);
-  if (stuck.length > 0) log("warn", `${stuck.length} orphaned worktrees could not be removed`);
+  if (stuck.length > 0) await log("warn", `${stuck.length} orphaned worktrees could not be removed`);
 
   // Latched one path at a time, so a husk nobody has cleared by hand stays quiet
   // while the rest of the set churns around it.
-  const filed = reportFindings({
+  const filed = await reportFindings({
     job: "wt-orphan-sweep",
     title: "Orphaned worktree directories could not be removed",
     command: stuck.map((orphan) => `rm -rf ${quote(orphan.path)}`).join("\n"),
@@ -425,15 +331,15 @@ function sweepOrphans(wtAll: string, revision: string): number {
   return refused(failed, filed);
 }
 
-function reportPrune(prune: Capture, revision: string): number {
+async function reportPrune(prune: Capture, revision: string): Promise<number> {
   if (prune.status === 0) {
     reportSuccess("worktree-prune");
-    log("info", "Worktree prune completed successfully");
+    await log("info", "Worktree prune completed successfully");
     return 0;
   }
 
-  log("error", "worktree prune failed");
-  return reportFailure({
+  await log("error", "worktree prune failed");
+  return await reportFailure({
     job: "worktree-prune",
     title: "Nightly worktree prune failed",
     command: "wt all prune --before",
@@ -447,14 +353,14 @@ function reportPrune(prune: Capture, revision: string): number {
 
 export async function main(): Promise<number> {
   const wtAll = join(dotfilesHome(), "bin", "wt-all");
-  const revision = revisionOf(dotfilesHome());
+  const revision = await revisionOf(dotfilesHome());
 
-  log("info", "Running worktree prune");
+  await log("info", "Running worktree prune");
   const prune = await runPrune(wtAll);
-  const pruned = reportPrune(prune, revision);
+  const pruned = await reportPrune(prune, revision);
 
-  log("info", "Sweeping orphaned worktree directories");
-  const swept = sweepOrphans(wtAll, revision);
+  await log("info", "Sweeping orphaned worktree directories");
+  const swept = await sweepOrphans(wtAll, revision);
 
   if (prune.status !== 0) {
     // The audit re-derives the survivor set this prune should have produced, so
@@ -462,8 +368,8 @@ export async function main(): Promise<number> {
     return pruned !== 0 ? pruned : 1;
   }
 
-  log("info", "Auditing for prune drift");
-  const audit = runAudit(wtAll);
+  await log("info", "Auditing for prune drift");
+  const audit = await runAudit(wtAll);
   const rows = auditRows(audit.stdout);
 
   // A nonzero status means repos failed the audit outright, so their worktrees
@@ -473,8 +379,8 @@ export async function main(): Promise<number> {
   // carries on into the drift analysis below.
   let audited = 0;
   if (audit.status !== 0) {
-    log("error", "prune audit failed");
-    audited = reportFailure({
+    await log("error", "prune audit failed");
+    audited = await reportFailure({
       job: "wt-prune-audit-failed",
       title: "Worktree prune audit could not run",
       command: "wt all prune-audit",
@@ -490,11 +396,11 @@ export async function main(): Promise<number> {
 
   if (rows.length === 0) {
     reportSuccess("wt-prune-drift");
-    log("info", "No prune drift");
+    await log("info", "No prune drift");
     return refused(audited, swept);
   }
 
-  log("warn", "prune drift detected");
+  await log("warn", "prune drift detected");
 
   const findings = rows
     .map(parseFinding)
@@ -504,8 +410,8 @@ export async function main(): Promise<number> {
     // The audit wrote something no field parser recognized. Filing a "leaked 0"
     // to-do would latch the drift job and suppress the next real drift, so
     // surface the unparsed text itself and leave that latch alone.
-    log("error", "prune audit output could not be parsed");
-    const filed = reportFailure({
+    await log("error", "prune audit output could not be parsed");
+    const filed = await reportFailure({
       job: "wt-prune-audit-failed",
       title: "Worktree prune audit output could not be parsed",
       command: "WT_ALL_RAW=1 wt all prune-audit",
@@ -523,7 +429,7 @@ export async function main(): Promise<number> {
   // what actually happened rather than worktrunk's default.
   const minAge = process.env.WT_PRUNE_MIN_AGE || "1d";
 
-  const filed = reportFailure({
+  const filed = await reportFailure({
     job: "wt-prune-drift",
     title: driftTitle(findings.length),
     command: investigation(findings, base, minAge),

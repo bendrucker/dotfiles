@@ -2,6 +2,7 @@
 // marketplace says it comes from. bin/claude-sync prunes and updates the
 // plugins.
 
+import { $ } from "bun";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -54,10 +55,10 @@ export function claudePluginsDir(): string {
   return join(home(), ".claude", "plugins");
 }
 
-export function pluginInventory(): Inventory {
+export async function pluginInventory(): Promise<Inventory> {
   let rows: InstalledPlugin[];
   try {
-    rows = listedPlugins().concat(enabledPlugins());
+    rows = (await listedPlugins()).concat(enabledPlugins());
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
@@ -68,8 +69,8 @@ interface ListedPlugin extends InstalledPlugin {
   scope: string;
 }
 
-function listedRows(): ListedPlugin[] {
-  const run = runList();
+async function listedRows(): Promise<ListedPlugin[]> {
+  const run = await runList();
   if (run.exitCode !== 0) throw new Error("claude plugin list failed");
 
   const captured = run.stdout.toString().replace(TRAILING_NEWLINES, "");
@@ -95,30 +96,21 @@ function listedRows(): ListedPlugin[] {
 
 // `claude plugin update` works at user scope, so a project's plugin is not this
 // job's to update.
-function listedPlugins(): InstalledPlugin[] {
-  return listedRows()
+async function listedPlugins(): Promise<InstalledPlugin[]> {
+  return (await listedRows())
     .filter((row) => row.scope === "user")
     .map(({ id, installPath }) => ({ id, installPath }));
 }
 
-function runList() {
-  try {
-    return Bun.spawnSync({
-      cmd: ["claude", "plugin", "list", "--json"],
-      // Handed over rather than inherited, so the CLI is resolved against $PATH
-      // as it stands at the call. An inherited environment resolves against the
-      // $PATH the process started with, and a spec that shadows the CLI reaches
-      // the real one.
-      env: process.env,
-      // A prompt-happy CLI handed the caller's stdin would swallow whatever the
-      // caller is iterating. Its own complaints say nothing the failure this
-      // raises does not.
-      stdin: "ignore",
-      stderr: "ignore",
-    });
-  } catch (error) {
-    throw new Error(`claude plugin list could not be run: ${describe(error)}`);
+async function runList() {
+  // Bun Shell reports a missing binary as an ordinary exit 1.
+  if (Bun.which("claude", { PATH: process.env.PATH }) === null) {
+    throw new Error("claude plugin list could not be run: claude is not on PATH");
   }
+  // A prompt-happy CLI handed the caller's stdin would swallow whatever the
+  // caller is iterating. Its own complaints say nothing the failure this
+  // raises does not.
+  return await $`cat /dev/null | claude plugin list --json 2>/dev/null`.nothrow().quiet();
 }
 
 // The absent case is the caller's to interpret. Enabling nothing and declaring
@@ -186,10 +178,10 @@ export function declaredPlugins(): Declaration {
 // declared-but-never-installed rows pluginInventory folds in. Those rows carry
 // no payload, so a caller deciding what to uninstall has nothing to do with
 // them.
-export function installedPlugins(): Inventory {
+export async function installedPlugins(): Promise<Inventory> {
   let rows: InstalledPlugin[];
   try {
-    rows = listedPlugins();
+    rows = await listedPlugins();
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
@@ -330,10 +322,10 @@ function marketplaceManifest(marketplace: string): string {
 
 // At every scope: a project's plugin gets no user-scope key, so a prune reading
 // the declaration alone would remove its marketplace out from under it.
-export function pluginMarketplaces(): MarketplaceUse {
+export async function pluginMarketplaces(): Promise<MarketplaceUse> {
   let rows: ListedPlugin[];
   try {
-    rows = listedRows();
+    rows = await listedRows();
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }

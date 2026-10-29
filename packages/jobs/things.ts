@@ -10,10 +10,12 @@
 // nobody is there to make. `open` and a file in the user's own group container
 // need no grant.
 
+import { $ } from "bun";
 import { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { writeAll } from "#pipe";
 
 // Things stores 10,000 characters of notes and silently drops the rest from the
 // tail, which is the wrong end to lose when a job fails at the end of its log.
@@ -146,7 +148,7 @@ export interface NewTodo {
 
 // `open`'s own exit status, so a refused filing takes the run down with the
 // status that says why rather than the 1 a reported failure already carries.
-export function addTodo(todo: NewTodo): number {
+export function addTodo(todo: NewTodo): Promise<number> {
   return openUrl(thingsUrl("add", { ...todo }));
 }
 
@@ -159,8 +161,8 @@ export interface TodoEdit {
 
 // `update` is the one Things command needing the token from the app's settings,
 // which lives in the login keychain so a launchd job reads it without a prompt.
-export function editTodo(edit: TodoEdit): boolean {
-  const token = authToken();
+export async function editTodo(edit: TodoEdit): Promise<boolean> {
+  const token = await authToken();
   if (!token) return false;
 
   const url = thingsUrl("update", {
@@ -170,41 +172,27 @@ export function editTodo(edit: TodoEdit): boolean {
     title: edit.title ?? "",
     when: edit.when ?? "",
   });
-  return openUrl(url) === 0;
+  return (await openUrl(url)) === 0;
 }
 
-export function authToken(): string | undefined {
-  const security = Bun.which("security", { PATH: process.env.PATH });
-  if (!security) return undefined;
-
-  const child = Bun.spawnSync({
-    cmd: [security, "find-generic-password", "-a", user(), "-s", KEYCHAIN_SERVICE, "-w"],
-    env: process.env,
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  if (child.exitCode !== 0) return undefined;
-
-  const token = child.stdout.toString().trim();
-  return token === "" ? undefined : token;
+export async function authToken(): Promise<string | undefined> {
+  const found = await $`security find-generic-password -a ${user()} -s ${KEYCHAIN_SERVICE} -w < /dev/null`.nothrow().quiet();
+  const token = found.exitCode === 0 ? found.stdout.toString().trim() : "";
+  return token ? token : undefined;
 }
 
 function user(): string {
   return process.env.USER || "";
 }
 
-// The environment goes across explicitly because Bun otherwise resolves a bare
-// command name against the PATH it captured at startup, and a caller that
-// adjusted PATH afterwards would reach a different binary than it meant to.
-function openUrl(url: string): number {
-  const open = Bun.which("open", { PATH: process.env.PATH });
-  if (!open) return NOT_FOUND;
+// `open`'s own status, which is 127 where it is not installed. Off macOS that is
+// every filing, so the reason it could not start is not repeated each time.
+async function openUrl(url: string): Promise<number> {
+  if (!Bun.which("open", { PATH: process.env.PATH })) return NOT_FOUND;
 
-  const child = Bun.spawnSync({
-    cmd: [open, "-g", url],
-    env: process.env,
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-  return child.exitCode;
+  const opened = await $`open -g ${url} < /dev/null`.nothrow().quiet();
+  writeAll(2, opened.stderr.toString());
+  return opened.exitCode;
 }
 
 // What a shell exits with for a command it could not find.

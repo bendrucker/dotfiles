@@ -14,9 +14,12 @@
 // agent's own summary text. Removal is `claude rm`, which owns the worktree and
 // refuses when there are unpushed commits.
 
-import { readFileSync, realpathSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { $ } from "bun";
+import { choose, log } from "#gum";
+import { writeAll } from "#pipe";
 
 const USAGE = [
   "Usage: claude-prune-agents [-f|--force] [-n|--dry-run]",
@@ -260,25 +263,11 @@ interface Capture {
   stdout: string;
 }
 
-// The environment goes across explicitly because Bun otherwise resolves a bare
-// command name against the PATH it captured at startup, so a caller that
-// adjusted PATH would reach a different binary than it meant to.
-function capture(cmd: string[], cwd?: string): Capture {
-  try {
-    const child = Bun.spawnSync({
-      cmd,
-      env: process.env,
-      cwd,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    return { status: child.exitCode, stdout: child.stdout.toString() };
-  } catch {
-    // Bun raises where the shell exited 127. A command that could not be run
-    // resolved nothing, which is the failure every caller here already handles.
-    return { status: 127, stdout: "" };
-  }
+// A command that could not be run answers nonzero with no output, which
+// resolved nothing, the failure every caller here already handles.
+async function lookup(cmd: string[], cwd?: string): Promise<Capture> {
+  const child = await $`${cmd} < /dev/null`.cwd(cwd ?? process.cwd()).nothrow().quiet();
+  return { status: child.exitCode, stdout: child.stdout.toString() };
 }
 
 function lines(text: string): string[] {
@@ -295,9 +284,9 @@ function isDirectory(path: string): boolean {
 
 export interface Forge {
   // The <owner>/<repo> slug for a repo root, empty when there is none.
-  slug(root: string): string;
-  branchPrs(slug: string, branch: string): Capture;
-  refState(slug: string, number: string): string;
+  slug(root: string): Promise<string>;
+  branchPrs(slug: string, branch: string): Promise<Capture>;
+  refState(slug: string, number: string): Promise<string>;
 }
 
 // Slug lookups are memoized for the life of one run, negative results included:
@@ -306,11 +295,11 @@ export interface Forge {
 export function ghForge(): Forge {
   const slugs = new Map<string, string>();
   return {
-    slug(root: string): string {
+    async slug(root: string): Promise<string> {
       if (root === "" || !isDirectory(root)) return "";
       const cached = slugs.get(root);
       if (cached !== undefined) return cached;
-      const view = capture(
+      const view = await lookup(
         ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
         root,
       );
@@ -318,8 +307,8 @@ export function ghForge(): Forge {
       slugs.set(root, slug);
       return slug;
     },
-    branchPrs(slug: string, branch: string): Capture {
-      return capture([
+    branchPrs(slug: string, branch: string): Promise<Capture> {
+      return lookup([
         "gh",
         "pr",
         "list",
@@ -335,8 +324,8 @@ export function ghForge(): Forge {
         '.[] | "\\(.number)\\t\\(.state)"',
       ]);
     },
-    refState(slug: string, number: string): string {
-      const view = capture([
+    async refState(slug: string, number: string): Promise<string> {
+      const view = await lookup([
         "gh", "pr", "view", number, "--repo", slug, "--json", "state", "--jq", ".state",
       ]);
       return view.stdout.trim();
@@ -347,7 +336,7 @@ export function ghForge(): Forge {
 // Every PR an agent produced, in discovery order: the branch query first, then
 // the summary references. Refs that fail to resolve (issue numbers, another
 // repo's numbering) are dropped rather than treated as blocking.
-export function agentPrs(forge: Forge, slug: string, branch: string, summary: string): Pr[] {
+export async function agentPrs(forge: Forge, slug: string, branch: string, summary: string): Promise<Pr[]> {
   const seen = new Set<string>();
   const prs: Pr[] = [];
 
@@ -355,7 +344,7 @@ export function agentPrs(forge: Forge, slug: string, branch: string, summary: st
     // The query's exit status is what separates a failed lookup from a branch
     // that genuinely has no PR. Both are empty output, and treating the failure
     // as "no PRs" would hide an open PR and let the agent classify as stale.
-    const listing = forge.branchPrs(slug, branch);
+    const listing = await forge.branchPrs(slug, branch);
     if (listing.status !== 0) {
       prs.push({ number: "-", state: "ERROR" });
     } else {
@@ -372,7 +361,7 @@ export function agentPrs(forge: Forge, slug: string, branch: string, summary: st
     const key = `${ref.slug}#${ref.number}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const state = forge.refState(ref.slug, ref.number);
+    const state = await forge.refState(ref.slug, ref.number);
     if (state === "") continue;
     prs.push({ number: ref.number, state });
   }
@@ -393,7 +382,7 @@ function readAgentState(id: string): AgentState {
   }
 }
 
-export function classifyCandidate(forge: Forge, agent: Candidate, now: number): Row {
+export async function classifyCandidate(forge: Forge, agent: Candidate, now: number): Promise<Row> {
   const state = readAgentState(agent.id);
 
   // The worktree path is the branch signal, not cwd: a finished agent reports
@@ -402,7 +391,7 @@ export function classifyCandidate(forge: Forge, agent: Candidate, now: number): 
   const root = worktree ? worktree.root : agent.cwd;
   const branch = worktree ? worktree.branch : "";
 
-  const prs = agentPrs(forge, forge.slug(root), branch, state.summary);
+  const prs = await agentPrs(forge, await forge.slug(root), branch, state.summary);
   const decision = classifyAgent(prs.map((pr) => pr.state));
 
   return {
@@ -481,11 +470,11 @@ function startSpinner(title: string, sentinel: string): Promise<number> | undefi
   }
 }
 
-async function withSpinner<T>(title: string, scan: () => T): Promise<T> {
+async function withSpinner<T>(title: string, scan: () => Promise<T>): Promise<T> {
   const sentinel = join(tmpdir(), `claude-prune-agents.${process.pid}.spin`);
   const spinner = startSpinner(title, sentinel);
   try {
-    return scan();
+    return await scan();
   } finally {
     // Progress is the only thing at stake, so a spinner that never started
     // leaves the scan to run without one.
@@ -495,28 +484,16 @@ async function withSpinner<T>(title: string, scan: () => T): Promise<T> {
 }
 
 // The stale set as a preselected checklist: enter accepts the batch, individual
-// rows can be deselected, and esc removes nothing. gum's exit status is not
-// checked, so an escape and a gum that could not run both come back as no
-// selection.
-function chooseStale(rows: Row[]): string[] {
+// rows can be deselected, and esc removes nothing. An escape and a gum that
+// could not run both come back as no selection.
+async function chooseStale(rows: Row[]): Promise<string[]> {
   const labels = columnize(rows.map((row) => [row.id, row.name, row.age, row.prs]));
   const idByLabel = new Map(labels.map((label, index) => [label, rows[index].id]));
 
-  let chosen: string;
-  try {
-    chosen = Bun.spawnSync({
-      cmd: ["gum", "choose", "--no-limit", "--selected=*", "--header", "Select agents to remove"],
-      env: process.env,
-      stdin: Buffer.from(`${labels.join("\n")}\n`),
-      stdout: "pipe",
-      stderr: "inherit",
-    }).stdout.toString();
-  } catch {
-    return [];
-  }
+  const chosen = await choose(labels, { limit: "none", selected: "*", header: "Select agents to remove" });
 
   const ids: string[] = [];
-  for (const line of lines(chosen)) {
+  for (const line of chosen) {
     const id = idByLabel.get(line);
     if (id !== undefined) ids.push(id);
   }
@@ -532,21 +509,12 @@ interface Removal {
 // `claude rm` owns the worktree and refuses when there are unpushed commits, so
 // it is the guard against destroying work. Its stdin is closed so it cannot
 // consume the caller's input or block on a prompt.
-function removeAgents(ids: string[]): Removal {
+async function removeAgents(ids: string[]): Promise<Removal> {
   const removal: Removal = { removed: 0, failed: 0, warnings: [] };
-  const gum = Bun.which("gum", { PATH: process.env.PATH });
+  const gum = haveGum();
 
   for (const id of ids) {
-    let status: number;
-    try {
-      status = Bun.spawnSync({
-        cmd: ["claude", "rm", id],
-        env: process.env,
-        stdio: ["ignore", "ignore", "ignore"],
-      }).exitCode;
-    } catch {
-      status = 127;
-    }
+    const { exitCode: status } = await $`claude rm ${id} < /dev/null`.nothrow().quiet();
     if (status === 0) {
       removal.removed += 1;
       continue;
@@ -557,15 +525,8 @@ function removeAgents(ids: string[]): Removal {
     // The warning belongs on stderr whether or not gum is installed. Calling gum
     // unconditionally answers a failed removal with `command not found` on a
     // machine that has none.
-    if (gum) {
-      Bun.spawnSync({
-        cmd: [gum, "log", "--level", "warn", warning],
-        env: process.env,
-        stdio: ["ignore", "ignore", "inherit"],
-      });
-    } else {
-      removal.warnings.push(warning);
-    }
+    if (gum) await log("warn", warning);
+    else removal.warnings.push(warning);
   }
   return removal;
 }
@@ -619,7 +580,7 @@ export async function run(
   }
   const { dryRun, force } = parsed.flags;
 
-  const listing = capture(["claude", "agents", "--json", "--all"]).stdout.replace(/\n+$/, "");
+  const listing = (await lookup(["claude", "agents", "--json", "--all"])).stdout.replace(/\n+$/, "");
   // A claude that is missing, broken, or unauthenticated produces empty output,
   // which is indistinguishable here from a machine with no agents.
   if (listing === "" || listing === "[]") return { status: 0, stdout: "no agents\n", stderr: "" };
@@ -636,11 +597,15 @@ export async function run(
 
   const forge = ghForge();
   const now = Math.floor(Date.now() / 1000);
-  const scan = () => candidates.map((agent) => classifyCandidate(forge, agent, now));
+  const scan = async () => {
+    const scanned: Row[] = [];
+    for (const agent of candidates) scanned.push(await classifyCandidate(forge, agent, now));
+    return scanned;
+  };
   const rows =
     terminal && haveGum()
       ? await withSpinner(`Resolving PRs for ${candidates.length} agents`, scan)
-      : scan();
+      : await scan();
 
   const stale = rows.filter((row) => row.action === "stale");
   const kept = rows.filter((row) => row.action === "keep").length;
@@ -673,10 +638,10 @@ export async function run(
           "claude-prune-agents: interactive selection needs a terminal; use --force or --dry-run\n",
       };
     }
-    removeIds = chooseStale(stale);
+    removeIds = await chooseStale(stale);
   }
 
-  const removal = removeAgents(removeIds);
+  const removal = await removeAgents(removeIds);
 
   stdout += `${
     dryRun
@@ -689,27 +654,6 @@ export async function run(
     stdout,
     stderr: removal.warnings.map((warning) => `claude-prune-agents: ${warning}\n`).join(""),
   };
-}
-
-// A decision table is unbounded in length, and through a real pipeline a write
-// takes only what fits in the buffer while process.exit discards what is queued
-// behind it.
-function writeAll(fd: number, text: string): void {
-  const bytes = Buffer.from(text);
-  let written = 0;
-  try {
-    while (written < bytes.length) written += writeSync(fd, bytes, written);
-  } catch (error) {
-    // A reader that stops early, as `| head` does, closes the pipe under us.
-    // The shell died on SIGPIPE and said nothing; raising here would print a
-    // stack trace where it printed nothing and exit 1 where it exited 0.
-    if (isBrokenPipe(error)) return;
-    throw error;
-  }
-}
-
-function isBrokenPipe(error: unknown): boolean {
-  return isRecord(error) && (error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED");
 }
 
 if (import.meta.main) {

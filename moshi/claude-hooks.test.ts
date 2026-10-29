@@ -1,31 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { run, sandbox, stubGum, type Sandbox } from "#harness";
-import type { Output } from "#jobs/output";
-import { installClaudeHooks } from "./claude-hooks";
+import { join } from "node:path";
+import { sandbox, stubGum, type Sandbox } from "#harness";
+import { call } from "#harness/call";
 
 let box: Sandbox;
-let logged: string[];
-
-const out: Output = {
-  write(_fd, text) {
-    logged.push(text);
-  },
-  run(cmd, options) {
-    const result = run(cmd, { env: options?.env, cwd: options?.cwd });
-    logged.push(result.stdout, result.stderr);
-    return result.status;
-  },
-  read(cmd, options) {
-    const result = run(cmd, { env: options?.env, cwd: options?.cwd });
-    logged.push(result.stderr);
-    return { status: result.status, stdout: result.stdout };
-  },
-};
 
 beforeEach(() => {
   box = sandbox("moshi-claude-hooks");
   stubGum(box);
-  logged = [];
 });
 
 afterEach(() => {
@@ -36,24 +18,35 @@ function env(): Record<string, string | undefined> {
   return { ...process.env, PATH: `${box.bin}:/usr/bin:/bin` };
 }
 
+// Called in a child bun, since what Bun Shell writes never reaches this process's spies.
+function install() {
+  return call<boolean>(join(import.meta.dir, "claude-hooks.ts"), "installClaudeHooks", [env()], env());
+}
+
 describe("installClaudeHooks", () => {
-  test("installs the claude target", () => {
+  test("installs the claude target", async () => {
     box.stub("moshi-hook", `printf '%s\\n' "$*" >>"${box.path("calls")}"`);
 
-    expect(installClaudeHooks(out, env())).toBe(true);
+    const { value, output } = await install();
+
+    expect(value).toBe(true);
     expect(box.read("calls")).toBe("install --target claude\n");
-    expect(logged.join("")).toContain("Installing moshi claude hooks");
+    expect(output).toContain("Installing moshi claude hooks");
   });
 
-  test("reports a failed install", () => {
+  test("reports a failed install", async () => {
     box.stub("moshi-hook", "exit 1");
 
-    expect(installClaudeHooks(out, env())).toBe(false);
-    expect(logged.join("")).toContain("moshi-hook install failed");
+    const { value, output } = await install();
+
+    expect(value).toBe(false);
+    expect(output).toContain("moshi-hook install failed");
   });
 
-  test("skips when moshi-hook is not on PATH", () => {
-    expect(installClaudeHooks(out, env())).toBe(true);
-    expect(logged.join("")).toBe("");
+  test("skips when moshi-hook is not on PATH", async () => {
+    const { value, output } = await install();
+
+    expect(value).toBe(true);
+    expect(output).toBe("");
   });
 });

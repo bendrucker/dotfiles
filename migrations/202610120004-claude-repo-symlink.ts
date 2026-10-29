@@ -10,9 +10,9 @@ import { type Context, linkTarget, removeTree } from "#migrations/migration";
 
 export const platform = "darwin";
 
-export function up(context: Context): void {
+export async function up(context: Context): Promise<void> {
   const repo = join(context.home, ".claude-repo");
   if (linkTarget(repo) === undefined || existsSync(join(repo, ".git"))) return;
 
-  removeTree(context, repo);
+  await removeTree(context, repo);
 }

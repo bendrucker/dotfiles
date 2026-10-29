@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   lstatSync,
   mkdirSync,
@@ -12,29 +12,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ignoresModes, writeStub } from "#harness";
 import { fixture } from "#harness/fixture";
-import type { Capture, SpawnOptions } from "#jobs/output";
+import { call } from "#harness/call";
 import {
   claudeRepoHome,
   failureFields,
   failureFingerprint,
-  installAgentHooks,
-  installDependencies,
-  main,
-  pruneMarketplaces,
-  prunePlugins,
   repoRevision,
-  revertCosmeticJsonChanges,
-  sync,
-  syncRepo,
-  updateMarketplaces,
-  updatePlugins,
   versionMeta,
 } from "./claude-sync";
 
 let sandbox: string;
 let stubs: string;
 let repo: string;
-let out: Capture;
+// What the last syncCall wrote, both streams in the order they arrived.
+let output = "";
 
 const environment = {
   HOME: process.env.HOME,
@@ -45,63 +36,12 @@ const environment = {
 };
 
 // Every branch under test is a sequence of real git and CLI calls, so the
-// children run for real. What they write is kept rather than let through to the
-// test runner's own streams, which is also how an example reads the log the job
+// children run for real, in a child bun whose two streams are the log the job
 // produced.
-function recording(): Capture {
-  const chunks: string[] = [];
-  const keep = (text: string): void => {
-    if (text !== "") chunks.push(text);
-  };
-
-  const spawn = (
-    cmd: string[],
-    options?: SpawnOptions,
-  ): { status: number; stdout: string; stderr: string } => {
-    try {
-      const run = Bun.spawnSync({
-        cmd,
-        cwd: options?.cwd,
-        env: options?.env ?? process.env,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      return {
-        status: run.exitCode,
-        stdout: run.stdout.toString(),
-        stderr: run.stderr.toString(),
-      };
-    } catch {
-      return { status: 127, stdout: "", stderr: "" };
-    }
-  };
-
-  return {
-    write(_fd, text) {
-      keep(text);
-    },
-    run(cmd, options) {
-      // Answer `gum log` in-process. The job logs a few lines per step, and a
-      // spawn for each is most of a test.
-      if (cmd[0] === "gum" && cmd[1] === "log") {
-        keep(`${cmd.at(-1)}\n`);
-        return 0;
-      }
-      const result = spawn(cmd, options);
-      keep(result.stdout);
-      keep(result.stderr);
-      return result.status;
-    },
-    read(cmd, options) {
-      const result = spawn(cmd, options);
-      keep(result.stderr);
-      return { status: result.status, stdout: result.stdout };
-    },
-    captured() {
-      return chunks.join("");
-    },
-  };
+async function syncCall<T>(name: string, ...args: unknown[]): Promise<T> {
+  const called = await call<T>(join(import.meta.dir, "claude-sync"), name, args);
+  output = called.output;
+  return called.value;
 }
 
 function readLog(name: string): string {
@@ -353,9 +293,6 @@ function rexStub(hookLog: string): string {
 }
 
 beforeEach(() => {
-  // A refused plugin update pauses before its retry, and the pause is real time
-  // with nothing to assert about it.
-  spyOn(Bun, "sleepSync").mockImplementation(() => {});
   sandbox = mkdtempSync(join(tmpdir(), "claude-sync-"));
   stubs = join(sandbox, "stub");
   repo = join(sandbox, "repo");
@@ -411,6 +348,7 @@ beforeEach(() => {
       `printf '%s %s\\n' "herdr" "$*" >>"${hookLog}"`,
       `if [ -n "$HERDR_REPLACES" ]; then ${replaceLink("herdr")}; else printf '{"herdr":1}\\n' >"$AGENT_HOOK_REPO/user/settings.json"; fi`,
       `[ -n "$HERDR_LOCKS" ] && chmod 0444 "$AGENT_HOOK_REPO/user/settings.json"`,
+      '[ -n "$HERDR_STDERR" ] && cat "$HERDR_STDERR" >&2',
       '[ -n "$HERDR_FAILS" ] && exit 1',
       "exit 0",
     ].join("\n"),
@@ -437,6 +375,7 @@ beforeEach(() => {
   process.env.CLAUDE_DRAINS_STDIN = "";
   process.env.AGENT_HOOK_REPO = repo;
   process.env.HERDR_FAILS = "";
+  process.env.HERDR_STDERR = "";
   process.env.HERDR_LOCKS = "";
   process.env.HERDR_REPLACES = "";
   process.env.REX_FAILS = "";
@@ -455,11 +394,9 @@ beforeEach(() => {
     throw new Error(`claude resolved to ${probe.stdout.toString()}`);
   }
 
-  out = recording();
 });
 
 afterEach(() => {
-  mock.restore();
   process.env.HOME = environment.HOME;
   process.env.PATH = environment.PATH;
   if (environment.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
@@ -477,6 +414,7 @@ afterEach(() => {
   delete process.env.CLAUDE_PRUNE_SKIPS;
   delete process.env.AGENT_HOOK_REPO;
   delete process.env.HERDR_FAILS;
+  delete process.env.HERDR_STDERR;
   delete process.env.HERDR_LOCKS;
   delete process.env.HERDR_REPLACES;
   delete process.env.REX_FAILS;
@@ -485,34 +423,34 @@ afterEach(() => {
 });
 
 describe("prunePlugins", () => {
-  test("uninstalls a payload settings.json no longer names", () => {
+  test("uninstalls a payload settings.json no longer names", async () => {
     writePluginList([
       { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
       { id: "stray@first", installPath: payload("first", "stray", "1.0.0") },
     ]);
     writeSettings({ "alpha@first": true });
 
-    expect(prunePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("prunePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toContain("uninstall stray@first");
     expect(readLog("plugin.log")).not.toContain("uninstall alpha@first");
   });
 
   // The fixture records `disabled@first` as an explicit false, which is a plugin
   // installed and turned off rather than one nothing names.
-  test("keeps a plugin declared with an explicit false", () => {
+  test("keeps a plugin declared with an explicit false", async () => {
     writePluginList([
       { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
       { id: "disabled@first", installPath: payload("first", "disabled", "1.0.0") },
     ]);
 
-    expect(prunePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("prunePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toBe("prune\n");
   });
 
   // Claude Code installs a dependency without writing a settings.json key for
   // it, so the declaration alone would take it out from under the plugin that
   // needs it every night.
-  test("leaves a dependency to the CLI's own prune", () => {
+  test("leaves a dependency to the CLI's own prune", async () => {
     writePluginList([
       { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
       { id: "gamma@first", installPath: payload("first", "gamma", "1.0.0") },
@@ -520,49 +458,49 @@ describe("prunePlugins", () => {
     writeSettings({ "alpha@first": true });
     writeInstalled(["gamma@first"]);
 
-    expect(prunePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("prunePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toBe("prune\n");
   });
 
   // The prune follows the uninstalls, so a dependency only the removed plugin
   // named is no longer needed by the time it looks.
-  test("prunes dependencies after uninstalling", () => {
+  test("prunes dependencies after uninstalling", async () => {
     writePluginList([{ id: "stray@first", installPath: payload("first", "stray", "1.0.0") }]);
     writeSettings({ "alpha@first": true });
 
-    expect(prunePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("prunePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toBe("uninstall stray@first\nprune\n");
   });
 
-  test("fails when the CLI declines to prune", () => {
+  test("fails when the CLI declines to prune", async () => {
     writeSettings({ "alpha@first": true });
     process.env.CLAUDE_PRUNE_SKIPS = "1";
 
-    expect(prunePlugins(out, process.env)).toBe(false);
-    expect(out.captured()).toContain("Skipped");
+    expect(await syncCall("prunePlugins", process.env)).toBe(false);
+    expect(output).toContain("Skipped");
   });
 
   // A declaration that could not be read accounts for nothing, and acting on it
   // would uninstall every plugin on the machine.
-  test("uninstalls nothing when the declaration cannot be read", () => {
+  test("uninstalls nothing when the declaration cannot be read", async () => {
     writeFileSync(join(sandbox, ".claude", "settings.json"), "not json\n");
 
-    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(await syncCall("prunePlugins", process.env)).toBe(false);
     expect(readLog("plugin.log")).toBe("");
-    expect(out.captured()).toContain("claude-plugins:");
+    expect(output).toContain("claude-plugins:");
   });
 
   // The shape a broken symlink into the config repo leaves behind. An absent
   // file is not a declaration that nothing belongs here.
-  test("uninstalls nothing when settings.json is not there", () => {
+  test("uninstalls nothing when settings.json is not there", async () => {
     rmSync(join(sandbox, ".claude", "settings.json"), { force: true });
 
-    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(await syncCall("prunePlugins", process.env)).toBe(false);
     expect(readLog("plugin.log")).toBe("");
   });
 
   // Read as empty, every dependency would look undeclared and go.
-  test("uninstalls nothing when the install record cannot be read", () => {
+  test("uninstalls nothing when the install record cannot be read", async () => {
     writePluginList([
       { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
       { id: "stray@first", installPath: payload("first", "stray", "1.0.0") },
@@ -570,133 +508,133 @@ describe("prunePlugins", () => {
     writeSettings({ "alpha@first": true });
     writeFileSync(join(sandbox, ".claude", "plugins", "installed_plugins.json"), "not json\n");
 
-    expect(prunePlugins(out, process.env)).toBe(false);
+    expect(await syncCall("prunePlugins", process.env)).toBe(false);
     expect(readLog("plugin.log")).toBe("");
   });
 
   // Pruning against a partial inventory reports success over payloads it never
   // saw, which is the silence the whole job exists to break.
-  test("fails when the installed plugins cannot be enumerated", () => {
+  test("fails when the installed plugins cannot be enumerated", async () => {
     writeFileSync(join(sandbox, "plugin-list.json"), "not json\n");
 
-    expect(prunePlugins(out, process.env)).toBe(false);
-    expect(out.captured()).toContain("claude-plugins:");
+    expect(await syncCall("prunePlugins", process.env)).toBe(false);
+    expect(output).toContain("claude-plugins:");
   });
 
-  test("fails when an uninstall fails", () => {
+  test("fails when an uninstall fails", async () => {
     writePluginList([{ id: "stray@first", installPath: payload("first", "stray", "1.0.0") }]);
     writeSettings({ "alpha@first": true });
     process.env.CLAUDE_UNINSTALL_FAILS = "stray@first";
 
-    expect(prunePlugins(out, process.env)).toBe(false);
-    expect(out.captured()).toContain("Failed to uninstall stray@first");
+    expect(await syncCall("prunePlugins", process.env)).toBe(false);
+    expect(output).toContain("Failed to uninstall stray@first");
   });
 
   // A plugin declared but never installed has no payload, so there is nothing
   // for the prune to reach and the update pass installs it instead.
-  test("leaves a declared plugin that is not installed alone", () => {
+  test("leaves a declared plugin that is not installed alone", async () => {
     writePluginList([{ id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") }]);
     writeSettings({ "alpha@first": true, "gamma@first": true });
 
-    expect(prunePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("prunePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toBe("prune\n");
   });
 });
 
 describe("pruneMarketplaces", () => {
-  test("removes a registration settings.json no longer names", () => {
+  test("removes a registration settings.json no longer names", async () => {
     writeKnownMarketplaces(["first", "third", "stray"]);
 
-    expect(pruneMarketplaces(out, process.env)).toBe(true);
+    expect(await syncCall("pruneMarketplaces", process.env)).toBe(true);
     expect(readLog("plugin.log")).toContain("marketplace remove stray");
     expect(readLog("plugin.log")).not.toContain("marketplace remove first");
   });
 
   // A project's plugins get no user-scope key.
-  test("keeps a marketplace a plugin outside the user scope came from", () => {
+  test("keeps a marketplace a plugin outside the user scope came from", async () => {
     writePluginList([
       { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
       { id: "delta@second", installPath: payload("second", "delta", "1.0.0"), scope: "project" },
     ]);
     writeKnownMarketplaces(["first", "second"]);
 
-    expect(pruneMarketplaces(out, process.env)).toBe(true);
+    expect(await syncCall("pruneMarketplaces", process.env)).toBe(true);
     expect(readLog("plugin.log")).toBe("");
   });
 
-  test("removes nothing when nothing is registered", () => {
+  test("removes nothing when nothing is registered", async () => {
     rmSync(join(sandbox, ".claude", "plugins", "known_marketplaces.json"), { force: true });
 
-    expect(pruneMarketplaces(out, process.env)).toBe(true);
+    expect(await syncCall("pruneMarketplaces", process.env)).toBe(true);
     expect(readLog("plugin.log")).toBe("");
   });
 
   // Acting on a declaration nothing could read would remove every marketplace.
-  test("removes nothing when the declaration cannot be read", () => {
+  test("removes nothing when the declaration cannot be read", async () => {
     writeFileSync(join(sandbox, ".claude", "settings.json"), "not json\n");
 
-    expect(pruneMarketplaces(out, process.env)).toBe(false);
+    expect(await syncCall("pruneMarketplaces", process.env)).toBe(false);
     expect(readLog("plugin.log")).toBe("");
-    expect(out.captured()).toContain("claude-marketplaces:");
+    expect(output).toContain("claude-marketplaces:");
   });
 
   // The shape a broken symlink into the config repo leaves behind.
-  test("removes nothing when settings.json is not there", () => {
+  test("removes nothing when settings.json is not there", async () => {
     rmSync(join(sandbox, ".claude", "settings.json"), { force: true });
 
-    expect(pruneMarketplaces(out, process.env)).toBe(false);
+    expect(await syncCall("pruneMarketplaces", process.env)).toBe(false);
     expect(readLog("plugin.log")).toBe("");
   });
 
   // An unreadable listing names nothing in use, so every name reads unaccounted.
-  test("removes nothing when the installed plugins cannot be enumerated", () => {
+  test("removes nothing when the installed plugins cannot be enumerated", async () => {
     writeFileSync(join(sandbox, "plugin-list.json"), "not json\n");
     writeKnownMarketplaces(["first", "stray"]);
 
-    expect(pruneMarketplaces(out, process.env)).toBe(false);
+    expect(await syncCall("pruneMarketplaces", process.env)).toBe(false);
     expect(readLog("plugin.log")).toBe("");
   });
 
   // Reading it as empty would report success over a prune that never ran.
-  test("fails when the registry cannot be read", () => {
+  test("fails when the registry cannot be read", async () => {
     writeFileSync(join(sandbox, ".claude", "plugins", "known_marketplaces.json"), "not json\n");
 
-    expect(pruneMarketplaces(out, process.env)).toBe(false);
-    expect(out.captured()).toContain("claude-marketplaces:");
+    expect(await syncCall("pruneMarketplaces", process.env)).toBe(false);
+    expect(output).toContain("claude-marketplaces:");
   });
 
-  test("fails when a removal fails", () => {
+  test("fails when a removal fails", async () => {
     writeKnownMarketplaces(["first", "third", "stray"]);
     process.env.CLAUDE_REMOVE_FAILS = "stray";
 
-    expect(pruneMarketplaces(out, process.env)).toBe(false);
-    expect(out.captured()).toContain("Failed to remove stray");
+    expect(await syncCall("pruneMarketplaces", process.env)).toBe(false);
+    expect(output).toContain("Failed to remove stray");
   });
 });
 
 describe("updatePlugins", () => {
-  test("updates every installed plugin", () => {
-    expect(updatePlugins(out, process.env)).toBe(true);
+  test("updates every installed plugin", async () => {
+    expect(await syncCall("updatePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toContain("update alpha@first");
     expect(readLog("plugin.log")).toContain("update beta@third");
   });
 
   // Counting failures and returning 0 is what let a machine where every update
   // failed still report success and file no to-do.
-  test("fails when an update fails", () => {
+  test("fails when an update fails", async () => {
     process.env.CLAUDE_UPDATE_FAILS = "beta@third";
-    expect(updatePlugins(out, process.env)).toBe(false);
-    expect(out.captured()).toContain("Failed to update beta@third");
+    expect(await syncCall("updatePlugins", process.env)).toBe(false);
+    expect(output).toContain("Failed to update beta@third");
   });
 
   // `claude plugin update` answers "Plugin not found" for an id its own
   // marketplace manifest lists, and the same plugin updates on the next nightly
   // run. Every one of those filed a to-do naming a plugin that was never broken.
-  test("takes a second attempt at a plugin whose first update refuses", () => {
+  test("takes a second attempt at a plugin whose first update refuses", async () => {
     process.env.CLAUDE_UPDATE_FAILS_ONCE = "beta@third";
 
-    expect(updatePlugins(out, process.env)).toBe(true);
-    expect(out.captured()).not.toContain("Failed to update beta@third");
+    expect(await syncCall("updatePlugins", process.env)).toBe(true);
+    expect(output).not.toContain("Failed to update beta@third");
     const attempts = readLog("plugin.log")
       .split("\n")
       .filter((line) => line === "update beta@third");
@@ -705,74 +643,74 @@ describe("updatePlugins", () => {
 
   // The retry absorbs a flake without hiding a plugin that is genuinely stuck,
   // which stays reported after it has failed every attempt.
-  test("reports a plugin that refuses every attempt", () => {
+  test("reports a plugin that refuses every attempt", async () => {
     process.env.CLAUDE_UPDATE_FAILS = "beta@third";
 
-    expect(updatePlugins(out, process.env)).toBe(false);
+    expect(await syncCall("updatePlugins", process.env)).toBe(false);
     const attempts = readLog("plugin.log")
       .split("\n")
       .filter((line) => line === "update beta@third");
     expect(attempts).toHaveLength(2);
   });
 
-  test("leaves a plugin its marketplace dropped alone", () => {
+  test("leaves a plugin its marketplace dropped alone", async () => {
     writePluginList([
       { id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") },
       { id: "ghost@first", installPath: payload("first", "ghost", "1.0.0") },
     ]);
     writeSettings({ "alpha@first": true, "ghost@first": true });
 
-    expect(updatePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("updatePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).not.toContain("ghost@first");
-    expect(out.captured()).toContain("ghost@first is no longer offered by its marketplace");
+    expect(output).toContain("ghost@first is no longer offered by its marketplace");
   });
 
   // Only a marketplace that stopped listing the plugin is beyond updating. One
   // that lists it without saying where it comes from still carries it, and
   // skipping those is how a plugin stops being updated for good.
-  test("keeps updating a plugin listed without a source", () => {
+  test("keeps updating a plugin listed without a source", async () => {
     writeMarketplace("first", [{ name: "alpha" }, { name: "gamma", source: "./plugins/gamma" }]);
 
-    expect(updatePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("updatePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
   // A CLI invocation that reads the job's stdin used to swallow the rest of the
   // inventory and leave every plugin after it unattempted, with nothing in the
   // exit status to say so.
-  test("updates every plugin even when the CLI reads stdin", () => {
+  test("updates every plugin even when the CLI reads stdin", async () => {
     process.env.CLAUDE_DRAINS_STDIN = "1";
 
-    expect(updatePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("updatePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toContain("update alpha@first");
     expect(readLog("plugin.log")).toContain("update gamma@first");
   });
 
   // An inventory that could not be read is not an empty one: updating nothing and
   // reporting success is the failure this job exists to make loud.
-  test("fails when the inventory cannot be read", () => {
+  test("fails when the inventory cannot be read", async () => {
     writeFileSync(join(sandbox, ".claude", "settings.json"), "not json\n");
 
-    expect(updatePlugins(out, process.env)).toBe(false);
+    expect(await syncCall("updatePlugins", process.env)).toBe(false);
     expect(readLog("plugin.log")).toBe("");
     // The reason reaches the captured log, so the to-do names the cause.
-    expect(out.captured()).toContain("claude-plugins:");
+    expect(output).toContain("claude-plugins:");
   });
 
   // A plugin enabled in settings.json but never installed has no payload to
   // update, and its marketplace vouches for the id.
-  test("installs a plugin that is enabled but not installed", () => {
+  test("installs a plugin that is enabled but not installed", async () => {
     writeSettings({ "alpha@first": true, "gamma@first": true });
     writePluginList([{ id: "alpha@first", installPath: payload("first", "alpha", "1.0.0") }]);
 
-    expect(updatePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("updatePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toContain("install gamma@first");
   });
 
   // Claude Code loads these from the marketplace's own path and keeps no copy to
   // refresh, so an update per plugin would cost a CLI call each and change
   // nothing.
-  test("leaves a plugin from a local marketplace to load in place", () => {
+  test("leaves a plugin from a local marketplace to load in place", async () => {
     writeLocalMarketplace("mine", [
       { name: "delta", source: "./plugins/delta" },
       { name: "omega", source: { source: "github", repo: "example/omega" } },
@@ -784,41 +722,41 @@ describe("updatePlugins", () => {
     ]);
     writeSettings({ "alpha@first": true, "delta@mine": true, "omega@mine": true });
 
-    expect(updatePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("updatePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toContain("update alpha@first");
     expect(readLog("plugin.log")).not.toContain("delta@mine");
     // A repo of its own is copied into the cache wherever its marketplace lives.
     expect(readLog("plugin.log")).toContain("update omega@mine");
   });
 
-  test("installs a plugin from a local marketplace that has no install record", () => {
+  test("installs a plugin from a local marketplace that has no install record", async () => {
     writeLocalMarketplace("mine", [{ name: "delta", source: "./plugins/delta" }]);
     writePluginList([]);
     writeSettings({ "delta@mine": true, "ghost@mine": true });
 
-    expect(updatePlugins(out, process.env)).toBe(true);
+    expect(await syncCall("updatePlugins", process.env)).toBe(true);
     expect(readLog("plugin.log")).toBe("install delta@mine\n");
   });
 });
 
 describe("installDependencies", () => {
-  test("runs a frozen install at the root of the repo", () => {
-    expect(installDependencies(out, repo, process.env)).toBe(true);
+  test("runs a frozen install at the root of the repo", async () => {
+    expect(await syncCall("installDependencies", repo, process.env)).toBe(true);
     expect(readLog("bun.log")).toBe(`${repo} install --frozen-lockfile\n`);
   });
 
-  test("warns when the install fails", () => {
+  test("warns when the install fails", async () => {
     process.env.BUN_INSTALL_FAILS = "1";
-    expect(installDependencies(out, repo, process.env)).toBe(false);
-    expect(out.captured()).toContain("bun install failed in the Claude repository");
+    expect(await syncCall("installDependencies", repo, process.env)).toBe(false);
+    expect(output).toContain("bun install failed in the Claude repository");
   });
 });
 
 describe("updateMarketplaces", () => {
-  test("warns and carries on when the refresh fails", () => {
+  test("warns and carries on when the refresh fails", async () => {
     writeStub(join(stubs, "claude"), "exit 1");
-    expect(updateMarketplaces(out, process.env)).toBe(false);
-    expect(out.captured()).toContain("marketplace update had issues, continuing");
+    expect(await syncCall("updateMarketplaces", process.env)).toBe(false);
+    expect(output).toContain("marketplace update had issues, continuing");
   });
 
   function cloneAtTag(name: string, tag: string): void {
@@ -833,70 +771,70 @@ describe("updateMarketplaces", () => {
   test.each<{ name: string; declared: string; refreshed: string }>([
     { name: "skips a marketplace already on its pinned tag", declared: "v1", refreshed: "update first\n" },
     { name: "refreshes everything once a pin moves past the clone", declared: "v2", refreshed: "update \n" },
-  ])("$name", ({ declared, refreshed }) => {
+  ])("$name", async ({ declared, refreshed }) => {
     cloneAtTag("pinned", "v1");
     writeKnownMarketplaces(["first", "pinned"]);
     writeSettings({}, { first: {}, pinned: { source: { source: "github", ref: declared } } });
 
-    expect(updateMarketplaces(out, process.env)).toBe(true);
+    expect(await syncCall("updateMarketplaces", process.env)).toBe(true);
     expect(readLog("refresh.log")).toBe(refreshed);
   });
 
-  test("fails when one of the named refreshes fails", () => {
+  test("fails when one of the named refreshes fails", async () => {
     cloneAtTag("pinned", "v1");
     writeKnownMarketplaces(["first", "pinned"]);
     writeSettings({}, { first: {}, pinned: { source: { source: "github", ref: "v1" } } });
     process.env.CLAUDE_REFRESH_FAILS = "1";
 
-    expect(updateMarketplaces(out, process.env)).toBe(false);
+    expect(await syncCall("updateMarketplaces", process.env)).toBe(false);
   });
 });
 
 describe("revertCosmeticJsonChanges", () => {
   // An app that rewrote a tracked settings file without changing anything in it
   // would otherwise stall the sync behind a diff with nothing in it.
-  test("reverts a file whose keys only moved", () => {
+  test("reverts a file whose keys only moved", async () => {
     writeRepoSettings(settingsJson(HOOK), 4);
-    revertCosmeticJsonChanges(out, repo);
+    await syncCall("revertCosmeticJsonChanges", repo);
 
-    expect(out.captured()).toContain("Reverting cosmetic reorder in user/settings.json");
+    expect(output).toContain("Reverting cosmetic reorder in user/settings.json");
     expect(settingsStatus()).toBe("clean");
   });
 
-  test("leaves a file whose values changed alone", () => {
+  test("leaves a file whose values changed alone", async () => {
     writeRepoSettings(settingsJson(HOOK, "changed"));
-    revertCosmeticJsonChanges(out, repo);
+    await syncCall("revertCosmeticJsonChanges", repo);
 
     expect(settingsStatus()).toBe("dirty");
   });
 
-  test("leaves a file that no longer parses alone", () => {
+  test("leaves a file that no longer parses alone", async () => {
     writeFileSync(join(repo, "user", "settings.json"), "not json\n");
-    revertCosmeticJsonChanges(out, repo);
+    await syncCall("revertCosmeticJsonChanges", repo);
 
     expect(settingsStatus()).toBe("dirty");
   });
 });
 
 describe("syncRepo", () => {
-  test("refuses a repo directory that is not there", () => {
-    expect(syncRepo(out, join(sandbox, "missing"))).toBe(false);
+  test("refuses a repo directory that is not there", async () => {
+    expect(await syncCall("syncRepo", join(sandbox, "missing"))).toBe(false);
   });
 
   // The revert runs before the gate, so a tree dirtied only by a reformat is
   // clean by the time it looks.
-  test("clears a cosmetic reorder before the gate sees it", () => {
+  test("clears a cosmetic reorder before the gate sees it", async () => {
     writeRepoSettings(settingsJson(HOOK), 4);
 
-    expect(syncRepo(out, repo)).toBe(true);
+    expect(await syncCall("syncRepo", repo)).toBe(true);
     expect(settingsStatus()).toBe("clean");
   });
 
-  test("stops at the gate on a real local change", () => {
+  test("stops at the gate on a real local change", async () => {
     writeRepoSettings(settingsJson(HOOK, "changed"));
 
-    expect(syncRepo(out, repo)).toBe(false);
-    expect(out.captured()).toContain("Local changes present - skipping sync");
+    expect(await syncCall("syncRepo", repo)).toBe(false);
+    expect(output).toContain("Local changes present - skipping sync");
   });
 
   // Rex owns its hook and setup re-adds it after the sync, so its entry alone
@@ -904,28 +842,28 @@ describe("syncRepo", () => {
   test.each<{ name: string; settings: unknown }>([
     { name: "beside a committed hook", settings: withRexHook(settingsJson(HOOK)) },
     { name: "in an event of its own", settings: withRexEvent(settingsJson(HOOK)) },
-  ])("clears rex's hook before the gate sees it: $name", ({ settings }) => {
+  ])("clears rex's hook before the gate sees it: $name", async ({ settings }) => {
     writeRepoSettings(settings);
 
-    expect(syncRepo(out, repo)).toBe(true);
+    expect(await syncCall("syncRepo", repo)).toBe(true);
     expect(settingsStatus()).toBe("clean");
   });
 
   // A release that changes the command still matches while HEAD carries the
   // entry, which it does until the claude repo drops it.
-  test("clears a changed rex hook that HEAD still carries", () => {
+  test("clears a changed rex hook that HEAD still carries", async () => {
     writeRepoSettings(withRexHook(settingsJson(HOOK)));
     git("commit", "-q", "-am", "rex");
     writeRepoSettings(withRexHook(settingsJson(HOOK), "rex __internal session-start --agent claude --v2"));
 
-    expect(syncRepo(out, repo)).toBe(true);
+    expect(await syncCall("syncRepo", repo)).toBe(true);
     expect(settingsStatus()).toBe("clean");
   });
 
-  test("stops at the gate on a real change beside rex's hook", () => {
+  test("stops at the gate on a real change beside rex's hook", async () => {
     writeRepoSettings(withRexHook(settingsJson(HOOK, "changed")));
 
-    expect(syncRepo(out, repo)).toBe(false);
+    expect(await syncCall("syncRepo", repo)).toBe(false);
     expect(repoSettingsText()).toContain("rex __internal");
   });
 });
@@ -999,23 +937,23 @@ describe("failureFingerprint", () => {
 });
 
 describe("repoRevision", () => {
-  test("reads the short HEAD", () => {
-    expect(repoRevision(repo)).toBe(git("rev-parse", "--short", "HEAD").trim());
+  test("reads the short HEAD", async () => {
+    expect(await repoRevision(repo)).toBe(git("rev-parse", "--short", "HEAD").trim());
   });
 
-  test("reads unknown where there is no repo", () => {
-    expect(repoRevision(join(sandbox, "missing"))).toBe("unknown");
+  test("reads unknown where there is no repo", async () => {
+    expect(await repoRevision(join(sandbox, "missing"))).toBe("unknown");
   });
 });
 
 describe("versionMeta", () => {
-  test("names the installed Claude version in a single bullet", () => {
-    expect(versionMeta()).toBe("- **Claude:** claude 1.2.3");
+  test("names the installed Claude version in a single bullet", async () => {
+    expect(await versionMeta()).toBe("- **Claude:** claude 1.2.3");
   });
 
-  test("says unknown where the CLI cannot answer", () => {
+  test("says unknown where the CLI cannot answer", async () => {
     writeStub(join(stubs, "claude"), "exit 1");
-    expect(versionMeta()).toBe("- **Claude:** unknown");
+    expect(await versionMeta()).toBe("- **Claude:** unknown");
   });
 });
 
@@ -1049,8 +987,8 @@ describe("installAgentHooks", () => {
 
   // moshi replaces the link, so its entry only reaches the gate by being carried
   // into the working copy.
-  test("discards herdr's settings edit and keeps moshi's", () => {
-    expect(installAgentHooks(out, repo, process.env)).toBe(true);
+  test("discards herdr's settings edit and keeps moshi's", async () => {
+    expect(await syncCall("installAgentHooks", repo, process.env)).toBe(true);
     expect(readLog("hooks.log")).toBe(
       [
         "herdr integration install claude",
@@ -1065,11 +1003,11 @@ describe("installAgentHooks", () => {
 
   // Replacing the link leaves the repo untouched, so the discard comes from
   // relinking.
-  test("discards herdr's edit when it replaces the link", () => {
+  test("discards herdr's edit when it replaces the link", async () => {
     const env = without("rex", "moshi-hook");
 
-    expect(installAgentHooks(out, repo, { ...env, HERDR_REPLACES: "1" })).toBe(true);
-    expect(out.captured()).toContain("Relinked ~/.claude/settings.json");
+    expect(await syncCall("installAgentHooks", repo, { ...env, HERDR_REPLACES: "1" })).toBe(true);
+    expect(output).toContain("Relinked ~/.claude/settings.json");
     expect(linked()).toBe(true);
     expect(settingsStatus()).toBe("clean");
   });
@@ -1077,57 +1015,57 @@ describe("installAgentHooks", () => {
   // herdr writes its entry before it can fail on a later step. The discard has to
   // take that back too: left in the tree, it holds the sync gate shut on every
   // later run, and that gate is what this step needs to clear to run again.
-  test("reports a failed install and still discards what it wrote", () => {
+  test("reports a failed install and still discards what it wrote", async () => {
     const env = without("rex", "moshi-hook");
 
-    expect(installAgentHooks(out, repo, { ...env, HERDR_FAILS: "1" })).toBe(false);
-    expect(out.captured()).toContain("herdr integration install failed");
+    expect(await syncCall("installAgentHooks", repo, { ...env, HERDR_FAILS: "1" })).toBe(false);
+    expect(output).toContain("herdr integration install failed");
     expect(settingsStatus()).toBe("clean");
   });
 
   // Only what herdr wrote comes back out. An edit already in the tree when the
   // install started belongs to whoever made it, and restoring the committed file
   // would take that with it.
-  test("keeps an edit the install did not make", () => {
+  test("keeps an edit the install did not make", async () => {
     const env = without("rex", "moshi-hook");
     writeRepoSettings({ unrelated: 1 });
 
-    expect(installAgentHooks(out, repo, env)).toBe(true);
+    expect(await syncCall("installAgentHooks", repo, env)).toBe(true);
     expect(repoSettings()).toEqual({ unrelated: 1 });
   });
 
   // The entry survives a restore that could not write, and the sync gate blocks
   // on it the next night. Reporting it here is what says which run put it there.
-  test.skipIf(ignoresModes)("reports a restore that could not run", () => {
+  test.skipIf(ignoresModes)("reports a restore that could not run", async () => {
     const env = without("rex", "moshi-hook");
 
-    expect(installAgentHooks(out, repo, { ...env, HERDR_LOCKS: "1" })).toBe(false);
-    expect(out.captured()).toContain("Could not discard herdr's edit");
+    expect(await syncCall("installAgentHooks", repo, { ...env, HERDR_LOCKS: "1" })).toBe(false);
+    expect(output).toContain("Could not discard herdr's edit");
     expect(repoSettings()).toEqual({ herdr: 1 });
   });
 
   // A missing installer stays out of the log rather than warning every night.
-  test("skips an installer that is not on PATH", () => {
+  test("skips an installer that is not on PATH", async () => {
     const env = without("herdr", "rex", "moshi-hook");
 
-    expect(installAgentHooks(out, repo, env)).toBe(true);
-    expect(out.captured()).toBe("");
+    expect(await syncCall("installAgentHooks", repo, env)).toBe(true);
+    expect(output).toBe("");
     expect(readLog("hooks.log")).toBe("");
   });
 
   // A Rex release that changes its hook leaves the clone dirty, so the sync gate
   // surfaces the new entry for a commit.
-  test("keeps rex's settings edit", () => {
+  test("keeps rex's settings edit", async () => {
     const env = without("herdr", "moshi-hook");
 
-    expect(installAgentHooks(out, repo, env)).toBe(true);
+    expect(await syncCall("installAgentHooks", repo, env)).toBe(true);
     expect(repoSettings()).toEqual({ ...(settingsJson(HOOK) as object), rex: 1 });
     expect(linked()).toBe(true);
   });
 
   // Outside a Rex terminal, rex is only in the app bundle, which is where the
   // nightly finds it.
-  test("runs rex from the app bundle when it is not on PATH", () => {
+  test("runs rex from the app bundle when it is not on PATH", async () => {
     const env = without("herdr", "rex", "moshi-hook");
     const bundled = join(
       sandbox,
@@ -1135,38 +1073,38 @@ describe("installAgentHooks", () => {
     );
     writeStub(bundled, rexStub(join(sandbox, "hooks.log")));
 
-    expect(installAgentHooks(out, repo, env)).toBe(true);
+    expect(await syncCall("installAgentHooks", repo, env)).toBe(true);
     expect(readLog("hooks.log")).toBe("rex skill setup --agent claude --autostart=false\n");
   });
 
-  test("reports a failed rex setup", () => {
+  test("reports a failed rex setup", async () => {
     const env = without("herdr", "moshi-hook");
 
-    expect(installAgentHooks(out, repo, { ...env, REX_FAILS: "1" })).toBe(false);
-    expect(out.captured()).toContain("rex skill setup failed");
+    expect(await syncCall("installAgentHooks", repo, { ...env, REX_FAILS: "1" })).toBe(false);
+    expect(output).toContain("rex skill setup failed");
   });
 });
 
 describe("sync", () => {
-  test("succeeds when the sync and the updates do", () => {
-    expect(sync(out, repo)).toBe(0);
+  test("succeeds when the sync and the updates do", async () => {
+    expect(await syncCall("sync", repo)).toBe(0);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
   // The install follows the sync, so the pull that removes a stale script from
   // the clone runs against a clean tree before the installer puts the current one
   // back.
-  test("reinstalls the hooks after the sync and before the plugins", () => {
-    expect(sync(out, repo)).toBe(0);
-    const log = out.captured();
+  test("reinstalls the hooks after the sync and before the plugins", async () => {
+    expect(await syncCall("sync", repo)).toBe(0);
+    const log = output;
     expect(log.indexOf("Syncing Claude repository")).toBeLessThan(log.indexOf("Installing herdr"));
     expect(log.indexOf("Installing moshi")).toBeLessThan(log.indexOf("Updating marketplaces"));
   });
 
   // So a marketplace losing its last plugin goes with it, unfetched on the way.
-  test("prunes marketplaces after the plugins and before the refresh", () => {
-    expect(sync(out, repo)).toBe(0);
-    const log = out.captured();
+  test("prunes marketplaces after the plugins and before the refresh", async () => {
+    expect(await syncCall("sync", repo)).toBe(0);
+    const log = output;
     expect(log.indexOf("Pruning undeclared plugins")).toBeLessThan(
       log.indexOf("Pruning undeclared marketplaces"),
     );
@@ -1178,9 +1116,9 @@ describe("sync", () => {
   test.each<{ name: string; interactive: boolean }>([
     { name: "full", interactive: false },
     { name: "interactive", interactive: true },
-  ])("installs the repo's dependencies after the sync: $name", ({ interactive }) => {
-    expect(sync(out, repo, { interactive })).toBe(0);
-    const log = out.captured();
+  ])("installs the repo's dependencies after the sync: $name", async ({ interactive }) => {
+    expect(await syncCall("sync", repo, { interactive })).toBe(0);
+    const log = output;
     expect(readLog("bun.log")).toBe(`${repo} install --frozen-lockfile\n`);
     expect(log.indexOf("Syncing Claude repository")).toBeLessThan(
       log.indexOf("Installing Claude repository dependencies"),
@@ -1190,33 +1128,33 @@ describe("sync", () => {
   test.each<{ name: string; interactive: boolean }>([
     { name: "full", interactive: false },
     { name: "interactive", interactive: true },
-  ])("fails when the dependency install fails, and still updates the plugins: $name", ({ interactive }) => {
+  ])("fails when the dependency install fails, and still updates the plugins: $name", async ({ interactive }) => {
     process.env.BUN_INSTALL_FAILS = "1";
-    expect(sync(out, repo, { interactive })).toBe(1);
+    expect(await syncCall("sync", repo, { interactive })).toBe(1);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
   // The gate clears Rex's entry, and setup puts the installed release's back.
-  test("leaves rex's hook in place after the run", () => {
-    expect(sync(out, repo)).toBe(0);
+  test("leaves rex's hook in place after the run", async () => {
+    expect(await syncCall("sync", repo)).toBe(0);
     expect(JSON.parse(repoSettingsText())).toMatchObject({ rex: 1 });
   });
 
-  test("fails when a hook install fails, and still updates the plugins", () => {
+  test("fails when a hook install fails, and still updates the plugins", async () => {
     process.env.HERDR_FAILS = "1";
-    expect(sync(out, repo)).toBe(1);
+    expect(await syncCall("sync", repo)).toBe(1);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
-  test("fails when a plugin update fails", () => {
+  test("fails when a plugin update fails", async () => {
     process.env.CLAUDE_UPDATE_FAILS = "beta@third";
-    expect(sync(out, repo)).toBe(1);
+    expect(await syncCall("sync", repo)).toBe(1);
   });
 
-  test("updates the plugins alone when interactive", () => {
+  test("updates the plugins alone when interactive", async () => {
     process.env.HERDR_FAILS = "1";
-    expect(sync(out, repo, { interactive: true })).toBe(0);
-    const log = out.captured();
+    expect(await syncCall("sync", repo, { interactive: true })).toBe(0);
+    const log = output;
     expect(readLog("plugin.log")).toContain("update alpha@first");
     expect(log).toContain("Updating marketplaces");
     for (const skipped of ["Installing herdr", "Pruning undeclared"]) {
@@ -1224,31 +1162,31 @@ describe("sync", () => {
     }
   });
 
-  test("fails an interactive run when a plugin update fails", () => {
+  test("fails an interactive run when a plugin update fails", async () => {
     process.env.CLAUDE_UPDATE_FAILS = "beta@third";
-    expect(sync(out, repo, { interactive: true })).toBe(1);
+    expect(await syncCall("sync", repo, { interactive: true })).toBe(1);
   });
 
   test.each<{ name: string; interactive: boolean }>([
     { name: "full", interactive: false },
     { name: "interactive", interactive: true },
-  ])("failed refresh fails the run and still updates: $name", ({ interactive }) => {
+  ])("failed refresh fails the run and still updates: $name", async ({ interactive }) => {
     process.env.CLAUDE_REFRESH_FAILS = "1";
-    expect(sync(out, repo, { interactive })).toBe(1);
+    expect(await syncCall("sync", repo, { interactive })).toBe(1);
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
-  test("relinks even when the gate refuses", () => {
+  test("relinks even when the gate refuses", async () => {
     writeRepoSettings(settingsJson(HOOK, "changed"));
     replaceLink(settingsJson(HOOK));
 
-    expect(sync(out, repo)).toBe(1);
+    expect(await syncCall("sync", repo)).toBe(1);
     expect(linked()).toBe(true);
   });
 
-  test("leaves the plugins and dependencies unattempted when the sync refuses", () => {
+  test("leaves the plugins and dependencies unattempted when the sync refuses", async () => {
     writeRepoSettings(settingsJson(HOOK, "changed"));
-    expect(sync(out, repo)).toBe(1);
+    expect(await syncCall("sync", repo)).toBe(1);
     expect(readLog("plugin.log")).toBe("");
     expect(readLog("bun.log")).toBe("");
   });
@@ -1257,20 +1195,44 @@ describe("sync", () => {
 describe("main", () => {
   // The whole run is captured as it happens, and a failure files a Things to-do
   // built from that log.
-  test("files a to-do built from the captured log when the sync fails", () => {
+  test("files a to-do built from the captured log when the sync fails", async () => {
     process.env.CLAUDE_REPO_HOME = join(sandbox, "missing");
 
-    expect(main(out)).toBe(1);
+    expect(await syncCall("main", ["--full"])).toBe(1);
     expect(todoCount()).toBe(1);
     expect(readLog("todos")).toContain("Claude%20sync%20failed");
   });
 
-  // Nothing else runs the whole of a clean night, and the branch it ends on has
-  // no output to assert against beyond the latch it clears.
-  test("clears the sync latch when the run succeeds", () => {
+  test("runs the interactive sync through the re-exec without --full", async () => {
     process.env.CLAUDE_REPO_HOME = repo;
 
-    expect(main(out)).toBe(0);
+    expect(await syncCall("main", [])).toBe(0);
+    expect(readLog("plugin.log")).toContain("update alpha@first");
+    expect(readLog("hooks.log")).toBe("");
+  });
+
+  test.each<{ name: string; lines: number }>([
+    { name: "a short log", lines: 1 },
+    { name: "a log past one pipe buffer", lines: 3000 },
+  ])("carries a child's stderr into the to-do from $name", async ({ lines }) => {
+    const said = join(sandbox, "herdr-said");
+    const filler = `${"x".repeat(60)}\n`.repeat(lines - 1);
+    writeFileSync(said, `${filler}herdr-said-the-last-line\n`);
+    process.env.CLAUDE_REPO_HOME = repo;
+    process.env.HERDR_STDERR = said;
+    process.env.HERDR_FAILS = "1";
+
+    expect(await syncCall("main", ["--full"])).toBe(1);
+    expect(output.split("x".repeat(60)).length - 1).toBe(lines - 1);
+    expect(readLog("todos")).toContain("herdr-said-the-last-line");
+  });
+
+  // Nothing else runs the whole of a clean night, and the branch it ends on has
+  // no output to assert against beyond the latch it clears.
+  test("clears the sync latch when the run succeeds", async () => {
+    process.env.CLAUDE_REPO_HOME = repo;
+
+    expect(await syncCall("main", ["--full"])).toBe(0);
     expect(todoCount()).toBe(0);
     expect(readFileSync(join(sandbox, "state", "dotfiles", "claude-sync.status"), "utf8")).toBe(
       "ok\n",

@@ -5,6 +5,7 @@
 //
 // EXPIRES: 2027-04-08 every machine has run scripts/install since the removal
 
+import { $ } from "bun";
 import { join } from "node:path";
 import { type Context, removeCask } from "#migrations/migration";
 
@@ -12,10 +13,10 @@ import { type Context, removeCask } from "#migrations/migration";
 // Linux.
 export const platform = "darwin";
 
-export function up(context: Context): void {
+export async function up(context: Context): Promise<void> {
   const install = join(context.root, "claude", "install-native");
-  if (context.out.run([install], { stdin: "ignore" }) !== 0) {
+  if ((await $`${install} < /dev/null`.nothrow()).exitCode !== 0) {
     throw new Error("installing native Claude Code failed, so the cask stays");
   }
-  removeCask(context, "claude-code@latest");
+  await removeCask("claude-code@latest");
 }

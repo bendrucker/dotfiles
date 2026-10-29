@@ -14,11 +14,12 @@
 // when the gate refused, the sync failed, or the submodules did. A failing
 // bootstrap exits with its own status.
 
+import { $ } from "bun";
 import { accessSync, constants, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { log } from "#gum";
 import { reviewDirty, syncNotify } from "#jobs/sync-gate";
-import { log, type Output, streamOutput } from "#jobs/output";
 import { notify } from "#jobs/report";
 
 const TITLE = "Dotfiles Sync";
@@ -27,14 +28,14 @@ const TITLE = "Dotfiles Sync";
 // through the resolved path rather than the invoked one.
 const SPIN = join(dirname(realpathSync(import.meta.path)), "spin");
 
-export function run(args: string[], out: Output): number {
+export async function run(args: string[]): Promise<number> {
   // $HOME is read before the account's own home directory, because that is what
   // the shell expanded and what a spec re-points between examples.
   const home = process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles");
 
-  if (!reviewDirty(out, home, TITLE)) return 1;
+  if (!(await reviewDirty(home, TITLE))) return 1;
 
-  const sync = syncNotify(out, home, TITLE);
+  const sync = await syncNotify(home, TITLE);
   // The failure has already notified, and nothing after this ran.
   if (sync.status === "failed") return 1;
 
@@ -45,43 +46,34 @@ export function run(args: string[], out: Output): number {
   // early there would strand them at the wrong revision for good. The update
   // itself costs a shell wrapper and a handful of git processes, so it runs only
   // when some submodule is missing or off its pinned revision.
-  const submodules = submodulesPinned(out, home) ? 0 : out.run([
-    SPIN,
-    "--show-error",
-    "--title",
-    "Updating submodules",
-    "--",
-    "git",
-    "-C",
-    home,
-    "submodule",
-    "update",
-    "--init",
-  ]);
+  const submodules = (await submodulesPinned(home))
+    ? 0
+    : (await $`${SPIN} --show-error --title ${"Updating submodules"} -- git -C ${home} submodule update --init 2> ${Bun.stderr}`.nothrow())
+        .exitCode;
   if (submodules !== 0) {
-    log(out, "error", "Submodule update failed");
-    notify(TITLE, "Failed: submodules");
+    await log("error", "Submodule update failed");
+    await notify(TITLE, "Failed: submodules");
     return 1;
   }
 
   if (sync.status !== "current") {
-    log(out, "info", `Successfully updated to ${sync.rev}`);
-    notify(TITLE, `Updated to ${sync.rev}`, "Glass");
+    await log("info", `Successfully updated to ${sync.rev}`);
+    await notify(TITLE, `Updated to ${sync.rev}`, "Glass");
   }
 
   // The symlink refresh is opt-in; the launchd job skips it. It runs on a
   // current checkout too, since a machine-local change like ~/.zshenv.local can
   // need a converge with nothing to pull. Unknown arguments have never meant
   // anything here.
-  if (args[0] === "--bootstrap") return bootstrap(out, home);
+  if (args[0] === "--bootstrap") return bootstrap(home);
   if (sync.status === "current") return 0;
 
   // The symlinks didn't move, but the files they point at just did, so anything
   // holding the old config is now behind. A reload that had trouble is a
   // warning: the sync it follows has already succeeded, and stale in-memory
   // config resolves itself the next time the program starts.
-  if (out.run([join(home, "bin", "dotfiles-reload")]) !== 0) {
-    log(out, "warn", "some config reloads had issues");
+  if ((await $`${join(home, "bin", "dotfiles-reload")}`.nothrow()).exitCode !== 0) {
+    await log("warn", "some config reloads had issues");
   }
   return 0;
 }
@@ -92,30 +84,31 @@ const GITLINK = /^160000 ([0-9a-f]+) 0\t(.+)$/;
 // True when every submodule the index pins has that commit checked out. An
 // uninitialized submodule is an empty directory, where rev-parse answers with
 // the superproject's HEAD, which never matches a pin.
-function submodulesPinned(out: Output, home: string): boolean {
-  const staged = out.read(["git", "-C", home, "ls-files", "--stage", "-z"]);
-  if (staged.status !== 0) return false;
+async function submodulesPinned(home: string): Promise<boolean> {
+  const staged = await $`git -C ${home} ls-files --stage -z 2> ${Bun.stderr}`.nothrow().quiet();
+  if (staged.exitCode !== 0) return false;
 
-  return staged.stdout.split("\0").every((entry) => {
+  for (const entry of staged.stdout.toString().split("\0")) {
     const gitlink = GITLINK.exec(entry);
-    if (gitlink === null) return true;
-    const head = out.read(["git", "-C", join(home, gitlink[2] ?? ""), "rev-parse", "HEAD"]);
-    return head.status === 0 && head.stdout.trim() === gitlink[1];
-  });
+    if (gitlink === null) continue;
+    const head = await $`git -C ${join(home, gitlink[2] ?? "")} rev-parse HEAD 2> ${Bun.stderr}`.nothrow().quiet();
+    if (head.exitCode !== 0 || head.stdout.toString().trim() !== gitlink[1]) return false;
+  }
+  return true;
 }
 
 // The shell fell through to the reload when the bootstrap script was not
 // executable, so a caller that asked for a symlink refresh got a config reload
 // and was told it had succeeded.
-function bootstrap(out: Output, home: string): number {
+async function bootstrap(home: string): Promise<number> {
   const script = join(home, "scripts", "bootstrap");
   if (!isExecutable(script)) {
-    log(out, "error", `${script} is not executable - cannot bootstrap`);
+    await log("error", `${script} is not executable - cannot bootstrap`);
     return 1;
   }
 
-  log(out, "info", "Running bootstrap...");
-  return out.run([script, "--no-prompt"]);
+  await log("info", "Running bootstrap...");
+  return (await $`${script} --no-prompt 2> ${Bun.stderr}`.nothrow()).exitCode;
 }
 
 function isExecutable(path: string): boolean {
@@ -128,5 +121,5 @@ function isExecutable(path: string): boolean {
 }
 
 if (import.meta.main) {
-  process.exit(run(process.argv.slice(2), streamOutput()));
+  process.exit(await run(process.argv.slice(2)));
 }

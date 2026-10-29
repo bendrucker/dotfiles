@@ -1,17 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
+import { recorded, recordingStub } from "#harness/recorder";
 import type { Context } from "#migrations/migration";
 import { up } from "./202610080001-native-claude-code";
 
 let box: Sandbox;
-let ran: string[][];
 let installStatus: number;
 let caskInstalled: boolean;
 
 beforeEach(() => {
   box = sandbox("native-claude-code");
-  ran = [];
   installStatus = 0;
   caskInstalled = true;
 });
@@ -19,8 +17,6 @@ beforeEach(() => {
 afterEach(() => {
   box.remove();
 });
-
-const install = () => join(box.dir, "claude", "install-native");
 
 function context(): Context {
   return {
@@ -31,48 +27,52 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [box.mkdir("installed")],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        if (cmd[0] !== "gum") ran.push(cmd);
-        return cmd[0] === install() ? installStatus : 0;
-      },
-      read: () => ({ status: caskInstalled ? 0 : 1, stdout: "" }),
-    },
   };
 }
 
-function withBrew(body: () => void): string {
-  const brew = box.stub("brew", "");
+async function withBrew(body: () => Promise<void>): Promise<void> {
+  recordingStub(box, "claude/install-native", `exit ${installStatus}`);
+  recordingStub(box, "brew", `[ "$1" = list ] && exit ${caskInstalled ? 0 : 1}
+exit 0`);
   const saved = process.env.PATH;
-  process.env.PATH = box.bin;
+  process.env.PATH = `${box.bin}:${saved ?? ""}`;
   try {
-    body();
+    await body();
   } finally {
     process.env.PATH = saved;
   }
-  return brew;
+}
+
+function calls(): string[][] {
+  return recorded(box);
 }
 
 describe("native-claude-code", () => {
-  test("installs the native build before uninstalling the cask", () => {
-    const brew = withBrew(() => up(context()));
+  test("installs the native build before uninstalling the cask", async () => {
+    await withBrew(() => up(context()));
 
-    expect(ran).toEqual([[install()], [brew, "uninstall", "--cask", "claude-code@latest"]]);
+    expect(calls()).toEqual([
+      ["install-native"],
+      ["brew", "list", "--cask", "--versions", "claude-code@latest"],
+      ["brew", "uninstall", "--cask", "claude-code@latest"],
+    ]);
   });
 
-  test("keeps the cask when the native install fails", () => {
+  test("keeps the cask when the native install fails", async () => {
     installStatus = 1;
 
-    expect(() => withBrew(() => up(context()))).toThrow("cask stays");
-    expect(ran).toEqual([[install()]]);
+    await expect(withBrew(() => up(context()))).rejects.toThrow("cask stays");
+    expect(calls()).toEqual([["install-native"]]);
   });
 
-  test("a machine without the cask only gets the native install", () => {
+  test("a machine without the cask only gets the native install", async () => {
     caskInstalled = false;
 
-    withBrew(() => up(context()));
+    await withBrew(() => up(context()));
 
-    expect(ran).toEqual([[install()]]);
+    expect(calls()).toEqual([
+      ["install-native"],
+      ["brew", "list", "--cask", "--versions", "claude-code@latest"],
+    ]);
   });
 });

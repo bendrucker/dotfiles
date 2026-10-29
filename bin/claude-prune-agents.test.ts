@@ -322,55 +322,55 @@ describe("parseArguments", () => {
   });
 });
 
-describe("agentPrs", () => {
+describe("agentPrs", async () => {
   function forgeStub(overrides: Partial<Forge> = {}): Forge {
     return {
-      slug: () => "own/repo",
-      branchPrs: () => ({ status: 0, stdout: "" }),
-      refState: () => "",
+      slug: async () => "own/repo",
+      branchPrs: async () => ({ status: 0, stdout: "" }),
+      refState: async () => "",
       ...overrides,
     };
   }
 
-  test("skips the branch query when there is no branch", () => {
+  test("skips the branch query when there is no branch", async () => {
     let queried = false;
     const forge = forgeStub({
-      branchPrs: () => {
+      branchPrs: async () => {
         queried = true;
         return { status: 0, stdout: "" };
       },
     });
-    expect(agentPrs(forge, "own/repo", "", "")).toEqual([]);
+    expect(await agentPrs(forge, "own/repo", "", "")).toEqual([]);
     expect(queried).toBe(false);
   });
 
-  test("skips the branch query when there is no repo", () => {
+  test("skips the branch query when there is no repo", async () => {
     let queried = false;
     const forge = forgeStub({
-      branchPrs: () => {
+      branchPrs: async () => {
         queried = true;
         return { status: 0, stdout: "" };
       },
     });
-    expect(agentPrs(forge, "", "a-branch", "")).toEqual([]);
+    expect(await agentPrs(forge, "", "a-branch", "")).toEqual([]);
     expect(queried).toBe(false);
   });
 
   // A failed query and a branch with genuinely no PR are both empty output, and
   // only the status separates them. Reading the failure as "no PRs" would hide
   // an open PR and let the agent classify as stale.
-  test("turns a failed branch query into a blocking ERROR", () => {
-    const forge = forgeStub({ branchPrs: () => ({ status: 1, stdout: "" }) });
-    expect(agentPrs(forge, "own/repo", "a-branch", "")).toEqual([{ number: "-", state: "ERROR" }]);
+  test("turns a failed branch query into a blocking ERROR", async () => {
+    const forge = forgeStub({ branchPrs: async () => ({ status: 1, stdout: "" }) });
+    expect(await agentPrs(forge, "own/repo", "a-branch", "")).toEqual([{ number: "-", state: "ERROR" }]);
   });
 
-  test("reads a branch with no PR as no PR", () => {
-    expect(agentPrs(forgeStub(), "own/repo", "a-branch", "")).toEqual([]);
+  test("reads a branch with no PR as no PR", async () => {
+    expect(await agentPrs(forgeStub(), "own/repo", "a-branch", "")).toEqual([]);
   });
 
-  test("resolves each row of the branch query", () => {
-    const forge = forgeStub({ branchPrs: () => ({ status: 0, stdout: "1\tMERGED\n2\tOPEN\n" }) });
-    expect(agentPrs(forge, "own/repo", "a-branch", "")).toEqual([
+  test("resolves each row of the branch query", async () => {
+    const forge = forgeStub({ branchPrs: async () => ({ status: 0, stdout: "1\tMERGED\n2\tOPEN\n" }) });
+    expect(await agentPrs(forge, "own/repo", "a-branch", "")).toEqual([
       { number: "1", state: "MERGED" },
       { number: "2", state: "OPEN" },
     ]);
@@ -378,16 +378,16 @@ describe("agentPrs", () => {
 
   // The branch results seed the seen set, so a PR found both ways is resolved
   // and counted once.
-  test("resolves a PR found both ways only once", () => {
+  test("resolves a PR found both ways only once", async () => {
     const views: string[] = [];
     const forge = forgeStub({
-      branchPrs: () => ({ status: 0, stdout: "77\tMERGED\n" }),
-      refState: (slug, number) => {
+      branchPrs: async () => ({ status: 0, stdout: "77\tMERGED\n" }),
+      refState: async (slug, number) => {
         views.push(`${slug}#${number}`);
         return "MERGED";
       },
     });
-    expect(agentPrs(forge, "own/repo", "a-branch", "shipped #77 and #77")).toEqual([
+    expect(await agentPrs(forge, "own/repo", "a-branch", "shipped #77 and #77")).toEqual([
       { number: "77", state: "MERGED" },
     ]);
     expect(views).toEqual([]);
@@ -395,17 +395,17 @@ describe("agentPrs", () => {
 
   // Refs that fail to resolve are issue numbers and another repo's numbering as
   // often as they are outages, so they are dropped rather than blocking.
-  test("drops a reference that resolves to nothing", () => {
-    const forge = forgeStub({ refState: () => "" });
-    expect(agentPrs(forge, "own/repo", "", "closes #4")).toEqual([]);
+  test("drops a reference that resolves to nothing", async () => {
+    const forge = forgeStub({ refState: async () => "" });
+    expect(await agentPrs(forge, "own/repo", "", "closes #4")).toEqual([]);
   });
 
-  test("orders branch results ahead of summary references", () => {
+  test("orders branch results ahead of summary references", async () => {
     const forge = forgeStub({
-      branchPrs: () => ({ status: 1, stdout: "" }),
-      refState: () => "MERGED",
+      branchPrs: async () => ({ status: 1, stdout: "" }),
+      refState: async () => "MERGED",
     });
-    expect(agentPrs(forge, "own/repo", "a-branch", "shipped as PR #77")).toEqual([
+    expect(await agentPrs(forge, "own/repo", "a-branch", "shipped as PR #77")).toEqual([
       { number: "-", state: "ERROR" },
       { number: "77", state: "MERGED" },
     ]);

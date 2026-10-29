@@ -58,7 +58,7 @@ if (previous === signingKey) process.exit(0);
 
 // A new key goes to GitHub once, when it is first configured, so a missing
 // scope reports here instead of on every install after.
-const title = `${values.name} (${machineName()})`;
+const title = `${values.name} (${await machineName()})`;
 const added = Bun.which("gh") && Bun.spawnSync({
   cmd: ["gh", "ssh-key", "add", "-", "--type", "signing", "--title", title],
   stdin: new TextEncoder().encode(publicKey),

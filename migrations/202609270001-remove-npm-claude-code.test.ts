@@ -2,20 +2,17 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
+import { recorded, recordingStub } from "#harness/recorder";
 import type { Context } from "#migrations/migration";
 import { exists } from "#migrations/migration";
 import { up } from "./202609270001-remove-npm-claude-code";
 
 let box: Sandbox;
 let home: string;
-let ran: string[][];
-let reshimStatus: number;
 
 beforeEach(() => {
   box = sandbox("remove-npm-claude-code");
   home = box.mkdir("home");
-  ran = [];
-  reshimStatus = 0;
 });
 
 afterEach(() => {
@@ -31,14 +28,6 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [box.mkdir("installed")],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        ran.push(cmd);
-        return cmd.at(-1) === "reshim" ? reshimStatus : 0;
-      },
-      read: () => ({ status: 1, stdout: "" }),
-    },
   };
 }
 
@@ -61,126 +50,125 @@ function staleShim(): void {
   symlinkSync("/opt/homebrew/bin/mise", mise("shims", "claude"));
 }
 
-function withPath(path: string, body: () => void): void {
+async function withPath(path: string, body: () => Promise<void>): Promise<void> {
   const saved = process.env.PATH;
   process.env.PATH = path;
   try {
-    body();
+    await body();
   } finally {
     process.env.PATH = saved;
   }
 }
 
 function reshims(): string[][] {
-  return ran.filter((cmd) => cmd.at(-1) === "reshim");
+  return recorded(box).filter((call) => call[0] === "mise");
 }
 
 describe("remove-npm-claude-code", () => {
-  test("removes the package and the bin link npm made", () => {
+  test("removes the package and the bin link npm made", async () => {
     const install = npmInstall("20.11.1");
 
-    withPath("", () => up(context()));
+    await withPath("", () => up(context()));
 
     expect(exists(join(install, "bin", "claude"))).toBe(false);
     expect(exists(join(install, "lib", "node_modules", "@anthropic-ai"))).toBe(false);
   });
 
-  test("keeps the node version and the rest of its globals", () => {
+  test("keeps the node version and the rest of its globals", async () => {
     const install = npmInstall("20.11.1");
     box.write(join(MISE, "installs", "node", "20.11.1", "bin", "node"), "");
     box.write(join(MISE, "installs", "node", "20.11.1", "lib", "node_modules", "@anthropic-ai", "sdk", "index.js"), "");
 
-    withPath("", () => up(context()));
+    await withPath("", () => up(context()));
 
     expect(exists(join(install, "bin", "node"))).toBe(true);
     expect(exists(join(install, "lib", "node_modules", "@anthropic-ai", "sdk"))).toBe(true);
     expect(exists(join(install, "lib", "node_modules", "@anthropic-ai", "claude-code"))).toBe(false);
   });
 
-  test("finishes what an interrupted run left behind", () => {
+  test("finishes what an interrupted run left behind", async () => {
     const install = npmInstall("20.11.1");
     rmSync(join(install, "lib", "node_modules", "@anthropic-ai", "claude-code"), { recursive: true });
 
-    withPath("", () => up(context()));
+    await withPath("", () => up(context()));
 
     expect(exists(join(install, "bin", "claude"))).toBe(false);
     expect(exists(join(install, "lib", "node_modules", "@anthropic-ai"))).toBe(false);
   });
 
-  test("throws when the installs directory exists but cannot be read", () => {
+  test("throws when the installs directory exists but cannot be read", async () => {
     box.write(join(MISE, "installs", "node"), "");
 
-    expect(() => withPath("", () => up(context()))).toThrow();
+    await expect(withPath("", () => up(context()))).rejects.toThrow();
   });
 
-  test("reaches every installed version and skips the alias links", () => {
+  test("reaches every installed version and skips the alias links", async () => {
     const old = npmInstall("20.11.1");
     const other = npmInstall("22.14.0");
     symlinkSync("./20.11.1", mise("installs", "node", "lts-iron"));
 
-    withPath("", () => up(context()));
+    await withPath("", () => up(context()));
 
     expect(exists(join(old, "bin", "claude"))).toBe(false);
     expect(exists(join(other, "bin", "claude"))).toBe(false);
     expect(exists(mise("installs", "node", "lts-iron"))).toBe(true);
   });
 
-  test("leaves a claude in bin that npm did not link to the package", () => {
+  test("leaves a claude in bin that npm did not link to the package", async () => {
     const install = npmInstall("20.11.1");
     const bin = join(install, "bin", "claude");
     rmSync(bin);
     writeFileSync(bin, "#!/bin/sh\n");
 
-    withPath("", () => up(context()));
+    await withPath("", () => up(context()));
 
     expect(exists(bin)).toBe(true);
   });
 
-  test("reshims while the stale shim is there", () => {
+  test("reshims while the stale shim is there", async () => {
     npmInstall("20.11.1");
     staleShim();
-    const stub = box.stub("mise", "");
+    recordingStub(box, "mise");
 
-    withPath(box.bin, () => up(context()));
+    await withPath(box.bin, () => up(context()));
 
-    expect(reshims()).toEqual([[stub, "reshim"]]);
+    expect(reshims()).toEqual([["mise", "reshim"]]);
   });
 
-  test("reshims a shim left behind after the package is already gone", () => {
+  test("reshims a shim left behind after the package is already gone", async () => {
     staleShim();
-    box.stub("mise", "");
+    recordingStub(box, "mise");
 
-    withPath(box.bin, () => up(context()));
+    await withPath(box.bin, () => up(context()));
 
     expect(reshims()).toHaveLength(1);
   });
 
-  test("does not reshim without a claude shim", () => {
+  test("does not reshim without a claude shim", async () => {
     npmInstall("20.11.1");
-    box.stub("mise", "");
+    recordingStub(box, "mise");
 
-    withPath(box.bin, () => up(context()));
+    await withPath(box.bin, () => up(context()));
 
     expect(reshims()).toEqual([]);
   });
 
-  test("throws when reshim fails, so the next run retries it", () => {
+  test("throws when reshim fails, so the next run retries it", async () => {
     staleShim();
-    box.stub("mise", "");
-    reshimStatus = 1;
+    recordingStub(box, "mise", "exit 1");
 
-    expect(() => withPath(box.bin, () => up(context()))).toThrow("mise reshim failed");
+    await expect(withPath(box.bin, () => up(context()))).rejects.toThrow("mise reshim failed");
   });
 
-  test("a machine without mise is not an error", () => {
+  test("a machine without mise is not an error", async () => {
     npmInstall("20.11.1");
     staleShim();
 
-    expect(() => withPath("", () => up(context()))).not.toThrow();
+    await expect(withPath("", () => up(context()))).resolves.toBeUndefined();
     expect(reshims()).toEqual([]);
   });
 
-  test("a machine with no node installs is not an error", () => {
-    expect(() => withPath("", () => up(context()))).not.toThrow();
+  test("a machine with no node installs is not an error", async () => {
+    await expect(withPath("", () => up(context()))).resolves.toBeUndefined();
   });
 });

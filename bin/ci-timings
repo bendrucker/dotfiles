@@ -4,10 +4,12 @@
 // fetch replaces the database with every job and step from the last N days.
 // report prints p50/p90 queue and run time per job, then the slowest steps.
 
+import { $ } from "bun";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { writeAll } from "#pipe";
 
 const USAGE = [
   "Usage: ci-timings fetch [--days N] OWNER/REPO...",
@@ -38,9 +40,10 @@ from steps where conclusion = 'success'
 group by all having seconds[2] >= 10 order by seconds[2] desc limit 25;`;
 
 async function gh(path: string, jq: string): Promise<Record<string, unknown>[]> {
-  const proc = Bun.spawn(["gh", "api", "--paginate", path, "--jq", jq], { stderr: "inherit" });
-  const out = await new Response(proc.stdout).text();
-  if ((await proc.exited) !== 0) throw new Error(`gh api ${path} failed`);
+  const result = await $`gh api --paginate ${path} --jq ${jq} < /dev/null`.nothrow().quiet();
+  writeAll(2, result.stderr.toString());
+  if (result.exitCode !== 0) throw new Error(`gh api ${path} failed`);
+  const out = result.stdout.toString();
   return out.split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }
 
@@ -60,14 +63,13 @@ async function fetchJobs(repo: string, from: string): Promise<Record<string, unk
   return jobs;
 }
 
-function duckdb(db: string, sql: string, stdin?: string): void {
+async function duckdb(db: string, sql: string, stdin?: string): Promise<void> {
   mkdirSync(dirname(db), { recursive: true });
-  const proc = Bun.spawnSync(["duckdb", "-box", db, "-c", sql], {
-    stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (proc.exitCode !== 0) throw new Error("duckdb failed");
+  const input = stdin === undefined ? undefined : new Response(stdin);
+  const result = input
+    ? await $`duckdb -box ${db} -c ${sql} < ${input}`.nothrow()
+    : await $`duckdb -box ${db} -c ${sql} < /dev/null`.nothrow();
+  if (result.exitCode !== 0) throw new Error("duckdb failed");
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -84,11 +86,11 @@ export async function main(argv: string[]): Promise<number> {
   if (command === "fetch" && repos.length > 0 && Number.isInteger(days) && days > 0) {
     const from = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
     const jobs = (await Promise.all(repos.map((repo) => fetchJobs(repo, from)))).flat();
-    duckdb(values.db, LOAD, jobs.map((job) => JSON.stringify(job)).join("\n"));
+    await duckdb(values.db, LOAD, jobs.map((job) => JSON.stringify(job)).join("\n"));
     return 0;
   }
   if (command === "report") {
-    duckdb(values.db, REPORT);
+    await duckdb(values.db, REPORT);
     return 0;
   }
   console.error(USAGE);

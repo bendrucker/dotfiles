@@ -462,6 +462,17 @@ describe("the install step", () => {
     expect(run.stderr).toContain("Running install");
     expect(field(filedTodos()[0], "notes")).not.toContain("Running install");
   });
+
+  // A step that could not be started has to say why, or the failure arrives
+  // with nothing in it to act on.
+  test("carries the reason an installer could not be started", () => {
+    const installer = join(home, "scripts", "install");
+    rmSync(installer);
+
+    const run = runUpgrade();
+    expect(run.status).toBe(1);
+    expect(field(filedTodos()[0], "notes")).toContain(`not found: ${installer}`);
+  });
 });
 
 describe("brew cleanup", () => {
@@ -895,7 +906,7 @@ describe("the run as a whole", () => {
 });
 
 describe("currentRevision", () => {
-  test("falls back to a literal where the tree is not a checkout", () => {
-    expect(currentRevision(join(sandbox, "nowhere"))).toBe("unknown");
+  test("falls back to a literal where the tree is not a checkout", async () => {
+    expect(await currentRevision(join(sandbox, "nowhere"))).toBe("unknown");
   });
 });

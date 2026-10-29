@@ -11,6 +11,10 @@
 // dispatch via repeated --add-dir. Pass --here to skip the picker and launch in
 // the current directory.
 
+import { $ } from "bun";
+import { realpathSync } from "node:fs";
+import { choose as gumChoose, log } from "#gum";
+
 const USAGE = [
   "usage: claude-launch [--here]",
   "",
@@ -92,68 +96,13 @@ export function agentId(dispatched: string): string {
   return first.split(SEPARATOR)[1] ?? "";
 }
 
-interface Capture {
-  status: number;
-  stdout: string;
-}
-
-interface Options {
-  cwd?: string;
-  // The three lookups that seed the launch are advisory, so their complaints
-  // are dropped rather than shown above a picker that works without them. The
-  // dispatch keeps its stderr, which is where a refused launch says why.
-  quiet?: boolean;
-}
-
-// The environment goes across explicitly because Bun otherwise resolves a bare
-// command name against the PATH it captured at startup, so a caller that
-// adjusted PATH would reach a different binary than it meant to. A command that
-// is not installed raises where the shell exited 127, and every caller here
-// already handles the answer it could not get.
-function capture(cmd: string[], options: Options = {}): Capture {
-  try {
-    const child = Bun.spawnSync({
-      cmd,
-      env: process.env,
-      cwd: options.cwd,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: options.quiet === true ? "ignore" : "inherit",
-    });
-    return { status: child.exitCode, stdout: child.stdout.toString() };
-  } catch {
-    return { status: 127, stdout: "" };
-  }
-}
-
-// gum and fzf draw their interface on stderr and read the terminal, so stderr
-// and (for gum) stdin stay inherited. Dismissing one exits nonzero with nothing
-// on stdout, which is the same answer as choosing nothing.
-function ask(cmd: string[], stdin: "inherit" | string): string {
-  try {
-    const child = Bun.spawnSync({
-      cmd,
-      env: process.env,
-      stdin: stdin === "inherit" ? "inherit" : Buffer.from(stdin),
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    return child.stdout.toString().replace(/\n+$/, "");
-  } catch {
-    return "";
-  }
-}
-
-function log(level: "error" | "warn" | "info", message: string): void {
-  try {
-    Bun.spawnSync({
-      cmd: ["gum", "log", "--level", level, message],
-      env: process.env,
-      stdio: ["ignore", "ignore", "inherit"],
-    });
-  } catch {
-    process.stderr.write(`claude-launch: ${message}\n`);
-  }
+// The three lookups that seed the launch are advisory, so their complaints are
+// dropped rather than shown above a picker that works without them. A command
+// that is not installed answers nonzero with no output, which every caller here
+// already handles.
+async function lookup(cmd: string[]): Promise<{ status: number; stdout: string }> {
+  const child = await $`${cmd} < /dev/null`.nothrow().quiet();
+  return { status: child.exitCode, stdout: child.stdout.toString() };
 }
 
 function lines(text: string): string[] {
@@ -162,16 +111,16 @@ function lines(text: string): string[] {
 
 // Taking the leading "default" option, or dismissing the picker, both leave the
 // flag off so Claude applies its own default.
-function choose(header: string, options: string[]): string {
-  return ask(["gum", "choose", "--header", header, ...options], "inherit");
+async function choose(header: string, options: string[]): Promise<string> {
+  return (await gumChoose(options, { header }))[0] ?? "";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function agentDirs(): string[] {
-  const agents = capture(["claude", "agents", "--json"], { quiet: true });
+async function agentDirs(): Promise<string[]> {
+  const agents = await lookup(["claude", "agents", "--json"]);
   if (agents.status !== 0) return [];
 
   let parsed: unknown;
@@ -188,55 +137,54 @@ function agentDirs(): string[] {
   });
 }
 
-function pickDir(): string | undefined {
-  const frecent = capture(["zoxide", "query", "-l"], { quiet: true });
-  const dirs = launchDirs(agentDirs(), lines(frecent.stdout));
+// fzf draws its interface on stderr and reads the terminal, so stderr stays
+// inherited. Dismissing it exits nonzero with nothing on stdout.
+async function pickDir(): Promise<string | undefined> {
+  const frecent = await lookup(["zoxide", "query", "-l"]);
+  const dirs = launchDirs(await agentDirs(), lines(frecent.stdout));
   if (dirs.length === 0) {
-    log("error", "no directories from zoxide");
+    await log("error", "no directories from zoxide");
     return undefined;
   }
 
-  const picked = ask(
-    ["fzf", "--no-sort", "--border", "--border-label", " claude · launch dir ", "--prompt", "  "],
-    `${dirs.join("\n")}\n`,
-  );
+  const input = new Response(`${dirs.join("\n")}\n`);
+  const picked = (
+    await $`cat < ${input} | fzf --no-sort --border --border-label ${" claude · launch dir "} --prompt ${"  "} 2> ${Bun.stderr}`
+      .nothrow()
+      .quiet()
+  ).stdout
+    .toString()
+    .replace(/\n+$/, "");
   if (picked === "") {
-    log("warn", "no directory selected");
+    await log("warn", "no directory selected");
     return undefined;
   }
   return picked;
 }
 
-function main(args: string[]): number {
+async function main(args: string[]): Promise<number> {
   if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(`${USAGE}\n`);
     return 0;
   }
 
-  const repo = args[0] === "--here" ? process.cwd() : pickDir();
+  const repo = args[0] === "--here" ? process.cwd() : await pickDir();
   if (repo === undefined) return 1;
 
-  const permission = choose("permission-mode", PERMISSION_MODES);
-  const model = choose("model", MODELS);
-  const seed = seedFrom(capture(["pbpaste"], { quiet: true }).stdout);
+  const permission = await choose("permission-mode", PERMISSION_MODES);
+  const model = await choose("model", MODELS);
+  const seed = seedFrom((await lookup(["pbpaste"])).stdout);
 
-  const prompt = ask(
-    [
-      "gum",
-      "write",
-      "--placeholder",
-      "Task for the agent…",
-      "--value",
-      seed,
-      "--width",
-      "80",
-      "--height",
-      "12",
-    ],
-    "inherit",
-  );
+  // gum draws on stderr and reads the terminal, so both stay inherited.
+  const prompt = (
+    await $`gum write --placeholder ${"Task for the agent…"} --value ${seed} --width 80 --height 12 2> ${Bun.stderr}`
+      .nothrow()
+      .quiet()
+  ).stdout
+    .toString()
+    .replace(/\n+$/, "");
   if (prompt === "") {
-    log("warn", "no prompt entered");
+    await log("warn", "no prompt entered");
     return 1;
   }
 
@@ -248,17 +196,29 @@ function main(args: string[]): number {
     prompt,
   });
 
-  log("info", `Launching in ${repo}`);
-  const dispatched = capture(cmd, { cwd: repo });
+  await log("info", `Launching in ${repo}`);
+  const dispatched = await dispatch(cmd, repo);
   process.stdout.write(`${dispatched.stdout.replace(/\n+$/, "")}\n`);
-  if (dispatched.status !== 0) {
-    log("error", "launch failed");
-    return dispatched.status;
+  if (dispatched.exitCode !== 0) {
+    await log("error", "launch failed");
+    return dispatched.exitCode;
   }
 
   const id = agentId(dispatched.stdout);
-  if (id !== "") log("info", `agent ${id} · attach with: claude attach ${id}`);
+  if (id !== "") await log("info", `agent ${id} · attach with: claude attach ${id}`);
   return 0;
 }
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+// The dispatch keeps its stderr, which is where a refused launch says why. A
+// picked directory that no longer exists makes the cwd throw, which is a failed
+// launch rather than a crash.
+async function dispatch(cmd: string[], repo: string): Promise<{ exitCode: number; stdout: string }> {
+  try {
+    const run = await $`cat /dev/null | ${cmd} 2> ${Bun.stderr}`.cwd(realpathSync(repo)).nothrow().quiet();
+    return { exitCode: run.exitCode, stdout: run.stdout.toString() };
+  } catch {
+    return { exitCode: 1, stdout: "" };
+  }
+}
+
+if (import.meta.main) process.exit(await main(process.argv.slice(2)));

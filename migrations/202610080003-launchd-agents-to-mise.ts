@@ -5,9 +5,10 @@
 //
 // EXPIRES: 2027-04-08 every machine has run scripts/install since the move
 
+import { $ } from "bun";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { log } from "#jobs/output";
+import { log } from "#gum";
 import { type Context, exists } from "#migrations/migration";
 
 export const platform = "darwin";
@@ -24,15 +25,16 @@ export const RETIRED = [
   "com.user.claude-upgrade",
 ];
 
-export function up(context: Context): void {
+export async function up(context: Context): Promise<void> {
   const domain = `gui/${process.getuid?.() ?? 0}`;
 
   for (const label of RETIRED) {
-    context.out.read(["launchctl", "bootout", `${domain}/${label}`]);
+    const target = `${domain}/${label}`;
+    await $`launchctl bootout ${target} 2> ${Bun.stderr}`.nothrow().quiet();
 
     const plist = join(context.home, "Library", "LaunchAgents", `${label}.plist`);
     if (!exists(plist)) continue;
     rmSync(plist);
-    log(context.out, "info", `retired ${label}`);
+    await log("info", `retired ${label}`);
   }
 }
