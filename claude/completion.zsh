@@ -6,4 +6,4 @@ _claude_worktree_switch_complete() {
   (( CURRENT++ ))
   _clap_dynamic_completer_wt
 }
-compdef _claude_worktree_switch_complete cw ccw cwa cwp
+compdef _claude_worktree_switch_complete cw ccw cwp

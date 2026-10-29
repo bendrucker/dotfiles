@@ -17,7 +17,6 @@ _claude_worktree_switch() {
 
 cw() { _claude_worktree_switch '' "$@" }
 ccw() { _claude_worktree_switch '' --create "$@" }
-cwa() { _claude_worktree_switch auto "$@" }
 cwp() { _claude_worktree_switch plan --create "$@" -- "$(pbpaste)" }
 
 # Open the background-agent view (`claude agents`). Launch new agents with the

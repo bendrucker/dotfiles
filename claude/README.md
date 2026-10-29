@@ -23,14 +23,13 @@ Launch Claude in a [Worktrunk](https://worktrunk.dev) worktree. All variants pas
 | `cw <branch>` | existing | default |
 | `ccw <branch>` | create | default |
 | `cwp <branch>` | create | plan |
-| `cwa <branch>` | existing | auto |
 
 Arguments after `--` are forwarded to `claude`:
 
 ```
 ccw my-feature -- 'fix the bug'
 ccw my-feature --base=@ -- 'stack on current branch'
-cwa pr:123
+cw pr:123
 ```
 
 `cwp` reads the pasteboard and passes it as Claude's initial prompt. Paste an issue URL or Linear prompt, then run `cwp <branch>`.
