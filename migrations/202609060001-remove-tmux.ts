@@ -13,22 +13,22 @@
 import { join } from "node:path";
 import { type Context, isEmpty, ownedLink, removeFormula, removeTree } from "#migrations/migration";
 
-export function up(context: Context): void {
-  removeFormula(context, "tmux");
-  removeFormula(context, "sesh");
+export async function up(context: Context): Promise<void> {
+  await removeFormula("tmux");
+  await removeFormula("sesh");
 
   // Everything under here is a plugin repo TPM cloned, since install.sh pointed
   // TMUX_PLUGIN_MANAGER_PATH at it and nothing else ever wrote there.
-  removeTree(context, join(context.data, "tmux"));
+  await removeTree(context, join(context.data, "tmux"));
 
   // `mkdir -p` is all that made this, so an empty one is the directory the
   // installer left and anything else is someone's own.
   const home = join(context.home, ".tmux");
-  if (isEmpty(home)) removeTree(context, home);
+  if (isEmpty(home)) await removeTree(context, home);
 
   // Only while it still resolves into a dotfiles tree. A directory here, or a
   // link someone repointed at config of their own, is not this migration's to
   // decide about.
   const config = join(context.config, "tmux");
-  if (ownedLink(context, config)) removeTree(context, config);
+  if (ownedLink(context, config)) await removeTree(context, config);
 }

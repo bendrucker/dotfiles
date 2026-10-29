@@ -231,40 +231,40 @@ describe("pickerRow", () => {
 });
 
 describe("choose", () => {
-  test("returns the request behind the chosen row", () => {
+  test("returns the request behind the chosen row", async () => {
     const first = makeRequest({ number: 1, url: "first" });
     const second = makeRequest({ number: 2, url: "second" });
     process.env.FZF_PICK = "2";
 
-    expect(choose([first, second], PICKER)).toBe(second);
+    expect(await choose([first, second], PICKER)).toBe(second);
     expect(read("FZF_STDIN")).toBe(`${pickerRow(first)}\n${pickerRow(second)}\n`);
   });
 
-  test("shows the prompt and the preview command it was given", () => {
+  test("shows the prompt and the preview command it was given", async () => {
     process.env.FZF_PICK = "1";
-    choose([makeRequest()], PICKER);
+    await choose([makeRequest()], PICKER);
 
     expect(read("FZF_ARGS")).toContain("--prompt=pr> ");
     expect(read("FZF_ARGS")).toContain("--preview=gh pr view {4}");
   });
 
-  test("returns nothing when the picker is dismissed", () => {
-    expect(choose([makeRequest()], PICKER)).toBeUndefined();
+  test("returns nothing when the picker is dismissed", async () => {
+    expect(await choose([makeRequest()], PICKER)).toBeUndefined();
   });
 });
 
 describe("switchTo", () => {
-  test("opens the checkout clone-repo resolved and forwards the rest", () => {
-    expect(switchTo(makeRequest(), ["-x", "claude"])).toBe(0);
+  test("opens the checkout clone-repo resolved and forwards the rest", async () => {
+    expect(await switchTo(makeRequest(), ["-x", "claude"])).toBe(0);
     expect(read("CLONE_LOG")).toBe("owner/repo\n");
     expect(read("WT_LOG")).toBe(
       "-C /checkouts/repo switch https://github.com/owner/repo/pull/1 -x claude\n",
     );
   });
 
-  test("answers with the status the switch exited on", () => {
+  test("answers with the status the switch exited on", async () => {
     process.env.WT_EXIT = "3";
-    expect(switchTo(makeRequest(), [])).toBe(3);
+    expect(await switchTo(makeRequest(), [])).toBe(3);
   });
 
   test.each<{ name: string; setup: () => void }>([
@@ -273,10 +273,10 @@ describe("switchTo", () => {
       name: "clone-repo named no directory",
       setup: () => writeFileSync(process.env.CLONE_PATH as string, ""),
     },
-  ])("reports the checkout it could not resolve when $name", ({ setup }) => {
+  ])("reports the checkout it could not resolve when $name", async ({ setup }) => {
     setup();
 
-    expect(switchTo(makeRequest(), [])).toBe(1);
+    expect(await switchTo(makeRequest(), [])).toBe(1);
     expect(read("WT_LOG")).toBe("");
     expect(read("GUM_LOG")).toBe("log --level error could not resolve a checkout for owner/repo\n");
   });
@@ -295,19 +295,19 @@ describe("missingTool", () => {
 });
 
 describe("capture", () => {
-  test("trims the trailing newlines off what the command printed", () => {
-    expect(capture(["clone-repo", "owner/repo"])).toBe("/checkouts/repo");
+  test("trims the trailing newlines off what the command printed", async () => {
+    expect(await capture(["clone-repo", "owner/repo"])).toBe("/checkouts/repo");
   });
 
   // A forge query that failed is not an empty result set. Reporting "none open"
   // for a network error would quietly show half of what is waiting on you.
-  test("answers with nothing when the command exited nonzero", () => {
+  test("answers with nothing when the command exited nonzero", async () => {
     rmSync(process.env.CLONE_PATH as string);
-    expect(capture(["clone-repo", "owner/repo"])).toBeUndefined();
+    expect(await capture(["clone-repo", "owner/repo"])).toBeUndefined();
   });
 
-  test("answers with nothing when the command is not installed", () => {
-    expect(capture(["not-installed-here"])).toBeUndefined();
+  test("answers with nothing when the command is not installed", async () => {
+    expect(await capture(["not-installed-here"])).toBeUndefined();
   });
 });
 

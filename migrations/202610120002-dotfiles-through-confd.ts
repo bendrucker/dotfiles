@@ -8,10 +8,10 @@
 
 import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { log } from "#jobs/output";
+import { log } from "#gum";
 import { type Context, contains, exists, linkTarget } from "#migrations/migration";
 
-export function up(context: Context): void {
+export async function up(context: Context): Promise<void> {
   const confd = join(context.config, "mise", "conf.d");
   // Laid here rather than left to install-symlinks, so a link rerouted below
   // still resolves if that step fails tonight.
@@ -33,7 +33,7 @@ export function up(context: Context): void {
 
     if (!existsSync(target)) {
       rmSync(link);
-      log(context.out, "info", `removed ${link}, whose ${target} is gone`);
+      await log("info", `removed ${link}, whose ${target} is gone`);
       continue;
     }
 

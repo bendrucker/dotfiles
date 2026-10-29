@@ -14,10 +14,13 @@
 // The whole run is captured as it happens: a failure files a Things to-do built
 // from that log, on a latch keyed by which steps warned.
 
+import { $ } from "bun";
 import { createHash } from "node:crypto";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { log } from "#gum";
+import { writeAll } from "#pipe";
 import {
   autoInstalledPlugins,
   claudePluginsDir,
@@ -33,6 +36,7 @@ import {
   splitPluginId,
 } from "#plugins";
 import {
+  gitQuiet,
   httpsEnv,
   isDirectory,
   lines,
@@ -40,12 +44,6 @@ import {
   stripNewlines,
   syncNotify,
 } from "#jobs/sync-gate";
-import {
-  type Capture,
-  capturedOutput,
-  log,
-  type Output,
-} from "#jobs/output";
 import { byCodeUnit, canonicalJson } from "#jobs/json";
 import { reportFailure, reportSuccess } from "#jobs/report";
 import {
@@ -58,6 +56,9 @@ import { installClaudeHooks } from "../moshi/claude-hooks";
 
 const TITLE = "Claude Sync";
 const SYNC_JOB = "claude-sync";
+const BODY = "--body";
+
+type Env = Record<string, string | undefined>;
 
 // $HOME is read before the account's own home directory, because that is what
 // the shell expanded and what a spec re-points between examples.
@@ -67,73 +68,101 @@ export function claudeRepoHome(): string {
 
 // A tracked .json whose parsed form still matches its blob at HEAD is a
 // reformat: an app rewrote the file and changed nothing in it.
-export function revertCosmeticJsonChanges(out: Output, repoDir: string): void {
-  for (const file of lines(gitQuiet(["diff", "HEAD", "--name-only"], repoDir).stdout)) {
+export async function revertCosmeticJsonChanges(repoDir: string): Promise<void> {
+  for (const file of lines((await gitQuiet(["diff", "HEAD", "--name-only"], repoDir)).stdout)) {
     if (!file.endsWith(".json")) continue;
     const path = join(repoDir, file);
     if (!isFile(path)) continue;
 
-    const working = sortedFile(path);
-    const head = sortedBlob(repoDir, file);
+    const working = await sortedFile(path);
+    const head = await sortedBlob(repoDir, file);
     if (working === undefined || head === undefined) continue;
 
     if (working === head) {
-      log(out, "info", `Reverting cosmetic reorder in ${file}`);
-      out.run(["git", "-C", repoDir, "checkout", "HEAD", "--", file]);
+      await log("info", `Reverting cosmetic reorder in ${file}`);
+      await $`git -C ${repoDir} checkout HEAD -- ${file}`.nothrow();
     }
   }
 }
 
-export function syncRepo(out: Output, repoDir: string): boolean {
-  log(out, "info", "Syncing Claude repository...");
+// Part of the Rex trial, through 2026-12-15. Rex owns its hook, and setup
+// re-adds it after every sync, so a settings.json that differs from HEAD only
+// in Rex's entries goes back to HEAD. Both sides drop them before comparing,
+// whether or not HEAD still carries one.
+const WITHOUT_REX_HOOKS = `
+  if (.hooks | type) == "object" then
+    .hooks |= (
+      map_values(
+        map(.hooks |= ((. // []) | map(select((.command // "") | contains("rex __internal") | not))))
+        | map(select(.hooks | length > 0))
+      )
+      | with_entries(select(.value | length > 0))
+    )
+    | if .hooks == {} then del(.hooks) else . end
+  else . end`;
+
+export async function revertRexHooks(repoDir: string): Promise<void> {
+  const path = join(repoDir, SETTINGS);
+  if (!isFile(path)) return;
+
+  const head = await gitQuiet(["show", `HEAD:${SETTINGS}`], repoDir);
+  const working = readText(path);
+  if (head.status !== 0 || working === head.stdout) return;
+
+  const stripped = await canonicalJson(working, WITHOUT_REX_HOOKS);
+  if (stripped === undefined || stripped !== (await canonicalJson(head.stdout, WITHOUT_REX_HOOKS))) return;
+
+  await log("info", `Reverting rex's hook in ${SETTINGS}`);
+  await $`git -C ${repoDir} checkout HEAD -- ${SETTINGS}`.nothrow();
+}
+
+export async function syncRepo(repoDir: string): Promise<boolean> {
+  await log("info", "Syncing Claude repository...");
 
   if (!isDirectory(repoDir)) return false;
 
   // Before the gate, so a tree dirtied only by a reformat is clean by the time it looks. A dirty tracked file stalls the sync
   // behind it every night.
-  adoptReplacedSettings(out, repoDir);
-  revertCosmeticJsonChanges(out, repoDir);
+  await adoptReplacedSettings(repoDir);
+  await revertRexHooks(repoDir);
+  await revertCosmeticJsonChanges(repoDir);
 
-  if (!reviewDirty(out, repoDir, TITLE)) return false;
+  if (!(await reviewDirty(repoDir, TITLE))) return false;
 
-  const pulled = syncNotify(out, repoDir, TITLE);
+  const pulled = await syncNotify(repoDir, TITLE);
   if (pulled.status === "failed") return false;
-  if (pulled.status === "updated") log(out, "info", `Repository updated to ${pulled.rev}`);
+  if (pulled.status === "updated") await log("info", `Repository updated to ${pulled.rev}`);
   return true;
 }
 
 // Claude Code installs no dependencies for an in-place plugin. Frozen, so a
 // lockfile that disagrees with its package.json fails instead of being rewritten
 // in the deployed clone, which would stop the next night at the sync gate.
-export function installDependencies(
-  out: Output,
-  repoDir: string,
-  env: Record<string, string | undefined>,
-): boolean {
-  log(out, "info", "Installing Claude repository dependencies...");
+export async function installDependencies(repoDir: string, env: Env): Promise<boolean> {
+  await log("info", "Installing Claude repository dependencies...");
 
-  if (out.run(["bun", "install", "--frozen-lockfile"], { cwd: repoDir, env, stdin: "ignore" }) !== 0) {
-    log(out, "warn", "bun install failed in the Claude repository, continuing");
+  if ((await $`bun install --frozen-lockfile < /dev/null`.cwd(repoDir).env(env).nothrow()).exitCode !== 0) {
+    await log("warn", "bun install failed in the Claude repository, continuing");
     return false;
   }
   return true;
 }
 
-export function updateMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
-  log(out, "info", "Updating marketplaces...");
+export async function updateMarketplaces(env: Env): Promise<boolean> {
+  await log("info", "Updating marketplaces...");
 
-  const refresh = marketplacesOffPin();
+  const refresh = await marketplacesOffPin();
   let failed = false;
   if (refresh === undefined) {
-    failed = claude(out, ["plugin", "marketplace", "update"], env) !== 0;
+    failed = (await claude(["plugin", "marketplace", "update"], env)) !== 0;
   } else {
     for (const name of refresh) {
-      if (claude(out, ["plugin", "marketplace", "update", name], env) !== 0) failed = true;
+      if ((await claude(["plugin", "marketplace", "update", name], env)) !== 0) failed = true;
     }
   }
 
   if (failed) {
-    log(out, "warn", "marketplace update had issues, continuing");
+    await log("warn", "marketplace update had issues, continuing");
     return false;
   }
   return true;
@@ -143,24 +172,27 @@ export function updateMarketplaces(out: Output, env: Record<string, string | und
 // its pin has nothing to fetch, and each refresh costs a few seconds of network.
 // Undefined when none can be skipped, which keeps the CLI's own refresh of
 // everything, the built-in directory included.
-function marketplacesOffPin(): string[] | undefined {
+async function marketplacesOffPin(): Promise<string[] | undefined> {
   const known = knownMarketplaces();
   if (!known.ok) return undefined;
 
   const pins = declaredMarketplacePins();
-  const refresh = known.names.filter((name) => !onPin(name, pins.get(name)));
+  const refresh: string[] = [];
+  for (const name of known.names) {
+    if (!(await onPin(name, pins.get(name)))) refresh.push(name);
+  }
   return refresh.length === known.names.length ? undefined : refresh;
 }
 
 // Only a tag or a full commit counts, since a branch pin moves upstream. A
 // declaration bumped to a new tag doesn't resolve in the clone yet.
-function onPin(name: string, ref: string | undefined): boolean {
+async function onPin(name: string, ref: string | undefined): Promise<boolean> {
   if (ref === undefined) return false;
 
   const clone = join(claudePluginsDir(), "marketplaces", name);
   const pinned = /^[0-9a-f]{40}$/i.test(ref) ? ref : `refs/tags/${ref}`;
-  const head = gitQuiet(["rev-parse", "HEAD"], clone);
-  const target = gitQuiet(["rev-parse", "--verify", "--quiet", `${pinned}^{commit}`], clone);
+  const head = await gitQuiet(["rev-parse", "HEAD"], clone);
+  const target = await gitQuiet(["rev-parse", "--verify", "--quiet", `${pinned}^{commit}`], clone);
 
   return (
     head.status === 0 &&
@@ -185,31 +217,31 @@ function onPin(name: string, ref: string | undefined): boolean {
 // A dependency Claude Code installed on its own has no key either. Those are
 // left to `claude plugin prune`, which removes the ones no remaining plugin
 // names.
-export function prunePlugins(out: Output, env: Record<string, string | undefined>): boolean {
-  log(out, "info", "Pruning undeclared plugins...");
+export async function prunePlugins(env: Env): Promise<boolean> {
+  await log("info", "Pruning undeclared plugins...");
 
   // Neither failure can be read as an empty set. An unreadable declaration would
   // account for nothing and take every plugin on the machine with it, and an
   // unreadable inventory would report success over a prune that never ran.
   const declared = declaredPlugins();
   if (!declared.ok) {
-    log(out, "warn", "Could not read which plugins settings.json declares");
-    out.write(2, `claude-plugins: ${declared.reason}\n`);
+    await log("warn", "Could not read which plugins settings.json declares");
+    writeAll(2, `claude-plugins: ${declared.reason}\n`);
     return false;
   }
 
-  const installed = installedPlugins();
+  const installed = await installedPlugins();
   if (!installed.ok) {
-    log(out, "warn", "Could not enumerate installed plugins");
-    out.write(2, `claude-plugins: ${installed.reason}\n`);
+    await log("warn", "Could not enumerate installed plugins");
+    writeAll(2, `claude-plugins: ${installed.reason}\n`);
     return false;
   }
 
   // Read as empty, every dependency would look undeclared and go.
   const auto = autoInstalledPlugins();
   if (!auto.ok) {
-    log(out, "warn", "Could not read which plugins were installed as dependencies");
-    out.write(2, `claude-plugins: ${auto.reason}\n`);
+    await log("warn", "Could not read which plugins were installed as dependencies");
+    writeAll(2, `claude-plugins: ${auto.reason}\n`);
     return false;
   }
 
@@ -217,21 +249,21 @@ export function prunePlugins(out: Output, env: Record<string, string | undefined
   for (const plugin of installed.plugins) {
     if (plugin.id === "" || declared.ids.has(plugin.id) || auto.ids.has(plugin.id)) continue;
 
-    log(out, "info", `Uninstalling ${plugin.id} (no longer declared)...`);
+    await log("info", `Uninstalling ${plugin.id} (no longer declared)...`);
     // One id per call: the CLI takes a single plugin and ignores anything after
     // it. The scope is named rather than left to the default, because these rows
     // are the user-scope ones and an uninstall aimed at another scope fails.
-    if (claude(out, ["plugin", "uninstall", "--scope", "user", plugin.id], env) !== 0) {
-      log(out, "warn", `Failed to uninstall ${plugin.id}`);
+    if ((await claude(["plugin", "uninstall", "--scope", "user", plugin.id], env)) !== 0) {
+      await log("warn", `Failed to uninstall ${plugin.id}`);
       failed += 1;
     }
   }
 
   // After the uninstalls, so a dependency only a removed plugin named goes with it.
-  const pruned = pruneDependencies(out, env);
+  const pruned = await pruneDependencies(env);
 
   if (failed > 0) {
-    log(out, "warn", `${failed} plugin(s) failed to uninstall`);
+    await log("warn", `${failed} plugin(s) failed to uninstall`);
     return false;
   }
   return pruned;
@@ -239,16 +271,11 @@ export function prunePlugins(out: Output, env: Record<string, string | undefined
 
 // The CLI exits 0 when it declines to act because an installed plugin failed to
 // load, so its refusal is read off the message.
-function pruneDependencies(out: Output, env: Record<string, string | undefined>): boolean {
-  const pruned = out.read(["claude", "plugin", "prune", "--scope", "user", "--yes"], {
-    cwd: "/",
-    env,
-    stdin: "ignore",
-  });
-  out.write(1, pruned.stdout);
+async function pruneDependencies(env: Env): Promise<boolean> {
+  const pruned = await $`claude plugin prune --scope user --yes < /dev/null`.cwd("/").env(env).nothrow();
 
-  if (pruned.status !== 0 || pruned.stdout.trimStart().startsWith("Skipped")) {
-    log(out, "warn", "Pruning unneeded dependencies had issues");
+  if (pruned.exitCode !== 0 || pruned.stdout.toString().trimStart().startsWith("Skipped")) {
+    await log("warn", "Pruning unneeded dependencies had issues");
     return false;
   }
   return true;
@@ -258,28 +285,28 @@ function pruneDependencies(out: Output, env: Record<string, string | undefined>)
 // the registry outgrows the declaration and re-fetches what nothing names. A
 // marketplace backing an installed plugin is kept anyway, at every scope. The
 // removal names no scope, which the CLI refuses without a user declaration.
-export function pruneMarketplaces(out: Output, env: Record<string, string | undefined>): boolean {
-  log(out, "info", "Pruning undeclared marketplaces...");
+export async function pruneMarketplaces(env: Env): Promise<boolean> {
+  await log("info", "Pruning undeclared marketplaces...");
 
   // No failure below reads as an empty set, which would take every marketplace.
   const declared = declaredMarketplaces();
   if (!declared.ok) {
-    log(out, "warn", "Could not read which marketplaces settings.json declares");
-    out.write(2, `claude-marketplaces: ${declared.reason}\n`);
+    await log("warn", "Could not read which marketplaces settings.json declares");
+    writeAll(2, `claude-marketplaces: ${declared.reason}\n`);
     return false;
   }
 
-  const used = pluginMarketplaces();
+  const used = await pluginMarketplaces();
   if (!used.ok) {
-    log(out, "warn", "Could not read which marketplaces have plugins installed");
-    out.write(2, `claude-marketplaces: ${used.reason}\n`);
+    await log("warn", "Could not read which marketplaces have plugins installed");
+    writeAll(2, `claude-marketplaces: ${used.reason}\n`);
     return false;
   }
 
   const known = knownMarketplaces();
   if (!known.ok) {
-    log(out, "warn", "Could not enumerate registered marketplaces");
-    out.write(2, `claude-marketplaces: ${known.reason}\n`);
+    await log("warn", "Could not enumerate registered marketplaces");
+    writeAll(2, `claude-marketplaces: ${known.reason}\n`);
     return false;
   }
 
@@ -287,30 +314,30 @@ export function pruneMarketplaces(out: Output, env: Record<string, string | unde
   for (const name of known.names) {
     if (name === "" || declared.ids.has(name) || used.names.has(name)) continue;
 
-    log(out, "info", `Removing ${name} (no longer declared)...`);
-    if (claude(out, ["plugin", "marketplace", "remove", name], env) !== 0) {
-      log(out, "warn", `Failed to remove ${name}`);
+    await log("info", `Removing ${name} (no longer declared)...`);
+    if ((await claude(["plugin", "marketplace", "remove", name], env)) !== 0) {
+      await log("warn", `Failed to remove ${name}`);
       failed += 1;
     }
   }
 
   if (failed > 0) {
-    log(out, "warn", `${failed} marketplace(s) failed to remove`);
+    await log("warn", `${failed} marketplace(s) failed to remove`);
     return false;
   }
   return true;
 }
 
-export function updatePlugins(out: Output, env: Record<string, string | undefined>): boolean {
-  log(out, "info", "Updating plugins...");
+export async function updatePlugins(env: Env): Promise<boolean> {
+  await log("info", "Updating plugins...");
 
   // An inventory that could not be read is not an empty one. Treating it as
   // empty would update nothing and report success, which is the failure this job
   // exists to make loud.
-  const inventory = pluginInventory();
+  const inventory = await pluginInventory();
   if (!inventory.ok) {
-    log(out, "warn", "Could not enumerate installed plugins");
-    out.write(2, `claude-plugins: ${inventory.reason}\n`);
+    await log("warn", "Could not enumerate installed plugins");
+    writeAll(2, `claude-plugins: ${inventory.reason}\n`);
     return false;
   }
 
@@ -325,7 +352,7 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
     // to, so `claude plugin update` can only ever fail. Counting them here would
     // make every run fail.
     if (!source.ok && source.reason === "absent") {
-      log(out, "info", `${plugin.id} is no longer offered by its marketplace; uninstall it`);
+      await log("info", `${plugin.id} is no longer offered by its marketplace; uninstall it`);
       continue;
     }
 
@@ -334,9 +361,9 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
       // every night.
       if (!source.ok) continue;
 
-      log(out, "info", `Installing ${plugin.id} (not yet installed)...`);
-      if (claude(out, ["plugin", "install", plugin.id], env) !== 0) {
-        log(out, "warn", `Failed to install ${plugin.id}`);
+      await log("info", `Installing ${plugin.id} (not yet installed)...`);
+      if ((await claude(["plugin", "install", plugin.id], env)) !== 0) {
+        await log("warn", `Failed to install ${plugin.id}`);
         failed += 1;
       }
       continue;
@@ -352,16 +379,16 @@ export function updatePlugins(out: Output, env: Record<string, string | undefine
       continue;
     }
 
-    log(out, "info", `Updating ${plugin.id}...`);
-    if (!updatePlugin(out, plugin.id, env)) {
-      log(out, "warn", `Failed to update ${plugin.id}`);
+    await log("info", `Updating ${plugin.id}...`);
+    if (!(await updatePlugin(plugin.id, env))) {
+      await log("warn", `Failed to update ${plugin.id}`);
       failed += 1;
     }
   }
 
-  if (loadedInPlace > 0) log(out, "info", `${loadedInPlace} plugin(s) load in place from a local marketplace`);
+  if (loadedInPlace > 0) await log("info", `${loadedInPlace} plugin(s) load in place from a local marketplace`);
   if (failed > 0) {
-    log(out, "warn", `${failed} plugin(s) failed to update`);
+    await log("warn", `${failed} plugin(s) failed to update`);
     return false;
   }
   return true;
@@ -375,18 +402,14 @@ const RETRY_PAUSE_MS = 2000;
 // pluginSource has already read that manifest by the time this runs, so the id
 // is one the CLI should resolve. A second attempt absorbs the race while a
 // plugin that is genuinely stuck fails both and still reports.
-function updatePlugin(
-  out: Output,
-  id: string,
-  env: Record<string, string | undefined>,
-): boolean {
+async function updatePlugin(id: string, env: Env): Promise<boolean> {
   for (let attempt = 1; attempt <= UPDATE_ATTEMPTS; attempt += 1) {
     // Named, because a plugin also installed for a project leaves the CLI to
     // guess which install is meant.
-    if (claude(out, ["plugin", "update", "--scope", "user", id], env) === 0) return true;
+    if ((await claude(["plugin", "update", "--scope", "user", id], env)) === 0) return true;
     if (attempt < UPDATE_ATTEMPTS) {
-      log(out, "info", `Retrying ${id} (attempt ${attempt + 1}/${UPDATE_ATTEMPTS})...`);
-      Bun.sleepSync(RETRY_PAUSE_MS);
+      await log("info", `Retrying ${id} (attempt ${attempt + 1}/${UPDATE_ATTEMPTS})...`);
+      await Bun.sleep(RETRY_PAUSE_MS);
     }
   }
   return false;
@@ -396,8 +419,8 @@ function updatePlugin(
 // working through and leave every plugin after it silently unattempted. Run from
 // the root, where launchd already puts the nightly: `claude` resolves a project
 // scope from its cwd, and the scopeless removals would edit that project.
-function claude(out: Output, args: string[], env: Record<string, string | undefined>): number {
-  return out.run(["claude", ...args], { cwd: "/", env, stdin: "ignore" });
+async function claude(args: string[], env: Env): Promise<number> {
+  return (await $`claude ${args} < /dev/null`.cwd("/").env(env).nothrow()).exitCode;
 }
 
 // herdr owns user/hooks/herdr-agent-state.sh. Its installer writes the script
@@ -409,17 +432,16 @@ function claude(out: Output, args: string[], env: Record<string, string | undefi
 // script's version marker, so that edit is discarded, whether it came through
 // the link or replaced it.
 //
-// moshi's edit stays, so its install runs after herdr's restore. It replaces
-// the link as it writes, so what it changed is carried into the working copy.
-export function installAgentHooks(
-  out: Output,
-  repoDir: string,
-  env: Record<string, string | undefined>,
-): boolean {
+// moshi's and Rex's edits stay, so their installs run after herdr's restore.
+// A release that changes its hook dirties the clone for the sync gate to
+// surface. moshi replaces the link as it writes, so what it changed is carried
+// into the working copy. Rex writes through whichever file moshi left, so it
+// runs before that carry: after it, the dirty tree would refuse moshi's edit.
+export async function installAgentHooks(repoDir: string, env: Env): Promise<boolean> {
   let ok = true;
 
   if (Bun.which("herdr", { PATH: env.PATH }) !== null) {
-    log(out, "info", "Installing herdr claude integration...");
+    await log("info", "Installing herdr claude integration...");
 
     // Taken before the install and written back after, so what goes away is
     // herdr's entry and nothing else. Restoring from HEAD would also discard an
@@ -427,8 +449,8 @@ export function installAgentHooks(
     const settings = join(repoDir, SETTINGS);
     const before = readSettings(settings);
 
-    if (out.run(["herdr", "integration", "install", "claude"], { env, stdin: "ignore" }) !== 0) {
-      log(out, "warn", "herdr integration install failed");
+    if ((await $`herdr integration install claude < /dev/null`.env(env).nothrow()).exitCode !== 0) {
+      await log("warn", "herdr integration install failed");
       ok = false;
     }
 
@@ -436,17 +458,41 @@ export function installAgentHooks(
     // that wrote the entry and then failed leaves it behind either way. Left
     // there, it holds the sync gate shut on every later run, and clearing that
     // gate is what lets this step run again at all.
-    if (!restoreSettings(out, settings, before)) ok = false;
-    if (settingsReplaced() && !relinkClaudeHome(out, repoDir, env)) ok = false;
+    if (!(await restoreSettings(settings, before))) ok = false;
+    if (settingsReplaced() && !(await relinkClaudeHome(repoDir, env))) ok = false;
   }
 
-  if (!installClaudeHooks(out, env)) ok = false;
+  if (!(await installClaudeHooks(env))) ok = false;
+
+  // Part of the Rex trial, through 2026-12-15.
+  const rex = rexCommand(env);
+  if (rex !== undefined) {
+    await log("info", "Installing rex claude integration...");
+    const setup = await $`${rex} skill setup --agent claude --autostart=false < /dev/null`.env(env).nothrow();
+    if (setup.exitCode !== 0) {
+      await log("warn", "rex skill setup failed");
+      ok = false;
+    }
+  }
+
   if (settingsReplaced()) {
-    adoptReplacedSettings(out, repoDir);
-    if (!relinkClaudeHome(out, repoDir, env)) ok = false;
+    await adoptReplacedSettings(repoDir);
+    if (!(await relinkClaudeHome(repoDir, env))) ok = false;
   }
 
   return ok;
+}
+
+// rex is on PATH only inside Rex terminals, so the nightly finds it in the app bundle.
+function rexCommand(env: Env): string | undefined {
+  const onPath = Bun.which("rex", { PATH: env.PATH });
+  if (onPath !== null) return onPath;
+
+  const bundled = join(
+    env.HOME || homedir(),
+    "Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex",
+  );
+  return isFile(bundled) ? bundled : undefined;
 }
 
 function readSettings(path: string): string | undefined {
@@ -457,27 +503,27 @@ function readSettings(path: string): string | undefined {
   }
 }
 
-function restoreSettings(out: Output, path: string, before: string | undefined): boolean {
+async function restoreSettings(path: string, before: string | undefined): Promise<boolean> {
   if (before === undefined || readSettings(path) === before) return true;
 
   try {
     writeFileSync(path, before);
   } catch {
-    log(out, "warn", `Could not discard herdr's edit to ${SETTINGS}`);
+    await log("warn", `Could not discard herdr's edit to ${SETTINGS}`);
     return false;
   }
 
   return true;
 }
 
-export function repoRevision(repoDir: string): string {
-  const rev = stripNewlines(gitQuiet(["rev-parse", "--short", "HEAD"], repoDir).stdout);
+export async function repoRevision(repoDir: string): Promise<string> {
+  const rev = stripNewlines((await gitQuiet(["rev-parse", "--short", "HEAD"], repoDir)).stdout);
   return rev === "" ? "unknown" : rev;
 }
 
-export function versionMeta(): string {
-  const version = mergedOutput(["claude", "--version"], undefined, "ignore");
-  return `- **Claude:** ${version.status === 0 ? version.output : "unknown"}`;
+export async function versionMeta(): Promise<string> {
+  const version = await $`claude --version < /dev/null`.nothrow().quiet();
+  return `- **Claude:** ${version.exitCode === 0 ? stripNewlines(version.stdout.toString()) : "unknown"}`;
 }
 
 // Reduce a job's output to what is wrong with it, so the latch reopens when that
@@ -517,14 +563,14 @@ function awkFields(line: string): string[] {
   return trimmed === "" ? [] : trimmed.split(/[ \t]+/);
 }
 
-export function reportSyncFailure(output: string, repoDir: string): number {
+export async function reportSyncFailure(output: string, repoDir: string): Promise<number> {
   return reportFailure({
     job: SYNC_JOB,
     title: "Claude sync failed",
     command: SYNC_JOB,
     output,
-    revision: repoRevision(repoDir),
-    extraMeta: versionMeta(),
+    revision: await repoRevision(repoDir),
+    extraMeta: await versionMeta(),
     outputHeading: "Error Output",
     fingerprint: failureFingerprint(failureFields(output)),
   });
@@ -535,106 +581,75 @@ export interface SyncOptions {
   interactive?: boolean;
 }
 
-export function sync(out: Output, repoDir: string, options: SyncOptions = {}): number {
-  const synced = syncRepo(out, repoDir);
+export async function sync(repoDir: string, options: SyncOptions = {}): Promise<number> {
+  const synced = await syncRepo(repoDir);
   // Whether or not the gate let the pull through, so a refused sync still leaves
   // Claude reading the repo.
-  const linked = !isDirectory(repoDir) || relinkClaudeHome(out, repoDir);
+  const linked = !isDirectory(repoDir) || (await relinkClaudeHome(repoDir));
   if (!synced) return 1;
 
   // Claude Code clones marketplaces and plugins from `git@github.com:` and
   // re-clones them on every update, so those remotes are not ours to rewrite.
   // The rewrite outranks a pushurl, so it goes to these steps alone: bin/git-sync
   // moves the repo itself, and its PR push has to stay on the SSH pushurl.
-  const env = { ...process.env, ...httpsEnv() };
+  const env = { ...process.env, ...(await httpsEnv()) };
 
   // Right after the pull, so in-place plugins get the new revision's dependencies.
-  const installed = installDependencies(out, repoDir, env);
+  const installed = await installDependencies(repoDir, env);
 
   if (options.interactive) {
-    const refreshed = updateMarketplaces(out, env);
-    return updatePlugins(out, env) && refreshed && installed && linked ? 0 : 1;
+    const refreshed = await updateMarketplaces(env);
+    return (await updatePlugins(env)) && refreshed && installed && linked ? 0 : 1;
   }
 
   let status = linked && installed ? 0 : 1;
   // After the sync, so the pull that removes a stale script from the clone runs
   // against a clean tree and the installer puts the current one back.
-  if (!installAgentHooks(out, repoDir, env)) status = 1;
+  if (!(await installAgentHooks(repoDir, env))) status = 1;
 
   // Before the update pass, so a payload on its way out is not refreshed first.
-  if (!prunePlugins(out, env)) status = 1;
+  if (!(await prunePlugins(env))) status = 1;
 
   // After the plugin prune so a marketplace losing its last plugin goes with it,
   // before the update so a clone on its way out is not fetched first.
-  if (!pruneMarketplaces(out, env)) status = 1;
+  if (!(await pruneMarketplaces(env))) status = 1;
 
-  if (!updateMarketplaces(out, env)) status = 1;
+  if (!(await updateMarketplaces(env))) status = 1;
 
-  if (!updatePlugins(out, env)) status = 1;
+  if (!(await updatePlugins(env))) status = 1;
   return status;
 }
 
-export function main(out: Capture = capturedOutput(), options: SyncOptions = {}): number {
-  const repoDir = claudeRepoHome();
-
-  if (sync(out, repoDir, options) !== 0) {
-    reportSyncFailure(stripNewlines(out.captured()), repoDir);
-    return 1;
-  }
+async function body(args: string[]): Promise<number> {
+  if ((await sync(claudeRepoHome(), { interactive: !args.includes("--full") })) !== 0) return 1;
 
   reportSuccess(SYNC_JOB);
-  log(out, "info", "Claude sync completed successfully");
+  await log("info", "Claude sync completed successfully");
   return 0;
 }
 
-function sortedFile(path: string): string | undefined {
-  return canonicalJson(readText(path));
+// The body runs as a child with both streams folded onto one pipe, which
+// streams live and is kept for the failure report: the `{ … } 2>&1 | tee` the
+// shell wrapped it in. The child keeps the terminal on stdin, so the sync gate
+// can still prompt.
+export async function main(args: string[]): Promise<number> {
+  if (args[0] === BODY) return body(args.slice(1));
+
+  const run = await $`${process.execPath} ${import.meta.path} ${BODY} ${args} 2>&1`.nothrow();
+  if (run.exitCode === 0) return 0;
+
+  await reportSyncFailure(stripNewlines(run.stdout.toString()), claudeRepoHome());
+  return 1;
 }
 
-function sortedBlob(repoDir: string, file: string): string | undefined {
-  const blob = gitQuiet(["show", `HEAD:${file}`], repoDir);
+async function sortedFile(path: string): Promise<string | undefined> {
+  return await canonicalJson(readText(path));
+}
+
+async function sortedBlob(repoDir: string, file: string): Promise<string | undefined> {
+  const blob = await gitQuiet(["show", `HEAD:${file}`], repoDir);
   if (blob.status !== 0) return undefined;
-  return canonicalJson(blob.stdout);
-}
-
-// A git command whose stdout is the answer and whose complaints the shell
-// discarded.
-function gitQuiet(args: string[], cwd: string): { status: number; stdout: string } {
-  try {
-    const run = Bun.spawnSync({
-      cmd: ["git", ...args],
-      cwd,
-      env: process.env,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    return { status: run.exitCode, stdout: run.stdout.toString() };
-  } catch {
-    return { status: 127, stdout: "" };
-  }
-}
-
-// Both streams, so a diagnostic the child wrote reaches the note built from this.
-function mergedOutput(
-  cmd: string[],
-  env?: Record<string, string | undefined>,
-  stderr: "pipe" | "ignore" = "pipe",
-): { status: number; output: string } {
-  try {
-    const run = Bun.spawnSync({
-      cmd,
-      env: env ?? process.env,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr,
-    });
-    // A stream that was not piped leaves no buffer behind to read.
-    const captured = `${run.stdout.toString()}${run.stderr ? run.stderr.toString() : ""}`;
-    return { status: run.exitCode, output: stripNewlines(captured) };
-  } catch {
-    return { status: 127, output: "" };
-  }
+  return await canonicalJson(blob.stdout);
 }
 
 function readText(path: string): string {
@@ -654,5 +669,5 @@ function isFile(path: string): boolean {
 }
 
 if (import.meta.main) {
-  process.exit(main(capturedOutput(), { interactive: !process.argv.includes("--full") }));
+  process.exit(await main(process.argv.slice(2)));
 }

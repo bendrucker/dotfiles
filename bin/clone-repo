@@ -10,6 +10,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdir, rename, stat } from "node:fs/promises";
+import { $ } from "bun";
 
 const USAGE = [
   "usage: clone-repo <repo|owner/repo|url>",
@@ -165,12 +166,16 @@ async function main(argv: string[]): Promise<number> {
         // git_protocol it was configured with. A bare path lets it pick.
         ["glab", "repo", "clone", `${org}/${repo}`, checkout]
       : ["gh", "repo", "clone", host ? input : `${org}/${repo}`, checkout];
-  const status = await exec(clone);
+  // gh and glab explain their own failures on stderr, so the caller adds one line
+  // naming what failed rather than a stack trace behind it.
+  const { exitCode: status } = await $`${clone}`.nothrow();
   if (status !== 0) throw new Failure(`${clone[0]} could not clone ${clone[3]}`, status);
 
   // Callers read the checkout path off stdout, so the linker only gets stderr. A
   // clone without an overlay is still a usable clone, so nothing here is fatal.
-  await spawn(["claude-overlay", "link", checkout], { stdout: "ignore", stderr: "inherit" })?.exited;
+  if (Bun.which("claude-overlay", { PATH: process.env.PATH }) !== null) {
+    await $`cat /dev/null | claude-overlay link ${checkout} > /dev/null`.nothrow();
+  }
 
   console.log(checkout);
   return 0;
@@ -232,11 +237,13 @@ async function getRepos(): Promise<string[]> {
 }
 
 function spawnRefresh(flag: string): void {
-  spawn([process.execPath, import.meta.path, flag], {
-    stdin: "ignore",
-    stdout: "ignore",
-    stderr: "ignore",
-  })?.unref();
+  try {
+    Bun.spawn([process.execPath, import.meta.path, flag], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    }).unref();
+  } catch {}
 }
 
 // Empty when either call fails, so a rate-limited org listing cannot overwrite
@@ -276,33 +283,12 @@ async function fetchRepos(): Promise<string[]> {
     .map(([name]) => name);
 }
 
-// A command that is not installed throws where a shell would print `command not
-// found`. Undefined lets each caller say what that means for it.
-function spawn(cmd: string[], options: Parameters<typeof Bun.spawn>[1]): Bun.Subprocess | undefined {
-  try {
-    return Bun.spawn(cmd, options);
-  } catch {
-    return undefined;
-  }
-}
-
-// Run a command on the terminal and report how it ended. gh and glab explain
-// their own failures on stderr, so the caller adds one line naming what failed
-// rather than a stack trace behind it.
-async function exec(cmd: string[]): Promise<number> {
-  const proc = spawn(cmd, { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-  if (proc === undefined) throw new Failure(`${cmd[0]} is not installed`, 127);
-  return await proc.exited;
-}
-
 // stdout of a command that succeeded, or undefined. Its stderr is dropped: every
 // caller is reading a login or a listing, most of them mid-completion, where a
 // rate-limit notice would land in the middle of the word being typed.
 async function output(cmd: string[]): Promise<string | undefined> {
-  const proc = spawn(cmd, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
-  if (proc === undefined) return undefined;
-  const [text, status] = await Promise.all([new Response(proc.stdout as ReadableStream).text(), proc.exited]);
-  return status === 0 ? text : undefined;
+  const result = await $`${cmd} < /dev/null`.nothrow().quiet();
+  return result.exitCode === 0 ? result.stdout.toString() : undefined;
 }
 
 function lines(text: string): string[] {

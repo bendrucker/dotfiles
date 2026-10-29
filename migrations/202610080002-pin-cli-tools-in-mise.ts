@@ -7,8 +7,8 @@
 //
 // EXPIRES: 2027-04-08 every machine has run scripts/install since the move to mise
 
-import { log } from "#jobs/output";
-import { type Context, removeFormula } from "#migrations/migration";
+import { log } from "#gum";
+import { removeFormula } from "#migrations/migration";
 
 // actionlint before shellcheck, which the Homebrew actionlint depends on.
 export const FORMULAE = [
@@ -25,15 +25,15 @@ export const FORMULAE = [
   "yq",
 ];
 
-export function up(context: Context): void {
+export async function up(): Promise<void> {
   for (const name of FORMULAE) {
     // brew refuses while another installed formula depends on this one, and
     // that holds on every later run, so a refusal is logged and skipped.
     try {
-      removeFormula(context, name);
+      await removeFormula(name);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      log(context.out, "warn", `kept ${name}: ${reason}`);
+      await log("warn", `kept ${name}: ${reason}`);
     }
   }
 }

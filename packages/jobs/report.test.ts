@@ -79,7 +79,7 @@ afterEach(() => {
   rmSync(sandbox, { recursive: true, force: true });
 });
 
-function fail(output: string, fingerprint = ""): number {
+async function fail(output: string, fingerprint = ""): Promise<number> {
   return reportFailure({
     job: "drift",
     title: "Stale",
@@ -148,47 +148,47 @@ function standInThings(id = "todo-1", notes = filedNotes(), status = 0): void {
 // A job that files a to-do every night trains you to ignore it, and one that
 // files none after the first leaves later breakage silent.
 describe("reportFailure latch", () => {
-  test("files a to-do on the first failure", () => {
-    expect(fail("one plugin stale")).toBe(0);
+  test("files a to-do on the first failure", async () => {
+    expect(await fail("one plugin stale")).toBe(0);
     expect(added()).toHaveLength(1);
   });
 
-  test("stays quiet while the job keeps failing the same way", () => {
-    fail("one plugin stale");
-    fail("one plugin stale");
+  test("stays quiet while the job keeps failing the same way", async () => {
+    await fail("one plugin stale");
+    await fail("one plugin stale");
     expect(added()).toHaveLength(1);
   });
 
-  test("files again after reportSuccess clears the latch", () => {
-    fail("one plugin stale");
+  test("files again after reportSuccess clears the latch", async () => {
+    await fail("one plugin stale");
     reportSuccess("drift");
-    fail("one plugin stale");
+    await fail("one plugin stale");
     expect(added()).toHaveLength(2);
   });
 
-  test("records ok on success and the cause on a failure", () => {
+  test("records ok on success and the cause on a failure", async () => {
     reportSuccess("drift");
     expect(readFileSync(statusFile("drift"), "utf8")).toBe("ok\n");
-    fail("one plugin stale", "alpha");
+    await fail("one plugin stale", "alpha");
     expect(readFileSync(statusFile("drift"), "utf8")).toMatch(/^failed [0-9a-f]{12}\n$/);
   });
 
-  test("reads a missing latch as the empty string", () => {
+  test("reads a missing latch as the empty string", async () => {
     expect(readLatch("never-run")).toBe("");
   });
 
   // A latch claiming a to-do that was never created silences the cause on every
   // later night the store cannot be read, which is every night on a machine
   // without Things.
-  test("puts the latch back when the filing itself fails", () => {
+  test("puts the latch back when the filing itself fails", async () => {
     writeStub(stub("open"), "exit 3");
     // The filer's own status, which is what tells a refused filing apart from a
     // failure that was filed.
-    expect(fail("one plugin stale")).toBe(3);
+    expect(await fail("one plugin stale")).toBe(3);
     expect(readLatch("drift")).toBe("");
   });
 
-  test("treats an empty fingerprint as no fingerprint", () => {
+  test("treats an empty fingerprint as no fingerprint", async () => {
     expect(latchValue("")).toBe("failed");
     expect(latchValue("alpha")).toBe("failed alpha");
   });
@@ -198,62 +198,62 @@ describe("reportFailure latch", () => {
 // keyed on the step alone filed the first and suppressed every different one
 // behind it.
 describe("reportFailure cause", () => {
-  test("stays quiet when the same line fails again with a different duration", () => {
-    fail("ERRO sync failed\nfatal: could not resolve host, after 3012 ms\n");
-    fail("ERRO sync failed\nfatal: could not resolve host, after 44 ms\n");
+  test("stays quiet when the same line fails again with a different duration", async () => {
+    await fail("ERRO sync failed\nfatal: could not resolve host, after 3012 ms\n");
+    await fail("ERRO sync failed\nfatal: could not resolve host, after 44 ms\n");
     expect(added()).toHaveLength(1);
   });
 
-  test("files again when the step breaks a different way", () => {
-    fail("fatal: could not resolve host\n");
-    fail("error: cannot lock ref 'HEAD'\n");
+  test("files again when the step breaks a different way", async () => {
+    await fail("fatal: could not resolve host\n");
+    await fail("error: cannot lock ref 'HEAD'\n");
     expect(added()).toHaveLength(2);
   });
 
-  test("honours a fingerprint the caller derived itself", () => {
-    fail("alpha stale", "alpha");
-    fail("beta stale", "alpha");
+  test("honours a fingerprint the caller derived itself", async () => {
+    await fail("alpha stale", "alpha");
+    await fail("beta stale", "alpha");
     expect(added()).toHaveLength(1);
-    fail("beta stale", "beta");
+    await fail("beta stale", "beta");
     expect(added()).toHaveLength(2);
   });
 
-  test("stays quiet for a fingerprint whose text ends in a newline", () => {
-    fail("alpha stale", "alpha\n");
-    fail("alpha stale", "alpha\n");
+  test("stays quiet for a fingerprint whose text ends in a newline", async () => {
+    await fail("alpha stale", "alpha\n");
+    await fail("alpha stale", "alpha\n");
     expect(added()).toHaveLength(1);
   });
 });
 
 // Where a to-do lands, which is the half of this Ben reads every morning.
 describe("reportFailure filing", () => {
-  test("lands in Anytime rather than Today", () => {
-    fail("boom");
+  test("lands in Anytime rather than Today", async () => {
+    await fail("boom");
     expect(field(added()[0], "when")).toBe("anytime");
   });
 
-  test("carries the tag that gathers the set", () => {
-    fail("boom");
+  test("carries the tag that gathers the set", async () => {
+    await fail("boom");
     expect(field(added()[0], "tags")).toBe("dotfiles");
   });
 
-  test("names the machine in the title, since the two of them fail independently", () => {
-    fail("boom");
+  test("names the machine in the title, since the two of them fail independently", async () => {
+    await fail("boom");
     expect(field(added()[0], "title")).toMatch(/^Stale on .+/);
   });
 
-  test("notifies when the cause is new", () => {
-    fail("boom");
+  test("notifies when the cause is new", async () => {
+    await fail("boom");
     expect(notifications()).toHaveLength(1);
   });
 });
 
 describe("reportFailure append", () => {
-  test("appends the run to the to-do already standing for the cause", () => {
-    fail("boom");
+  test("appends the run to the to-do already standing for the cause", async () => {
+    await fail("boom");
     standInThings();
 
-    expect(fail("boom")).toBe(0);
+    expect(await fail("boom")).toBe(0);
     expect(added()).toHaveLength(1);
     expect(updated()).toHaveLength(1);
     expect(field(updated()[0], "id")).toBe("todo-1");
@@ -262,39 +262,39 @@ describe("reportFailure append", () => {
 
   // The two runs have to share a cause to reach the append at all, so they differ
   // below the line that names the failure rather than in it.
-  test("carries the run's own output into the append", () => {
-    fail("fatal: could not resolve host\nattempt one\n");
+  test("carries the run's own output into the append", async () => {
+    await fail("fatal: could not resolve host\nattempt one\n");
     standInThings();
-    fail("fatal: could not resolve host\nattempt two\n");
+    await fail("fatal: could not resolve host\nattempt two\n");
     expect(field(updated()[0], "append-notes")).toContain("attempt two");
   });
 
-  test("stays quiet rather than notifying again", () => {
-    fail("boom");
+  test("stays quiet rather than notifying again", async () => {
+    await fail("boom");
     standInThings();
-    fail("boom");
+    await fail("boom");
     expect(notifications()).toHaveLength(1);
   });
 
-  test("counts the runs in the title, so a cause aging shows without being opened", () => {
-    fail("boom");
+  test("counts the runs in the title, so a cause aging shows without being opened", async () => {
+    await fail("boom");
     standInThings();
-    fail("boom");
+    await fail("boom");
     expect(field(updated()[0], "title")).toMatch(/^Stale on .+ \(2 runs\)$/);
   });
 
-  test("files a fresh to-do for a different cause while one stands", () => {
-    fail("fatal: could not resolve host\n");
+  test("files a fresh to-do for a different cause while one stands", async () => {
+    await fail("fatal: could not resolve host\n");
     standInThings();
-    fail("error: cannot lock ref 'HEAD'\n");
+    await fail("error: cannot lock ref 'HEAD'\n");
     expect(added()).toHaveLength(2);
     expect(updated()).toHaveLength(0);
   });
 
-  test("files again once the standing to-do has been completed", () => {
-    fail("boom");
+  test("files again once the standing to-do has been completed", async () => {
+    await fail("boom");
     standInThings("todo-1", filedNotes(), 3);
-    fail("boom");
+    await fail("boom");
     expect(added()).toHaveLength(2);
   });
 
@@ -302,14 +302,14 @@ describe("reportFailure append", () => {
   // this cause. Filing a second one every night it repeats was the flood this
   // whole design exists to prevent, and nothing is lost by staying quiet: the
   // archive holds every run, and the standing note names the archive.
-  test("leaves the standing to-do alone where the append cannot be made", () => {
-    fail("boom");
+  test("leaves the standing to-do alone where the append cannot be made", async () => {
+    await fail("boom");
     standInThings();
     writeStub(stub("security"), "exit 1");
 
-    fail("boom");
-    fail("boom");
-    fail("boom");
+    await fail("boom");
+    await fail("boom");
+    await fail("boom");
 
     expect(added()).toHaveLength(1);
   });
@@ -317,13 +317,13 @@ describe("reportFailure append", () => {
   // The latch moves before the filing, so a filing Things refused puts it back.
   // A later night that cannot read the store would otherwise read the latch as a
   // to-do standing and leave the failure unreported for good.
-  test("puts the latch back where the filing was refused", () => {
+  test("puts the latch back where the filing was refused", async () => {
     writeStub(stub("open"), "exit 1");
-    fail("boom");
+    await fail("boom");
     expect(added()).toHaveLength(0);
 
     writeStub(stub("open"), `printf '%s\\n' "$2" >> "${join(sandbox, "urls")}"`);
-    fail("boom");
+    await fail("boom");
 
     expect(added()).toHaveLength(1);
   });
@@ -331,24 +331,24 @@ describe("reportFailure append", () => {
   // A recovery clears the latch while the to-do it filed stays standing, so the
   // append has to put the cause back. Otherwise a later night that cannot read
   // the store reads the stale latch and files what it is blind to.
-  test("re-latches a cause returning to a to-do that still stands", () => {
-    fail("boom");
+  test("re-latches a cause returning to a to-do that still stands", async () => {
+    await fail("boom");
     standInThings();
     reportSuccess("drift");
-    fail("boom");
+    await fail("boom");
 
     process.env.THINGS_DATABASE = join(sandbox, "unreadable.sqlite");
-    fail("boom");
+    await fail("boom");
 
     expect(added()).toHaveLength(1);
   });
 
   // A to-do standing for a different cause is not one this failure can append to.
-  test("still files where nothing stands for this cause", () => {
+  test("still files where nothing stands for this cause", async () => {
     writeStub(stub("security"), "exit 1");
-    fail("fatal: could not resolve host\n");
+    await fail("fatal: could not resolve host\n");
     standInThings();
-    fail("error: cannot lock ref 'HEAD'\n");
+    await fail("error: cannot lock ref 'HEAD'\n");
     expect(added()).toHaveLength(2);
   });
 });
@@ -356,40 +356,40 @@ describe("reportFailure append", () => {
 // Today is the working list. A cause that has outlived three runs is no longer
 // something to look at when convenient.
 describe("reportFailure escalation", () => {
-  function repeat(times: number): void {
-    fail("boom");
+  async function repeat(times: number): Promise<void> {
+    await fail("boom");
     for (let run = 2; run <= times; run += 1) {
       standInThings();
-      fail("boom");
+      await fail("boom");
     }
   }
 
-  test("leaves a cause in Anytime while it is young", () => {
-    repeat(2);
+  test("leaves a cause in Anytime while it is young", async () => {
+    await repeat(2);
     expect(field(updated().at(-1) ?? "", "when")).toBe("");
   });
 
-  test("moves a cause to Today once it has survived the threshold", () => {
-    repeat(ESCALATE_AFTER);
+  test("moves a cause to Today once it has survived the threshold", async () => {
+    await repeat(ESCALATE_AFTER);
     expect(field(updated().at(-1) ?? "", "when")).toBe("today");
   });
 
   // Ben pulling it back out of Today is a decision the next run leaves standing.
-  test("does not move it again on the runs after that", () => {
-    repeat(ESCALATE_AFTER + 1);
+  test("does not move it again on the runs after that", async () => {
+    await repeat(ESCALATE_AFTER + 1);
     expect(field(updated().at(-1) ?? "", "when")).toBe("");
   });
 
   // A night the store cannot be read records its run without appending, so the
   // count steps over the threshold rather than landing on it. Testing for
   // equality there lost the escalation for good.
-  test("escalates on the first append past a threshold the count stepped over", () => {
-    repeat(ESCALATE_AFTER - 1);
+  test("escalates on the first append past a threshold the count stepped over", async () => {
+    await repeat(ESCALATE_AFTER - 1);
     process.env.THINGS_DATABASE = join(sandbox, "unreadable.sqlite");
-    fail("boom");
+    await fail("boom");
 
     standInThings();
-    fail("boom");
+    await fail("boom");
 
     expect(field(updated().at(-1) ?? "", "title")).toMatch(/\(4 runs\)$/);
     expect(field(updated().at(-1) ?? "", "when")).toBe("today");
@@ -398,15 +398,15 @@ describe("reportFailure escalation", () => {
   // The claim is taken before the update that would carry it, so an update
   // Things refuses hands it back. Spending the one move on an edit that never
   // landed leaves the cause in Anytime for good.
-  test("keeps the escalation where the update carrying it fails", () => {
-    repeat(ESCALATE_AFTER - 1);
+  test("keeps the escalation where the update carrying it fails", async () => {
+    await repeat(ESCALATE_AFTER - 1);
     writeStub(stub("security"), "exit 1");
     standInThings();
-    fail("boom");
+    await fail("boom");
 
     writeStub(stub("security"), 'printf "token-abc\\n"');
     standInThings();
-    fail("boom");
+    await fail("boom");
 
     expect(field(updated().at(-1) ?? "", "when")).toBe("today");
   });
@@ -414,17 +414,17 @@ describe("reportFailure escalation", () => {
   // The run count that decides this is the standing to-do's, not the archive's.
   // Counting every run the cause ever had leaves the replacement starting above
   // the threshold, so it walks past it and never reaches Today again.
-  test("escalates the to-do that replaces a completed one on its own third run", () => {
-    repeat(ESCALATE_AFTER);
+  test("escalates the to-do that replaces a completed one on its own third run", async () => {
+    await repeat(ESCALATE_AFTER);
     standInThings("todo-1", filedNotes(), 3);
 
-    fail("boom");
+    await fail("boom");
     expect(field(added().at(-1) ?? "", "title")).toMatch(/^Stale on [^(]+$/);
 
     standInThings("todo-2");
-    fail("boom");
+    await fail("boom");
     standInThings("todo-2");
-    fail("boom");
+    await fail("boom");
 
     expect(field(updated().at(-1) ?? "", "id")).toBe("todo-2");
     expect(field(updated().at(-1) ?? "", "title")).toMatch(/\(3 runs\)$/);
@@ -433,14 +433,14 @@ describe("reportFailure escalation", () => {
 });
 
 describe("todoTitle", () => {
-  test("names the machine, and the run count only once there is more than one", () => {
+  test("names the machine, and the run count only once there is more than one", async () => {
     expect(todoTitle("Stale", "Studio", 1)).toBe("Stale on Studio");
     expect(todoTitle("Stale", "Studio", 4)).toBe("Stale on Studio (4 runs)");
   });
 });
 
 describe("causeMarker", () => {
-  test("names the machine, the job and the cause", () => {
+  test("names the machine, the job and the cause", async () => {
     expect(causeMarker("a1b2c3d4", "dotfiles-sync", "9f8e")).toBe(
       "dotfiles-job a1b2c3d4/dotfiles-sync/9f8e",
     );
@@ -454,7 +454,7 @@ function finding(row: string): Finding {
 
 // One night of a findings job: what stands, and what it could not reach a
 // verdict on.
-function night(standing: string[], held: string[] = []): number {
+async function night(standing: string[], held: string[] = []): Promise<number> {
   return reportFindings({
     job: "drift",
     title: "Stale",
@@ -472,92 +472,92 @@ function night(standing: string[], held: string[] = []): number {
 // of them joined or left, so a plugin that had been stale for a week filed a
 // fresh to-do each time an unrelated one was fixed.
 describe("reportFindings latch", () => {
-  test("files a to-do for a newly standing finding", () => {
-    night(["alpha stale"]);
+  test("files a to-do for a newly standing finding", async () => {
+    await night(["alpha stale"]);
     expect(added()).toHaveLength(1);
   });
 
   // A finding that left and came back has a to-do already standing for it, so an
   // append Things refuses leaves that one alone. The ordinary failure path
   // reaches the same answer through its latch, which this path does not carry.
-  test("leaves the standing to-do alone where the append cannot be made", () => {
-    night(["alpha stale"]);
+  test("leaves the standing to-do alone where the append cannot be made", async () => {
+    await night(["alpha stale"]);
     standInThings();
     writeStub(stub("security"), "exit 1");
 
-    night([]);
-    night(["alpha stale"]);
+    await night([]);
+    await night(["alpha stale"]);
 
     expect(added()).toHaveLength(1);
   });
 
   // A latch claiming a to-do that was never created leaves the finding quiet
   // however long it stands.
-  test("puts the findings back where the filing was refused", () => {
+  test("puts the findings back where the filing was refused", async () => {
     writeStub(stub("open"), "exit 3");
-    expect(night(["alpha stale"])).toBe(3);
+    expect(await night(["alpha stale"])).toBe(3);
 
     writeStub(stub("open"), `printf '%s\\n' "$2" >> "${join(sandbox, "urls")}"`);
-    night(["alpha stale"]);
+    await night(["alpha stale"]);
 
     expect(added()).toHaveLength(1);
   });
 
-  test("stays quiet while the same finding stands", () => {
-    night(["alpha stale"]);
-    night(["alpha stale"]);
+  test("stays quiet while the same finding stands", async () => {
+    await night(["alpha stale"]);
+    await night(["alpha stale"]);
     expect(added()).toHaveLength(1);
   });
 
-  test("stays quiet for a standing finding while the set churns around it", () => {
-    night(["alpha stale"]);
-    night(["alpha stale", "beta stale"]);
-    night(["alpha stale"]);
-    night(["alpha stale", "gamma pinned"]);
+  test("stays quiet for a standing finding while the set churns around it", async () => {
+    await night(["alpha stale"]);
+    await night(["alpha stale", "beta stale"]);
+    await night(["alpha stale"]);
+    await night(["alpha stale", "gamma pinned"]);
     // One each for beta and gamma, and none of the three later nights re-filed
     // alpha.
     expect(added()).toHaveLength(3);
     expect(filedNotes()).toContain("**New:** gamma pinned");
   });
 
-  test("names only the newly standing findings", () => {
-    night(["alpha stale", "beta stale"]);
-    night(["alpha stale", "beta stale", "gamma orphaned"]);
+  test("names only the newly standing findings", async () => {
+    await night(["alpha stale", "beta stale"]);
+    await night(["alpha stale", "beta stale", "gamma orphaned"]);
     expect(filedNotes()).toContain("**New:** gamma orphaned");
   });
 
-  test("files again when a subject's verdict changes", () => {
-    night(["alpha stale"]);
-    night(["alpha pinned"]);
+  test("files again when a subject's verdict changes", async () => {
+    await night(["alpha stale"]);
+    await night(["alpha pinned"]);
     expect(added()).toHaveLength(2);
     expect(filedNotes()).toContain("**New:** alpha pinned");
   });
 
-  test("files again after a finding is fixed and comes back", () => {
-    night(["alpha stale"]);
-    night([]);
-    night(["alpha stale"]);
+  test("files again after a finding is fixed and comes back", async () => {
+    await night(["alpha stale"]);
+    await night([]);
+    await night(["alpha stale"]);
     expect(added()).toHaveLength(2);
   });
 
-  test("puts the latch back when the filing itself fails", () => {
+  test("puts the latch back when the filing itself fails", async () => {
     writeStub(stub("open"), "exit 3");
-    expect(night(["alpha stale"])).toBe(3);
+    expect(await night(["alpha stale"])).toBe(3);
     expect(readLatch("drift")).toBe("");
   });
 
-  test("keeps its latch clear of the single-failure one", () => {
-    fail("alpha stale", "alpha");
-    night(["alpha stale"]);
-    night(["alpha stale"]);
+  test("keeps its latch clear of the single-failure one", async () => {
+    await fail("alpha stale", "alpha");
+    await night(["alpha stale"]);
+    await night(["alpha stale"]);
     expect(added()).toHaveLength(2);
   });
 
-  test("appends a returning finding set to the to-do standing for it", () => {
-    night(["alpha stale"]);
+  test("appends a returning finding set to the to-do standing for it", async () => {
+    await night(["alpha stale"]);
     standInThings();
-    night([]);
-    night(["alpha stale"]);
+    await night([]);
+    await night(["alpha stale"]);
     expect(added()).toHaveLength(1);
     expect(updated()).toHaveLength(1);
   });
@@ -569,46 +569,46 @@ describe("reportFindings latch", () => {
 // second route to the same duplicate to-do: it left the latch on the blip and
 // re-filed as new the next night.
 describe("reportFindings held subjects", () => {
-  test("keeps a latched finding whose subject went unverified", () => {
-    night(["alpha stale"]);
-    night([], ["alpha"]);
+  test("keeps a latched finding whose subject went unverified", async () => {
+    await night(["alpha stale"]);
+    await night([], ["alpha"]);
     expect(readLatch("drift")).toBe("standing\nalpha\tstale");
     expect(added()).toHaveLength(1);
   });
 
-  test("files nothing when a held finding comes back unchanged", () => {
-    night(["alpha stale"]);
-    night([], ["alpha"]);
-    night(["alpha stale"]);
+  test("files nothing when a held finding comes back unchanged", async () => {
+    await night(["alpha stale"]);
+    await night([], ["alpha"]);
+    await night(["alpha stale"]);
     expect(added()).toHaveLength(1);
   });
 
-  test("files nothing for a subject that is only ever unverified", () => {
-    night([], ["alpha"]);
+  test("files nothing for a subject that is only ever unverified", async () => {
+    await night([], ["alpha"]);
     expect(added()).toHaveLength(0);
     expect(readLatch("drift")).toBe("standing");
   });
 
-  test("clears a subject that is neither standing nor held", () => {
-    night(["alpha stale", "beta stale"]);
-    night(["alpha stale"], ["gamma"]);
+  test("clears a subject that is neither standing nor held", async () => {
+    await night(["alpha stale", "beta stale"]);
+    await night(["alpha stale"], ["gamma"]);
     expect(readLatch("drift")).toBe("standing\nalpha\tstale");
   });
 });
 
 describe("decideFindings", () => {
-  test("carries a held finding without calling it fresh", () => {
+  test("carries a held finding without calling it fresh", async () => {
     const decision = decideFindings([finding("alpha stale")], [], ["alpha"]);
     expect(decision.fresh).toEqual([]);
     expect(decision.latched).toEqual([finding("alpha stale")]);
   });
 
-  test("drops a finding that came back clean", () => {
+  test("drops a finding that came back clean", async () => {
     const decision = decideFindings([finding("alpha stale")], [], []);
     expect(decision.latched).toEqual([]);
   });
 
-  test("reports every standing finding as fresh against an empty latch", () => {
+  test("reports every standing finding as fresh against an empty latch", async () => {
     const decision = decideFindings([], [finding("alpha stale"), finding("beta pinned")], []);
     expect(decision.fresh).toHaveLength(2);
   });
@@ -618,39 +618,39 @@ describe("decideFindings", () => {
 // its log with a repository sync whose diffstat alone ran past that, and the
 // error that ended the run was the part cut.
 describe("trimOutput", () => {
-  test("keeps a log that fits", () => {
+  test("keeps a log that fits", async () => {
     expect(trimOutput("short", 100)).toBe("short");
   });
 
-  test("keeps the end of a log that does not", () => {
+  test("keeps the end of a log that does not", async () => {
     const output = `${"line\n".repeat(100)}the failure`;
     const trimmed = trimOutput(output, 60);
     expect(trimmed.length).toBeLessThanOrEqual(60);
     expect(trimmed).toEndWith("the failure");
   });
 
-  test("says how much it dropped", () => {
+  test("says how much it dropped", async () => {
     const output = `${"line\n".repeat(100)}the failure`;
     expect(trimOutput(output, 60)).toContain("characters elided]");
   });
 
-  test("resumes at a line boundary", () => {
+  test("resumes at a line boundary", async () => {
     const output = `${"line\n".repeat(100)}the failure`;
     const kept = trimOutput(output, 60).split("\n").slice(1);
     expect(kept.every((line) => line === "line" || line === "the failure")).toBe(true);
   });
 
-  test("resumes at a word boundary inside a line longer than the budget", () => {
+  test("resumes at a word boundary inside a line longer than the budget", async () => {
     const output = `${"word ".repeat(200)}end`;
     const trimmed = trimOutput(output, 60);
     expect(trimmed.split("\n")[1]).toStartWith("word ");
   });
 
-  test("yields nothing where the budget cannot hold the accounting", () => {
+  test("yields nothing where the budget cannot hold the accounting", async () => {
     expect(trimOutput("some output here", 5)).toBe("");
   });
 
-  test("counts every dropped character, the elision marker's own included", () => {
+  test("counts every dropped character, the elision marker's own included", async () => {
     const output = `${"line\n".repeat(100)}the failure`;
     const trimmed = trimOutput(output, 60);
     const marker = trimmed.match(/\[(\d+) of (\d+) characters elided\]/);
@@ -660,13 +660,13 @@ describe("trimOutput", () => {
     expect(Number(marker[2])).toBe(output.length);
   });
 
-  test("reports the width of the elision marker", () => {
+  test("reports the width of the elision marker", async () => {
     expect(elisionMarker(4, 9)).toBe("[4 of 9 characters elided]");
   });
 
   // A cut between the halves of a surrogate pair leaves an orphaned code unit that
   // renders as a replacement character.
-  test("does not open the kept text on half a surrogate pair", () => {
+  test("does not open the kept text on half a surrogate pair", async () => {
     const emoji = "🙂".repeat(200);
     const trimmed = trimOutput(emoji, 100);
     expect(trimmed.split("\n")[1]).not.toMatch(/^[\uDC00-\uDFFF]/);
@@ -687,66 +687,66 @@ describe("buildNotes", () => {
     output: "boom",
   };
 
-  test("opens with the machine, time and revision", () => {
-    expect(buildNotes(note)).toStartWith(
+  test("opens with the machine, time and revision", async () => {
+    expect(await buildNotes(note)).toStartWith(
       "- **Machine:** Mac Studio\n- **First seen:** 2026-09-05 03:00:12 PDT\n- **Revision:** abc123\n",
     );
   });
 
-  test("names the cause it was filed against and where every run is kept", () => {
-    expect(buildNotes(note)).toContain("- **Cause:** fatal: could not resolve host");
-    expect(buildNotes(note)).toContain("- **Every run:** /state/dotfiles/runs/drift-9f8e.log");
+  test("names the cause it was filed against and where every run is kept", async () => {
+    expect(await buildNotes(note)).toContain("- **Cause:** fatal: could not resolve host");
+    expect(await buildNotes(note)).toContain("- **Every run:** /state/dotfiles/runs/drift-9f8e.log");
   });
 
   // The marker is what the next run finds the to-do by, so its absence would make
   // every repeat file a second to-do.
-  test("carries the marker", () => {
-    expect(buildNotes(note)).toContain("`dotfiles-job a1b2c3d4/drift/9f8e`");
+  test("carries the marker", async () => {
+    expect(await buildNotes(note)).toContain("`dotfiles-job a1b2c3d4/drift/9f8e`");
   });
 
-  test("appends extra metadata to the header only when there is some", () => {
-    expect(buildNotes(note)).not.toContain("- **Claude:**");
-    expect(buildNotes({ ...note, extraMeta: "- **Claude:** 2.0" })).toContain(
+  test("appends extra metadata to the header only when there is some", async () => {
+    expect(await buildNotes(note)).not.toContain("- **Claude:**");
+    expect(await buildNotes({ ...note, extraMeta: "- **Claude:** 2.0" })).toContain(
       "- **Revision:** abc123\n- **Claude:** 2.0\n",
     );
   });
 
-  test("fences the reproduction command and names the output section", () => {
-    expect(buildNotes(note)).toContain("```sh\nbrew bundle\n```\n\n## Error Output\n```\nboom\n```");
+  test("fences the reproduction command and names the output section", async () => {
+    expect(await buildNotes(note)).toContain("```sh\nbrew bundle\n```\n\n## Error Output\n```\nboom\n```");
   });
 
-  test("closes the fence on the line after the last log line", () => {
-    expect(buildNotes({ ...note, output: "boom\n\n\n" })).toEndWith("boom\n```");
+  test("closes the fence on the line after the last log line", async () => {
+    expect(await buildNotes({ ...note, output: "boom\n\n\n" })).toEndWith("boom\n```");
   });
 
   // The regression: the error is the last line, and it was the part Things cut.
-  test("keeps the note within what Things stores and keeps the error that ended the run", () => {
+  test("keeps the note within what Things stores and keeps the error that ended the run", async () => {
     const big = `${" plugins/some/path.ts | 12 ++++\n".repeat(400)}WARN the actual failure\n`;
-    const notes = buildNotes({ ...note, output: big });
+    const notes = await buildNotes({ ...note, output: big });
     expect(notes.length).toBeLessThanOrEqual(THINGS_NOTES_LIMIT);
     expect(notes).toContain("WARN the actual failure");
   });
 });
 
 describe("appendBlock", () => {
-  test("heads the block with the run and the time", () => {
+  test("heads the block with the run and the time", async () => {
     expect(appendBlock(3, "2026-09-11 03:00:04 PDT", "boom", 2000)).toContain(
       "### Run 3 — 2026-09-11 03:00:04 PDT",
     );
   });
 
-  test("fences the run's output", () => {
+  test("fences the run's output", async () => {
     expect(appendBlock(2, "monday", "boom", 2000)).toEndWith("```\nboom\n```");
   });
 
-  test("stays inside the room the note has left", () => {
+  test("stays inside the room the note has left", async () => {
     const block = appendBlock(2, "monday", "x".repeat(5000), 500);
     expect(block.length).toBeLessThanOrEqual(500);
   });
 
   // Every run is in the log whether or not it fits here, so the note says which
   // of the two happened.
-  test("points at the log where the output cannot fit at all", () => {
+  test("points at the log where the output cannot fit at all", async () => {
     const block = appendBlock(2, "monday", "x".repeat(5000), 64);
     expect(block).toContain("in the log");
     expect(block.length).toBeLessThanOrEqual(64);
@@ -754,7 +754,7 @@ describe("appendBlock", () => {
 
   // Appending nothing still updates the title, so the run count moves and the
   // run stays in the log.
-  test("appends nothing where not even the pointer fits", () => {
+  test("appends nothing where not even the pointer fits", async () => {
     expect(appendBlock(2, "monday", "x".repeat(5000), 20)).toBe("");
   });
 });
@@ -762,20 +762,20 @@ describe("appendBlock", () => {
 // Nothing can be appended without the token, and a note that did not say so would
 // leave the runs after this one unrecorded and unexplained.
 describe("missing auth token", () => {
-  test("says so in the note it files", () => {
+  test("says so in the note it files", async () => {
     writeStub(stub("security"), "exit 1");
-    fail("boom");
+    await fail("boom");
     expect(filedNotes()).toContain("things-auth-token");
   });
 
-  test("says nothing about it on a machine that has one", () => {
-    fail("boom");
+  test("says nothing about it on a machine that has one", async () => {
+    await fail("boom");
     expect(filedNotes()).not.toContain("things-auth-token");
   });
 });
 
 describe("notificationScript", () => {
-  test("names the message, title and sound", () => {
+  test("names the message, title and sound", async () => {
     expect(notificationScript("Dotfiles Sync", "Updated to abc123", "Glass")).toBe(
       'display notification "Updated to abc123" with title "Dotfiles Sync" sound name "Glass"',
     );
@@ -783,7 +783,7 @@ describe("notificationScript", () => {
 
   // Titles are built by interpolation at the call sites, and an invalid script
   // fails silently, so the notification would simply never appear.
-  test("escapes quotes and backslashes so a caller cannot break the script", () => {
+  test("escapes quotes and backslashes so a caller cannot break the script", async () => {
     expect(notificationScript('a "b" c', "back\\slash", "Basso")).toBe(
       'display notification "back\\\\slash" with title "a \\"b\\" c" sound name "Basso"',
     );
@@ -794,23 +794,23 @@ describe("notificationScript", () => {
 // is not reading the Things list, and osascript discards its own errors, so a
 // broken call would go unnoticed on the one platform that has it.
 describe("notify", () => {
-  test("hands osascript the script for the notification", () => {
-    notify("Dotfiles Sync", "Updated to abc123", "Glass");
+  test("hands osascript the script for the notification", async () => {
+    await notify("Dotfiles Sync", "Updated to abc123", "Glass");
     expect(notifications()).toEqual([
       'display notification "Updated to abc123" with title "Dotfiles Sync" sound name "Glass"',
     ]);
   });
 
-  test("defaults the sound", () => {
-    notify("Dotfiles Sync", "Updated to abc123");
+  test("defaults the sound", async () => {
+    await notify("Dotfiles Sync", "Updated to abc123");
     expect(notifications()[0]).toContain('sound name "Basso"');
   });
 
   // Every Linux run reaches this, CI included, under callers that abort on a
   // nonzero status.
-  test("does nothing where osascript is absent", () => {
+  test("does nothing where osascript is absent", async () => {
     rmSync(stub("osascript"));
-    expect(() => notify("Dotfiles Sync", "Updated")).not.toThrow();
+    await notify("Dotfiles Sync", "Updated");
     expect(notifications()).toEqual([]);
   });
 });

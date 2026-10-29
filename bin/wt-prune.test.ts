@@ -557,49 +557,49 @@ describe("interactive checklist", () => {
     };
   }
 
-  function pick(candidates: Candidate[], choice?: string, confirmRc?: string): Report {
+  async function pick(candidates: Candidate[], choice?: string, confirmRc?: string): Promise<Report> {
     if (choice !== undefined) process.env.GUM_CHOOSE = choice;
     if (confirmRc !== undefined) process.env.GUM_CONFIRM_RC = confirmRc;
     const report: Report = { worktrees: 0, branches: 0, reasons: [] };
-    checklist(candidates, options, report);
+    await checklist(candidates, options, report);
     return report;
   }
 
-  test("selecting nothing removes nothing", () => {
-    const report = pick([candidate("feature-x", true)]);
+  test("selecting nothing removes nothing", async () => {
+    const report = await pick([candidate("feature-x", true)]);
     expect(report.worktrees).toBe(0);
     expect(log("WT_REMOVE_LOG")).toBe("");
   });
 
-  test("a selection is removed by its own handle", () => {
-    const report = pick([candidate("feature-x", true), candidate("feature-y", true)], "feature-x");
+  test("a selection is removed by its own handle", async () => {
+    const report = await pick([candidate("feature-x", true), candidate("feature-y", true)], "feature-x");
     expect(report.worktrees).toBe(1);
     expect(log("WT_REMOVE_LOG")).toContain("--foreground --force --force-delete feature-x");
     expect(log("WT_REMOVE_LOG")).not.toContain("feature-y");
   });
 
-  test("a selection with a remote copy is not gated on a confirm", () => {
-    pick([candidate("feature-x", true)], "feature-x");
+  test("a selection with a remote copy is not gated on a confirm", async () => {
+    await pick([candidate("feature-x", true)], "feature-x");
     expect(log("GUM_LOG")).not.toContain("confirm");
   });
 
-  test("declining the local-only confirm removes nothing", () => {
-    const report = pick([candidate("feature-x", false)], "feature-x", "1");
+  test("declining the local-only confirm removes nothing", async () => {
+    const report = await pick([candidate("feature-x", false)], "feature-x", "1");
     expect(report.worktrees).toBe(0);
     expect(log("GUM_LOG")).toContain("no remote copy");
     expect(log("WT_REMOVE_LOG")).toBe("");
   });
 
-  test("a confirmed local-only selection is removed", () => {
-    const report = pick([candidate("feature-x", false)], "feature-x", "0");
+  test("a confirmed local-only selection is removed", async () => {
+    const report = await pick([candidate("feature-x", false)], "feature-x", "0");
     expect(report.worktrees).toBe(1);
     expect(log("WT_REMOVE_LOG")).toContain("feature-x");
   });
 
-  test("a dry run counts the selection without removing it", () => {
+  test("a dry run counts the selection without removing it", async () => {
     const report: Report = { worktrees: 0, branches: 0, reasons: [] };
     process.env.GUM_CHOOSE = "feature-x";
-    checklist([candidate("feature-x", true)], { ...options, dryRun: true }, report);
+    await checklist([candidate("feature-x", true)], { ...options, dryRun: true }, report);
     expect(report.worktrees).toBe(1);
     expect(log("WT_REMOVE_LOG")).toBe("");
   });

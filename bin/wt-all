@@ -18,9 +18,12 @@
 // Output is an aligned table by default. Set $WT_ALL_RAW to get the underlying
 // "<repo>\t<line>" rows instead, for a caller that parses the fields.
 
-import { readdirSync, writeSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { $ } from "bun";
+import { log } from "#gum";
+import { writeAll } from "#pipe";
 import { alignColumns } from "#worktree/table";
 
 const USAGE = [
@@ -205,8 +208,6 @@ async function pool<T, R>(items: T[], limit: number, work: (item: T) => Promise<
   return results;
 }
 
-// Bun otherwise resolves a bare command name against the PATH it captured at
-// startup, so the environment goes over explicitly on every spawn.
 function environment(): Record<string, string | undefined> {
   // Sibling wt-* subcommands (e.g. wt-prune) stay resolvable by `wt` even when
   // this script is run by path, before install has put bin/ on PATH.
@@ -215,20 +216,13 @@ function environment(): Record<string, string | undefined> {
 }
 
 async function runRepo(repo: string, base: string, cmd: string[]): Promise<Result> {
-  const spawned = Bun.spawn({
-    cmd: ["wt", "-C", repo, ...cmd],
-    env: environment(),
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr] = await Promise.all([
-    new Response(spawned.stdout).text(),
-    new Response(spawned.stderr).text(),
-  ]);
-
-  return { display: display(repo, base), stdout, stderr, ok: (await spawned.exited) === 0 };
+  const run = await $`wt -C ${repo} ${cmd} < /dev/null`.env(environment()).nothrow().quiet();
+  return {
+    display: display(repo, base),
+    stdout: run.stdout.toString(),
+    stderr: run.stderr.toString(),
+    ok: run.exitCode === 0,
+  };
 }
 
 // One line redrawn in place as results arrive. Off without a terminal, which is
@@ -243,15 +237,7 @@ function clearProgress(): void {
   if (process.stderr.isTTY) process.stderr.write(ERASE_LINE);
 }
 
-function log(level: "info" | "warn", message: string): void {
-  Bun.spawnSync({
-    cmd: ["gum", "log", "--level", level, message],
-    env: environment(),
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-}
-
-function report(results: Result[], cmd: string[]): number {
+async function report(results: Result[], cmd: string[]): Promise<number> {
   const raw = setting("WT_ALL_RAW") !== undefined;
   const totals: Totals = {
     scanned: results.length,
@@ -306,9 +292,9 @@ function report(results: Result[], cmd: string[]): number {
   if (!raw) lines.push("");
   if (lines.length > 0) writeAll(1, `${lines.join("\n")}\n`);
 
-  log("info", summarize(totals));
+  await log("info", summarize(totals));
   if (failed.length > 0) {
-    log("warn", `failed: ${failed.join(", ")}`);
+    await log("warn", `failed: ${failed.join(", ")}`);
     // Diagnostics go to stderr, alongside the gum summary they belong to. On
     // stdout this free-form text would land in a raw consumer's field parser as
     // rows that are not rows.
@@ -316,14 +302,6 @@ function report(results: Result[], cmd: string[]): number {
   }
 
   return failed.length === 0 ? 0 : 1;
-}
-
-// A write followed by process.exit delivers only one pipe buffer, and the
-// nightly job reads this through a pipe. A table over every repo outruns that.
-function writeAll(fd: number, text: string): void {
-  const bytes = Buffer.from(text);
-  let written = 0;
-  while (written < bytes.length) written += writeSync(fd, bytes, written);
 }
 
 function missing(tool: string): boolean {
@@ -364,7 +342,7 @@ async function main(args: string[]): Promise<number> {
   });
   clearProgress();
 
-  return report(results, args);
+  return await report(results, args);
 }
 
 if (import.meta.main) {

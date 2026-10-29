@@ -296,59 +296,59 @@ describe("classify", () => {
   const facts = (fields: Partial<Facts>): Facts => ({
     mainState: "diverged",
     grace: 172800,
-    age: () => 0,
-    forge: () => "",
+    age: async () => 0,
+    forge: async () => "",
     ...fields,
   });
 
   const cases: [string, Facts, string | undefined][] = [
     [
       "integrated and past grace",
-      facts({ mainState: "integrated", age: () => 172800 }),
+      facts({ mainState: "integrated", age: async () => 172800 }),
       "integrated (integrated)",
     ],
     // "empty" names the same landed state and travels into the reason, so the
     // to-do says which of the two `wt list` reported.
-    ["no commits of its own and past grace", facts({ mainState: "empty", age: () => 999999 }), "integrated (empty)"],
-    ["integrated and inside grace", facts({ mainState: "integrated", age: () => 5 }), undefined],
+    ["no commits of its own and past grace", facts({ mainState: "empty", age: async () => 999999 }), "integrated (empty)"],
+    ["integrated and inside grace", facts({ mainState: "integrated", age: async () => 5 }), undefined],
     // An age no clock could resolve reads as old enough, so a filesystem that
     // records no birth time cannot hide drift.
     [
       "integrated with an unreadable age",
-      facts({ mainState: "integrated", age: () => undefined }),
+      facts({ mainState: "integrated", age: async () => undefined }),
       "integrated (integrated)",
     ],
     [
       "merged while still inside grace",
-      facts({ mainState: "integrated", age: () => 5, forge: () => "MERGED" }),
+      facts({ mainState: "integrated", age: async () => 5, forge: async () => "MERGED" }),
       "merged PR survived",
     ],
-    ["merged and never integrated", facts({ forge: () => "MERGED" }), "merged PR survived"],
-    ["open PR", facts({ forge: () => "OPEN" }), undefined],
+    ["merged and never integrated", facts({ forge: async () => "MERGED" }), "merged PR survived"],
+    ["open PR", facts({ forge: async () => "OPEN" }), undefined],
     // Closed without merging is not landed work. The pruner removes it only
     // when the tip is backed up, and the audit has no view of that, so an
     // oracle reporting it would fire on every abandoned branch.
-    ["closed PR", facts({ forge: () => "CLOSED" }), undefined],
+    ["closed PR", facts({ forge: async () => "CLOSED" }), undefined],
     ["no PR at all", facts({}), undefined],
   ];
 
-  test.each(cases)("%s", (_name, given, expected) => {
-    expect(classify(given)).toBe(expected);
+  test.each(cases)("%s", async (_name, given, expected) => {
+    expect(await classify(given)).toBe(expected);
   });
 
   // The integration rule is free and the forge call is a network round trip per
   // survivor, which is what makes a fleet-wide sweep over clean repos cheap.
-  test("does not consult the forge once the integration rule answers", () => {
+  test("does not consult the forge once the integration rule answers", async () => {
     let asked = 0;
-    classify(facts({ mainState: "integrated", age: () => 999999, forge: () => (asked++, "MERGED") }));
+    await classify(facts({ mainState: "integrated", age: async () => 999999, forge: async () => (asked++, "MERGED") }));
     expect(asked).toBe(0);
   });
 
   // Reading the clock costs a git call per worktree, and a branch that never
   // integrated has no age question to answer.
-  test("does not read the clock for a worktree that never integrated", () => {
+  test("does not read the clock for a worktree that never integrated", async () => {
     let asked = 0;
-    classify(facts({ mainState: "diverged", age: () => (asked++, 0) }));
+    await classify(facts({ mainState: "diverged", age: async () => (asked++, 0) }));
     expect(asked).toBe(0);
   });
 });

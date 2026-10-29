@@ -10,13 +10,13 @@
 // packages/worktree/forge.ts holds everything below the query, which is what
 // bin/wt-mr shares with this.
 
+import { log } from "#gum";
 import {
   type Bucket,
   capture,
   choose,
   count,
   isRecord,
-  log,
   missingTool,
   ordered,
   parseOptions,
@@ -40,8 +40,8 @@ const USAGE = [
 
 // Undefined when gh could not answer, which every caller treats as a reason to
 // stop rather than to show the other half of the results as the whole picture.
-function search(filter: string, bucket: Bucket): Request[] | undefined {
-  const captured = capture([
+async function search(filter: string, bucket: Bucket): Promise<Request[] | undefined> {
+  const captured = await capture([
     "gh",
     "search",
     "prs",
@@ -80,7 +80,7 @@ function search(filter: string, bucket: Bucket): Request[] | undefined {
   });
 }
 
-function main(args: string[]): number {
+async function main(args: string[]): Promise<number> {
   const parsed = parseOptions(args);
   if (!parsed.ok) {
     if (parsed.message === "") {
@@ -93,7 +93,7 @@ function main(args: string[]): number {
 
   const missing = missingTool(["gh", "fzf", "clone-repo", "wt"]);
   if (missing !== undefined) {
-    log("error", `${missing} is required`);
+    await log("error", `${missing} is required`);
     return 1;
   }
 
@@ -104,9 +104,9 @@ function main(args: string[]): number {
     [parsed.options.review, "--review-requested", "review"],
   ] as const) {
     if (!wanted) continue;
-    const results = search(filter, bucket);
+    const results = await search(filter, bucket);
     if (results === undefined) {
-      log("error", `gh search prs ${filter}=@me failed`);
+      await log("error", `gh search prs ${filter}=@me failed`);
       return 1;
     }
     found.push(...results);
@@ -114,14 +114,14 @@ function main(args: string[]): number {
 
   const requests = ordered(found);
   if (requests.length === 0) {
-    log("warn", "no open pull requests");
+    await log("warn", "no open pull requests");
     return 1;
   }
 
-  const chosen = choose(requests, { prompt: "pr> ", preview: "gh pr view {4}" });
+  const chosen = await choose(requests, { prompt: "pr> ", preview: "gh pr view {4}" });
   if (chosen === undefined) return 1;
 
-  return switchTo(chosen, parsed.options.rest);
+  return await switchTo(chosen, parsed.options.rest);
 }
 
-if (import.meta.main) process.exit(main(process.argv.slice(2)));
+if (import.meta.main) process.exit(await main(process.argv.slice(2)));

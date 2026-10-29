@@ -6,34 +6,29 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { $ } from "bun";
 import { reportFailure, reportSuccess } from "#jobs/report";
 import { claudeRepoHome, repoRevision } from "./claude-sync";
 
 const JOB = "session-index-compact";
 const REFRESH = join("plugins", "observability", "skills", "session", "scripts", "refresh.ts");
 
-export function main(): number {
+export async function main(): Promise<number> {
   const repoDir = claudeRepoHome();
   const script = join(repoDir, REFRESH);
   if (!existsSync(script)) return 0;
 
-  const run = Bun.spawnSync({
-    cmd: [process.execPath, script, "--compact"],
-    cwd: repoDir,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const run = await $`${process.execPath} ${script} --compact < /dev/null`.cwd(repoDir).nothrow().quiet();
   const output = `${run.stdout.toString()}${run.stderr.toString()}`;
   process.stdout.write(output);
 
   if (run.exitCode !== 0) {
-    reportFailure({
+    await reportFailure({
       job: JOB,
       title: "Session index compaction failed",
       command: `${REFRESH} --compact`,
       output,
-      revision: repoRevision(repoDir),
+      revision: await repoRevision(repoDir),
       extraMeta: "",
       outputHeading: "Output",
       fingerprint: "",
@@ -44,4 +39,4 @@ export function main(): number {
   return 0;
 }
 
-if (import.meta.main) process.exit(main());
+if (import.meta.main) process.exit(await main());

@@ -2,31 +2,30 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
+import { recorded, recordingStub } from "#harness/recorder";
 import { type Context, exists, isEmpty, ownedLink, removeCask, removeFormula, removeTree } from "#migrations/migration";
 
 let box: Sandbox;
 let home: string;
 let installed: string;
-// What the context's Output was asked to run, so a case can say which brew
-// command the helper reached for.
-let commands: string[][];
 
 function brewCalls(): string[][] {
-  return commands.filter((cmd) => cmd[0]?.endsWith("brew") === true).map((cmd) => cmd.slice(1));
+  return recorded(box)
+    .filter((call) => call[0] === "brew")
+    .map((call) => call.slice(1));
 }
 
 beforeEach(() => {
   box = sandbox("migration");
   home = box.mkdir("home");
   installed = box.mkdir("installed");
-  commands = [];
 });
 
 afterEach(() => {
   box.remove();
 });
 
-function context(read: (cmd: string[]) => number = () => 0): Context {
+function context(): Context {
   return {
     root: box.dir,
     home,
@@ -35,75 +34,66 @@ function context(read: (cmd: string[]) => number = () => 0): Context {
     applications: join(box.dir, "Applications"),
     installed: [installed],
     platform: "darwin",
-    out: {
-      write() {},
-      run(cmd) {
-        commands.push(cmd);
-        return 0;
-      },
-      read(cmd) {
-        commands.push(cmd);
-        return { status: read(cmd), stdout: "" };
-      },
-    },
   };
 }
 
 // removeFormula resolves brew off PATH, so a case that wants it to find one
-// puts a stub there. `brew list --versions` is what it asks.
-function stubBrew(): void {
-  box.stub("brew", "exit 0");
+// puts a stub there. `brew list --versions` is what it asks, and `listed` is
+// its exit status.
+function stubBrew(listed = 0): void {
+  recordingStub(box, "brew", `[ "$1" = list ] && exit ${listed}
+exit 0`);
   process.env.PATH = `${box.bin}:${process.env.PATH ?? ""}`;
 }
 
 describe("removeTree", () => {
-  test("removes a directory a retired topic's installer created", () => {
+  test("removes a directory a retired topic's installer created", async () => {
     const target = box.mkdir("home", ".tmux");
-    removeTree(context(), target);
+    await removeTree(context(), target);
     expect(exists(target)).toBe(false);
   });
 
-  test("a path that is already gone is not an error", () => {
-    expect(() => removeTree(context(), join(home, "never-there"))).not.toThrow();
+  test("a path that is already gone is not an error", async () => {
+    await expect(removeTree(context(), join(home, "never-there"))).resolves.toBeUndefined();
   });
 
-  test("removes a dangling symlink, which stat alone reports as missing", () => {
+  test("removes a dangling symlink, which stat alone reports as missing", async () => {
     const link = join(home, ".config-link");
     symlinkSync(box.path("home", "gone"), link);
     expect(exists(link)).toBe(true);
 
-    removeTree(context(), link);
+    await removeTree(context(), link);
     expect(exists(link)).toBe(false);
   });
 
-  test("refuses a root even when another root contains it", () => {
+  test("refuses a root even when another root contains it", async () => {
     // An XDG variable left pointing at an ancestor of the home directory would
     // otherwise make the home directory a legal target.
-    expect(() => removeTree({ ...context(), data: box.dir }, home)).toThrow(/is one of/);
+    await expect(removeTree({ ...context(), data: box.dir }, home)).rejects.toThrow(/is one of/);
     expect(exists(home)).toBe(true);
   });
 
-  test("allows an XDG directory the context puts outside the home directory", () => {
+  test("allows an XDG directory the context puts outside the home directory", async () => {
     const data = box.mkdir("volume", "share");
     const target = box.mkdir("volume", "share", "tmux");
 
-    removeTree({ ...context(), data }, target);
+    await removeTree({ ...context(), data }, target);
 
     expect(exists(target)).toBe(false);
   });
 
-  test("refuses a path outside every directory it was handed", () => {
+  test("refuses a path outside every directory it was handed", async () => {
     const outside = box.mkdir("elsewhere");
-    expect(() => removeTree(context(), outside)).toThrow(/outside/);
+    await expect(removeTree(context(), outside)).rejects.toThrow(/outside/);
     expect(exists(outside)).toBe(true);
   });
 
-  test("refuses the home directory itself", () => {
-    expect(() => removeTree(context(), home)).toThrow(/is one of/);
+  test("refuses the home directory itself", async () => {
+    await expect(removeTree(context(), home)).rejects.toThrow(/is one of/);
   });
 
-  test("refuses a path that climbs back out through the home", () => {
-    expect(() => removeTree(context(), join(home, "..", "elsewhere"))).toThrow(/outside/);
+  test("refuses a path that climbs back out through the home", async () => {
+    await expect(removeTree(context(), join(home, "..", "elsewhere"))).rejects.toThrow(/outside/);
   });
 });
 
@@ -113,24 +103,24 @@ describe("removeFormula", () => {
     process.env.PATH = path;
   });
 
-  test("uninstalls a formula that is installed", () => {
+  test("uninstalls a formula that is installed", async () => {
     stubBrew();
-    removeFormula(context(), "tmux");
+    await removeFormula("tmux");
     expect(brewCalls()).toEqual([
       ["list", "--versions", "tmux"],
       ["uninstall", "tmux"],
     ]);
   });
 
-  test("leaves a formula that is not installed alone", () => {
-    stubBrew();
-    removeFormula(context(() => 1), "tmux");
+  test("leaves a formula that is not installed alone", async () => {
+    stubBrew(1);
+    await removeFormula("tmux");
     expect(brewCalls()).toEqual([["list", "--versions", "tmux"]]);
   });
 
-  test("does nothing on a machine with no brew, which is every Linux one here", () => {
+  test("does nothing on a machine with no brew, which is every Linux one here", async () => {
     process.env.PATH = box.mkdir("empty");
-    removeFormula(context(), "tmux");
+    await removeFormula("tmux");
     expect(brewCalls()).toEqual([]);
   });
 });
@@ -143,24 +133,24 @@ describe("removeCask", () => {
 
   // Without --cask, `brew list` answers only for formulae and exits nonzero for
   // an installed cask, which would read as already gone and uninstall nothing.
-  test("scopes both commands to casks", () => {
+  test("scopes both commands to casks", async () => {
     stubBrew();
-    removeCask(context(), "wispr-flow");
+    await removeCask("wispr-flow");
     expect(brewCalls()).toEqual([
       ["list", "--cask", "--versions", "wispr-flow"],
       ["uninstall", "--cask", "wispr-flow"],
     ]);
   });
 
-  test("leaves a cask that is not installed alone", () => {
-    stubBrew();
-    removeCask(context(() => 1), "wispr-flow");
+  test("leaves a cask that is not installed alone", async () => {
+    stubBrew(1);
+    await removeCask("wispr-flow");
     expect(brewCalls()).toEqual([["list", "--cask", "--versions", "wispr-flow"]]);
   });
 
-  test("does nothing on a machine with no brew", () => {
+  test("does nothing on a machine with no brew", async () => {
     process.env.PATH = box.mkdir("empty");
-    removeCask(context(), "wispr-flow");
+    await removeCask("wispr-flow");
     expect(brewCalls()).toEqual([]);
   });
 });

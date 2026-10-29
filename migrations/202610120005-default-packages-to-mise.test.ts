@@ -27,7 +27,6 @@ function context(): Context {
     applications: box.path("Applications"),
     installed: [box.mkdir("installed")],
     platform: "darwin",
-    out: { write() {}, run: () => 0, read: () => ({ status: 1, stdout: "" }) },
   };
 }
 
@@ -50,19 +49,19 @@ describe("default-packages-to-mise", () => {
     { name: "removes the generated npm list", list: ".default-npm-packages", content: "# Auto-generated from dotfiles - do not edit directly\ntypescript\n", kept: false },
     { name: "removes the generated go list", list: ".default-go-packages", content: "# Auto-generated from dotfiles - do not edit directly\ngithub.com/spf13/cobra-cli\n", kept: false },
     { name: "leaves a list someone wrote by hand", list: ".default-npm-packages", content: "prettier\n", kept: true },
-  ])("$name", ({ list, content, kept }) => {
+  ])("$name", async ({ list, content, kept }) => {
     const path = box.write(join("home", list), content);
 
-    up(context());
+    await up(context());
 
     expect(exists(path)).toBe(kept);
   });
 
-  test("removes each package and the bin links npm made into it", () => {
+  test("removes each package and the bin links npm made into it", async () => {
     const install = npmGlobal("24.21.0", "typescript", ["tsc", "tsserver"]);
     npmGlobal("24.21.0", "@modelcontextprotocol/inspector", ["mcp-inspector"]);
 
-    up(context());
+    await up(context());
 
     for (const bin of ["tsc", "tsserver", "mcp-inspector"]) {
       expect(exists(join(install, "bin", bin))).toBe(false);
@@ -71,13 +70,13 @@ describe("default-packages-to-mise", () => {
     expect(exists(join(install, "lib", "node_modules", "@modelcontextprotocol"))).toBe(false);
   });
 
-  test("keeps the node version and every other global", () => {
+  test("keeps the node version and every other global", async () => {
     const install = npmGlobal("24.21.0", "ccusage", ["ccusage"]);
     npmGlobal("24.21.0", "prettier", ["prettier"]);
     box.write(join(NODE, "24.21.0", "bin", "node"), "");
     box.write(join(NODE, "24.21.0", "lib", "node_modules", "@modelcontextprotocol", "sdk", "package.json"), "{}");
 
-    up(context());
+    await up(context());
 
     expect(exists(join(install, "bin", "node"))).toBe(true);
     expect(exists(join(install, "bin", "prettier"))).toBe(true);
@@ -86,35 +85,35 @@ describe("default-packages-to-mise", () => {
     expect(exists(join(install, "bin", "ccusage"))).toBe(false);
   });
 
-  test("leaves a bin of the same name that npm did not link into the package", () => {
+  test("leaves a bin of the same name that npm did not link into the package", async () => {
     const install = npmGlobal("24.21.0", "typescript", []);
     const tsc = box.write(join(NODE, "24.21.0", "bin", "tsc"), "#!/bin/sh\n");
 
-    up(context());
+    await up(context());
 
     expect(exists(tsc)).toBe(true);
     expect(exists(join(install, "lib", "node_modules", "typescript"))).toBe(false);
   });
 
-  test("reaches every installed version and skips the alias links", () => {
+  test("reaches every installed version and skips the alias links", async () => {
     const current = npmGlobal("24.21.0", "typescript", ["tsc"]);
     const old = npmGlobal("22.14.0", "typescript", ["tsc"]);
     symlinkSync("./24.21.0", box.path(NODE, "24"));
 
-    up(context());
+    await up(context());
 
     expect(exists(join(current, "bin", "tsc"))).toBe(false);
     expect(exists(join(old, "bin", "tsc"))).toBe(false);
     expect(exists(box.path(NODE, "24"))).toBe(true);
   });
 
-  test("throws when the installs directory exists but cannot be read", () => {
+  test("throws when the installs directory exists but cannot be read", async () => {
     box.write(NODE, "");
 
-    expect(() => up(context())).toThrow();
+    await expect(up(context())).rejects.toThrow();
   });
 
-  test("a machine with nothing to clean up is not an error", () => {
-    expect(() => up(context())).not.toThrow();
+  test("a machine with nothing to clean up is not an error", async () => {
+    await expect(up(context())).resolves.toBeUndefined();
   });
 });

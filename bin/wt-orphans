@@ -28,11 +28,12 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
-  writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { $ } from "bun";
+import { writeAll } from "#pipe";
 import { minAge, parseDuration, pathAgeSecs } from "#worktree/state";
 import { alignColumns } from "#worktree/table";
 
@@ -218,7 +219,7 @@ function errorCode(error: unknown): string {
   return typeof error.code === "string" ? error.code : "error";
 }
 
-export function sweep(dryRun: boolean): Outcome {
+export async function sweep(dryRun: boolean): Promise<Outcome> {
   const floor = parseDuration(minAge());
   // A misconfigured duration returns nonzero, which flags the repo as failed
   // under `wt all` and puts the reason in front of someone, rather than
@@ -228,14 +229,14 @@ export function sweep(dryRun: boolean): Outcome {
     return { status: 1, stdout: "", stderr: said };
   }
 
-  const listed = capture(["git", "worktree", "list", "--porcelain"]);
+  const listed = await capture(["git", "worktree", "list", "--porcelain"]);
   if (listed.status !== 0) return notListed(listed.stderr);
 
   const registered = parseWorktrees(listed.stdout);
   const repo = registered[0];
   if (repo === undefined) return { status: 0, stdout: "", stderr: "" };
 
-  const commonDir = capture(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const commonDir = await capture(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]);
   const context: Context = {
     common: commonDir.stdout.trim() || join(repo, ".git"),
     known: new Set(registered.map(real)),
@@ -316,7 +317,7 @@ function render(rows: Row[]): string {
   return `${alignColumns([["VERDICT", "DETAIL", "PATH"], ...cells]).join("\n")}\n`;
 }
 
-export function run(args: string[]): Outcome {
+export async function run(args: string[]): Promise<Outcome> {
   let values;
   try {
     ({ values } = parseArgs({
@@ -333,7 +334,7 @@ export function run(args: string[]): Outcome {
   }
 
   if (values.help) return { status: 0, stdout: `${USAGE}\n`, stderr: "" };
-  return sweep(values["dry-run"]);
+  return await sweep(values["dry-run"]);
 }
 
 // A path that cannot be resolved is compared as it stands: git reports real
@@ -368,28 +369,15 @@ interface Captured {
   stderr: string;
 }
 
-// Bun otherwise resolves a bare command name against the PATH it captured at
-// startup, so the environment goes over explicitly. A git that is not installed
-// throws rather than returning a status, and reads here as the failure it is.
-function capture(cmd: string[]): Captured {
-  try {
-    const run = Bun.spawnSync({ cmd, env: process.env, stdin: "ignore" });
-    return { status: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() };
-  } catch (error) {
-    return { status: 127, stdout: "", stderr: `${cmd[0]}: ${errorCode(error)}\n` };
-  }
-}
-
-// A write followed by process.exit delivers only one pipe buffer, and `wt all`
-// reads this through a pipe. A repo holding a backlog of orphans outruns that.
-function writeAll(fd: number, text: string): void {
-  const bytes = Buffer.from(text);
-  let written = 0;
-  while (written < bytes.length) written += writeSync(fd, bytes, written);
+// stdin is closed so a git that prompts cannot eat what the caller is reading.
+// A git that is not installed exits nonzero and reads here as the failure it is.
+async function capture(cmd: string[]): Promise<Captured> {
+  const run = await $`${cmd} < /dev/null`.nothrow().quiet();
+  return { status: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() };
 }
 
 if (import.meta.main) {
-  const outcome = run(process.argv.slice(2));
+  const outcome = await run(process.argv.slice(2));
   if (outcome.stdout !== "") writeAll(1, outcome.stdout);
   if (outcome.stderr !== "") writeAll(2, outcome.stderr);
   process.exit(outcome.status);

@@ -10,7 +10,7 @@ import { type Context, removeCask, removeTree } from "#migrations/migration";
 export const platform = "darwin";
 
 // The cask goes first so a running app is quit before its tree is removed.
-export function up(context: Context): void {
-  removeCask(context, "vibe-island");
-  removeTree(context, join(context.home, ".vibe-island"));
+export async function up(context: Context): Promise<void> {
+  await removeCask("vibe-island");
+  await removeTree(context, join(context.home, ".vibe-island"));
 }

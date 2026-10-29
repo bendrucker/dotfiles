@@ -33,7 +33,7 @@ esac
 exit 0
 `;
 
-beforeEach(() => {
+beforeEach(async () => {
   sandbox = mkdtempSync(join(tmpdir(), "plugins-"));
   plugins = join(sandbox, ".claude", "plugins");
   mkdirSync(plugins, { recursive: true });
@@ -52,7 +52,7 @@ beforeEach(() => {
   // A stub that failed to shadow the real CLI would enumerate the machine's own
   // plugins, and every example would then be asserting against whatever this
   // machine happens to have installed. Prove the shadowing before each one.
-  const probed = pluginInventory();
+  const probed = await pluginInventory();
   if (!probed.ok || probed.plugins.length !== 1 || probed.plugins[0].id !== "probe@stub") {
     throw new Error(`claude resolved to ${JSON.stringify(probed)}`);
   }
@@ -96,14 +96,14 @@ function orphan(path: string): string {
   return path;
 }
 
-function inventory(): Record<string, string> {
-  const read = pluginInventory();
+async function inventory(): Promise<Record<string, string>> {
+  const read = await pluginInventory();
   if (!read.ok) throw new Error(`inventory failed: ${read.reason}`);
   return Object.fromEntries(read.plugins.map((plugin) => [plugin.id, plugin.installPath]));
 }
 
-function ids(): string[] {
-  const read = pluginInventory();
+async function ids(): Promise<string[]> {
+  const read = await pluginInventory();
   if (!read.ok) throw new Error(`inventory failed: ${read.reason}`);
   return read.plugins.map((plugin) => plugin.id);
 }
@@ -146,88 +146,88 @@ describe("claudePluginsDir", () => {
 });
 
 describe("plugin enumeration", () => {
-  test("unions what the CLI reports with what settings.json enables", () => {
+  test("unions what the CLI reports with what settings.json enables", async () => {
     const alpha = payload("first", "alpha", "1.0.0");
     writeList([record("alpha@first", alpha)]);
     writeSettings({ enabledPlugins: { "beta@third": true } });
 
     // A plugin enabled but never installed appears with an empty payload, which
     // is what tells the updater to install it.
-    expect(inventory()).toEqual({ "alpha@first": alpha, "beta@third": "" });
+    expect(await inventory()).toEqual({ "alpha@first": alpha, "beta@third": "" });
   });
 
   // The filter this replaced kept only ids ending in the first-party marketplace
   // name, so every third-party plugin went unattempted for months.
-  test("includes plugins from every marketplace", () => {
+  test("includes plugins from every marketplace", async () => {
     writeList([record("alpha@first"), record("beta@third")]);
-    expect(ids()).toEqual(["alpha@first", "beta@third"]);
+    expect(await ids()).toEqual(["alpha@first", "beta@third"]);
   });
 
   // `claude plugin update` works at user scope, so a plugin a project enabled is
   // not this job's to update.
-  test("leaves out a plugin enabled outside user scope", () => {
+  test("leaves out a plugin enabled outside user scope", async () => {
     writeList([record("alpha@first"), { id: "local@first", scope: "project", installPath: "" }]);
-    expect(ids()).toEqual(["alpha@first"]);
+    expect(await ids()).toEqual(["alpha@first"]);
   });
 
   // settings.json records a plugin turned off as a false value rather than
   // dropping the key, so reading the keys alone would install it.
-  test("leaves out a plugin settings.json turned off", () => {
+  test("leaves out a plugin settings.json turned off", async () => {
     writeSettings({ enabledPlugins: { "alpha@first": true, "disabled@first": false } });
-    expect(ids()).toEqual(["alpha@first"]);
+    expect(await ids()).toEqual(["alpha@first"]);
   });
 
   // Only false and null are off. Every other value is a plugin left on, however
   // little it looks like one.
-  test("keeps a plugin enabled with a value that is neither false nor null", () => {
+  test("keeps a plugin enabled with a value that is neither false nor null", async () => {
     writeSettings({
       enabledPlugins: { "zero@first": 0, "empty@first": "", "list@first": [], "off@first": null },
     });
-    expect(ids()).toEqual(["empty@first", "list@first", "zero@first"]);
+    expect(await ids()).toEqual(["empty@first", "list@first", "zero@first"]);
   });
 
-  test("emits one row per plugin, ordered by code unit", () => {
+  test("emits one row per plugin, ordered by code unit", async () => {
     writeList([record("gamma@first"), record("alpha@first"), record("beta@third")]);
     writeSettings({ enabledPlugins: { "alpha@first": true, "delta@third": true } });
-    expect(ids()).toEqual(["alpha@first", "beta@third", "delta@third", "gamma@first"]);
+    expect(await ids()).toEqual(["alpha@first", "beta@third", "delta@third", "gamma@first"]);
   });
 
-  test("skips a record with no id", () => {
+  test("skips a record with no id", async () => {
     writeList([record(""), record("alpha@first")]);
-    expect(ids()).toEqual(["alpha@first"]);
+    expect(await ids()).toEqual(["alpha@first"]);
   });
 });
 
 describe("duplicate records", () => {
-  test("points a duplicated plugin at the payload that exists", () => {
+  test("points a duplicated plugin at the payload that exists", async () => {
     const installed = payload("first", "gamma", "1.0.0");
     const missing = join(plugins, "cache", "first", "gamma", "unknown");
     writeList([record("gamma@first", missing), record("gamma@first", installed)]);
-    expect(inventory()["gamma@first"]).toBe(installed);
+    expect((await inventory())["gamma@first"]).toBe(installed);
 
     writeList([record("gamma@first", installed), record("gamma@first", missing)]);
-    expect(inventory()["gamma@first"]).toBe(installed);
+    expect((await inventory())["gamma@first"]).toBe(installed);
   });
 
-  test("prefers a payload Claude Code has not superseded", () => {
+  test("prefers a payload Claude Code has not superseded", async () => {
     const superseded = orphan(payload("first", "gamma", "1.0.0"));
     const current = payload("first", "gamma", "2.0.0");
     writeList([record("gamma@first", superseded), record("gamma@first", current)]);
-    expect(inventory()["gamma@first"]).toBe(current);
+    expect((await inventory())["gamma@first"]).toBe(current);
 
     writeList([record("gamma@first", current), record("gamma@first", superseded)]);
-    expect(inventory()["gamma@first"]).toBe(current);
+    expect((await inventory())["gamma@first"]).toBe(current);
   });
 
-  test("takes the last superseded payload when every one has been superseded", () => {
+  test("takes the last superseded payload when every one has been superseded", async () => {
     const older = orphan(payload("first", "gamma", "1.0.0"));
     const newer = orphan(payload("first", "gamma", "2.0.0"));
     writeList([record("gamma@first", older), record("gamma@first", newer)]);
-    expect(inventory()["gamma@first"]).toBe(newer);
+    expect((await inventory())["gamma@first"]).toBe(newer);
   });
 
   // Any entry of that name marks the payload, whatever its type.
-  test("counts a directory named .orphaned_at as the marker", () => {
+  test("counts a directory named .orphaned_at as the marker", async () => {
     const superseded = payload("first", "gamma", "1.0.0", ".orphaned_at");
     const current = payload("first", "gamma", "2.0.0");
     writeList([
@@ -235,21 +235,21 @@ describe("duplicate records", () => {
       record("gamma@first", current),
     ]);
     expect(superseded).toContain(".orphaned_at");
-    expect(inventory()["gamma@first"]).toBe(current);
+    expect((await inventory())["gamma@first"]).toBe(current);
   });
 
   // Callers distinguish "no payload installed" from "payload at path X", so a
   // path the CLI recorded is handed back even when nothing is there.
-  test("keeps the first recorded path when none of them exists", () => {
+  test("keeps the first recorded path when none of them exists", async () => {
     const first = join(plugins, "cache", "first", "gamma", "1.0.0");
     const second = join(plugins, "cache", "first", "gamma", "2.0.0");
     writeList([record("gamma@first", first), record("gamma@first", second)]);
-    expect(inventory()["gamma@first"]).toBe(first);
+    expect((await inventory())["gamma@first"]).toBe(first);
   });
 
-  test("emits a row for a plugin that has no recorded payload at all", () => {
+  test("emits a row for a plugin that has no recorded payload at all", async () => {
     writeList([record("gamma@first"), record("gamma@first")]);
-    expect(inventory()).toEqual({ "gamma@first": "" });
+    expect(await inventory()).toEqual({ "gamma@first": "" });
   });
 });
 
@@ -270,7 +270,7 @@ describe("unreadable inventory", () => {
       arrange: () => {
         process.env.PATH = join(sandbox, "empty");
       },
-      reason: "claude plugin list",
+      reason: "claude plugin list could not be run",
     },
     {
       name: "a stray line reaches the CLI's stdout",
@@ -322,50 +322,50 @@ describe("unreadable inventory", () => {
       arrange: () => writeSettings({ enabledPlugins: "alpha@first" }),
       reason: "enabledPlugins is not an object",
     },
-  ])("fails when $name", ({ arrange, reason }) => {
+  ])("fails when $name", async ({ arrange, reason }) => {
     arrange();
-    const read = pluginInventory();
+    const read = await pluginInventory();
     if (read.ok) throw new Error(`inventory succeeded with ${JSON.stringify(read.plugins)}`);
     expect(read.reason).toContain(reason);
   });
 });
 
 describe("readable but empty inventory", () => {
-  test("treats no output from the CLI as no plugins", () => {
+  test("treats no output from the CLI as no plugins", async () => {
     writeList("");
-    expect(pluginInventory()).toEqual({ ok: true, plugins: [] });
+    expect(await pluginInventory()).toEqual({ ok: true, plugins: [] });
   });
 
-  test("succeeds when settings.json is absent", () => {
+  test("succeeds when settings.json is absent", async () => {
     writeList([record("alpha@first")]);
-    expect(ids()).toEqual(["alpha@first"]);
+    expect(await ids()).toEqual(["alpha@first"]);
   });
 
   // The read is guarded on a regular file, so a directory at the settings path
   // reports no enabled plugins rather than stopping the inventory.
-  test("reads no settings from a directory at the settings path", () => {
+  test("reads no settings from a directory at the settings path", async () => {
     mkdirSync(join(sandbox, ".claude", "settings.json"));
     writeList([record("alpha@first")]);
-    expect(ids()).toEqual(["alpha@first"]);
+    expect(await ids()).toEqual(["alpha@first"]);
   });
 
-  test("treats a null enabledPlugins as nothing enabled", () => {
+  test("treats a null enabledPlugins as nothing enabled", async () => {
     writeSettings({ enabledPlugins: null });
-    expect(ids()).toEqual([]);
+    expect(await ids()).toEqual([]);
   });
 
   // An editor that saved the file with a byte order mark left valid JSON behind
   // it, and a machine whose plugins enumerated yesterday has to keep
   // enumerating today.
-  test("reads a settings.json carrying a byte order mark", () => {
+  test("reads a settings.json carrying a byte order mark", async () => {
     writeList([record("alpha@first")]);
     writeSettings(`\uFEFF${JSON.stringify({ enabledPlugins: { "beta@third": true } })}`);
-    expect(ids()).toEqual(["alpha@first", "beta@third"]);
+    expect(await ids()).toEqual(["alpha@first", "beta@third"]);
   });
 
-  test("reads a plugin list carrying a byte order mark", () => {
+  test("reads a plugin list carrying a byte order mark", async () => {
     writeList(`\uFEFF${JSON.stringify([record("alpha@first")])}`);
-    expect(ids()).toEqual(["alpha@first"]);
+    expect(await ids()).toEqual(["alpha@first"]);
   });
 });
 
@@ -386,10 +386,10 @@ describe("declaredPlugins", () => {
   // The enabled view drops a key set to false, because reading the keys alone
   // would install a plugin that is deliberately off. The declaration keeps it:
   // the file naming a plugin is what says its payload belongs here.
-  test("keeps an id settings.json turned off", () => {
+  test("keeps an id settings.json turned off", async () => {
     writeSettings({ enabledPlugins: { "on@market": true, "off@market": false } });
     expect(declared()).toEqual(["off@market", "on@market"]);
-    expect(ids()).toEqual(["on@market"]);
+    expect(await ids()).toEqual(["on@market"]);
   });
 
   // The shape a broken symlink into the config repo leaves behind. Reading it as
@@ -425,19 +425,19 @@ describe("installedPlugins", () => {
   // never installed appears there with no payload. This view reports payloads
   // that exist, and a caller deciding what to uninstall has nothing to do with
   // a row that has none.
-  test("reports what the CLI lists, without the declared-but-missing rows", () => {
+  test("reports what the CLI lists, without the declared-but-missing rows", async () => {
     writeList([record("installed@market", payload("market", "installed", "1.0.0"))]);
     writeSettings({ enabledPlugins: { "installed@market": true, "missing@market": true } });
 
-    const read = installedPlugins();
+    const read = await installedPlugins();
     if (!read.ok) throw new Error(read.reason);
     expect(read.plugins.map((plugin) => plugin.id)).toEqual(["installed@market"]);
-    expect(ids()).toEqual(["installed@market", "missing@market"]);
+    expect(await ids()).toEqual(["installed@market", "missing@market"]);
   });
 
-  test("fails when the CLI could not be read", () => {
+  test("fails when the CLI could not be read", async () => {
     process.env.CLAUDE_LIST_STATUS = "1";
-    expect(installedPlugins().ok).toBe(false);
+    expect((await installedPlugins()).ok).toBe(false);
   });
 });
 
@@ -515,38 +515,38 @@ describe("localMarketplaces", () => {
     expect([...localMarketplaces()].sort()).toEqual(["folder", "manifest"]);
   });
 
-  test("names none when the registry cannot be read", () => {
+  test("names none when the registry cannot be read", async () => {
     writeRegistry("not json\n");
     expect(localMarketplaces().size).toBe(0);
   });
 });
 
 describe("pluginMarketplaces", () => {
-  function used(): string[] {
-    const read = pluginMarketplaces();
+  async function used(): Promise<string[]> {
+    const read = await pluginMarketplaces();
     if (!read.ok) throw new Error(read.reason);
     return [...read.names].sort();
   }
 
   // Removing one out from under a project plugin leaves it with no source.
-  test("reads every scope rather than the user one", () => {
+  test("reads every scope rather than the user one", async () => {
     writeList([
       { id: "alpha@first", scope: "user", installPath: "" },
       { id: "delta@second", scope: "project", installPath: "" },
       { id: "epsilon@third", scope: "local", installPath: "" },
     ]);
-    expect(used()).toEqual(["first", "second", "third"]);
+    expect(await used()).toEqual(["first", "second", "third"]);
   });
 
   // Over-keeping is the safe direction for a prune.
-  test("reads an id with no separator as its own marketplace", () => {
+  test("reads an id with no separator as its own marketplace", async () => {
     writeList([{ id: "loose", scope: "user", installPath: "" }]);
-    expect(used()).toEqual(["loose"]);
+    expect(await used()).toEqual(["loose"]);
   });
 
-  test("fails when the CLI could not be read", () => {
+  test("fails when the CLI could not be read", async () => {
     process.env.CLAUDE_LIST_STATUS = "1";
-    expect(pluginMarketplaces().ok).toBe(false);
+    expect((await pluginMarketplaces()).ok).toBe(false);
   });
 });
 

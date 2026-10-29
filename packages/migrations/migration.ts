@@ -13,8 +13,8 @@
 
 import { lstatSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import type { Output } from "#jobs/output";
-import { log } from "#jobs/output";
+import { $ } from "bun";
+import { log } from "#gum";
 
 // node:os platform values, which is what `process.platform` reports.
 export type Platform = "darwin" | "linux";
@@ -43,8 +43,6 @@ export interface Context {
   // them to tell a link this repo made from one someone else did.
   installed: string[];
   platform: Platform;
-  // Where the migration's own output goes, so it lands in the install log.
-  out: Output;
 }
 
 export interface Migration {
@@ -60,31 +58,30 @@ const HOMEBREW_ENV = { HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ENV_HINTS: "1" 
 // Uninstall a formula a Brewfile stopped declaring. Silent where brew is not
 // installed or the formula already isn't, which is every machine but the one
 // this migration exists for.
-export function removeFormula(context: Context, name: string): void {
-  removePackage(context, name, []);
+export async function removeFormula(name: string): Promise<void> {
+  await removePackage(name, []);
 }
 
 // The same for a cask. Casks are a namespace of their own, and `brew list`
 // without --cask answers only for formulae: it exits nonzero for an installed
 // cask, so sharing removeFormula here would read every cask as already gone and
 // uninstall nothing.
-export function removeCask(context: Context, name: string): void {
-  removePackage(context, name, ["--cask"]);
+export async function removeCask(name: string): Promise<void> {
+  await removePackage(name, ["--cask"]);
 }
 
-function removePackage(context: Context, name: string, scope: string[]): void {
+async function removePackage(name: string, scope: string[]): Promise<void> {
   const brew = Bun.which("brew", { PATH: process.env.PATH });
   if (brew === null) return;
 
   const env = { ...process.env, ...HOMEBREW_ENV };
   // --versions rather than plain `list`, which prints every file the package
   // owns and would bury the log it shares with the rest of the install.
-  if (context.out.read([brew, "list", ...scope, "--versions", name], { env, stdin: "ignore" }).status !== 0) {
-    return;
-  }
+  const listed = await $`cat /dev/null | ${brew} list ${scope} --versions ${name} 2> ${Bun.stderr}`.env(env).nothrow().quiet();
+  if (listed.exitCode !== 0) return;
 
-  log(context.out, "info", `uninstalling ${name}`);
-  if (context.out.run([brew, "uninstall", ...scope, name], { env, stdin: "ignore" }) !== 0) {
+  await log("info", `uninstalling ${name}`);
+  if ((await $`${brew} uninstall ${scope} ${name} < /dev/null`.env(env).nothrow()).exitCode !== 0) {
     throw new Error(`brew uninstall ${name} failed`);
   }
 }
@@ -97,7 +94,7 @@ function removePackage(context: Context, name: string, scope: string[]): void {
 // migration legitimately owns and strand every migration behind it. This runs
 // unattended as the user, so a migration meaning to reach anywhere else says so
 // by calling node:fs itself rather than getting there through a typo here.
-export function removeTree(context: Context, path: string): void {
+export async function removeTree(context: Context, path: string): Promise<void> {
   const target = resolve(path);
   const roots = [context.home, context.config, context.data];
   // Refused separately from the containment test below, because the roots may
@@ -111,7 +108,7 @@ export function removeTree(context: Context, path: string): void {
   }
 
   if (!exists(target)) return;
-  log(context.out, "info", `removing ${target}`);
+  await log("info", `removing ${target}`);
   rmSync(target, { recursive: true, force: true });
 }
 
