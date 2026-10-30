@@ -161,6 +161,7 @@ A sync that moved the tree, an install, and a dev-mode toggle all end by calling
 | Topic | Reload |
 | --- | --- |
 | [`herdr`](herdr/reload.sh) | `herdr server reload-config` over its socket API, for `config.toml` only |
+| [`rex`](rex/reload.sh) | `rex config reload`, which re-reads `init.lua` in the running server |
 | [`terminal`](terminal/mise.toml) | `SIGUSR2` to Ghostty, the same path as its `reload_config` action |
 
 Every one is in place. The program re-reads its config and keeps its state, sessions, and child processes, and nothing restarts. This runs unattended at 3am, where a restart would take live work down with it. So a tool whose only path to new config is a restart gets no `reload.sh`, and picks the change up whenever it next starts.

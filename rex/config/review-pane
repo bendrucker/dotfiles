@@ -1,0 +1,35 @@
+#!/bin/sh
+#
+# Usage: review-pane AGENT_BLOCK [TUICR_ARGS...]
+#
+# Runs tuicr, then pastes the review it exports into the agent's terminal and
+# focuses it. A paste goes through bracketed paste, so the agent's prompt
+# holds the review until the user submits it.
+set -u
+
+agent=$1
+shift
+
+# The pane closes when this exits, so a failure waits to be read.
+hold() {
+  printf '%s Press Enter to close.\n' "$1"
+  read -r _
+  exit 1
+}
+
+review=$(tuicr --stdout "$@") || hold "tuicr exited $?."
+
+set -- block="$agent"
+[ -n "$review" ] && set -- "$@" text="$review"
+
+rex "do" -e '
+if rex.args.text then
+  local _, err = rex.call("block.event", {
+    session_id = rex.session_id,
+    block_id = rex.args.block,
+    event = { type = "paste", payload = { text = rex.args.text } },
+  })
+  if err then error(err, 0) end
+end
+rex.session.focus_block{ block_id = rex.args.block }
+' "$@" || hold "$(printf '%s\n\nHanding this review to %s failed.' "$review" "$agent")"
