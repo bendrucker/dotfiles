@@ -17,8 +17,5 @@ if git config --get remote.origin.url >/dev/null && ! git config --get "branch.$
 fi
 """
 
-[list]
-summary = true
-
 [commit.generation]
 command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --disable-slash-commands --setting-sources='' --system-prompt=''"
