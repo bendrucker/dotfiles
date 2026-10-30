@@ -102,7 +102,6 @@ export async function pruneBranches(
 }
 
 // Keyed on the reflog's own date, since the archived commit is often already old.
-// Worktree snapshots expire by commit date in pruneArchives instead.
 async function expireArchives(dryRun: boolean, explaining: boolean, report: BranchReport): Promise<void> {
   const captured = await capture(["git", "for-each-ref", "refs/archive", "--format=%(refname)%09%(subject)"]);
   if (captured === "") return;

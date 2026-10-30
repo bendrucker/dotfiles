@@ -106,8 +106,6 @@ export async function pruneArchives(retentionSecs: number, repo = "."): Promise<
   return deleted;
 }
 
-// Whether a ref under refs/archive is a worktree snapshot, which retention here
-// owns, rather than a branch archive.
 export function isSnapshot(ref: string, subject: string): boolean {
   return ref.startsWith(`${NAMESPACE}/`) && LEAF.test(ref) && subject.startsWith(SUBJECT);
 }
