@@ -1,0 +1,7 @@
+[dotfiles]
+"~/.config/rex" = "config"
+
+[tasks."rex:reload"]
+run = "./rex/reload.sh"
+dir = "{{config_root}}/.."
+timeout = "60s"
