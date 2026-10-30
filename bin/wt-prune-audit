@@ -28,12 +28,13 @@
 // worktree at any age, so one that survives is a genuine miss.
 //
 // A worktree holding the default branch is excluded outright, since no prune
-// pass can remove it. So is one with another worktree nested inside it, which
-// the pruner keeps until the inner one is gone.
+// pass can remove it. A merged worktree with another nested inside it is kept
+// by the pruner, and reported here so the pin does not go unseen.
 
 import { writeAll } from "#pipe";
 import {
   defaultBranch,
+  holdsWorktrees,
   listWorktrees,
   minAge,
   parseDuration,
@@ -141,7 +142,6 @@ export async function audit(): Promise<Outcome> {
     // branch is the integration target. Nothing the pruner does can clear it,
     // so reporting it files the same to-do every night forever.
     if (defaultName !== "" && worktree.branch === defaultName) continue;
-    if (worktrees.some((other) => other.kind === "worktree" && other.path.startsWith(`${worktree.path}/`))) continue;
 
     const reason = await classify({
       mainState: worktree.mainState,
@@ -150,7 +150,8 @@ export async function audit(): Promise<Outcome> {
       forge: async () => (await prState(worktree.branch, host))?.state ?? "",
     });
     if (reason !== undefined) {
-      findings.push({ branch: worktree.branch, reason, path: worktree.path });
+      const held = holdsWorktrees(worktree, worktrees) ? " (holds worktrees)" : "";
+      findings.push({ branch: worktree.branch, reason: `${reason}${held}`, path: worktree.path });
     }
   }
 

@@ -34,6 +34,7 @@ describe("statusPaths", () => {
   test.each<{ name: string; captured: string; paths: string[] }>([
     { name: "each entry's path", captured: " M a\0?? dir/\0", paths: ["a", "dir/"] },
     { name: "no rename or copy origin", captured: "R  new\0old\0C  copy\0src\0 M b\0", paths: ["new", "copy", "b"] },
+    { name: "no worktree rename origin", captured: " R new\0old-name\0 M b\0", paths: ["new", "b"] },
     { name: "nothing from a clean tree", captured: "", paths: [] },
   ])("reads $name", ({ captured, paths }) => {
     expect(statusPaths(captured)).toEqual(paths);

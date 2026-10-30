@@ -3,13 +3,12 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { alignColumns } from "#worktree/table";
-import { parseDuration, type Worktree } from "#worktree/state";
+import { holdsWorktrees, parseDuration, type Worktree } from "#worktree/state";
 import {
   type Candidate,
   ARM_IDLE,
   checklist,
   classifyArm,
-  holdsWorktrees,
   classifySurvivor,
   type Decision,
   isArm,
@@ -36,14 +35,18 @@ exit 0
 
 // `gh pr view <branch> --json state,number --jq …` resolves to the state under
 // test. An empty state file mimics a branch with no PR, where real gh exits
-// nonzero printing nothing. Every call is logged, so a case can assert the
+// nonzero and says so on stderr, and FAIL mimics a lookup that failed. Every call is logged, so a case can assert the
 // forge was never consulted.
 const GH_STUB = `#!/usr/bin/env bash
 [ "$1" = "--stub-check" ] && { echo "gh stub"; exit 0; }
 printf 'gh %s\\n' "$*" >>"$GH_LOG"
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   state="$(cat "$PR_STATE_FILE")"
-  [ -n "$state" ] && printf '%s\\t42\\n' "$state"
+  case "$state" in
+    "") echo "no pull requests found for branch \\"$3\\"" >&2; exit 1 ;;
+    FAIL) echo "HTTP 401: Bad credentials" >&2; exit 1 ;;
+  esac
+  printf '%s\\t42\\n' "$state"
 fi
 exit 0
 `;
@@ -379,6 +382,11 @@ describe("classifySurvivor decision matrix", () => {
       { action: "remove", reason: "archived idle", mode: "archive" },
     ],
     [
+      "dirty and idle with a forge that could not answer",
+      survivor({ prState: "UNKNOWN", clean: false, beforeEnabled: true, idleExceeded: true }),
+      { action: "defer", reason: "forge unknown" },
+    ],
+    [
       "dirty and idle with an open PR",
       survivor({ prState: "OPEN", clean: false, beforeEnabled: true, idleExceeded: true, ageExceeded: true }),
       { action: "keep", reason: "open PR" },
@@ -690,6 +698,16 @@ describe("prune (black box)", () => {
     prStateIs("");
     const result = prune(["--before", "--archive-after=0h"], { WT_ALL: "1" });
     expect(result.stdout).toBe("1\t0\tfeature-x\n");
+  });
+
+  test("a forge that cannot answer archives and removes nothing", () => {
+    dirtySurvivor();
+    prStateIs("FAIL");
+    const result = prune(["--dry-run", "--before", "--archive-after=0h"]);
+    expect(result.stdout).toContain("forge unknown");
+    expect(prune(["--before", "--archive-after=0h"]).status).toBe(0);
+    expect(archives()).toBe("");
+    expect(log("WT_REMOVE_LOG")).toBe("");
   });
 
   test("a failed archive removes nothing", () => {

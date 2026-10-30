@@ -127,17 +127,22 @@ export interface PullRequest {
   number: string;
 }
 
-// The exact PR/MR state for a branch on the forge, undefined when the branch
-// has none. gh is the tested path; glab mirrors it (newest MR wins).
+// What prState answers when the forge could not say: an absent CLI, an expired
+// token, or no network. Distinct from undefined, which the forge confirmed.
+export const UNKNOWN = "UNKNOWN";
+
+// The exact PR/MR state for a branch on the forge, undefined when the forge
+// confirms the branch has none. gh is the tested path; glab mirrors it (newest
+// MR wins).
 export async function prState(branch: string, host: string): Promise<PullRequest | undefined> {
   return host.includes("gitlab") ? mergeRequest(branch) : pullRequest(branch);
 }
 
 async function pullRequest(branch: string): Promise<PullRequest | undefined> {
   // The extraction stays in gh's own --jq rather than moving here: gh answers
-  // in one tab-separated line, and a branch with no PR exits nonzero and prints
-  // nothing, which is the same empty answer as a gh that is not installed.
-  const captured = await capture([
+  // in one tab-separated line. A branch with no PR exits nonzero and says so on
+  // stderr, and any other failure leaves the state unknown.
+  const run = await $`${[
     "gh",
     "pr",
     "view",
@@ -146,8 +151,14 @@ async function pullRequest(branch: string): Promise<PullRequest | undefined> {
     "state,number",
     "--jq",
     '"\\(.state)\\t\\(.number)"',
-  ]);
-  if (captured === "") return undefined;
+  ]} < /dev/null`
+    .nothrow()
+    .quiet();
+  if (run.exitCode !== 0) {
+    return /no pull requests found/i.test(run.stderr.toString()) ? undefined : { state: UNKNOWN, number: "" };
+  }
+  const captured = run.stdout.toString().trim();
+  if (captured === "") return { state: UNKNOWN, number: "" };
 
   const [state, number] = captured.split("\t");
   return { state, number: number ?? "" };
@@ -165,18 +176,21 @@ async function mergeRequest(branch: string): Promise<PullRequest | undefined> {
     "--output",
     "json",
   ]);
-  if (captured === "") return undefined;
+  const unknown = { state: UNKNOWN, number: "" };
+  if (captured === "") return unknown;
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(captured);
   } catch {
-    return undefined;
+    return unknown;
   }
-  if (!Array.isArray(parsed)) return undefined;
+  if (!Array.isArray(parsed)) return unknown;
+  // An empty list is the forge confirming there is no MR.
+  if (parsed.length === 0) return undefined;
 
   const newest = parsed[0];
-  if (!isRecord(newest)) return undefined;
+  if (!isRecord(newest)) return unknown;
 
   const state = text(newest.state).toUpperCase();
   // GitLab's own word for an open MR, spelled the way the rest of this reads
@@ -269,6 +283,15 @@ function toWorktree(item: z.infer<typeof Item>): Worktree {
     onRemote: item.upstream?.ahead === 0,
     mainState: item.display?.state ?? "",
   };
+}
+
+// Whether another linked worktree that is still on disk sits inside this one.
+// Removing the outer tree would delete the inner one's files with it.
+export function holdsWorktrees(worktree: Worktree, worktrees: Worktree[], gone: Set<string> = new Set()): boolean {
+  const prefix = `${worktree.path}/`;
+  return worktrees.some(
+    (other) => other.kind === "worktree" && other.path.startsWith(prefix) && !gone.has(other.path),
+  );
 }
 
 export function nowSeconds(): number {

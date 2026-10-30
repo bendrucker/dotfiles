@@ -51,11 +51,13 @@ import { alignColumns } from "#worktree/table";
 import {
   capture,
   defaultBranch,
+  holdsWorktrees,
   listWorktrees,
   minAge,
   parseDuration,
   prState,
   remoteHost,
+  UNKNOWN,
   type Worktree,
 } from "#worktree/state";
 
@@ -219,9 +221,11 @@ export function classifySurvivor(state: SurvivorState): Decision {
     return { action: "remove", reason: "closed, recoverable", mode: "delete-branch" };
   }
 
-  // Dirty, idle, and not under review: snapshot the uncommitted work into a
-  // ref, then drop the tree and keep the branch.
-  if (state.beforeEnabled && !state.clean && state.idleExceeded && state.prState !== "OPEN") {
+  // Dirty, idle, and confirmed not under review: snapshot the uncommitted work
+  // into a ref, then drop the tree and keep the branch. A forge that could not
+  // answer is no confirmation, so it never reaches this.
+  const unreviewed = state.prState === "" || state.prState === "CLOSED";
+  if (state.beforeEnabled && !state.clean && state.idleExceeded && unreviewed) {
     return { action: "remove", reason: "archived idle", mode: "archive" };
   }
 
@@ -233,6 +237,7 @@ export function classifySurvivor(state: SurvivorState): Decision {
 
   // Preserved this run. Label why, for the dry-run reasons table.
   if (state.prState === "OPEN") return { action: "keep", reason: "open PR" };
+  if (state.prState === UNKNOWN) return { action: "defer", reason: "forge unknown" };
   if (state.prState === "CLOSED") {
     return state.clean
       ? { action: "keep", reason: "local-only" }
@@ -419,7 +424,7 @@ async function forgePass(
       idleExceeded: exceeds(idle, options.archiveAfter),
     });
 
-    const state = pr === undefined ? "-" : `${pr.state}#${pr.number}`;
+    const state = pr === undefined ? "-" : pr.number === "" ? pr.state : `${pr.state}#${pr.number}`;
     if (explaining) {
       report.reasons.push([dir(worktree), worktree.branch, state, decision.action, decision.reason]);
     }
@@ -496,15 +501,6 @@ async function armPass(
       gone.add(worktree.path);
     }
   }
-}
-
-// Whether another linked worktree that is still on disk sits inside this one.
-// Removing the outer tree would delete the inner one's files with it.
-export function holdsWorktrees(worktree: Worktree, worktrees: Worktree[], gone: Set<string>): boolean {
-  const prefix = `${worktree.path}/`;
-  return worktrees.some(
-    (other) => other.kind === "worktree" && other.path.startsWith(prefix) && !gone.has(other.path),
-  );
 }
 
 function exceeds(idle: number | undefined, limit: number | undefined): boolean {
@@ -587,7 +583,7 @@ function finish(report: Report, fanOut: boolean, explaining: boolean): Outcome {
 
   // Under `wt all`, tab-separated counts so the caller can total them into a
   // table. Standalone, a one-line summary.
-  // A third field names what was archived, so the nightly report shows it.
+  // A third field names what was archived, so the nightly log records it.
   const archived = report.archived.join(", ");
   if (fanOut) {
     const names = archived === "" ? "" : `\t${archived}`;

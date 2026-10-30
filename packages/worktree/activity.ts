@@ -6,14 +6,16 @@ import { join } from "node:path";
 import { capture, nowSeconds, type Worktree, worktreeAgeSecs } from "#worktree/state";
 
 // Seconds since the worktree's newest activity. Undefined when no time can be
-// read.
-export async function idleSecs(worktree: Pick<Worktree, "path" | "timestamp">): Promise<number | undefined> {
+// read. A tree known to be clean skips `git status`, having no edits to date.
+export async function idleSecs(
+  worktree: Pick<Worktree, "path" | "timestamp"> & { clean?: boolean },
+): Promise<number | undefined> {
   const now = nowSeconds();
   const age = await worktreeAgeSecs(worktree.path);
   const times = [
     worktree.timestamp > 0 ? worktree.timestamp : undefined,
     age === undefined ? undefined : now - age,
-    await newestChange(worktree.path),
+    worktree.clean === true ? undefined : await newestChange(worktree.path),
   ].filter((time): time is number => time !== undefined);
 
   if (times.length === 0) return undefined;
@@ -52,7 +54,7 @@ export function statusPaths(captured: string): string[] {
     const entry = fields[index];
     if (entry.length < 4) continue;
     paths.push(entry.slice(3));
-    if (entry[0] === "R" || entry[0] === "C") index += 1;
+    if (/[RC]/.test(entry.slice(0, 2))) index += 1;
   }
   return paths;
 }

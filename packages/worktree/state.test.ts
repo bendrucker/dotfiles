@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sandbox, type Sandbox } from "#harness";
-import { capture, defaultBranch, listWorktrees, prState, readWorktrees, remoteHost } from "./state.ts";
+import { capture, defaultBranch, listWorktrees, prState, readWorktrees, remoteHost, UNKNOWN } from "./state.ts";
 
 let box: Sandbox;
 let originalPath: string | undefined;
@@ -135,8 +135,38 @@ describe("readers over capture", () => {
     expect(await prState("feature", host)).toEqual(expected);
   });
 
-  test("prState is undefined when the forge CLI is absent", async () => {
+  // A lookup that failed must not read as a branch with no PR, which the
+  // pruner would take as license to archive and remove a dirty tree.
+  test.each<{ name: string; host: string; tool: string; body: string; expected: unknown }>([
+    {
+      name: "gh confirms no PR",
+      host: "github.com",
+      tool: "gh",
+      body: `echo 'no pull requests found for branch "feature"' >&2; exit 1`,
+      expected: undefined,
+    },
+    {
+      name: "gh fails on auth",
+      host: "github.com",
+      tool: "gh",
+      body: "echo 'HTTP 401: Bad credentials' >&2; exit 1",
+      expected: { state: UNKNOWN, number: "" },
+    },
+    { name: "glab confirms no MR", host: "gitlab.example.com", tool: "glab", body: "echo '[]'", expected: undefined },
+    {
+      name: "glab fails",
+      host: "gitlab.example.com",
+      tool: "glab",
+      body: "exit 1",
+      expected: { state: UNKNOWN, number: "" },
+    },
+  ])("prState: $name", async ({ host, tool, body, expected }) => {
+    box.stub(tool, body);
+    expect(await prState("feature", host)).toEqual(expected);
+  });
+
+  test("prState is unknown when the forge CLI is absent", async () => {
     process.env.PATH = box.bin;
-    expect(await prState("feature", "github.com")).toBeUndefined();
+    expect(await prState("feature", "github.com")).toEqual({ state: UNKNOWN, number: "" });
   });
 });
