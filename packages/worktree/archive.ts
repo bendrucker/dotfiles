@@ -2,7 +2,7 @@
 // refs/archive/wt/ before the pruner removes a dirty tree. Restore one with
 // `git worktree add <path> <ref>`. Ignored files are not kept.
 
-import { rmSync } from "node:fs";
+import { copyFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
 import { EXPIRY } from "#worktree/branches";
@@ -12,6 +12,8 @@ export const NAMESPACE = "refs/archive/wt";
 export const RETENTION = EXPIRY;
 
 const SUBJECT = "wt archive:";
+// The `<date>` or `<date>-<commit>` leaf `record` writes.
+const LEAF = /\/[0-9]{8}(-[0-9a-f]{12})?$/;
 
 // The ref holding the snapshot, or undefined when any step fails.
 export async function archive(path: string, name: string): Promise<string | undefined> {
@@ -23,11 +25,13 @@ export async function archive(path: string, name: string): Promise<string | unde
   if ((await git(path, ["config", "--bool", "core.sparseCheckout"])) === "true") return undefined;
 
   // A private index leaves the worktree's staged state untouched. It lives in
-  // the git dir because macOS mktemp ignores TMPDIR.
-  const index = join(gitdir, "wt-archive-index");
+  // the git dir because macOS mktemp ignores TMPDIR, and the pid keeps two
+  // concurrent prunes of one tree off each other's copy.
+  const index = join(gitdir, `wt-archive-index-${process.pid}`);
   rmSync(index, { force: true });
   try {
-    const commit = await snapshot(path, head, name, { GIT_INDEX_FILE: index });
+    const seeded = copy(join(gitdir, "index"), index);
+    const commit = await snapshot(path, head, name, seeded, { GIT_INDEX_FILE: index });
     return commit === undefined ? undefined : await record(path, name, commit);
   } finally {
     rmSync(index, { force: true });
@@ -38,9 +42,12 @@ async function snapshot(
   path: string,
   head: string,
   name: string,
+  seeded: boolean,
   env: Record<string, string>,
 ): Promise<string | undefined> {
-  if ((await git(path, ["read-tree", head], env)) === undefined) return undefined;
+  // A copy of the real index keeps files force-added past .gitignore, which
+  // `add -A` would skip on an index read fresh from HEAD.
+  if (!seeded && (await git(path, ["read-tree", head], env)) === undefined) return undefined;
   if ((await git(path, ["add", "-A"], env)) === undefined) return undefined;
   const tree = await git(path, ["write-tree"], env);
   if (tree === undefined || tree === "") return undefined;
@@ -64,6 +71,15 @@ async function record(path: string, name: string, commit: string): Promise<strin
   return undefined;
 }
 
+function copy(from: string, to: string): boolean {
+  try {
+    copyFileSync(from, to);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function datestamp(): string {
   return new Date(nowSeconds() * 1000).toISOString().slice(0, 10).replaceAll("-", "");
 }
@@ -84,7 +100,7 @@ export async function pruneArchives(retentionSecs: number, repo = "."): Promise<
   let deleted = 0;
   for (const line of captured.split("\n")) {
     const [ref = "", object = "", date = "", subject = ""] = line.split("\t");
-    if (ref === "" || !subject.startsWith(SUBJECT)) continue;
+    if (!LEAF.test(ref) || !subject.startsWith(SUBJECT)) continue;
     if (!/^[0-9]+$/.test(date) || nowSeconds() - Number(date) < retentionSecs) continue;
     if ((await git(repo, ["update-ref", "-d", ref, object])) !== undefined) deleted += 1;
   }

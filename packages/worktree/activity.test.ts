@@ -53,17 +53,22 @@ describe("newestChange", () => {
     expect(await newestChange(repo)).toBe(nowSeconds() - 3 * DAY);
   });
 
-  test("dates an untracked directory by its own mtime", async () => {
+  test("dates a fresh edit inside an old untracked directory by the file", async () => {
     const dir = box.mkdir("repo", "scratch");
     writeFileSync(join(dir, "inner"), "x");
     backdate(join(dir, "inner"), 1);
     backdate(dir, 20);
-    expect(await newestChange(repo)).toBe(nowSeconds() - 20 * DAY);
+    expect(await newestChange(repo)).toBe(nowSeconds() - DAY);
   });
 
-  test("ignores a deleted path, which has nothing to stat", async () => {
-    must(["rm", join(repo, "tracked")]);
-    expect(await newestChange(repo)).toBeUndefined();
+  test("dates a deleted path by the directory it was removed from", async () => {
+    const dir = box.mkdir("repo", "sub");
+    writeFileSync(join(dir, "gone"), "x");
+    must(["git", "-C", repo, "add", "sub/gone"]);
+    must(["git", "-C", repo, "commit", "-q", "-m", "sub"]);
+    must(["rm", join(dir, "gone")]);
+    backdate(dir, 4);
+    expect(await newestChange(repo)).toBe(nowSeconds() - 4 * DAY);
   });
 });
 

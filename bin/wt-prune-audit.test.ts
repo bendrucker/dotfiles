@@ -284,6 +284,19 @@ describe("the executable", () => {
     expect(runAudit({ WT_PRUNE_DRIFT_GRACE: "0h" })).toMatchObject({ status: 0, stdout: "" });
   });
 
+  // The pruner keeps a tree with a worktree nested inside it, since removing it
+  // would delete the inner one unarchived.
+  test("ignores a merged worktree that holds another worktree", () => {
+    prStateIs("MERGED");
+    listing([
+      worktree({ branch: "main", main: true, current: true, path: "/repo", state: "is_main" }),
+      worktree({ branch: "feature-x", path: linked }),
+      worktree({ branch: "", path: `${linked}/tmp/arms/base` }),
+    ]);
+
+    expect(runAudit()).toMatchObject({ status: 0, stdout: "" });
+  });
+
   test("stays silent when the survivor's PR is still open", () => {
     mergedSurvivor();
     prStateIs("OPEN");

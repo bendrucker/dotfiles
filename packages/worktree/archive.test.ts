@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { must, run, sandbox, type Sandbox } from "#harness";
 import { archive, pruneArchives, RETENTION } from "./archive.ts";
@@ -58,6 +58,13 @@ describe("archive", () => {
     expect(run(["test", "-e", join(restored, "ignored")]).status).not.toBe(0);
   });
 
+  test("keeps a file force-added past .gitignore", async () => {
+    writeFileSync(join(tree, "ignored"), "forced");
+    must(["git", "-C", tree, "add", "-f", "ignored"]);
+    const ref = (await archive(tree, "topic")) as string;
+    expect(must(["git", "-C", repo, "show", `${ref}:ignored`])).toBe("forced");
+  });
+
   test("leaves the worktree's own index and status as they were", async () => {
     dirty();
     const index = join(gitdir(tree), "index");
@@ -68,7 +75,7 @@ describe("archive", () => {
 
     expect(readFileSync(index)).toEqual(before);
     expect(must(["git", "-C", tree, "status", "--porcelain"])).toBe(status);
-    expect(run(["test", "-e", join(gitdir(tree), "wt-archive-index")]).status).not.toBe(0);
+    expect(readdirSync(gitdir(tree)).filter((name) => name.startsWith("wt-archive-index"))).toEqual([]);
   });
 
   test("records the snapshot on top of HEAD", async () => {
@@ -138,9 +145,17 @@ describe("pruneArchives", () => {
     expect(refs()).toEqual(["refs/archive/wt/young/20200101"]);
   });
 
-  test("leaves a branch archive under the same prefix alone", async () => {
-    archived("refs/archive/wt/branch", 400, "some branch tip");
+  test.each<{ name: string; ref: string; subject: string }>([
+    { name: "a branch archive under the same prefix", ref: "refs/archive/wt/branch", subject: "some branch tip" },
+    { name: "a ref with the subject but not the dated leaf", ref: "refs/archive/wt/release", subject: "wt archive: notes" },
+  ])("leaves $name alone", async ({ ref, subject }) => {
+    archived(ref, 400, subject);
     expect(await pruneArchives(RETENTION, repo)).toBe(0);
-    expect(refs()).toEqual(["refs/archive/wt/branch"]);
+    expect(refs()).toEqual([ref]);
+  });
+
+  test("deletes a suffixed snapshot past retention", async () => {
+    archived("refs/archive/wt/x/20200101-0123456789ab", 91);
+    expect(await pruneArchives(RETENTION, repo)).toBe(1);
   });
 });

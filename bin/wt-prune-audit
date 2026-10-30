@@ -28,7 +28,8 @@
 // worktree at any age, so one that survives is a genuine miss.
 //
 // A worktree holding the default branch is excluded outright, since no prune
-// pass can remove it.
+// pass can remove it. So is one with another worktree nested inside it, which
+// the pruner keeps until the inner one is gone.
 
 import { writeAll } from "#pipe";
 import {
@@ -127,7 +128,8 @@ export async function audit(): Promise<Outcome> {
 
   // Skip the forge entirely when no candidate survives, matching the pruner's
   // gating so most repos in a fan-out cost nothing.
-  const candidates = ((await listWorktrees()) ?? []).filter(isCandidate);
+  const worktrees = (await listWorktrees()) ?? [];
+  const candidates = worktrees.filter(isCandidate);
   if (candidates.length === 0) return { status: 0, stdout: "", stderr: "" };
 
   const host = await remoteHost();
@@ -139,6 +141,7 @@ export async function audit(): Promise<Outcome> {
     // branch is the integration target. Nothing the pruner does can clear it,
     // so reporting it files the same to-do every night forever.
     if (defaultName !== "" && worktree.branch === defaultName) continue;
+    if (worktrees.some((other) => other.kind === "worktree" && other.path.startsWith(`${worktree.path}/`))) continue;
 
     const reason = await classify({
       mainState: worktree.mainState,
