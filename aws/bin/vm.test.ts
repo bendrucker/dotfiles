@@ -329,6 +329,22 @@ describe("ssh entry", () => {
       else process.env.XDG_STATE_HOME = saved;
     }
   });
+
+  test.each<{ name: string; host: string; nc: number; hostname: string }>([
+    { name: "tailnet reachable", host: "h", nc: 0, hostname: "100.64.0.9" },
+    { name: "tailnet unreachable", host: "h", nc: 1, hostname: "i-1" },
+    { name: "-ssm alias", host: "h-ssm", nc: 0, hostname: "i-1" },
+  ])("ssh routes $name to $hostname", ({ host, nc, hostname }) => {
+    const box = sandbox("vm-ssh-route");
+    try {
+      box.stub("nc", `exit ${nc}`);
+      const config = box.write("config", sshEntry("h", "i-1", "100.64.0.9", "/k", tools));
+      const resolved = run(["ssh", "-G", "-F", config, host], { path: [box.bin], env: { SHELL: "/bin/sh" } });
+      expect(resolved.stdout).toContain(`\nhostname ${hostname}\n`);
+    } finally {
+      box.remove();
+    }
+  });
 });
 
 describe("extending", () => {
@@ -407,8 +423,10 @@ case "$1 $2" in
     echo '{"InstanceId":"i-0abc","InstanceType":"c8g.medium","State":{"Name":"pending"},"LaunchTime":"2026-09-27T08:00:00Z","Tags":[{"Key":"vm-name","Value":"t1"},{"Key":"vm-kind","Value":"performance"},{"Key":"expires-at","Value":"2026-09-27T08:30:00Z"}]}' > ${state}
     printf '{"Instances":[%s]}' "$(cat ${state})" ;;
   "ec2 describe-launch-template-versions")
-    if [ -f ${box.path("two-volumes")} ]; then echo '{"LaunchTemplateVersions":[{"LaunchTemplateData":{"BlockDeviceMappings":[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":30}},{"DeviceName":"/dev/xvdb","Ebs":{"VolumeSize":10}}]}}]}'
-    else echo '{"LaunchTemplateVersions":[{"LaunchTemplateData":{"BlockDeviceMappings":[{"DeviceName":"/dev/xvda","Ebs":{"Encrypted":true,"VolumeSize":30,"VolumeType":"gp3"}}]}}]}'; fi ;;
+    if [ -f ${box.path("data-only")} ]; then echo '{"LaunchTemplateVersions":[{"LaunchTemplateData":{"ImageId":"ami-0abc","BlockDeviceMappings":[{"DeviceName":"/dev/xvdb","Ebs":{"VolumeSize":10}}]}}]}'
+    else echo '{"LaunchTemplateVersions":[{"LaunchTemplateData":{"ImageId":"resolve:ssm:/aws/service/al2023","BlockDeviceMappings":[{"DeviceName":"/dev/xvdb","Ebs":{"VolumeSize":10}},{"DeviceName":"/dev/xvda","Ebs":{"Encrypted":true,"VolumeSize":30,"VolumeType":"gp3"}}]}}]}'; fi ;;
+  "ssm get-parameter") echo '{"Parameter":{"Value":"ami-0abc"}}' ;;
+  "ec2 describe-images") echo '{"Images":[{"RootDeviceName":"/dev/xvda"}]}' ;;
   "ec2 terminate-instances") rm -f ${state}; echo '{}' ;;
   "ec2 stop-instances") sed -i.bak 's/"pending"/"stopped"/' ${state}; echo '{}' ;;
   "ec2 start-instances") sed -i.bak 's/"stopped"/"running"/' ${state}; echo '{}' ;;
@@ -660,14 +678,16 @@ describe("commands", () => {
     const launched = await perf("launch", "--name", "t1", "--disk", "200");
     expect(launched.status).toBe(0);
     expect(calls()).toContain("aws ec2 describe-launch-template-versions --launch-template-name performance --versions $Default");
+    expect(calls()).toContain("aws ssm get-parameter --name /aws/service/al2023");
+    expect(calls()).toContain("aws ec2 describe-images --image-ids ami-0abc");
     expect(calls()).toContain(`--block-device-mappings [{"DeviceName":"/dev/xvda","Ebs":{"Encrypted":true,"VolumeSize":200,"VolumeType":"gp3"}}]`);
   });
 
-  test("launch refuses --disk for a template whose root it cannot tell", async () => {
-    box.write("two-volumes", "");
+  test("launch refuses --disk for a template that maps no volume at the image's root device", async () => {
+    box.write("data-only", "");
     const launched = await perf("launch", "--name", "t1", "--disk", "200");
     expect(launched.status).toBe(1);
-    expect(launched.stderr).toContain("launch template performance has 2 EBS volumes");
+    expect(launched.stderr).toContain("launch template performance maps no EBS volume at its image's root device /dev/xvda");
     expect(calls()).not.toContain("run-instances");
   });
 
