@@ -5,6 +5,11 @@
 [tasks."herdr:install"]
 run = "./herdr/install.sh"
 dir = "{{config_root}}/.."
+depends = ["herdr:install-app"]
+
+[tasks."herdr:install-app"]
+run = "./herdr/install-app.sh"
+dir = "{{config_root}}/.."
 
 [tasks."herdr:reload"]
 run = "./herdr/reload.sh"
