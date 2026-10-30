@@ -28,11 +28,13 @@
 // worktree at any age, so one that survives is a genuine miss.
 //
 // A worktree holding the default branch is excluded outright, since no prune
-// pass can remove it.
+// pass can remove it. A merged worktree with another nested inside it is kept
+// by the pruner, and reported here so the pin does not go unseen.
 
 import { writeAll } from "#pipe";
 import {
   defaultBranch,
+  holdsWorktrees,
   listWorktrees,
   minAge,
   parseDuration,
@@ -127,7 +129,8 @@ export async function audit(): Promise<Outcome> {
 
   // Skip the forge entirely when no candidate survives, matching the pruner's
   // gating so most repos in a fan-out cost nothing.
-  const candidates = ((await listWorktrees()) ?? []).filter(isCandidate);
+  const worktrees = (await listWorktrees()) ?? [];
+  const candidates = worktrees.filter(isCandidate);
   if (candidates.length === 0) return { status: 0, stdout: "", stderr: "" };
 
   const host = await remoteHost();
@@ -147,7 +150,8 @@ export async function audit(): Promise<Outcome> {
       forge: async () => (await prState(worktree.branch, host))?.state ?? "",
     });
     if (reason !== undefined) {
-      findings.push({ branch: worktree.branch, reason, path: worktree.path });
+      const held = holdsWorktrees(worktree, worktrees) ? " (holds worktrees)" : "";
+      findings.push({ branch: worktree.branch, reason: `${reason}${held}`, path: worktree.path });
     }
   }
 

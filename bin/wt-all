@@ -52,9 +52,10 @@ const ERASE_LINE = "\r\u001b[K";
 // block, short of a repo that failed by printing.
 const ERROR_LINES = 20;
 
-// `wt prune` under $WT_ALL emits its counts and nothing else, which is what
-// lets them be totalled. Every other shape of output is a line to display.
-const COUNTS = /^(\d+)\t(\d+)$/;
+// `wt prune` under $WT_ALL emits its counts, then the names it archived when
+// there are any, which is what lets them be totalled. Every other shape of
+// output is a line to display.
+const COUNTS = /^(\d+)\t(\d+)(?:\t[^\t\n]+)?$/;
 
 export interface Result {
   // The repo as the report names it, with the projects root cut off the front.
@@ -157,13 +158,16 @@ export function countsIn(output: string): [number, number] | undefined {
   return [Number(matched[1]), Number(matched[2])];
 }
 
-// Prune reports "<worktrees>\t<branches>" per repo, so head those columns and
-// sort by worktree count (then branches) to put the biggest cleanups on top.
+// Prune reports "<worktrees>\t<branches>[\t<archived>]" per repo, so head
+// those columns and sort by worktree count (then branches) to put the biggest
+// cleanups on top.
 export function pruneTable(rows: string[][]): string[] {
   const sorted = [...rows].sort(
     (left, right) => count(right, 1) - count(left, 1) || count(right, 2) - count(left, 2),
   );
-  return alignColumns([["REPO", "WORKTREES", "BRANCHES"], ...sorted]);
+  const header = ["REPO", "WORKTREES", "BRANCHES"];
+  if (rows.some((row) => row.length > 3)) header.push("ARCHIVED");
+  return alignColumns([header, ...sorted]);
 }
 
 function count(row: string[], column: number): number {

@@ -21,14 +21,18 @@ exit 0
 
 // `gh pr view <branch> --json state,number --jq …` resolves to the state under
 // test. An empty state file mimics a branch with no PR, where real gh exits
-// nonzero printing nothing. Every call is logged, so a case can assert the
+// nonzero and says so on stderr, and FAIL mimics a lookup that failed. Every call is logged, so a case can assert the
 // forge was never consulted.
 const GH_STUB = `#!/usr/bin/env bash
 [ "$1" = "--stub-check" ] && { echo "gh stub"; exit 0; }
 printf 'gh %s\\n' "$*" >>"$GH_LOG"
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   state="$(cat "$PR_STATE_FILE")"
-  [ -n "$state" ] && printf '%s\\t42\\n' "$state"
+  case "$state" in
+    "") echo "no pull requests found for branch \\"$3\\"" >&2; exit 1 ;;
+    FAIL) echo "HTTP 401: Bad credentials" >&2; exit 1 ;;
+  esac
+  printf '%s\\t42\\n' "$state"
 fi
 exit 0
 `;
@@ -282,6 +286,23 @@ describe("the executable", () => {
     ]);
 
     expect(runAudit({ WT_PRUNE_DRIFT_GRACE: "0h" })).toMatchObject({ status: 0, stdout: "" });
+  });
+
+  // The pruner keeps a tree with a worktree nested inside it, since removing it
+  // would delete the inner one unarchived. The audit still reports it, so a
+  // nested tree nothing removes cannot pin a merged one unseen.
+  test("names the nested worktree pinning a merged one", () => {
+    prStateIs("MERGED");
+    listing([
+      worktree({ branch: "main", main: true, current: true, path: "/repo", state: "is_main" }),
+      worktree({ branch: "feature-x", path: linked }),
+      worktree({ branch: "", path: `${linked}/tmp/arms/base` }),
+    ]);
+
+    expect(runAudit()).toMatchObject({
+      status: 0,
+      stdout: `feature-x\tmerged PR survived (holds worktrees)\t${linked}\n`,
+    });
   });
 
   test("stays silent when the survivor's PR is still open", () => {

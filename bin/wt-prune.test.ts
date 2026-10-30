@@ -3,12 +3,15 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { alignColumns } from "#worktree/table";
-import { parseDuration } from "#worktree/state";
+import { holdsWorktrees, parseDuration, type Worktree } from "#worktree/state";
 import {
   type Candidate,
+  ARM_IDLE,
   checklist,
+  classifyArm,
   classifySurvivor,
   type Decision,
+  isArm,
   type Options,
   parseOptions,
   plural,
@@ -32,14 +35,18 @@ exit 0
 
 // `gh pr view <branch> --json state,number --jq …` resolves to the state under
 // test. An empty state file mimics a branch with no PR, where real gh exits
-// nonzero printing nothing. Every call is logged, so a case can assert the
+// nonzero and says so on stderr, and FAIL mimics a lookup that failed. Every call is logged, so a case can assert the
 // forge was never consulted.
 const GH_STUB = `#!/usr/bin/env bash
 [ "$1" = "--stub-check" ] && { echo "gh stub"; exit 0; }
 printf 'gh %s\\n' "$*" >>"$GH_LOG"
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   state="$(cat "$PR_STATE_FILE")"
-  [ -n "$state" ] && printf '%s\\t42\\n' "$state"
+  case "$state" in
+    "") echo "no pull requests found for branch \\"$3\\"" >&2; exit 1 ;;
+    FAIL) echo "HTTP 401: Bad credentials" >&2; exit 1 ;;
+  esac
+  printf '%s\\t42\\n' "$state"
 fi
 exit 0
 `;
@@ -199,11 +206,19 @@ interface Row {
   current?: boolean;
   state?: string;
   upstream?: { ahead: number; behind: number } | null;
+  dirty?: boolean;
 }
 
-// One `wt list --format=json` schema 2 item for a clean worktree. An empty
-// branch is a detached HEAD.
-function worktree({ branch, path, main = false, current = false, state, upstream = { ahead: 0, behind: 0 } }: Row) {
+// A `wt list --format=json` schema 2 item. An empty branch is a detached HEAD.
+function worktree({
+  branch,
+  path,
+  main = false,
+  current = false,
+  state,
+  upstream = { ahead: 0, behind: 0 },
+  dirty = false,
+}: Row) {
   return {
     branch: branch === "" ? null : branch,
     head: { committed_at: "1970-01-01T00:16:40Z" },
@@ -211,7 +226,7 @@ function worktree({ branch, path, main = false, current = false, state, upstream
       path,
       main,
       current,
-      changes: { staged: false, modified: false, untracked: false, renamed: false, deleted: false },
+      changes: { staged: false, modified: dirty, untracked: false, renamed: false, deleted: false },
     },
     ...(upstream === null ? {} : { upstream: { remote: "origin", ...upstream } }),
     display: state === undefined ? {} : { state },
@@ -238,6 +253,35 @@ function defaultBranchWorktree(): void {
   ]);
 }
 
+function dirtySurvivor(): string {
+  oldCommit();
+  const path = join(repo, ".worktrees", "feature-x");
+  git(["-C", repo, "worktree", "add", "-q", "-b", "feature-x", path]);
+  writeFileSync(join(path, "f"), "edited");
+  writeFileSync(join(path, "scratch"), "new");
+  listing([
+    worktree({ branch: "main", main: true, current: true, path: repo }),
+    worktree({ branch: "feature-x", path, dirty: true }),
+  ]);
+  return path;
+}
+
+function archives(): string {
+  const run = Bun.spawnSync({ cmd: ["git", "-C", repo, "for-each-ref", "--format=%(refname)", "refs/archive"] });
+  return run.stdout.toString();
+}
+
+function failingCommitTree(): Record<string, string> {
+  const real = Bun.which("git", { PATH: environment.PATH }) as string;
+  const dir = join(sandbox, "failing-git");
+  mkdirSync(dir);
+  writeStub(join(dir, "git"), `#!/usr/bin/env bash
+for arg; do [ "$arg" = commit-tree ] && exit 1; done
+exec ${real} "$@"
+`);
+  return { PATH: `${dir}:${process.env.PATH}` };
+}
+
 describe("classifySurvivor decision matrix", () => {
   // A remove decision carries a mode (delete-branch / keep-branch) that the
   // passes map to the wt remove flags. keep/defer carry no mode. Branch
@@ -247,8 +291,10 @@ describe("classifySurvivor decision matrix", () => {
     onRemote: false,
     clean: true,
     isCurrent: false,
+    holdsWorktrees: false,
     beforeEnabled: false,
     ageExceeded: false,
+    idleExceeded: false,
     ...fields,
   });
 
@@ -320,6 +366,41 @@ describe("classifySurvivor decision matrix", () => {
       survivor({ ageExceeded: true }),
       { action: "defer", reason: "local-only" },
     ],
+    [
+      "a merged tree holding another worktree",
+      survivor({ prState: "MERGED", holdsWorktrees: true }),
+      { action: "keep", reason: "holds worktrees" },
+    ],
+    [
+      "dirty, idle, no PR",
+      survivor({ clean: false, beforeEnabled: true, idleExceeded: true }),
+      { action: "remove", reason: "archived idle", mode: "archive" },
+    ],
+    [
+      "dirty, idle, closed",
+      survivor({ prState: "CLOSED", clean: false, beforeEnabled: true, idleExceeded: true }),
+      { action: "remove", reason: "archived idle", mode: "archive" },
+    ],
+    [
+      "dirty and idle with a forge that could not answer",
+      survivor({ prState: "UNKNOWN", clean: false, beforeEnabled: true, idleExceeded: true }),
+      { action: "defer", reason: "forge unknown" },
+    ],
+    [
+      "dirty and idle with an open PR",
+      survivor({ prState: "OPEN", clean: false, beforeEnabled: true, idleExceeded: true, ageExceeded: true }),
+      { action: "keep", reason: "open PR" },
+    ],
+    [
+      "dirty but not idle",
+      survivor({ clean: false, beforeEnabled: true, ageExceeded: true }),
+      { action: "defer", reason: "local-only" },
+    ],
+    [
+      "dirty and idle with the age pass masked off",
+      survivor({ clean: false, idleExceeded: true }),
+      { action: "defer", reason: "local-only" },
+    ],
   ];
 
   for (const [name, state, expected] of cases) {
@@ -327,6 +408,52 @@ describe("classifySurvivor decision matrix", () => {
       expect(classifySurvivor(state)).toEqual(expected);
     });
   }
+});
+
+describe("classifyArm", () => {
+  const DAY = 86400;
+  test.each<{ name: string; idle: number | undefined; expected: Decision }>([
+    { name: "2 days idle", idle: 2 * DAY, expected: { action: "keep", reason: "arm in use" } },
+    { name: "4 days idle", idle: 4 * DAY, expected: { action: "remove", reason: "archived arm", mode: "archive" } },
+    { name: "exactly the limit", idle: ARM_IDLE, expected: { action: "remove", reason: "archived arm", mode: "archive" } },
+    { name: "an unreadable clock", idle: undefined, expected: { action: "keep", reason: "arm in use" } },
+  ])("$name", ({ idle, expected }) => {
+    expect(classifyArm(idle)).toEqual(expected);
+  });
+
+  test.each<{ path: string; arm: boolean }>([
+    { path: "/src/o/streamdown/tmp/arms/base", arm: true },
+    { path: "/src/o/streamdown/.worktrees/agent-1", arm: false },
+    { path: "/src/o/streamdown/tmp/armsx/base", arm: false },
+  ])("isArm($path) is $arm", ({ path, arm }) => {
+    expect(isArm(path)).toBe(arm);
+  });
+});
+
+describe("holdsWorktrees", () => {
+  const tree = (path: string): Worktree => ({
+    kind: "worktree",
+    branch: "",
+    path,
+    isMain: false,
+    isCurrent: false,
+    timestamp: 0,
+    clean: true,
+    onRemote: false,
+    mainState: "",
+  });
+  const outer = tree("/r/.worktrees/climb");
+  const inner = tree("/r/.worktrees/climb/tmp/arms/main");
+  const sibling = tree("/r/.worktrees/climber");
+
+  test.each<{ name: string; others: Worktree[]; gone: string[]; holds: boolean }>([
+    { name: "a nested arm", others: [inner], gone: [], holds: true },
+    { name: "a nested arm already removed", others: [inner], gone: [inner.path], holds: false },
+    { name: "a sibling sharing a prefix", others: [sibling], gone: [], holds: false },
+    { name: "only itself", others: [], gone: [], holds: false },
+  ])("$name: $holds", ({ others, gone, holds }) => {
+    expect(holdsWorktrees(outer, [outer, ...others], new Set(gone))).toBe(holds);
+  });
 });
 
 describe("parseDuration", () => {
@@ -355,7 +482,7 @@ describe("option parsing", () => {
     const parsed = parseOptions(["--before"]);
     expect(parsed).toEqual({
       ok: true,
-      options: { dryRun: false, interactive: false, minAge: "1d", before: 2592000 },
+      options: { dryRun: false, interactive: false, minAge: "1d", before: 2592000, archiveAfter: 1209600 },
     });
   });
 
@@ -374,6 +501,22 @@ describe("option parsing", () => {
   test("a duration it cannot read is refused rather than rounded to a default", () => {
     const parsed = parseOptions(["--before", "30min"]);
     expect(parsed).toEqual({ ok: false, message: "cannot read --before=30min as a duration" });
+  });
+
+  test.each<{ name: string; args: string[]; archiveAfter: number | undefined }>([
+    { name: "defaults to two weeks under --before", args: ["--before"], archiveAfter: 1209600 },
+    { name: "takes a duration of its own", args: ["--before", "--archive-after=3d"], archiveAfter: 259200 },
+    { name: "is off without --before", args: ["--archive-after=3d"], archiveAfter: undefined },
+  ])("--archive-after $name", ({ args, archiveAfter }) => {
+    const parsed = parseOptions(args);
+    expect(parsed.ok && parsed.options.archiveAfter).toBe(archiveAfter);
+  });
+
+  test("an --archive-after it cannot read is refused", () => {
+    expect(parseOptions(["--before", "--archive-after=soon"])).toEqual({
+      ok: false,
+      message: "cannot read --archive-after=soon as a duration",
+    });
   });
 
   test("an unknown flag is refused rather than forwarded to wt step prune", () => {
@@ -539,6 +682,90 @@ describe("prune (black box)", () => {
     expect(result.stdout).toBe("1\t0\n");
   });
 
+  test("archives a dirty idle tree, then removes it and keeps its branch", () => {
+    dirtySurvivor();
+    prStateIs("");
+    const result = prune(["--before", "--archive-after=0h"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("1 worktree (archived feature-x)\n");
+    expect(archives()).toMatch(/^refs\/archive\/wt\/feature-x\/[0-9]{8}\n$/);
+    expect(log("WT_REMOVE_LOG")).toContain("--foreground --force feature-x");
+    expect(log("WT_REMOVE_LOG")).not.toContain("force-delete");
+  });
+
+  test("names what it archived in the counts wt all reads", () => {
+    dirtySurvivor();
+    prStateIs("");
+    const result = prune(["--before", "--archive-after=0h"], { WT_ALL: "1" });
+    expect(result.stdout).toBe("1\t0\tfeature-x\n");
+  });
+
+  test("a forge that cannot answer archives and removes nothing", () => {
+    dirtySurvivor();
+    prStateIs("FAIL");
+    const result = prune(["--dry-run", "--before", "--archive-after=0h"]);
+    expect(result.stdout).toContain("forge unknown");
+    expect(prune(["--before", "--archive-after=0h"]).status).toBe(0);
+    expect(archives()).toBe("");
+    expect(log("WT_REMOVE_LOG")).toBe("");
+  });
+
+  test("a failed archive removes nothing", () => {
+    dirtySurvivor();
+    prStateIs("");
+    const result = prune(["--before", "--archive-after=0h"], failingCommitTree());
+    expect(result.status).toBe(0);
+    expect(archives()).toBe("");
+    expect(log("WT_REMOVE_LOG")).toBe("");
+  });
+
+  test("keeps a dirty tree that has not been idle long enough", () => {
+    dirtySurvivor();
+    prStateIs("");
+    prune(["--before"]);
+    expect(archives()).toBe("");
+    expect(log("WT_REMOVE_LOG")).toBe("");
+  });
+
+  test("dry-run explains an archive without writing one", () => {
+    dirtySurvivor();
+    prStateIs("");
+    const result = prune(["--dry-run", "--before", "--archive-after=0h"]);
+    expect(result.stdout).toContain("archived idle");
+    expect(result.stdout).toContain("1 worktree (archived feature-x)");
+    expect(archives()).toBe("");
+    expect(log("WT_REMOVE_LOG")).toBe("");
+  });
+
+  test("keeps a tree that holds an arm still in use", () => {
+    const path = dirtySurvivor();
+    const arm = join(path, "tmp", "arms", "base");
+    git(["-C", repo, "worktree", "add", "-q", "--detach", arm]);
+    listing([
+      worktree({ branch: "main", main: true, current: true, path: repo }),
+      worktree({ branch: "feature-x", path, dirty: true }),
+      worktree({ branch: "", path: arm, dirty: true }),
+    ]);
+    prStateIs("MERGED");
+    const result = prune(["--before", "--archive-after=0h"]);
+    expect(result.status).toBe(0);
+    expect(log("WT_REMOVE_LOG")).toBe("");
+    expect(archives()).toBe("");
+  });
+
+  test("keeps a benchmark arm that is still in use", () => {
+    oldCommit();
+    const arm = join(repo, "tmp", "arms", "base");
+    git(["-C", repo, "worktree", "add", "-q", "--detach", arm]);
+    listing([
+      worktree({ branch: "main", main: true, current: true, path: repo }),
+      worktree({ branch: "", path: arm, dirty: true }),
+    ]);
+    const result = prune(["--dry-run", "--before"]);
+    expect(result.stdout).toContain("arm in use");
+    expect(log("WT_REMOVE_LOG")).toBe("");
+  });
+
   test("refuses a duration it cannot read instead of pruning differently", () => {
     mergedSurvivor();
     const result = prune(["--before", "30min"]);
@@ -563,7 +790,7 @@ describe("prune (black box)", () => {
 // the handle `wt remove` is given, and the confirm is the only thing between a
 // local-only branch and a force-delete.
 describe("interactive checklist", () => {
-  const options: Options = { dryRun: false, interactive: true, minAge: "1d", before: undefined };
+  const options: Options = { dryRun: false, interactive: true, minAge: "1d", before: undefined, archiveAfter: undefined };
 
   function candidate(handle: string, onRemote: boolean): Candidate {
     return {
@@ -576,7 +803,7 @@ describe("interactive checklist", () => {
   async function pick(candidates: Candidate[], choice?: string, confirmRc?: string): Promise<Report> {
     if (choice !== undefined) process.env.GUM_CHOOSE = choice;
     if (confirmRc !== undefined) process.env.GUM_CONFIRM_RC = confirmRc;
-    const report: Report = { worktrees: 0, branches: 0, reasons: [] };
+    const report: Report = { worktrees: 0, branches: 0, reasons: [], archived: [] };
     await checklist(candidates, options, report);
     return report;
   }
@@ -613,7 +840,7 @@ describe("interactive checklist", () => {
   });
 
   test("a dry run counts the selection without removing it", async () => {
-    const report: Report = { worktrees: 0, branches: 0, reasons: [] };
+    const report: Report = { worktrees: 0, branches: 0, reasons: [], archived: [] };
     process.env.GUM_CHOOSE = "feature-x";
     await checklist([candidate("feature-x", true)], { ...options, dryRun: true }, report);
     expect(report.worktrees).toBe(1);

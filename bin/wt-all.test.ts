@@ -300,7 +300,11 @@ describe("countsIn", () => {
     expect(countsIn("2\t3\n")).toEqual([2, 3]);
   });
 
-  test.each([["one line"], ["2\t3\nand more"], ["2 3"], ["2\tthree"], [""]])(
+  test("reads the pair ahead of the names prune archived", () => {
+    expect(countsIn("2\t3\tfeature,arms/a\n")).toEqual([2, 3]);
+  });
+
+  test.each([["one line"], ["2\t3\nand more"], ["2 3"], ["2\tthree"], ["2\t3\t"], [""]])(
     "declines to total %p",
     (output) => {
       expect(countsIn(output)).toBeUndefined();
@@ -320,6 +324,14 @@ describe("pruneTable", () => {
       "middle  4          2",
       "big     4          0",
       "small   1          9",
+    ]);
+  });
+
+  test("adds an archived column when a repo archived something", () => {
+    expect(pruneTable([["one", "2", "0", "feature,arms/a"], ["two", "1", "0"]])).toEqual([
+      "REPO  WORKTREES  BRANCHES  ARCHIVED",
+      "one   2          0         feature,arms/a",
+      "two   1          0",
     ]);
   });
 });
