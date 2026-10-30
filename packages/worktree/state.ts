@@ -200,7 +200,7 @@ export interface Worktree {
   mainState: string;
 }
 
-// `wt list --format=json` schema 2, narrowed to the fields toWorktree reads.
+// `wt list --format=json` schema 2.
 const Item = z.object({
   branch: z.string().nullable(),
   head: z.object({ committed_at: z.string().nullable() }).nullish(),
