@@ -2,6 +2,7 @@
 // `git branch <name> refs/archive/<name>` until EXPIRY.
 
 import { $ } from "bun";
+import { isSnapshot } from "#worktree/archive";
 import { capture, nowSeconds, parseDuration } from "#worktree/state";
 
 export const EXPIRY = 90 * 86400;
@@ -101,11 +102,14 @@ export async function pruneBranches(
 }
 
 // Keyed on the reflog's own date, since the archived commit is often already old.
+// Worktree snapshots expire by commit date in pruneArchives instead.
 async function expireArchives(dryRun: boolean, explaining: boolean, report: BranchReport): Promise<void> {
-  const captured = await capture(["git", "for-each-ref", "refs/archive", "--format=%(refname)"]);
+  const captured = await capture(["git", "for-each-ref", "refs/archive", "--format=%(refname)%09%(subject)"]);
   if (captured === "") return;
 
-  for (const ref of captured.split("\n").filter((line) => line !== "")) {
+  for (const line of captured.split("\n").filter((line) => line !== "")) {
+    const [ref = "", subject = ""] = line.split("\t");
+    if (isSnapshot(ref, subject)) continue;
     const times = await reflogTimes(ref);
     if (times.length === 0) continue;
     if (nowSeconds() - Math.max(...times) < EXPIRY) continue;

@@ -55,7 +55,7 @@ const ERROR_LINES = 20;
 // `wt prune` under $WT_ALL emits its counts, then the names it archived when
 // there are any, which is what lets them be totalled. Every other shape of
 // output is a line to display.
-const COUNTS = /^(\d+)\t(\d+)(?:\t[^\t\n]+)?$/;
+const COUNTS = /^(\d+)\t(\d+)(?:\t([^\t\n]+))?$/;
 
 export interface Result {
   // The repo as the report names it, with the projects root cut off the front.
@@ -71,6 +71,8 @@ export interface Totals {
   failed: number;
   worktrees: number;
   branches: number;
+  // Each archived tree as "<repo>:<name>".
+  archived: string[];
 }
 
 // An empty variable counts as unset, matching the shell's `${VAR:-default}`.
@@ -158,6 +160,15 @@ export function countsIn(output: string): [number, number] | undefined {
   return [Number(matched[1]), Number(matched[2])];
 }
 
+// The trees `wt prune` archived, from the comma-separated field after its counts.
+export function archivedIn(output: string): string[] {
+  const names = COUNTS.exec(output.replace(/\n+$/, ""))?.[3] ?? "";
+  return names
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name !== "");
+}
+
 // Prune reports "<worktrees>\t<branches>[\t<archived>]" per repo, so head
 // those columns and sort by worktree count (then branches) to put the biggest
 // cleanups on top.
@@ -181,6 +192,7 @@ export function summarize(totals: Totals): string {
   if (totals.worktrees > 0 || totals.branches > 0) {
     parts.push(`${totals.worktrees} worktrees, ${totals.branches} branches`);
   }
+  if (totals.archived.length > 0) parts.push(`archived ${totals.archived.join(", ")}`);
   return parts.join(" · ");
 }
 
@@ -249,6 +261,7 @@ async function report(results: Result[], cmd: string[]): Promise<number> {
     failed: 0,
     worktrees: 0,
     branches: 0,
+    archived: [],
   };
   const rows: string[][] = [];
   const blocks: string[] = [];
@@ -274,6 +287,7 @@ async function report(results: Result[], cmd: string[]): Promise<number> {
     if (counts !== undefined) {
       totals.worktrees += counts[0];
       totals.branches += counts[1];
+      totals.archived.push(...archivedIn(result.stdout).map((name) => `${result.display}:${name}`));
     }
   }
 
