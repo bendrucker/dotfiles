@@ -3,6 +3,22 @@
 [herdr](https://herdr.dev) is the multiplexer this machine runs its panes in,
 and the thing that knows which coding agent occupies which one.
 
+## Programs
+
+herdr is three separate programs. Agents don't carry over between the TUI's server and hc.
+
+| Program | Command | What it is | Installed by | Updated by |
+| --- | --- | --- | --- | --- |
+| Herdr TUI | `herdr` | The terminal multiplexer, with its own server. Everything else in this directory configures it. | `install.sh` | `herdr update --handoff` in `install.sh` |
+| herdr-core | `hc`, `herdr-core` | The server that runs the app's terminals | `install-app.sh` | `hc update` in `install-app.sh` |
+| Herdr app | `herdr-app` | The native GUI on top of herdr-core | `install-app.sh`, macOS only | The app itself, which also updates herdr-core on its first start after an update |
+
+herdr-core installs to `~/.local/bin/herdr-core`. Its installer adds an `hc` link only when no other `hc` is on `PATH`. `install-app.sh` calls `herdr-core` by path for that reason. Its socket is `~/.local/state/herdr-core/default/default.sock`, with holder sockets beside it. `hc update` restarts the core while its terminals keep running. Never run `hc server stop`.
+
+The app installs to `~/Applications/Herdr.app` and keeps its config in `~/.config/herdr-app`, which this repo does not track yet.
+
+## TUI
+
 `config.toml` is the whole configuration and carries its own reasoning inline,
 including every keybinding and why it took the key it did. `install.sh`
 installs and updates herdr and converges plugins onto `plugins.list`, and `reload.sh` hands a changed
