@@ -73,6 +73,21 @@ describe("readWorktrees", () => {
     expect(row).toMatchObject({ branch: "", timestamp: 0, clean: false, onRemote: false, mainState: "" });
   });
 
+  test.each<{ name: string; conflicted: boolean | null | undefined; expected: boolean }>([
+    { name: "no conflicts", conflicted: false, expected: true },
+    { name: "conflicts", conflicted: true, expected: false },
+    { name: "an undetermined conflict check", conflicted: null, expected: false },
+    { name: "no conflict field", conflicted: undefined, expected: true },
+  ])("reads a worktree with $name as clean: $expected", ({ conflicted, expected }) => {
+    const changes = { ...clean, ...(conflicted === undefined ? {} : { conflicted }) };
+    const [row] = readWorktrees(envelope([{ branch: "topic", worktree: { path: "/wt", main: false, current: false, changes } }]));
+    expect(row?.clean).toBe(expected);
+  });
+
+  test("throws on output that is not JSON", () => {
+    expect(() => readWorktrees("warning: something\n{}")).toThrow("unexpected `wt list --format=json` output");
+  });
+
   test("reads a row without a worktree as a branch", () => {
     expect(readWorktrees(envelope([{ branch: "topic" }]))[0]?.kind).toBe("branch");
   });

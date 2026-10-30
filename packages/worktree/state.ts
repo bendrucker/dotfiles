@@ -184,7 +184,7 @@ async function mergeRequest(branch: string): Promise<PullRequest | undefined> {
   return { state: state === "OPENED" ? "OPEN" : state, number: scalar(newest.iid) };
 }
 
-const DIRT = ["staged", "modified", "untracked", "renamed", "deleted"] as const;
+const DIRT = ["staged", "modified", "untracked", "renamed", "deleted", "conflicted"] as const;
 
 export interface Worktree {
   kind: string;
@@ -216,6 +216,7 @@ const Item = z.object({
           untracked: z.boolean(),
           renamed: z.boolean(),
           deleted: z.boolean(),
+          conflicted: z.boolean().nullish(),
         })
         .nullish(),
     })
@@ -237,7 +238,13 @@ export async function listWorktrees(): Promise<Worktree[] | undefined> {
 // Throws on output it cannot read. A worktrunk format change then fails the run
 // instead of reading as a repo with no worktrees.
 export function readWorktrees(captured: string): Worktree[] {
-  const result = Listing.safeParse(JSON.parse(captured));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(captured);
+  } catch (error) {
+    throw new Error(`unexpected \`wt list --format=json\` output:\n${String(error)}`);
+  }
+  const result = Listing.safeParse(parsed);
   if (!result.success) {
     throw new Error(`unexpected \`wt list --format=json\` output:\n${z.prettifyError(result.error)}`);
   }
@@ -255,8 +262,8 @@ function toWorktree(item: z.infer<typeof Item>): Worktree {
     isMain: item.worktree?.main === true,
     isCurrent: item.worktree?.current === true,
     timestamp: committed == null ? 0 : Math.floor(Date.parse(committed) / 1000),
-    // Null changes means wt could not read the tree, which must not pass for clean.
-    clean: changes != null && !DIRT.some((field) => changes[field]),
+    // Null means wt could not read the tree or its conflicts, which must not pass for clean.
+    clean: changes != null && changes.conflicted !== null && !DIRT.some((field) => changes[field] === true),
     // No upstream reads as not backed up: the tip is only recoverable when the
     // remote has every commit.
     onRemote: item.upstream?.ahead === 0,
