@@ -4,6 +4,9 @@
   "scripts": {
     "test": "bun install --cwd aws/vm --frozen-lockfile --silent && GIT_CONFIG_GLOBAL=/dev/null bun test --parallel --timings=tmp/test-timings.json --update-timings --path-ignore-patterns='**/*.integration.test.ts' --path-ignore-patterns='**/lint-ts.test.ts' --path-ignore-patterns='.claude/skills/**'"
   },
+  "dependencies": {
+    "zod": "4.6.7"
+  },
   "devDependencies": {
     "oxlint": "1.90.0"
   },

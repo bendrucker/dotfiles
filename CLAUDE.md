@@ -101,7 +101,7 @@ run([script, ...args], { cwd: box.dir, path: [box.bin], env: { ZDOTDIR: box.mkdi
 
 Import a module under `packages/` by its `#` specifier from the root `package.json` `imports`, never by relative path. Lint rejects a relative path into `packages/`.
 
-Add no runtime dependency to `packages/` or to anything `bin/dotfiles-sync` reaches. The 3am jobs run `bin/*` under bun from a clone with nothing installed.
+Pin each runtime dependency to an exact version in the root `package.json` `dependencies`. The 3am jobs run `bin/*` under bun from a clone with no `node_modules`, where bun installs a pinned package from npm on its first import. Validate external data with zod.
 
 Write `scripts/shell/` as POSIX sh sourced by relative path. `scripts/setup` and `bin/dotf` source it before bun or gum exist.
 

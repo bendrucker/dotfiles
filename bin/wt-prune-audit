@@ -9,7 +9,7 @@
 //
 // Prints "<branch>\t<reason>\t<path>" for each linked, non-current worktree that
 // a healthy prune should already have removed:
-//   - main_state is empty/integrated and the worktree has outlived the grace
+//   - its state is empty, integrated, or same_commit and it has outlived the grace
 //     period: `wt list` already knows the work landed into the default branch,
 //     so no forge call is needed.
 //   - otherwise the branch has a MERGED PR that outlived the prune.
@@ -43,8 +43,9 @@ import {
 } from "#worktree/state";
 
 // What `wt list` says when it has already resolved the work into the default
-// branch. "empty" is a worktree carrying no commits of its own.
-const INTEGRATED = new Set(["empty", "integrated"]);
+// branch. "empty" is a worktree carrying no commits of its own, and
+// "same_commit" one whose HEAD is the default branch's commit.
+const INTEGRATED = new Set(["empty", "integrated", "same_commit"]);
 
 // One nightly run, added to the pruner's own age floor.
 const RUN_INTERVAL = 86400;
