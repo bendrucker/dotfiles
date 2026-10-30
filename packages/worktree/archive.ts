@@ -13,8 +13,7 @@ export const RETENTION = EXPIRY;
 
 const SUBJECT = "wt archive:";
 
-// The ref holding the snapshot, or undefined when any step fails, which callers
-// treat as a reason not to remove the tree.
+// The ref holding the snapshot, or undefined when any step fails.
 export async function archive(path: string, name: string): Promise<string | undefined> {
   const gitdir = await capture(["git", "-C", path, "rev-parse", "--absolute-git-dir"]);
   const head = await capture(["git", "-C", path, "rev-parse", "--verify", "-q", "HEAD"]);
@@ -92,7 +91,6 @@ export async function pruneArchives(retentionSecs: number, repo = "."): Promise<
   return deleted;
 }
 
-// Trimmed stdout, or undefined when git exits nonzero.
 async function git(path: string, args: string[], env: Record<string, string> = {}): Promise<string | undefined> {
   const run = await $`git -C ${path} ${args} < /dev/null`
     .env({ ...process.env, ...env })

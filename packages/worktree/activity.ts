@@ -1,14 +1,12 @@
-// How long a worktree has sat untouched, which the pruner's age and archive
-// passes judge it by. The tip commit is main's for a checkout with no commits
-// of its own, and uncommitted edits leave no commit, so three times are read.
+// The tip commit is main's for a checkout with no commits of its own, and
+// uncommitted edits leave no commit, so three times are read.
 
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { capture, nowSeconds, type Worktree, worktreeAgeSecs } from "#worktree/state";
 
-// Seconds since the newest of the tip commit, the worktree's creation, and the
-// last change to any path `git status` reports. Undefined when none of the
-// three reads, which callers treat as a reason to keep the tree.
+// Seconds since the worktree's newest activity. Undefined when no time can be
+// read.
 export async function idleSecs(worktree: Pick<Worktree, "path" | "timestamp">): Promise<number | undefined> {
   const now = nowSeconds();
   const age = await worktreeAgeSecs(worktree.path);
@@ -22,10 +20,9 @@ export async function idleSecs(worktree: Pick<Worktree, "path" | "timestamp">): 
   return Math.max(0, now - Math.max(...times));
 }
 
-// The newest mtime among the paths `git status` lists, in seconds. Normal
-// untracked mode lists an untracked directory once, and the directory's own
-// mtime is what gets read. `--no-optional-locks` keeps status from rewriting
-// the index of a tree someone may be working in.
+// Normal untracked mode lists an untracked directory once, and the directory's
+// own mtime is what gets read. `--no-optional-locks` keeps status from
+// rewriting the index of a tree someone may be working in.
 export async function newestChange(path: string): Promise<number | undefined> {
   const captured = await capture([
     "git",

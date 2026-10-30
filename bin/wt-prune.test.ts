@@ -206,8 +206,7 @@ interface Row {
   dirty?: boolean;
 }
 
-// One `wt list --format=json` schema 2 item, clean unless told otherwise. An
-// empty branch is a detached HEAD.
+// A `wt list --format=json` schema 2 item. An empty branch is a detached HEAD.
 function worktree({
   branch,
   path,
@@ -251,8 +250,6 @@ function defaultBranchWorktree(): void {
   ]);
 }
 
-// A real linked worktree with an uncommitted edit and an untracked file, so the
-// archive pass has something to snapshot.
 function dirtySurvivor(): string {
   oldCommit();
   const path = join(repo, ".worktrees", "feature-x");
@@ -271,8 +268,6 @@ function archives(): string {
   return run.stdout.toString();
 }
 
-// A git that refuses to write the archive commit and passes everything else to
-// the real one.
 function failingCommitTree(): Record<string, string> {
   const real = Bun.which("git", { PATH: environment.PATH }) as string;
   const dir = join(sandbox, "failing-git");
@@ -373,7 +368,6 @@ describe("classifySurvivor decision matrix", () => {
       survivor({ prState: "MERGED", holdsWorktrees: true }),
       { action: "keep", reason: "holds worktrees" },
     ],
-    // Dirty and idle with no open PR: snapshot, then remove.
     [
       "dirty, idle, no PR",
       survivor({ clean: false, beforeEnabled: true, idleExceeded: true }),
