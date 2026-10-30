@@ -2,10 +2,10 @@
 // `git branch <name> refs/archive/<name>` until EXPIRY.
 
 import { $ } from "bun";
-import { isSnapshot } from "#worktree/archive";
+import { isSnapshot, RETENTION } from "#worktree/archive";
 import { capture, nowSeconds, parseDuration } from "#worktree/state";
 
-export const EXPIRY = 90 * 86400;
+export const EXPIRY = RETENTION;
 
 export interface Branch {
   name: string;

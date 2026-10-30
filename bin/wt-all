@@ -155,14 +155,18 @@ export function rowsFor(result: Result): string[][] {
 // else. The whole output has to be the pair, so a command that happens to print
 // two numbers among other lines is not mistaken for one.
 export function countsIn(output: string): [number, number] | undefined {
-  const matched = COUNTS.exec(output.replace(/\n+$/, ""));
+  const matched = pruneFields(output);
   if (matched === null) return undefined;
   return [Number(matched[1]), Number(matched[2])];
 }
 
+function pruneFields(output: string): RegExpExecArray | null {
+  return COUNTS.exec(output.replace(/\n+$/, ""));
+}
+
 // The trees `wt prune` archived, from the comma-separated field after its counts.
 export function archivedIn(output: string): string[] {
-  const names = COUNTS.exec(output.replace(/\n+$/, ""))?.[3] ?? "";
+  const names = pruneFields(output)?.[3] ?? "";
   return names
     .split(",")
     .map((name) => name.trim())
