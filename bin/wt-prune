@@ -14,10 +14,14 @@
 // in it. The forge pass has no such guard and does not need one: a MERGED PR is
 // proof the work is done however new the checkout is.
 //
-// Age pass (--before [DURATION], default 1mo): removes old, clean worktree
-// directories that aren't integrated anywhere, to clear out stale checkouts. It
-// keeps the branch (so committed work is recoverable) and skips worktrees with
-// uncommitted changes, relying on `wt remove`'s own guards.
+// Age pass (--before [DURATION], default 1mo): removes clean worktree
+// directories idle that long that aren't integrated anywhere, keeping the
+// branch so committed work is recoverable. A dirty tree with no open PR idle
+// past --archive-after (default 2w) is first snapshotted into
+// refs/archive/wt/<branch>/<date>, tracked and untracked files but not ignored
+// ones, then removed. A detached benchmark arm under tmp/arms/ is archived as
+// arms/<dir> the same way once idle for 3 days. Idle time is the newest of the
+// tip commit, the worktree's creation, and its uncommitted edits.
 //
 // Interactive (-i / --interactive, standalone only): after the auto passes,
 // present the ambiguous remainder as a `gum` multi-select checklist annotated
@@ -40,6 +44,8 @@ import { parseArgs } from "node:util";
 import { $ } from "bun";
 import { choose } from "#gum";
 import { writeAll } from "#pipe";
+import { idleSecs } from "#worktree/activity";
+import { archive, pruneArchives, RETENTION } from "#worktree/archive";
 import { pruneBranches } from "#worktree/branches";
 import { alignColumns } from "#worktree/table";
 import {
@@ -47,7 +53,6 @@ import {
   defaultBranch,
   listWorktrees,
   minAge,
-  nowSeconds,
   parseDuration,
   prState,
   remoteHost,
@@ -56,15 +61,24 @@ import {
 
 const USAGE = [
   "Usage: wt prune [--dry-run] [-i|--interactive] [--min-age=DURATION] [--before[=DURATION]]",
+  "                [--archive-after=DURATION]",
   "Remove worktrees whose work has landed, and report what went.",
   "  --dry-run             count and explain, remove nothing",
   "  -i, --interactive     pick from the ambiguous remainder (needs a terminal)",
   "  --min-age=DURATION    the age floor the integration pass applies",
   "  --before[=DURATION]   also remove old clean checkouts, keeping their branches",
+  "  --archive-after=DURATION",
+  "                        with --before, archive then remove dirty trees idle this long (default 2w)",
+  "Restore an archived tree with `git worktree add <path> refs/archive/wt/<name>/<date>`.",
 ].join("\n");
 
 // What --before means when it names no duration of its own.
 const DEFAULT_BEFORE = "1mo";
+const DEFAULT_ARCHIVE_AFTER = "2w";
+
+// Benchmark arms are throwaway copies, so they go after days rather than weeks.
+export const ARM_IDLE = 3 * 86400;
+const ARM_PATH = "/tmp/arms/";
 
 export interface Options {
   dryRun: boolean;
@@ -72,6 +86,8 @@ export interface Options {
   minAge: string;
   // Seconds, or undefined when the age pass is off.
   before: number | undefined;
+  // Seconds, or undefined when the age pass is off, which turns this off too.
+  archiveAfter: number | undefined;
 }
 
 export type Parse = { ok: true; options: Options } | { ok: false; message: string };
@@ -105,6 +121,7 @@ export function parseOptions(args: string[]): Parse {
         interactive: { type: "boolean", short: "i", default: false },
         "min-age": { type: "string" },
         before: { type: "string" },
+        "archive-after": { type: "string" },
         help: { type: "boolean", short: "h", default: false },
       },
     }));
@@ -131,6 +148,15 @@ export function parseOptions(args: string[]): Parse {
     }
   }
 
+  let archiveAfter: number | undefined;
+  if (before !== undefined) {
+    const spec = values["archive-after"] ?? DEFAULT_ARCHIVE_AFTER;
+    archiveAfter = parseDuration(spec);
+    if (archiveAfter === undefined) {
+      return { ok: false, message: `cannot read --archive-after=${spec} as a duration` };
+    }
+  }
+
   return {
     ok: true,
     options: {
@@ -140,12 +166,13 @@ export function parseOptions(args: string[]): Parse {
       // duration grammar, which is this repo's, not worktrunk's.
       minAge: values["min-age"] ?? minAge(),
       before,
+      archiveAfter,
     },
   };
 }
 
 export type Decision =
-  | { action: "remove"; reason: string; mode: "delete-branch" | "keep-branch" }
+  | { action: "remove"; reason: string; mode: "delete-branch" | "keep-branch" | "archive" }
   | { action: "keep" | "defer"; reason: string };
 
 export interface SurvivorState {
@@ -154,8 +181,11 @@ export interface SurvivorState {
   onRemote: boolean;
   clean: boolean;
   isCurrent: boolean;
+  // Another surviving worktree is nested inside this one.
+  holdsWorktrees: boolean;
   beforeEnabled: boolean;
   ageExceeded: boolean;
+  idleExceeded: boolean;
 }
 
 // Decide a survivor's fate from its resolved state. Pure: it reads only its
@@ -166,10 +196,15 @@ export interface SurvivorState {
 // `reason` is a short human string for the dry-run table, display only and
 // never matched on, so renaming one must not change behaviour. `mode` is where
 // the branch-deletion call lives: keep-branch when the branch still holds the
-// only copy of committed work, delete-branch when the work has landed.
+// only copy of committed work, delete-branch when the work has landed, and
+// archive when uncommitted work has to be snapshotted before the tree goes.
 export function classifySurvivor(state: SurvivorState): Decision {
   // Never the current worktree: you cannot remove the checkout you stand in.
   if (state.isCurrent) return { action: "keep", reason: "current worktree" };
+
+  // Every removal deletes the directory, and a worktree nested inside it would
+  // go too, unarchived. Ahead of merged for that reason.
+  if (state.holdsWorktrees) return { action: "keep", reason: "holds worktrees" };
 
   // Merged upstream: the work landed, so the leftovers are cruft even when
   // dirty or ahead. A squash merge leaves local commits, so the forge state is
@@ -182,6 +217,12 @@ export function classifySurvivor(state: SurvivorState): Decision {
   // the tip is backed up on a remote (recoverable) and the tree is clean.
   if (state.prState === "CLOSED" && state.onRemote && state.clean) {
     return { action: "remove", reason: "closed, recoverable", mode: "delete-branch" };
+  }
+
+  // Dirty, idle, and not under review: snapshot the uncommitted work into a
+  // ref, then drop the tree and keep the branch.
+  if (state.beforeEnabled && !state.clean && state.idleExceeded && state.prState !== "OPEN") {
+    return { action: "remove", reason: "archived idle", mode: "archive" };
   }
 
   // Old and clean with no decisive forge state: drop the stale checkout but
@@ -198,6 +239,19 @@ export function classifySurvivor(state: SurvivorState): Decision {
       : { action: "keep", reason: "dirty & closed" };
   }
   return { action: "defer", reason: "local-only" };
+}
+
+// A detached benchmark arm, judged on idle time alone since it has no branch or
+// PR. An unreadable clock keeps it.
+export function classifyArm(idle: number | undefined): Decision {
+  if (idle !== undefined && idle >= ARM_IDLE) {
+    return { action: "remove", reason: "archived arm", mode: "archive" };
+  }
+  return { action: "keep", reason: "arm in use" };
+}
+
+export function isArm(path: string): boolean {
+  return path.includes(ARM_PATH);
 }
 
 export function plural(count: number, noun: string): string {
@@ -245,10 +299,12 @@ export interface Report {
   worktrees: number;
   branches: number;
   reasons: string[][];
+  // The names of the removed worktrees that were archived first.
+  archived: string[];
 }
 
 async function prune(options: Options): Promise<Outcome> {
-  const report: Report = { worktrees: 0, branches: 0, reasons: [] };
+  const report: Report = { worktrees: 0, branches: 0, reasons: [], archived: [] };
   const fanOut = (process.env.WT_ALL ?? "") !== "";
   // A dry-run table is standalone detail. The fan-out keeps its terse count
   // contract, which is the one line `wt all` parses.
@@ -292,6 +348,7 @@ async function prune(options: Options): Promise<Outcome> {
     : [];
 
   if (options.interactive) await checklist(candidates, options, report);
+  if (!options.dryRun) await pruneArchives(RETENTION);
 
   await pruneBranches(await defaultBranch(), options.minAge, options.dryRun, explaining, report);
 
@@ -315,10 +372,15 @@ async function forgePass(
 ): Promise<Candidate[]> {
   const host = await remoteHost();
   const defaultName = await defaultBranch();
-  const now = nowSeconds();
 
   const recoverable: Candidate[] = [];
   const localOnly: Candidate[] = [];
+  // Paths removed this run, or that a dry run would remove.
+  const gone = new Set<string>();
+
+  // Arms go first: they often sit inside another worktree's tmp/, and removing
+  // that worktree would delete them before they were archived.
+  if (options.before !== undefined && !options.interactive) await armPass(worktrees, options, report, explaining, gone);
 
   for (const worktree of worktrees) {
     if (worktree.kind !== "worktree" || worktree.branch === "") continue;
@@ -341,22 +403,20 @@ async function forgePass(
     // proves it landed. This runs once per survivor, not once per PR ever.
     const pr = await prState(worktree.branch, host);
 
-    // FIXME: timestamp is the tip commit's, not the worktree's. A worktree
-    // branched off an old main inherits that tip, so a checkout created minutes
-    // ago can read as older than the threshold and age out the same night.
-    // worktreeAgeSecs is the right clock here; switching to it changes what
-    // this pass removes, so it is left for its own change.
-    const ageExceeded = options.before !== undefined && now - worktree.timestamp >= options.before;
+    // Read only when the age pass is on, since it runs `git status` in the tree.
+    const idle = options.before === undefined ? undefined : await idleSecs(worktree);
 
     const decision = classifySurvivor({
       prState: pr?.state ?? "",
       onRemote: worktree.onRemote,
       clean: worktree.clean,
       isCurrent: worktree.isCurrent,
+      holdsWorktrees: holdsWorktrees(worktree, worktrees, gone),
       // Interactive ignores the age pass and defers aged candidates to the
       // checklist instead of auto-removing them.
       beforeEnabled: options.before !== undefined && !options.interactive,
-      ageExceeded,
+      ageExceeded: exceeds(idle, options.before),
+      idleExceeded: exceeds(idle, options.archiveAfter),
     });
 
     const state = pr === undefined ? "-" : `${pr.state}#${pr.number}`;
@@ -365,19 +425,9 @@ async function forgePass(
     }
 
     if (decision.action === "remove") {
-      // The mode token owns the branch-deletion call: keep-branch drops only
-      // the directory so committed work survives, anything else force-deletes
-      // the landed branch too. Nothing here infers it from the display reason,
-      // so rewording a reason is behaviour-safe.
-      const flags =
-        decision.mode === "keep-branch"
-          ? ["--foreground"]
-          : ["--foreground", "--force", "--force-delete"];
-      // Only confirmed removals count, so the summary matches what was removed.
-      // A dry run counts everything it lists, since it removes nothing.
-      if (options.dryRun || (await remove([...flags, worktree.branch]))) {
-        report.worktrees += 1;
+      if (await act(decision.mode, worktree, worktree.branch, options, report)) {
         seen.add(worktree.branch);
+        gone.add(worktree.path);
       }
       continue;
     }
@@ -401,12 +451,11 @@ async function forgePass(
     else localOnly.push(candidate);
   }
 
-  // Detached worktrees (agent-*/wf_*) have no branch and no PR, so they never
-  // auto-remove. Offer them in the checklist, removed by path.
+  // Detached worktrees (agent-*/wf_*) have no branch and no PR, so apart from
+  // idle arms they never auto-remove. Offer them in the checklist, removed by
+  // path.
   if (options.interactive) {
-    for (const worktree of worktrees) {
-      if (worktree.kind !== "worktree" || worktree.branch !== "") continue;
-      if (worktree.isMain || worktree.isCurrent) continue;
+    for (const worktree of detached(worktrees)) {
       localOnly.push({
         handle: worktree.path,
         row: [
@@ -423,6 +472,69 @@ async function forgePass(
 
   // Recoverable entries sort ahead of the ones with no remote copy.
   return [...recoverable, ...localOnly];
+}
+
+function detached(worktrees: Worktree[]): Worktree[] {
+  return worktrees.filter(
+    (worktree) => worktree.kind === "worktree" && worktree.branch === "" && !worktree.isMain && !worktree.isCurrent,
+  );
+}
+
+async function armPass(
+  worktrees: Worktree[],
+  options: Options,
+  report: Report,
+  explaining: boolean,
+  gone: Set<string>,
+): Promise<void> {
+  for (const worktree of detached(worktrees).filter((entry) => isArm(entry.path))) {
+    const decision: Decision = holdsWorktrees(worktree, worktrees, gone)
+      ? { action: "keep", reason: "holds worktrees" }
+      : classifyArm(await idleSecs(worktree));
+    if (explaining) report.reasons.push([dir(worktree), "detached", "-", decision.action, decision.reason]);
+    if (decision.action === "remove" && (await act(decision.mode, worktree, worktree.path, options, report))) {
+      gone.add(worktree.path);
+    }
+  }
+}
+
+// Whether another linked worktree that is still on disk sits inside this one.
+// Removing the outer tree would delete the inner one's files with it.
+export function holdsWorktrees(worktree: Worktree, worktrees: Worktree[], gone: Set<string>): boolean {
+  const prefix = `${worktree.path}/`;
+  return worktrees.some(
+    (other) => other.kind === "worktree" && other.path.startsWith(prefix) && !gone.has(other.path),
+  );
+}
+
+function exceeds(idle: number | undefined, limit: number | undefined): boolean {
+  return idle !== undefined && limit !== undefined && idle >= limit;
+}
+
+type Mode = Extract<Decision, { action: "remove" }>["mode"];
+
+// Carries out a remove decision, answering whether the tree went. The mode
+// token owns the flags: keep-branch drops only the directory so committed work
+// survives, archive does the same for a dirty tree once its snapshot exists,
+// and delete-branch force-deletes the landed branch too. Nothing here reads the
+// display reason, so rewording a reason is behaviour-safe.
+//
+// Only confirmed removals count, so the summary matches what was removed. A dry
+// run counts everything it lists, since it removes nothing.
+async function act(mode: Mode, worktree: Worktree, handle: string, options: Options, report: Report): Promise<boolean> {
+  const name = worktree.branch === "" ? `arms/${dir(worktree)}` : worktree.branch;
+  let removed = options.dryRun;
+  if (!removed && mode === "archive") {
+    // No snapshot, no removal: the tree holds the only copy of its edits.
+    removed = (await archive(worktree.path, name)) !== undefined && (await remove(["--foreground", "--force", handle]));
+  } else if (!removed) {
+    removed = await remove(mode === "keep-branch" ? ["--foreground", handle] : ["--foreground", "--force", "--force-delete", handle]);
+  }
+
+  if (!removed) return false;
+  report.worktrees += 1;
+  if (mode === "archive") report.archived.push(name);
+  return true;
 }
 
 // Present the ambiguous remainder as a multi-select checklist and remove only
@@ -475,10 +587,18 @@ function finish(report: Report, fanOut: boolean, explaining: boolean): Outcome {
 
   // Under `wt all`, tab-separated counts so the caller can total them into a
   // table. Standalone, a one-line summary.
-  if (fanOut) return { status: 0, stdout: `${report.worktrees}\t${report.branches}\n`, stderr: "" };
+  // A third field names what was archived, so the nightly report shows it.
+  const archived = report.archived.join(", ");
+  if (fanOut) {
+    const names = archived === "" ? "" : `\t${archived}`;
+    return { status: 0, stdout: `${report.worktrees}\t${report.branches}${names}\n`, stderr: "" };
+  }
 
   const parts: string[] = [];
-  if (report.worktrees > 0) parts.push(plural(report.worktrees, "worktree"));
+  if (report.worktrees > 0) {
+    const names = archived === "" ? "" : ` (archived ${archived})`;
+    parts.push(`${plural(report.worktrees, "worktree")}${names}`);
+  }
   if (report.branches > 0) parts.push(plural(report.branches, "branch"));
   return { status: 0, stdout: `${stdout}${parts.join(", ")}\n`, stderr: "" };
 }
