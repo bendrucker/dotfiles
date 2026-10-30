@@ -193,8 +193,8 @@ function youngSurvivor(mainState: string): void {
 }
 
 describe("the executable", () => {
-  // worktrunk 0.81 switched `wt list --format=json` to an envelope, and an
-  // audit that read the new shape as no worktrees reported no drift for weeks.
+  // Output that does not match schema 2 must fail the audit, since reading
+  // it as no worktrees reports no drift.
   test("fails on a wt list format it cannot read", () => {
     writeFileSync(process.env.WT_LIST_JSON as string, JSON.stringify([{ branch: "feature-x", kind: "worktree" }]));
 
