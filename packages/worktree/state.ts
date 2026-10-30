@@ -8,6 +8,7 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
+import { z } from "zod";
 
 // `wt step prune` refuses to remove a worktree younger than this, because a
 // worktree just branched off main points at main's commit and so reads as
@@ -183,7 +184,7 @@ async function mergeRequest(branch: string): Promise<PullRequest | undefined> {
   return { state: state === "OPENED" ? "OPEN" : state, number: scalar(newest.iid) };
 }
 
-const DIRT = ["staged", "modified", "untracked", "renamed", "deleted"] as const;
+const DIRT = ["staged", "modified", "untracked", "renamed", "deleted", "conflicted"] as const;
 
 export interface Worktree {
   kind: string;
@@ -199,43 +200,74 @@ export interface Worktree {
   mainState: string;
 }
 
-// Undefined when wt could not be run or said nothing a caller can read, which
-// every caller treats as "no worktrees to consider" rather than as an empty
-// repo.
+// `wt list --format=json` schema 2.
+const Item = z.object({
+  branch: z.string().nullable(),
+  head: z.object({ committed_at: z.string().nullable() }).nullish(),
+  worktree: z
+    .object({
+      path: z.string(),
+      main: z.boolean(),
+      current: z.boolean(),
+      changes: z
+        .object({
+          staged: z.boolean(),
+          modified: z.boolean(),
+          untracked: z.boolean(),
+          renamed: z.boolean(),
+          deleted: z.boolean(),
+          conflicted: z.boolean().nullish(),
+        })
+        .nullish(),
+    })
+    .optional(),
+  upstream: z.object({ ahead: z.number() }).nullish(),
+  display: z.object({ state: z.string().optional() }).optional(),
+});
+
+const Listing = z.object({ schema: z.literal(2), items: z.array(Item) });
+
+// Undefined only when wt printed nothing, as it does when worktrunk is not
+// installed.
 export async function listWorktrees(): Promise<Worktree[] | undefined> {
   const captured = await capture(["wt", "list", "--format=json"]);
   if (captured === "") return undefined;
   return readWorktrees(captured);
 }
 
-export function readWorktrees(captured: string): Worktree[] | undefined {
+// Throws on output it cannot read. A worktrunk format change then fails the run
+// instead of reading as a repo with no worktrees.
+export function readWorktrees(captured: string): Worktree[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(captured);
-  } catch {
-    return undefined;
+  } catch (error) {
+    throw new Error(`unexpected \`wt list --format=json\` output:\n${String(error)}`);
   }
-  if (!Array.isArray(parsed)) return undefined;
-  return parsed.filter(isRecord).map(toWorktree);
+  const result = Listing.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(`unexpected \`wt list --format=json\` output:\n${z.prettifyError(result.error)}`);
+  }
+  return result.data.items.map(toWorktree);
 }
 
-function toWorktree(entry: Record<string, unknown>): Worktree {
-  const commit = isRecord(entry.commit) ? entry.commit : {};
-  const tree = isRecord(entry.working_tree) ? entry.working_tree : {};
-  const remote = isRecord(entry.remote) ? entry.remote : undefined;
+function toWorktree(item: z.infer<typeof Item>): Worktree {
+  const committed = item.head?.committed_at;
+  const changes = item.worktree?.changes;
 
   return {
-    kind: text(entry.kind),
-    branch: text(entry.branch),
-    path: text(entry.path),
-    isMain: entry.is_main === true,
-    isCurrent: entry.is_current === true,
-    timestamp: typeof commit.timestamp === "number" ? commit.timestamp : 0,
-    clean: !DIRT.some((field) => truthy(tree[field])),
-    // A null remote, or one that reports no ahead count, reads as not backed
-    // up: the tip is only recoverable when a remote holds every commit.
-    onRemote: remote !== undefined && remote.ahead === 0,
-    mainState: text(entry.main_state),
+    kind: item.worktree === undefined ? "branch" : "worktree",
+    branch: item.branch ?? "",
+    path: item.worktree?.path ?? "",
+    isMain: item.worktree?.main === true,
+    isCurrent: item.worktree?.current === true,
+    timestamp: committed == null ? 0 : Math.floor(Date.parse(committed) / 1000),
+    // Null means wt could not read the tree or its conflicts, which must not pass for clean.
+    clean: changes != null && changes.conflicted !== null && !DIRT.some((field) => changes[field] === true),
+    // No upstream reads as not backed up: the tip is only recoverable when the
+    // remote has every commit.
+    onRemote: item.upstream?.ahead === 0,
+    mainState: item.display?.state ?? "",
   };
 }
 
@@ -263,13 +295,6 @@ function stat(path: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-// Only null and false are quiet. A field carrying anything else says the
-// working tree holds something, and reading an unrecognized value as clean is
-// the direction that loses work.
-function truthy(value: unknown): boolean {
-  return value !== undefined && value !== null && value !== false;
 }
 
 function text(value: unknown): string {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sandbox, type Sandbox } from "#harness";
-import { capture, defaultBranch, listWorktrees, prState, remoteHost } from "./state.ts";
+import { capture, defaultBranch, listWorktrees, prState, readWorktrees, remoteHost } from "./state.ts";
 
 let box: Sandbox;
 let originalPath: string | undefined;
@@ -34,6 +34,68 @@ describe("capture", () => {
 
   test("is empty for a command that is not installed", async () => {
     expect(await capture(["not-installed-here"])).toBe("");
+  });
+});
+
+describe("readWorktrees", () => {
+  const clean = { staged: false, modified: false, untracked: false, renamed: false, deleted: false };
+  const envelope = (items: unknown[]) => JSON.stringify({ schema: 2, items });
+
+  test("reads a schema 2 worktree row", () => {
+    const [row] = readWorktrees(
+      envelope([
+        {
+          branch: "feature",
+          head: { committed_at: "1970-01-01T00:16:40Z" },
+          worktree: { path: "/repo.feature", main: false, current: true, changes: clean },
+          upstream: { remote: "origin", branch: "feature", ahead: 0, behind: 2 },
+          display: { state: "diverged" },
+        },
+      ]),
+    );
+    expect(row).toEqual({
+      kind: "worktree",
+      branch: "feature",
+      path: "/repo.feature",
+      isMain: false,
+      isCurrent: true,
+      timestamp: 1000,
+      clean: true,
+      onRemote: true,
+      mainState: "diverged",
+    });
+  });
+
+  test("reads a detached worktree with undetermined changes as not clean", () => {
+    const [row] = readWorktrees(
+      envelope([{ branch: null, head: null, worktree: { path: "/wt", main: false, current: false, changes: null } }]),
+    );
+    expect(row).toMatchObject({ branch: "", timestamp: 0, clean: false, onRemote: false, mainState: "" });
+  });
+
+  test.each<{ name: string; conflicted: boolean | null | undefined; expected: boolean }>([
+    { name: "no conflicts", conflicted: false, expected: true },
+    { name: "conflicts", conflicted: true, expected: false },
+    { name: "an undetermined conflict check", conflicted: null, expected: false },
+    { name: "no conflict field", conflicted: undefined, expected: true },
+  ])("reads a worktree with $name as clean: $expected", ({ conflicted, expected }) => {
+    const changes = { ...clean, ...(conflicted === undefined ? {} : { conflicted }) };
+    const [row] = readWorktrees(envelope([{ branch: "topic", worktree: { path: "/wt", main: false, current: false, changes } }]));
+    expect(row?.clean).toBe(expected);
+  });
+
+  test("throws on output that is not JSON", () => {
+    expect(() => readWorktrees("warning: something\n{}")).toThrow("unexpected `wt list --format=json` output");
+  });
+
+  test("reads a row without a worktree as a branch", () => {
+    expect(readWorktrees(envelope([{ branch: "topic" }]))[0]?.kind).toBe("branch");
+  });
+
+  test("throws on the schema 1 bare array", () => {
+    expect(() => readWorktrees(JSON.stringify([{ kind: "worktree", branch: "main" }]))).toThrow(
+      "unexpected `wt list --format=json` output",
+    );
   });
 });
 

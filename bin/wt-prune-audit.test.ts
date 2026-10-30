@@ -147,24 +147,32 @@ function prStateIs(state: string): void {
 }
 
 function listing(entries: Record<string, unknown>[]): void {
-  writeFileSync(process.env.WT_LIST_JSON as string, JSON.stringify(entries));
+  writeFileSync(process.env.WT_LIST_JSON as string, JSON.stringify({ schema: 2, items: entries }));
 }
 
-function worktree(fields: Record<string, unknown>): Record<string, unknown> {
+interface Row {
+  branch: string;
+  path: string;
+  main?: boolean;
+  current?: boolean;
+  state?: string;
+  upstream?: { ahead: number; behind: number } | null;
+}
+
+// One `wt list --format=json` schema 2 item for a clean worktree. An empty
+// branch is a detached HEAD.
+function worktree({ branch, path, main = false, current = false, state, upstream = { ahead: 0, behind: 0 } }: Row) {
   return {
-    kind: "worktree",
-    is_main: false,
-    is_current: false,
-    commit: { timestamp: 1000 },
-    working_tree: {
-      staged: false,
-      modified: false,
-      untracked: false,
-      renamed: false,
-      deleted: false,
+    branch: branch === "" ? null : branch,
+    head: { committed_at: "1970-01-01T00:16:40Z" },
+    worktree: {
+      path,
+      main,
+      current,
+      changes: { staged: false, modified: false, untracked: false, renamed: false, deleted: false },
     },
-    remote: { ahead: 0, behind: 0 },
-    ...fields,
+    ...(upstream === null ? {} : { upstream: { remote: "origin", ...upstream } }),
+    display: state === undefined ? {} : { state },
   };
 }
 
@@ -173,18 +181,29 @@ function worktree(fields: Record<string, unknown>): Record<string, unknown> {
 // the finding.
 function mergedSurvivor(): void {
   listing([
-    worktree({ branch: "main", is_main: true, is_current: true, path: "/repo", main_state: "is_main" }),
-    worktree({ branch: "feature-x", path: "/repo/.worktrees/feature-x", main_state: "diverged" }),
+    worktree({ branch: "main", main: true, current: true, path: "/repo", state: "is_main" }),
+    worktree({ branch: "feature-x", path: "/repo/.worktrees/feature-x", state: "diverged" }),
   ]);
 }
 
 // The fresh linked worktree the fixture just created, whose git dir dates from
 // moments ago.
 function youngSurvivor(mainState: string): void {
-  listing([worktree({ branch: "fresh", path: linked, main_state: mainState, remote: null })]);
+  listing([worktree({ branch: "fresh", path: linked, state: mainState, upstream: null })]);
 }
 
 describe("the executable", () => {
+  // Output that does not match schema 2 must fail the audit, since reading
+  // it as no worktrees reports no drift.
+  test("fails on a wt list format it cannot read", () => {
+    writeFileSync(process.env.WT_LIST_JSON as string, JSON.stringify([{ branch: "feature-x", kind: "worktree" }]));
+
+    const outcome = runAudit();
+    expect(outcome.status).not.toBe(0);
+    expect(outcome.stderr).toContain("unexpected `wt list --format=json` output");
+    expect(outcome.stdout).toBe("");
+  });
+
   // A merged PR proves the work landed however new the checkout is, so the
   // forge rule reports it without consulting the grace period.
   test("flags a merged survivor the prune left behind", () => {
@@ -199,7 +218,7 @@ describe("the executable", () => {
   // counts as old enough, keeping a missing clock from masking real drift.
   test("flags an integrated survivor without a forge call", () => {
     listing([
-      worktree({ branch: "agent-x", path: "/repo/.worktrees/agent-x", main_state: "integrated", remote: null }),
+      worktree({ branch: "agent-x", path: "/repo/.worktrees/agent-x", state: "integrated", upstream: null }),
     ]);
 
     const outcome = runAudit();
@@ -258,8 +277,8 @@ describe("the executable", () => {
   test("ignores a default-branch worktree at any age", () => {
     prStateIs("");
     listing([
-      worktree({ branch: "topic", is_main: true, is_current: true, path: "/repo", main_state: "is_main" }),
-      worktree({ branch: "main", path: linked, main_state: "integrated" }),
+      worktree({ branch: "topic", main: true, current: true, path: "/repo", state: "is_main" }),
+      worktree({ branch: "main", path: linked, state: "integrated" }),
     ]);
 
     expect(runAudit({ WT_PRUNE_DRIFT_GRACE: "0h" })).toMatchObject({ status: 0, stdout: "" });
@@ -285,7 +304,7 @@ describe("the executable", () => {
   // Detached worktrees (agent-*/wf_*) carry no branch, so neither rule can
   // resolve one and the pruner offers them interactively instead.
   test("passes over a worktree with no branch", () => {
-    listing([worktree({ branch: "", path: "/repo/.worktrees/wf_1", main_state: "integrated" })]);
+    listing([worktree({ branch: "", path: "/repo/.worktrees/wf_1", state: "integrated" })]);
 
     expect(runAudit({ WT_PRUNE_DRIFT_GRACE: "0h" })).toMatchObject({ status: 0, stdout: "" });
     expect(log("GH_LOG")).toBe("");

@@ -188,25 +188,33 @@ function prStateIs(state: string): void {
   writeFileSync(process.env.PR_STATE_FILE as string, state);
 }
 
-function listing(entries: unknown[]): void {
-  writeFileSync(process.env.WT_LIST_JSON as string, JSON.stringify(entries));
+function listing(entries: Record<string, unknown>[]): void {
+  writeFileSync(process.env.WT_LIST_JSON as string, JSON.stringify({ schema: 2, items: entries }));
 }
 
-function worktree(fields: Record<string, unknown>): Record<string, unknown> {
+interface Row {
+  branch: string;
+  path: string;
+  main?: boolean;
+  current?: boolean;
+  state?: string;
+  upstream?: { ahead: number; behind: number } | null;
+}
+
+// One `wt list --format=json` schema 2 item for a clean worktree. An empty
+// branch is a detached HEAD.
+function worktree({ branch, path, main = false, current = false, state, upstream = { ahead: 0, behind: 0 } }: Row) {
   return {
-    kind: "worktree",
-    is_main: false,
-    is_current: false,
-    commit: { timestamp: 1000 },
-    working_tree: {
-      staged: false,
-      modified: false,
-      untracked: false,
-      renamed: false,
-      deleted: false,
+    branch: branch === "" ? null : branch,
+    head: { committed_at: "1970-01-01T00:16:40Z" },
+    worktree: {
+      path,
+      main,
+      current,
+      changes: { staged: false, modified: false, untracked: false, renamed: false, deleted: false },
     },
-    remote: { ahead: 0, behind: 0 },
-    ...fields,
+    ...(upstream === null ? {} : { upstream: { remote: "origin", ...upstream } }),
+    display: state === undefined ? {} : { state },
   };
 }
 
@@ -214,7 +222,7 @@ function worktree(fields: Record<string, unknown>): Record<string, unknown> {
 // shape): the integration pass misses it, the forge state carries the removal.
 function mergedSurvivor(): void {
   listing([
-    worktree({ branch: "main", is_main: true, is_current: true, path: "/repo" }),
+    worktree({ branch: "main", main: true, current: true, path: "/repo" }),
     worktree({ branch: "feature-x", path: "/repo/.worktrees/feature-x" }),
   ]);
 }
@@ -225,7 +233,7 @@ function mergedSurvivor(): void {
 // that always fails.
 function defaultBranchWorktree(): void {
   listing([
-    worktree({ branch: "topic", is_main: true, is_current: true, path: "/repo" }),
+    worktree({ branch: "topic", main: true, current: true, path: "/repo" }),
     worktree({ branch: "main", path: "/repo/.worktrees/main" }),
   ]);
 }
@@ -400,6 +408,14 @@ describe("summary wording", () => {
 });
 
 describe("prune (black box)", () => {
+  test("fails on a wt list format it cannot read", () => {
+    writeFileSync(process.env.WT_LIST_JSON as string, JSON.stringify([{ branch: "feature-x", kind: "worktree" }]));
+    const result = prune(["--dry-run"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("unexpected `wt list --format=json` output");
+    expect(log("WT_REMOVE_LOG")).toBe("");
+  });
+
   test("dry-run prints a reasons table and removes nothing", () => {
     mergedSurvivor();
     const result = prune(["--dry-run"]);
@@ -490,7 +506,7 @@ describe("prune (black box)", () => {
   });
 
   test("prints nothing when there is nothing to remove", () => {
-    listing([worktree({ branch: "main", is_main: true, is_current: true, path: "/repo" })]);
+    listing([worktree({ branch: "main", main: true, current: true, path: "/repo" })]);
     const result = prune([]);
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("");
@@ -498,13 +514,13 @@ describe("prune (black box)", () => {
 
   // The gate that keeps a fleet sweep of single-worktree repos off the network.
   test("consults no forge when no linked worktree survives", () => {
-    listing([worktree({ branch: "main", is_main: true, is_current: true, path: "/repo" })]);
+    listing([worktree({ branch: "main", main: true, current: true, path: "/repo" })]);
     prune([]);
     expect(log("GH_LOG")).toBe("");
   });
 
   test("counts a worktree-less stray branch with no linked worktree at all", () => {
-    listing([worktree({ branch: "main", is_main: true, is_current: true, path: "/repo" })]);
+    listing([worktree({ branch: "main", main: true, current: true, path: "/repo" })]);
     oldCommit();
     git(["-C", repo, "branch", "stray", "main"], { GIT_COMMITTER_DATE: OLD });
 
