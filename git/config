@@ -20,6 +20,7 @@
   excludesfile = ~/.config/git/ignore
   pager = delta
   compression = 9
+  untrackedCache = true
 
 [interactive]
   diffFilter = delta --color-only
