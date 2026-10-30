@@ -12,6 +12,8 @@ export const MISE: Source = {
   target: "/home/ec2-user/.local/bin/mise",
   tag: (version) => `v${version}`,
   asset: (version, arch) => `mise-v${version}-linux-${arch === "aarch64" ? "arm64" : "x64"}`,
+  // Skips the daily update check against mise.jdx.dev, which a sandbox denies.
+  versionEnv: { MISE_DISABLE_UPDATE_WARNING: "1" },
 };
 
 export const TOOLS_LOG = "/var/log/vm-tools.log";

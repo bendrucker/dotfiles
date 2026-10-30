@@ -45,6 +45,12 @@ export function proxyCommand(tools: Tools): string {
   return proxy.map(quote).join(" ");
 }
 
+// The alias goes over the tailnet only when a connection opens there, which a
+// sandbox that blocks direct connections refuses, and Session Manager otherwise.
+function tailnetMatch(host: string, tailnetIp: string): string[] {
+  return [`Match originalhost ${host} exec "nc -z -w 3 ${tailnetIp} 22 >/dev/null 2>&1"`, `  HostName ${tailnetIp}`, "  ProxyCommand none"];
+}
+
 // The -ssm alias always goes through Session Manager, which needs no secret
 // and survives a VM whose tailscale up failed.
 export function sshEntry(host: string, instanceId: string, tailnetIp: string | undefined, knownHosts: string, tools: Tools): string {
@@ -63,8 +69,9 @@ export function sshEntry(host: string, instanceId: string, tailnetIp: string | u
   ];
   const viaSsm = [`  HostName ${instanceId}`, `  ProxyCommand ${proxyCommand(tools)}`];
   return [
+    ...(tailnetIp ? tailnetMatch(host, tailnetIp) : []),
     `Host ${host}`,
-    ...(tailnetIp ? [`  HostName ${tailnetIp}`] : viaSsm),
+    ...viaSsm,
     ...common,
     "",
     `Host ${host}-ssm`,

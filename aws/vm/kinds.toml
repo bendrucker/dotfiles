@@ -2,6 +2,7 @@
 # ~/.config/vm/kinds.toml add to these or replace one by name, and a default
 # there overrides this one. A kind's tools table, a mise [tools] table, adds to
 # the command line tools in guest/mise.toml that every VM installs.
+# A kind's disk_gb sets the root volume size in GiB, replacing the template's.
 default = "performance"
 
 # The account's policy stops a VM 12h after it starts and terminates it 7 days

@@ -113,6 +113,44 @@ export function instances(account: Account, name?: string): Instance[] {
   return answer.Reservations.flatMap((reservation) => reservation.Instances.map(toInstance));
 }
 
+const TemplateVersions = z.object({
+  LaunchTemplateVersions: z.array(
+    z.object({
+      LaunchTemplateData: z.object({
+        ImageId: z.string().optional(),
+        BlockDeviceMappings: z.array(z.object({ DeviceName: z.string(), Ebs: z.record(z.string(), z.unknown()).optional() })).default([]),
+      }),
+    }),
+  ),
+});
+
+const Parameter = z.object({ Parameter: z.object({ Value: z.string() }) });
+const Images = z.object({ Images: z.array(z.object({ RootDeviceName: z.string() })) });
+
+const SSM_IMAGE = "resolve:ssm:";
+
+function rootDeviceName(account: Account, template: string, imageId: string | undefined): string {
+  if (!imageId) throw new Error(`launch template ${template} sets no image to find its root device from`);
+  const id = imageId.startsWith(SSM_IMAGE)
+    ? aws(account, ["ssm", "get-parameter", "--name", imageId.slice(SSM_IMAGE.length)], Parameter).Parameter.Value
+    : imageId;
+  const [image] = aws(account, ["ec2", "describe-images", "--image-ids", id], Images).Images;
+  if (!image) throw new Error(`image ${id} from launch template ${template} was not found`);
+  return image.RootDeviceName;
+}
+
+// A mapping in run-instances replaces the template's for that device, so the
+// template's own mapping is resubmitted with only the size changed, keeping
+// its encryption and volume type.
+export function rootVolume(account: Account, template: string, sizeGb: number): unknown[] {
+  const args = ["ec2", "describe-launch-template-versions", "--launch-template-name", template, "--versions", "$Default"];
+  const [version] = aws(account, args, TemplateVersions).LaunchTemplateVersions;
+  const root = rootDeviceName(account, template, version?.LaunchTemplateData.ImageId);
+  const mapping = version?.LaunchTemplateData.BlockDeviceMappings.find((candidate) => candidate.DeviceName === root && candidate.Ebs);
+  if (!mapping) throw new Error(`launch template ${template} maps no EBS volume at its image's root device ${root}`);
+  return [{ DeviceName: mapping.DeviceName, Ebs: { ...mapping.Ebs, VolumeSize: sizeGb } }];
+}
+
 export function runCommand(account: Account, instanceId: string, command: string): string {
   const sent = aws(account, [
     "ssm",
