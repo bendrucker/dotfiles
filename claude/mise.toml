@@ -1,5 +1,5 @@
 [tools]
-"npm:ccusage" = "20.0.30"
+"npm:ccusage" = "20.0.35"
 
 [tasks."claude:install"]
 run = "./claude/install.sh"

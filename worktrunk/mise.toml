@@ -3,7 +3,7 @@
 # cargo backend finds cargo only when rust is declared beside it. Renovate moves
 # this pin together with rust/mise.toml's.
 [tools]
-rust = "1.99.0"
+rust = "1.99.1"
 "cargo:worktrunk-sync" = "0.2.0"
 
 [dotfiles]

@@ -3,7 +3,7 @@
 
 # The release tarball runs as a user agent, since the cask installs a root daemon.
 [tools."github:osquery/osquery"]
-version = "5.23.1"
+version = "5.24.0"
 
 [tools."github:osquery/osquery".platforms]
 macos-arm64 = { asset_pattern = "osquery-*_1.macos_arm64.tar.gz", bin_path = "opt/osquery/lib/osquery.app/Contents/MacOS" }
