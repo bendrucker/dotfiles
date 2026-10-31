@@ -1,7 +1,9 @@
+tap 'anthropics/tap', trusted: true
 tap 'lightpanda-io/browser', trusted: true
 tap 'rjyo/moshi', trusted: true
 tap 'steipete/tap', trusted: true
 
+cask 'anthropics/tap/ant'
 cask 'claude'
 cask 'claude-devtools'
 cask 'commander'
