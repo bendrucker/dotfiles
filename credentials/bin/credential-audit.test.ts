@@ -121,6 +121,12 @@ describe("reporting", () => {
       subject: "~/.config/cloudflare/config/default.json",
     },
     {
+      name: "an ant profile carrying an oauth token",
+      path: "home/.config/anthropic/credentials/default.json",
+      contents: JSON.stringify({ version: "1.0", access_token: "xxx", expires_at: 0, refresh_token: "xxx" }),
+      subject: "~/.config/anthropic/credentials/default.json",
+    },
+    {
       name: "a token scoped to a registry naming a port",
       path: "home/.npmrc",
       contents: `//registry.example.com:8080/:_authToken=${FAKE_NPM_TOKEN}\n`,
