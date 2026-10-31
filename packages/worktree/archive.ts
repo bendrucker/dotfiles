@@ -5,11 +5,10 @@
 import { copyFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
-import { EXPIRY } from "#worktree/branches";
 import { capture, nowSeconds } from "#worktree/state";
 
 export const NAMESPACE = "refs/archive/wt";
-export const RETENTION = EXPIRY;
+export const RETENTION = 90 * 86400;
 
 const SUBJECT = "wt archive:";
 // The `<date>` or `<date>-<commit>` leaf `record` writes.
@@ -100,11 +99,15 @@ export async function pruneArchives(retentionSecs: number, repo = "."): Promise<
   let deleted = 0;
   for (const line of captured.split("\n")) {
     const [ref = "", object = "", date = "", subject = ""] = line.split("\t");
-    if (!LEAF.test(ref) || !subject.startsWith(SUBJECT)) continue;
+    if (!isSnapshot(ref, subject)) continue;
     if (!/^[0-9]+$/.test(date) || nowSeconds() - Number(date) < retentionSecs) continue;
     if ((await git(repo, ["update-ref", "-d", ref, object])) !== undefined) deleted += 1;
   }
   return deleted;
+}
+
+export function isSnapshot(ref: string, subject: string): boolean {
+  return ref.startsWith(`${NAMESPACE}/`) && LEAF.test(ref) && subject.startsWith(SUBJECT);
 }
 
 async function git(path: string, args: string[], env: Record<string, string> = {}): Promise<string | undefined> {
