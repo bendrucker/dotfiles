@@ -4,7 +4,7 @@
 # majors included. Tools used only by hand stay on Homebrew and track latest.
 [tools]
 "aqua:BurntSushi/ripgrep" = "15.2.0"
-"aqua:ast-grep/ast-grep" = "0.45.3"
+"aqua:ast-grep/ast-grep" = "0.51.0"
 "github:duckdb/duckdb" = "2.0.0"
 "aqua:gitleaks/gitleaks" = "8.30.1"
 "aqua:j178/prek" = "0.5.5"
