@@ -8,14 +8,6 @@ allowed-tools: [Read, Write, Edit, Bash, Grep, Glob]
 
 Guide for writing and managing custom ZSH completion files in this dotfiles repository.
 
-## When to Use
-
-- Implementing custom completions for CLI tools
-- Fixing or updating existing completion files
-- Understanding how completions are loaded in this repo
-
-**Do NOT use** when installing homebrew packages - they handle completions automatically.
-
 ## Repository Conventions
 
 ### File Naming
@@ -157,14 +149,6 @@ _tool_subcommand() {
 
 ## Common Completers
 
-Built-in zsh completion functions:
-
-- `_files` - File paths
-- `_directories` - Directory paths
-- `_values` - Predefined values
-- `_describe` - Command descriptions
-- `_arguments` - Argument parsing
-
 ### File Completion
 
 ```zsh
@@ -195,14 +179,7 @@ After creating/modifying a completion file:
 
 ## Generating Completions
 
-Steps to create completions for a new tool:
-
-1. Run `tool --help` to see main options
-2. Run `tool subcommand --help` for each subcommand
-3. Create `<topic>/completion.zsh`
-4. Define `_toolname()` function with all discovered options
-5. Register with `compdef _toolname toolname`
-6. Test thoroughly
+Derive options and subcommands from the tool's `--help` output.
 
 ## Common Issues
 

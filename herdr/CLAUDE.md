@@ -1,6 +1,6 @@
 # herdr Configuration
 
-This session runs inside the herdr server this directory configures. Change it without taking that server down.
+This session runs inside the herdr server this directory configures.
 
 ## The Live Session
 

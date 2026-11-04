@@ -20,8 +20,6 @@ Inventory what the dotfiles already provide:
 - **Brew packages**: `Grep` for `^brew ` across `*/Brewfile`
 - **bin/ scripts**: list `bin/`
 
-Run all of these in parallel.
-
 ## Pre-Process History
 
 History analysis runs on the shared `shell-history` data layer. Use the sibling runner `../shell-history/scripts/query.sh <query-name>` to produce compact frequency tables from atuin's command history. Each query supports `--recent <duration>` (e.g. `6m`, `30d`, `1y`) and `-n <limit>`. The available queries and views are cataloged in `../shell-history/references/catalog.md`.
@@ -41,9 +39,7 @@ Comparing recent vs all-time frequency reveals commands trending up (recent > al
 
 ## Analyze Patterns via Sub-Agent
 
-Launch a general-purpose Agent to do pure text pattern matching on the pre-processed data. Include the full frequency tables and dotfiles inventory directly in the agent prompt. The sub-agent needs no tools since all data is already extracted. This is a text analysis task well-suited to a fast, cheap model.
-
-The sub-agent prompt should include both the recent and all-time frequency tables and ask it to identify:
+From the recent and all-time tables and the inventory, identify:
 
 - Commands used 10+ times **recently** lacking aliases
 - Multi-step sequences repeated 3+ times recently that could become functions
@@ -73,8 +69,6 @@ Merge sub-agent findings with installed-tool observations. Group into these top-
 - **Stale Configuration**: aliases pointing to missing commands, unused topics
 
 Within each category, group items under priority subheadings (h3): **High**, **Medium**, **Low**. Omit a priority level if it has no items. This makes it easy to scan for the most impactful changes first.
-
-No implementation. Suggestions only.
 
 ## Conventions
 

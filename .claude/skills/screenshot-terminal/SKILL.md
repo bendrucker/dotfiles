@@ -103,4 +103,3 @@ The workspace has to be focused for its window to be the one on screen, which is
 
 - Render terminal output to images headlessly via `freeze` / `termshot` / `silicon`. Those are useful for ANSI-to-PNG but lose herdr's chrome and depend on font config, so they don't help with the styling questions this skill exists for.
 - Write reports. The skill produces images and TSVs in `tmp/`. Analysis goes back into the conversation, not into markdown files.
-- Drive the user's working pane without confirmation.
