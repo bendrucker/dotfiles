@@ -1,8 +1,8 @@
 # Shell History Query Catalog
 
-Full descriptions of every named query and the views they read, for the `shell-history` data layer. Load this before running a query you have not used.
+Full descriptions of every named query and the views they read, for the `shell-history` data layer.
 
-The runner ([`scripts/query.sh`](../scripts/query.sh)) builds an in-memory DuckDB: it attaches the source read-only, `.read`s [`resources/views.sql`](../resources/views.sql) to construct the view layer, binds `cutoff`/`limit`, then reads the named query from [`resources/queries/`](../resources/queries). No database file is ever written.
+The runner ([`scripts/query.sh`](../scripts/query.sh)) builds an in-memory DuckDB: it attaches the source read-only, `.read`s [`resources/views.sql`](../resources/views.sql) to construct the view layer, binds `cutoff`/`limit`, then reads the named query from [`resources/queries/`](../resources/queries).
 
 ## Source Caveat
 
