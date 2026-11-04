@@ -77,6 +77,8 @@ The third-party marketplaces still come from GitHub, and Claude Code copies thei
 
 `session-index-compact` runs weekly from launchd, Sundays at 4:30. It runs the session index's `refresh.ts --compact` from the clone, which applies a `raw` rewrite an interactive refresh deferred and compacts the database. A failure files a to-do.
 
+`agent-prune` runs nightly from launchd at 3:45, ahead of the 4:00 worktree prune. It runs `claude-prune-agents --force`, which removes finished background agents whose PRs have all left the open state. The worktree prune can then remove their worktrees. A failure files a to-do.
+
 A hand run of `claude-sync`, say after pushing to the config repo, only installs the dependencies, refreshes every marketplace, and updates the plugins. The hook installs and both prunes run only with `--full`, which the launchd job passes. A failed marketplace refresh fails either run.
 
 The herdr install writes `~/.claude/hooks/herdr-agent-state.sh`, which the config repo gitignores. It also appends a `SessionStart` entry to `settings.json`, which the sync discards: herdr cannot recognize the committed `$HOME` form of the same entry and only checks the script's version marker. What comes back is the file as it stood before the install, so an edit already in the tree survives. The restore runs whether or not the install finished, because an entry left behind stops the next night's run at the sync gate, before it reaches the step that would clear it. The moshi install's edits stay. A diff in `settings.json` is a moshi upgrade, and the run stops at that same gate until the diff is committed.
