@@ -77,7 +77,7 @@ The third-party marketplaces still come from GitHub, and Claude Code copies thei
 
 `session-index-compact` runs weekly from launchd, Sundays at 4:30. It runs the session index's `refresh.ts --compact` from the clone, which applies a `raw` rewrite an interactive refresh deferred and compacts the database. A failure files a to-do.
 
-`agent-prune` runs nightly from launchd at 3:45, ahead of the 4:00 worktree prune. It runs `claude-prune-agents --force`, which removes finished background agents whose PRs have all left the open state. The worktree prune can then remove their worktrees. A failure files a to-do.
+`agent-prune` runs nightly from launchd at 3:45, ahead of the 4:00 worktree prune. It runs `claude-prune-agents --force`, which removes finished background agents whose PRs have all left the open state. The worktree prune can then usually remove their worktrees the same night. A failure files a to-do.
 
 A hand run of `claude-sync`, say after pushing to the config repo, only installs the dependencies, refreshes every marketplace, and updates the plugins. The hook installs and both prunes run only with `--full`, which the launchd job passes. A failed marketplace refresh fails either run.
 

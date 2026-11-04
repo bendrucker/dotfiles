@@ -1,33 +1,31 @@
 #!/usr/bin/env bun
 //
 // Nightly removal of finished background Claude agents, run unattended from
-// launchd ahead of the worktree prune so the worktrees they held are free by
-// then.
+// launchd. It is scheduled ahead of the worktree prune, which can then usually
+// remove the worktrees those agents left behind the same night.
 
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 import { reportFailure, reportSuccess } from "#jobs/report";
+import { defaultHome, installedRoot } from "#migrations/runner";
 import { repoRevision } from "./claude-sync";
 
 const JOB = "agent-prune";
 
-function dotfilesHome(): string {
-  return process.env.DOTFILES_HOME || join(process.env.HOME || homedir(), ".dotfiles");
-}
-
 export async function main(): Promise<number> {
-  const script = join(dotfilesHome(), "bin", "claude-prune-agents");
-  // Bun Shell takes one redirect per command, so sh applies both.
-  const run = await $`/bin/sh -c ${'exec "$@" 2>&1 < /dev/null'} sh ${script} --force`.nothrow();
+  const dotfiles = installedRoot(defaultHome());
+  const script = join(dotfiles, "bin", "claude-prune-agents");
+  const run = await $`${script} --force < /dev/null`.nothrow().quiet();
+  const output = `${run.stdout.toString()}${run.stderr.toString()}`;
+  process.stdout.write(output);
 
   if (run.exitCode !== 0) {
     await reportFailure({
       job: JOB,
       title: "Nightly agent prune failed",
       command: "claude-prune-agents --force",
-      output: run.stdout.toString(),
-      revision: await repoRevision(dotfilesHome()),
+      output,
+      revision: await repoRevision(dotfiles),
       extraMeta: "",
       outputHeading: "Output",
       fingerprint: "",
