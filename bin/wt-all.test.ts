@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  archivedIn,
   countsIn,
   discover,
   display,
@@ -312,6 +313,16 @@ describe("countsIn", () => {
   );
 });
 
+describe("archivedIn", () => {
+  test.each<{ name: string; output: string; archived: string[] }>([
+    { name: "counts alone", output: "2\t3\n", archived: [] },
+    { name: "idle trees and arms", output: "2\t0\tfeature, arms/a\n", archived: ["feature", "arms/a"] },
+    { name: "a line that is not counts", output: "feature\n", archived: [] },
+  ])("reads $name", ({ output, archived }) => {
+    expect(archivedIn(output)).toEqual(archived);
+  });
+});
+
 describe("pruneTable", () => {
   test("heads the columns and puts the biggest cleanup on top", () => {
     const table = pruneTable([
@@ -339,18 +350,18 @@ describe("pruneTable", () => {
 describe("summarize", () => {
   test("reports what was scanned and what answered", () => {
     expect(
-      summarize({ scanned: 12, active: 2, failed: 0, worktrees: 0, branches: 0 }),
+      summarize({ scanned: 12, active: 2, failed: 0, worktrees: 0, branches: 0, archived: [] }),
     ).toBe("12 scanned · 2 with output");
   });
 
   test("names the failures and the totals when there are any", () => {
     expect(
-      summarize({ scanned: 12, active: 2, failed: 1, worktrees: 5, branches: 3 }),
+      summarize({ scanned: 12, active: 2, failed: 1, worktrees: 5, branches: 3, archived: [] }),
     ).toBe("12 scanned · 2 with output · 1 failed · 5 worktrees, 3 branches");
   });
 
   test("totals a run that removed branches and no worktrees", () => {
-    expect(summarize({ scanned: 1, active: 1, failed: 0, worktrees: 0, branches: 2 })).toEndWith(
+    expect(summarize({ scanned: 1, active: 1, failed: 0, worktrees: 0, branches: 2, archived: [] })).toEndWith(
       "· 0 worktrees, 2 branches",
     );
   });
@@ -463,6 +474,16 @@ test("heads and sorts the table for prune", () => {
   );
   expect(log("GUM_LOG")).toEqual([
     "log --level info 2 scanned · 2 with output · 5 worktrees, 1 branches",
+  ]);
+});
+
+test("names each archived idle tree and arm in the prune summary", () => {
+  repo("one", { stdout: "2\t0\tfeature, arms/a\n" });
+  repo("two", { stdout: "1\t0\tstale\n" });
+
+  run(["prune"]);
+  expect(log("GUM_LOG")).toEqual([
+    "log --level info 2 scanned · 2 with output · 3 worktrees, 0 branches · archived one:feature, one:arms/a, two:stale",
   ]);
 });
 

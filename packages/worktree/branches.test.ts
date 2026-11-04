@@ -246,6 +246,23 @@ describe("archive expiry", () => {
     expect(exists("refs/archive/archived")).toBe(!expires);
   });
 
+  // A snapshot expires on its commit date alone, so an old reflog entry for a
+  // young snapshot must not delete it.
+  test("leaves a worktree snapshot to its own retention", async () => {
+    const ref = "refs/archive/wt/topic/20261030";
+    const snapshot = git(["commit-tree", `${tip("main")}^{tree}`, "-m", "wt archive: topic /x"]);
+    const past = Math.floor(Date.now() / 1000) - EXPIRY - 86400;
+    git(["update-ref", "--create-reflog", ref, snapshot], repo, {
+      GIT_COMMITTER_DATE: new Date(past * 1000).toISOString(),
+    });
+
+    const rep = report();
+    await pruneBranches("main", "1d", false, false, rep);
+
+    expect(rep.branches).toBe(0);
+    expect(exists(ref)).toBe(true);
+  });
+
   test("re-archiving a tip an expired archive already holds restarts its clock", async () => {
     const past = Math.floor(Date.now() / 1000) - EXPIRY - 86400;
     aged(["checkout", "-q", "-b", "refreshed", "main"]);
