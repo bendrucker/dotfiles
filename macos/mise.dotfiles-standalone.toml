@@ -6,6 +6,14 @@ stdout_path = "/tmp/claude-sync.log"
 stderr_path = "/tmp/claude-sync.log"
 environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
 
+[bootstrap.macos.launchd.agents.agent-prune]
+program = "/bin/zsh"
+args = ["-lc", "$HOME/.dotfiles/bin/agent-prune"]
+start_calendar_interval = { hour = 3, minute = 45 }
+stdout_path = "/tmp/agent-prune.log"
+stderr_path = "/tmp/agent-prune.log"
+environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
+
 [bootstrap.macos.launchd.agents.worktree-prune]
 program = "/bin/zsh"
 args = ["-lc", "$HOME/.dotfiles/bin/worktree-prune"]

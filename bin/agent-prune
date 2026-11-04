@@ -1,0 +1,39 @@
+#!/usr/bin/env bun
+//
+// Nightly removal of finished background Claude agents, run unattended from
+// launchd. It is scheduled ahead of the worktree prune, which can then usually
+// remove the worktrees those agents left behind the same night.
+
+import { join } from "node:path";
+import { $ } from "bun";
+import { reportFailure, reportSuccess } from "#jobs/report";
+import { defaultHome, installedRoot } from "#migrations/runner";
+import { repoRevision } from "./claude-sync";
+
+const JOB = "agent-prune";
+
+export async function main(): Promise<number> {
+  const dotfiles = installedRoot(defaultHome());
+  const script = join(dotfiles, "bin", "claude-prune-agents");
+  const run = await $`${script} --force < /dev/null`.nothrow().quiet();
+  const output = `${run.stdout.toString()}${run.stderr.toString()}`;
+  process.stdout.write(output);
+
+  if (run.exitCode !== 0) {
+    await reportFailure({
+      job: JOB,
+      title: "Nightly agent prune failed",
+      command: "claude-prune-agents --force",
+      output,
+      revision: await repoRevision(dotfiles),
+      extraMeta: "",
+      outputHeading: "Output",
+      fingerprint: "",
+    });
+    return 1;
+  }
+  reportSuccess(JOB);
+  return 0;
+}
+
+if (import.meta.main) process.exit(await main());
