@@ -17,12 +17,20 @@ local function block_dir(block_id)
 end
 
 -- The server's PATH lacks Homebrew and bun. zsh reads ~/.zshenv, which sets them.
-local function review_argv(args)
-  local argv = { "/bin/zsh", "-c", 'exec "$@"', "review", review_cli }
+local function zsh_argv(script, name, args)
+  local argv = { "/bin/zsh", "-c", script, name }
   for _, arg in ipairs(args) do
     argv[#argv + 1] = arg
   end
   return argv
+end
+
+local function review_argv(args)
+  local argv = { review_cli }
+  for _, arg in ipairs(args) do
+    argv[#argv + 1] = arg
+  end
+  return zsh_argv('exec "$@"', "review", argv)
 end
 
 local function review(ctx, args)
@@ -64,6 +72,36 @@ rex.action{
         options = {
           cwd = dir,
           command = { "claude", "agents" },
+        },
+      },
+    }
+    if err ~= nil then
+      error(err, 0)
+    end
+  end,
+}
+
+rex.action{
+  name = "claude_attach",
+  title = "Attach Claude Session",
+  description = "Pick a Claude session, waiting ones first, and go to its pane, or attach it in a new tab of its repo's session.",
+  category = "Claude",
+  keywords = "claude agents background bg attach session pick",
+  run = function(ctx)
+    -- With several apps connected, the script brings the pick up in the one
+    -- that ran this action. A pane or float goes beside the pane focused when
+    -- the action ran, not the picker's own.
+    local _, err = rex.session.new_layer{
+      bounds = { 0.2, 0.25, 0.6, 0.5 },
+      focus = true,
+      layout = rex.layout.block{
+        flavor = "com.superlogical.terminal.shell",
+        options = {
+          command = zsh_argv(
+            '[[ -n $1 ]] && export REX_CLIENT=$1; rex-claude-attach --pick --beside "$2" || read -sk "?Press any key to close"',
+            "rex-claude-attach",
+            { ctx.client_id or "", ctx.block_id or "" }
+          ),
         },
       },
     }
