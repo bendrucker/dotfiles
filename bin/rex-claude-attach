@@ -8,7 +8,7 @@
 //   rex-claude-attach --pick [--beside BLOCK]
 
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { $ } from "bun";
@@ -66,7 +66,7 @@ export function showsAgent(pane: Pane, agent: Agent): boolean {
 export function findAgent(agents: Agent[], query: string): Agent | undefined {
   return (
     agents.find((a) => a.id === query || a.sessionId === query || a.name === query) ??
-    agents.find((a) => (a.id ?? a.sessionId)?.startsWith(query) || a.name?.startsWith(query))
+    agents.find((a) => [a.id, a.sessionId, a.name].some((key) => key?.startsWith(query)))
   );
 }
 
@@ -228,7 +228,7 @@ async function inFloat({ agent, target, focus }: Attach, beside: Pane): Promise<
 async function attach(placement: Placement, request: Attach): Promise<void> {
   if (placement === "tab") return inTab(request);
   const { beside } = request;
-  if (beside === undefined) throw new Error(`a ${placement} needs --beside or REX_BLOCK to place it`);
+  if (beside === undefined) throw new Error(`a ${placement} needs --beside or REX_BLOCK naming a Rex pane to place it`);
   return (placement === "pane" ? inPane : inFloat)(request, beside);
 }
 
@@ -294,16 +294,14 @@ interface Found {
 
 async function pickAgent(agents: Agent[], panes: Pane[]): Promise<Found | undefined> {
   const options = candidates(agents, panes);
-  if (options.length === 0) {
-    await log("info", "no Claude sessions to attach");
-    return undefined;
-  }
+  // The picker's float closes on success before anyone reads a message.
+  if (options.length === 0) throw new Error("no Claude sessions to attach");
   const dir = await mkdtemp(join(tmpdir(), "rex-claude-attach-"));
   try {
-    const out = await runFzf(rows(options, process.env.HOME ?? ""), dir);
+    const out = await runFzf(rows(options, homedir()), dir);
     const pick = out === undefined ? undefined : parsePick(out);
     const agent = pick && options[pick.index];
-    return agent && pick ? { agent, placement: pick.placement } : undefined;
+    return agent && { agent, placement: pick.placement };
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -327,7 +325,7 @@ async function bringUp(agent: Agent, panes: Pane[], placement: Placement, focus:
   }
   const target = agent.id ?? agent.sessionId;
   if (agent.kind !== "background" || target === undefined) {
-    throw new Error(`${agent.name ?? agent.sessionId} runs in a terminal outside Rex, so there is nothing to attach`);
+    throw new Error(`${nameOf(agent)} runs in a terminal outside Rex, so there is nothing to attach`);
   }
   await attach(placement, { agent, target, panes, focus, beside });
 }

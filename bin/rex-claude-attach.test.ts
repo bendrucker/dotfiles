@@ -63,6 +63,7 @@ describe("findAgent", () => {
     { query: "fix", name: "fix" },
     { query: "fix-o", name: "fix-other" },
     { query: "9999", name: "fix" },
+    { query: "cf37276a-07", name: "fix-thing" },
     { query: "nope", name: undefined },
   ])("$query", ({ query, name }) => {
     expect(findAgent(agents, query)?.name).toBe(name);
@@ -286,6 +287,15 @@ describe("main", () => {
     const result = attach("cf37276a", ...args);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(error);
+  });
+
+  test("fails the picker when there is nothing to attach", () => {
+    box.write("agents.json", JSON.stringify([makeAgent({ kind: "interactive", pid: 1 })]));
+    stubRex(view([]), {});
+    box.stub("ps", "true");
+    const result = attach("--pick");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("no Claude sessions to attach");
   });
 
   test("leaves focus alone with --no-focus", () => {
