@@ -265,11 +265,15 @@ describe("main", () => {
     expect(rexCalls().map((call) => call.slice(0, 2))).toEqual([["rex", "split"]]);
   });
 
-  test("dismissing the picker opens nothing", () => {
+  test.each<{ name: string; exit: number; status: number }>([
+    { name: "dismissing the picker", exit: 130, status: 0 },
+    { name: "a query with no match", exit: 1, status: 0 },
+    { name: "a broken picker", exit: 2, status: 1 },
+  ])("$name opens nothing and exits $status", ({ exit, status }) => {
     stubRex(view([]), {});
     box.stub("ps", "true");
-    box.stub("fzf", "exit 130");
-    expect(attach("--pick").status).toBe(0);
+    box.stub("fzf", `exit ${exit}`);
+    expect(attach("--pick").status).toBe(status);
     expect(rexCalls()).toEqual([]);
   });
 

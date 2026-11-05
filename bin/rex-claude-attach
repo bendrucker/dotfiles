@@ -281,7 +281,10 @@ async function runFzf(list: Row[], dir: string): Promise<string | undefined> {
   const expect = [...KEYS.keys()].filter((key) => key !== "");
   const input = new Response(lines(list));
   const result = await $`fzf --ansi --delimiter=${"\t"} --with-nth=2.. --nth=1 --reverse --expect=${expect.join(",")} --header=${HEADER} --bind=${binds.join(",")} < ${input}`.nothrow();
-  return result.exitCode === 0 ? result.stdout.toString() : undefined;
+  // fzf exits 1 with no match and 130 on Esc. Anything else is a failure.
+  if (result.exitCode === 1 || result.exitCode === 130) return undefined;
+  if (result.exitCode !== 0) throw new Error(`fzf exited ${result.exitCode}: ${result.stderr.toString().trim()}`);
+  return result.stdout.toString();
 }
 
 interface Found {
@@ -345,13 +348,12 @@ export async function main(argv: string[]): Promise<number> {
     await log("error", `--as takes tab, pane, or float, not ${values.as}`);
     return 2;
   }
-  const [agents, panes] = await Promise.all([listAgents(), listPanes()]);
-  const found = values.pick ? await pickAgent(agents, panes) : await findQueried(agents, positionals[0]);
-  // Dismissing the picker isn't an error.
-  if (found === undefined) return values.pick ? 0 : 1;
-
-  const beside = panes.find((p) => p.block === (values.beside ?? process.env.REX_BLOCK));
   try {
+    const [agents, panes] = await Promise.all([listAgents(), listPanes()]);
+    const found = values.pick ? await pickAgent(agents, panes) : await findQueried(agents, positionals[0]);
+    // Dismissing the picker isn't an error.
+    if (found === undefined) return values.pick ? 0 : 1;
+    const beside = panes.find((p) => p.block === (values.beside ?? process.env.REX_BLOCK));
     await bringUp(found.agent, panes, chosen?.data ?? found.placement, !values["no-focus"], beside);
   } catch (error) {
     await log("error", error instanceof Error ? error.message : String(error));
