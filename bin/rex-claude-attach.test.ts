@@ -5,13 +5,16 @@ import { recorded, recordingStub } from "#harness/recorder";
 import {
   type Agent,
   candidates,
-  describe,
+  filtered,
   findAgent,
   homeSession,
   type Pane,
   parsePick,
   type Pick,
+  rows,
   showsAgent,
+  type Status,
+  statusOf,
 } from "./rex-claude-attach";
 
 const script = join(import.meta.dir, "rex-claude-attach");
@@ -74,12 +77,53 @@ test("candidates keep background sessions and shown interactive ones, waiting fi
     makeAgent({ name: "busy" }),
     makeAgent({ name: "asking", state: "blocked", status: "waiting", waitingFor: "permission prompt" }),
   ];
-  expect(candidates(agents, [makePane({ pid: 2 })]).map((a) => a.name)).toEqual(["asking", "busy", "done", "shown"]);
+  expect(candidates(agents, [makePane({ pid: 2 })]).map((a) => a.name)).toEqual(["asking", "busy", "shown", "done"]);
 });
 
-test("describe shows the waiting reason and a home-relative directory", () => {
-  const agent = makeAgent({ waitingFor: "input needed", cwd: "/home/u/src/repo" });
-  expect(describe(agent, "/home/u")).toMatchInlineSnapshot(`"fix-thing  ·  input needed  ·  ~/src/repo"`);
+group("statusOf", () => {
+  test.each<{ name: string; agent: Partial<Agent>; status: Status }>([
+    {
+      name: "a permission prompt",
+      agent: { state: "blocked", status: "waiting", waitingFor: "permission prompt" },
+      status: { group: "waiting", text: "needs input: permission prompt" },
+    },
+    { name: "blocked with no reason", agent: { state: "blocked", status: undefined }, status: { group: "waiting", text: "needs input" } },
+    { name: "a failed run", agent: { state: "failed", status: undefined }, status: { group: "failed", text: "failed" } },
+    { name: "a busy interactive session", agent: { state: undefined, status: "busy" }, status: { group: "working", text: "working" } },
+    { name: "a finished run", agent: { state: "done", status: "idle" }, status: { group: "done", text: "done" } },
+    { name: "a stopped run", agent: { state: "stopped", status: undefined }, status: { group: "done", text: "stopped" } },
+    { name: "an idle interactive session", agent: { state: undefined, status: "idle" }, status: { group: "idle", text: "idle" } },
+  ])("$name", ({ agent, status }) => {
+    expect(statusOf(makeAgent(agent))).toEqual(status);
+  });
+});
+
+test("rows align names and statuses, color the status, and dim a home-relative directory", () => {
+  const agents = [
+    makeAgent({ name: "a", state: "blocked", status: "waiting", waitingFor: "input needed", cwd: "/home/u/src/repo" }),
+    makeAgent({ name: "longer-name", cwd: "/elsewhere" }),
+  ];
+  expect(rows(agents, "/home/u")).toMatchInlineSnapshot(`
+    [
+      "0	a          	\x1B[1;31mneeds input: input needed\x1B[0m	\x1B[2m~/src/repo\x1B[0m",
+      "1	longer-name	\x1B[33mworking                  \x1B[0m	\x1B[2m/elsewhere\x1B[0m",
+    ]
+  `);
+});
+
+test("filters hide finished sessions by default and narrow to the ones needing input", () => {
+  const agents = [
+    makeAgent({ name: "asking", state: "blocked", status: "waiting" }),
+    makeAgent({ name: "busy" }),
+    makeAgent({ name: "finished", state: "done", status: "idle" }),
+  ];
+  const names = (list: string[]) => list.map((row) => row.split("\t").slice(0, 2).map((field) => field.trim()).join(" "));
+  const lists = filtered(agents, "/home/u");
+  expect({ active: names(lists.active), waiting: names(lists.waiting), all: names(lists.all) }).toEqual({
+    active: ["0 asking", "1 busy"],
+    waiting: ["0 asking"],
+    all: ["0 asking", "1 busy", "2 finished"],
+  });
 });
 
 group("parsePick", () => {
@@ -221,7 +265,7 @@ group("main", () => {
     box.stub("ps", "echo '    5 -zsh'");
     box.stub("fzf", `cat > '${box.path("rows")}'; printf 'ctrl-v\\n0\\tfix-thing\\n'`);
     expect(attach("--pick", "--beside", "block:here").status).toBe(0);
-    expect(box.read("rows")).toBe(`0\tfix-thing  ·  working  ·  ${box.path("repo")}\n`);
+    expect(box.read("rows").split("\t").slice(0, 2)).toEqual(["0", "fix-thing"]);
     expect(rexCalls().map((call) => call.slice(0, 2))).toEqual([["rex", "split"]]);
   });
 

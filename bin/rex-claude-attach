@@ -7,7 +7,9 @@
 //   rex-claude-attach <id|name> [--as tab|pane|float] [--beside BLOCK] [--no-focus]
 //   rex-claude-attach --pick [--beside BLOCK]
 
-import { basename, dirname, sep } from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { $ } from "bun";
 import { z } from "zod";
@@ -68,24 +70,54 @@ export function findAgent(agents: Agent[], query: string): Agent | undefined {
   );
 }
 
-function urgency(agent: Agent): number {
-  if (agent.status === "waiting" || agent.state === "blocked") return 0;
-  if (agent.state === "working" || agent.status === "busy") return 1;
-  if (agent.state === "failed") return 2;
-  return 3;
+// In the order the picker lists them.
+const GROUPS = ["waiting", "working", "failed", "idle", "done"] as const;
+export type Group = (typeof GROUPS)[number];
+
+export interface Status {
+  group: Group;
+  text: string;
+}
+
+export function statusOf(agent: Agent): Status {
+  if (agent.status === "waiting" || agent.state === "blocked") {
+    return { group: "waiting", text: agent.waitingFor === undefined ? "needs input" : `needs input: ${agent.waitingFor}` };
+  }
+  if (agent.state === "failed") return { group: "failed", text: "failed" };
+  if (agent.state === "working" || agent.status === "busy") return { group: "working", text: "working" };
+  if (agent.state === "done" || agent.state === "stopped") return { group: "done", text: agent.state };
+  return { group: "idle", text: "idle" };
 }
 
 // Background sessions, and interactive ones a Rex pane shows, with the ones waiting on you first.
 export function candidates(agents: Agent[], panes: Pane[]): Agent[] {
+  const rank = (a: Agent) => GROUPS.indexOf(statusOf(a).group);
   return agents
     .filter((a) => a.kind === "background" || panes.some((p) => showsAgent(p, a)))
-    .toSorted((a, b) => urgency(a) - urgency(b) || (a.name ?? "").localeCompare(b.name ?? ""));
+    .toSorted((a, b) => rank(a) - rank(b) || (a.name ?? "").localeCompare(b.name ?? ""));
 }
 
-export function describe(agent: Agent, home: string): string {
-  const state = agent.waitingFor ?? agent.state ?? agent.status ?? "";
-  const cwd = agent.cwd.startsWith(home + sep) ? `~${agent.cwd.slice(home.length)}` : agent.cwd;
-  return `${agent.name ?? agent.id ?? agent.sessionId}  ·  ${state}  ·  ${cwd}`;
+const COLOR: Record<Group, string> = { waiting: "1;31", working: "33", failed: "31", idle: "2", done: "32" };
+
+function paint(code: string, text: string): string {
+  return `\x1b[${code}m${text}\x1b[0m`;
+}
+
+function nameOf(agent: Agent): string {
+  return agent.name ?? agent.id ?? agent.sessionId ?? "";
+}
+
+// Each fzf row leads with the agent's index, which the picker hides, and pads name and status into columns.
+export function rows(agents: Agent[], home: string): string[] {
+  const statuses = agents.map(statusOf);
+  const nameWidth = Math.max(0, ...agents.map((a) => nameOf(a).length));
+  const statusWidth = Math.max(0, ...statuses.map((s) => s.text.length));
+  return agents.map((agent, i) => {
+    const status = statuses[i] ?? statusOf(agent);
+    const cwd = agent.cwd.startsWith(home + sep) ? `~${agent.cwd.slice(home.length)}` : agent.cwd;
+    const name = nameOf(agent).padEnd(nameWidth);
+    return [i, name, paint(COLOR[status.group], status.text.padEnd(statusWidth)), paint("2", cwd)].join("\t");
+  });
 }
 
 // The Rex session to open a tab in: the one labeled for the repo, else one with a pane in it.
@@ -208,19 +240,55 @@ export function parsePick(out: string): Pick | undefined {
   return placement === undefined || row === "" || !Number.isInteger(index) ? undefined : { index, placement };
 }
 
+const FILTERS = ["active", "waiting", "all"] as const;
+export type Filter = (typeof FILTERS)[number];
+
+// The rows each filter key reloads. Every row keeps its index into the full list.
+export function filtered(agents: Agent[], home: string): Record<Filter, string[]> {
+  const all = rows(agents, home);
+  const groups = agents.map((a) => statusOf(a).group);
+  return {
+    active: all.filter((_, i) => groups[i] !== "done"),
+    waiting: all.filter((_, i) => groups[i] === "waiting"),
+    all,
+  };
+}
+
+const HEADER = "enter: tab · ctrl-v: pane · ctrl-f: float\nctrl-w: needs input · ctrl-o: active · ctrl-a: all";
+
+async function runFzf(lists: Record<Filter, string[]>, dir: string): Promise<string | undefined> {
+  const files = Object.fromEntries(
+    await Promise.all(
+      FILTERS.map(async (filter) => {
+        const file = join(dir, filter);
+        await Bun.write(file, lists[filter].map((row) => `${row}\n`).join(""));
+        return [filter, file] as const;
+      }),
+    ),
+  );
+  const reload = (key: string, filter: Filter, prompt: string) =>
+    `${key}:reload(cat '${files[filter]}')+change-prompt(${prompt}> )`;
+  const binds = [reload("ctrl-w", "waiting", "needs input"), reload("ctrl-o", "active", "active"), reload("ctrl-a", "all", "")];
+  const keys = Object.keys(KEYS).filter((key) => key !== "");
+  const result = await $`fzf --ansi --delimiter=${"\t"} --with-nth=2.. --nth=1 --reverse --expect=${keys.join(",")} --header=${HEADER} --bind=${binds.join(",")} < ${files.all}`.nothrow();
+  return result.exitCode === 0 ? result.stdout.toString() : undefined;
+}
+
 async function pickAgent(agents: Agent[], panes: Pane[]): Promise<{ agent: Agent; placement: Placement } | undefined> {
   const options = candidates(agents, panes);
   if (options.length === 0) {
     await log("info", "no Claude sessions to attach");
     return undefined;
   }
-  const rows = new Response(options.map((a, i) => `${i}\t${describe(a, process.env.HOME ?? "")}\n`).join(""));
-  const keys = Object.keys(KEYS).filter((key) => key !== "");
-  const header = "enter: tab · ctrl-v: pane · ctrl-f: float";
-  const result = await $`fzf --delimiter=${"\t"} --with-nth=2.. --no-sort --reverse --expect=${keys.join(",")} --header=${header} < ${rows}`.nothrow();
-  const pick = result.exitCode === 0 ? parsePick(result.stdout.toString()) : undefined;
-  const agent = pick === undefined ? undefined : options[pick.index];
-  return pick === undefined || agent === undefined ? undefined : { agent, placement: pick.placement };
+  const dir = await mkdtemp(join(tmpdir(), "rex-claude-attach-"));
+  try {
+    const out = await runFzf(filtered(options, process.env.HOME ?? ""), dir);
+    const pick = out === undefined ? undefined : parsePick(out);
+    const agent = pick === undefined ? undefined : options[pick.index];
+    return pick === undefined || agent === undefined ? undefined : { agent, placement: pick.placement };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 async function findQueried(agents: Agent[], query: string | undefined): Promise<Agent | undefined> {

@@ -30,7 +30,9 @@ Replies go through a Rex action because the server runs `rex.exec` outside the a
 
 Run **Claude Agents** from the command palette to open `claude agents` in a floating pane along the right edge of the tab, a quarter of its width. It starts in the focused pane's directory, so sessions you dispatch from it start there too. Quitting the agent view closes the pane.
 
-Attaching from the agent view opens the session inside that narrow pane. To work in a session, run **Attach Claude Session** instead. It lists background sessions and the interactive ones Rex panes show, with sessions waiting on you first. Picking one focuses the pane already showing it. Otherwise the key you pick with says where `claude attach` runs:
+Attaching from the agent view opens the session inside that narrow pane. To work in a session, run **Attach Claude Session** instead. It lists background sessions and the interactive ones Rex panes show, with sessions waiting on you first. Typing searches session names. Ctrl-W narrows the list to sessions that need input, Ctrl-O hides finished ones, and Ctrl-A shows them all again.
+
+Picking a session focuses the pane already showing it. Otherwise the key you pick with says where `claude attach` runs:
 
 | Key | Opens |
 | --- | --- |
