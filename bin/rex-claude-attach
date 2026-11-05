@@ -1,0 +1,202 @@
+#!/usr/bin/env bun
+//
+// Bring a Claude session up in Rex: focus the pane already showing it, or
+// attach it in a new tab of the Rex session for its repo.
+//
+//   rex-claude-attach <id|name> [--no-focus]
+//   rex-claude-attach --pick
+
+import { basename, dirname, sep } from "node:path";
+import { parseArgs } from "node:util";
+import { $ } from "bun";
+import { z } from "zod";
+import { choose, log } from "#gum";
+
+const Agent = z.object({
+  id: z.string().optional(),
+  sessionId: z.string().optional(),
+  name: z.string().optional(),
+  pid: z.number().optional(),
+  cwd: z.string(),
+  kind: z.string(),
+  state: z.string().optional(),
+  status: z.string().optional(),
+  waitingFor: z.string().optional(),
+});
+export type Agent = z.infer<typeof Agent>;
+
+const Sessions = z.object({ sessions: z.array(z.object({ session_id: z.string(), label: z.string() })) });
+
+const View = z.object({
+  windows: z.array(
+    z.object({
+      window_id: z.string(),
+      layers: z.array(z.object({ blocks: z.array(z.object({ block_id: z.string() })) })),
+    }),
+  ),
+});
+
+const Process = z.object({
+  foreground: z.object({ pid: z.number(), cwd: z.string().optional() }).nullish(),
+});
+
+const NewWindow = z.object({ window_id: z.string() });
+
+export interface Pane {
+  session: string;
+  label: string;
+  window: string;
+  block: string;
+  pid?: number;
+  cwd?: string;
+  args?: string;
+}
+
+// The session this pane shows, either as its own process or through `claude attach`.
+export function showsAgent(pane: Pane, agent: Agent): boolean {
+  if (agent.pid !== undefined && pane.pid === agent.pid) return true;
+  const target = pane.args?.match(/^\S*claude attach (\S+)/)?.[1];
+  if (target === undefined) return false;
+  return target === agent.id || target === agent.name || (agent.sessionId?.startsWith(target) ?? false);
+}
+
+export function findAgent(agents: Agent[], query: string): Agent | undefined {
+  return (
+    agents.find((a) => a.id === query || a.sessionId === query || a.name === query) ??
+    agents.find((a) => (a.id ?? a.sessionId)?.startsWith(query) || a.name?.startsWith(query))
+  );
+}
+
+function urgency(agent: Agent): number {
+  if (agent.status === "waiting" || agent.state === "blocked") return 0;
+  if (agent.state === "working" || agent.status === "busy") return 1;
+  if (agent.state === "failed") return 2;
+  return 3;
+}
+
+// Background sessions, and interactive ones a Rex pane shows, with the ones waiting on you first.
+export function candidates(agents: Agent[], panes: Pane[]): Agent[] {
+  return agents
+    .filter((a) => a.kind === "background" || panes.some((p) => showsAgent(p, a)))
+    .toSorted((a, b) => urgency(a) - urgency(b) || (a.name ?? "").localeCompare(b.name ?? ""));
+}
+
+export function describe(agent: Agent, home: string): string {
+  const state = agent.waitingFor ?? agent.state ?? agent.status ?? "";
+  const cwd = agent.cwd.startsWith(home + sep) ? `~${agent.cwd.slice(home.length)}` : agent.cwd;
+  return `${agent.name ?? agent.id ?? agent.sessionId}  ·  ${state}  ·  ${cwd}`;
+}
+
+// The Rex session to open a tab in: the one labeled for the repo, else one with a pane in it.
+export function homeSession(repo: string, panes: Pane[], fallback: string | undefined): string | undefined {
+  const name = basename(repo).toLowerCase();
+  const labeled = panes.find((p) => p.label.toLowerCase() === name);
+  if (labeled !== undefined) return labeled.session;
+  const inside = panes.find((p) => p.cwd === repo || p.cwd?.startsWith(repo + sep));
+  return inside?.session ?? fallback;
+}
+
+async function listAgents(): Promise<Agent[]> {
+  const out = await $`claude agents --json --all`.text();
+  return z.array(Agent).parse(JSON.parse(out));
+}
+
+async function listPanes(): Promise<Pane[]> {
+  const { sessions } = Sessions.parse(JSON.parse(await $`rex ls --json`.text()));
+  const panes: Pane[] = [];
+  for (const { session_id, label } of sessions) {
+    const view = View.parse(JSON.parse(await $`rex api call -s ${session_id} session.view`.text()));
+    for (const window of view.windows) {
+      for (const { block_id } of window.layers.flatMap((l) => l.blocks)) {
+        const call = await $`rex block call -s ${session_id} -b ${block_id} process`.nothrow().quiet();
+        const fg = call.exitCode === 0 ? Process.parse(JSON.parse(call.stdout.toString())).foreground : undefined;
+        panes.push({ session: session_id, label, window: window.window_id, block: block_id, pid: fg?.pid, cwd: fg?.cwd });
+      }
+    }
+  }
+  return withArgs(panes);
+}
+
+async function withArgs(panes: Pane[]): Promise<Pane[]> {
+  const pids = panes.flatMap((p) => (p.pid === undefined ? [] : [p.pid]));
+  if (pids.length === 0) return panes;
+  const out = await $`ps -o pid=,args= -p ${pids.join(",")}`.nothrow().text();
+  const args = new Map<number, string>();
+  for (const line of out.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(.*)$/);
+    if (match) args.set(Number(match[1]), match[2]);
+  }
+  return panes.map((p) => ({ ...p, args: p.pid === undefined ? undefined : args.get(p.pid) }));
+}
+
+async function repoRoot(cwd: string): Promise<string> {
+  const common = await $`git -C ${cwd} rev-parse --path-format=absolute --git-common-dir`.nothrow().quiet();
+  return common.exitCode === 0 ? dirname(common.stdout.toString().trim()) : cwd;
+}
+
+async function show(pane: Pane): Promise<void> {
+  await $`rex focus -s ${pane.session} ${pane.block}`.quiet();
+  await $`rex do session.select session_id=${pane.session} window_id=${pane.window}`.quiet();
+}
+
+async function attach(agent: Agent, panes: Pane[], focus: boolean): Promise<void> {
+  const target = agent.id ?? agent.sessionId;
+  if (agent.kind !== "background" || target === undefined) {
+    throw new Error(`${agent.name ?? agent.sessionId} runs in a terminal outside Rex, so there is nothing to attach`);
+  }
+  const session = homeSession(await repoRoot(agent.cwd), panes, process.env.REX_SESSION);
+  if (session === undefined) throw new Error("no Rex session to open the tab in");
+  const label = agent.name ?? target;
+  const out = await $`rex window new -s ${session} ${label} -c ${agent.cwd} --focus=${focus} --json -- claude attach ${target}`.text();
+  const { window_id } = NewWindow.parse(JSON.parse(out));
+  if (focus) await $`rex do session.select session_id=${session} window_id=${window_id}`.quiet();
+}
+
+export async function main(argv: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { pick: { type: "boolean" }, "no-focus": { type: "boolean" } },
+    allowPositionals: true,
+  });
+  const [agents, panes] = await Promise.all([listAgents(), listPanes()]);
+
+  let agent: Agent | undefined;
+  if (values.pick) {
+    const options = candidates(agents, panes);
+    if (options.length === 0) {
+      await log("info", "no Claude sessions to attach");
+      return 0;
+    }
+    const labels = options.map((a) => describe(a, process.env.HOME ?? ""));
+    const [picked] = await choose(labels, { header: "Attach to a Claude session" });
+    if (picked === undefined) return 0;
+    agent = options[labels.indexOf(picked)];
+  } else {
+    const query = positionals[0];
+    if (query === undefined) {
+      await log("error", "usage: rex-claude-attach <id|name> [--no-focus] | --pick");
+      return 2;
+    }
+    agent = findAgent(agents, query);
+    if (agent === undefined) {
+      await log("error", `no Claude session matches ${query}`);
+      return 1;
+    }
+  }
+  if (agent === undefined) return 1;
+
+  const pane = panes.find((p) => showsAgent(p, agent));
+  try {
+    if (pane !== undefined) {
+      if (!values["no-focus"]) await show(pane);
+    } else {
+      await attach(agent, panes, !values["no-focus"]);
+    }
+  } catch (error) {
+    await log("error", error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+  return 0;
+}
+
+if (import.meta.main) process.exit(await main(process.argv.slice(2)));

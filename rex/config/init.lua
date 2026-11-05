@@ -74,6 +74,32 @@ rex.action{
 }
 
 rex.action{
+  name = "claude_attach",
+  title = "Attach Claude Session",
+  description = "Pick a Claude session, waiting ones first, and go to its pane, or attach it in a new tab of its repo's session.",
+  category = "Claude",
+  keywords = "claude agents background bg attach session pick",
+  run = function()
+    local _, err = rex.session.new_layer{
+      bounds = { 0.2, 0.25, 0.6, 0.5 },
+      focus = true,
+      layout = rex.layout.block{
+        flavor = "com.superlogical.terminal.shell",
+        options = {
+          command = {
+            "/bin/zsh", "-c",
+            'rex-claude-attach --pick || read -sk "?Press any key to close"',
+          },
+        },
+      },
+    }
+    if err ~= nil then
+      error(err, 0)
+    end
+  end,
+}
+
+rex.action{
   name = "review_changes",
   title = "Review Changes",
   description = "Review an agent pane's changes in tuicr, split to its left. Send, Approve, or Dismiss hands the outcome to the agent.",
