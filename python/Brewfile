@@ -1,0 +1,1 @@
+brew 'py-spy', ci: :extra
