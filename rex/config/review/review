@@ -1,0 +1,180 @@
+#!/usr/bin/env bun
+//
+// Usage:
+//   review open AGENT_BLOCK --cwd DIR [--revisions REVSET]
+//   review run ID
+//   review send|approve|dismiss BLOCK
+//   review wait ID
+//   review reply BLOCK COMMENT_ID TEXT
+//
+// Couples a reviewer in a split to an agent's pane. BLOCK is either
+// pane. REX_SESSION names the session.
+
+import { randomUUID } from "node:crypto";
+import { parseArgs } from "node:util";
+import * as messages from "./messages";
+import { Client } from "./rex";
+import { AGENT_AUTHOR, type Reviewer } from "./reviewer";
+import { load, remove, resolve, save, type Review } from "./state";
+import { reviewer as tuicr } from "./tuicr";
+
+const reviewers: Record<Review["reviewer"], Reviewer> = { tuicr };
+
+const WAIT_POLL_MS = Number(process.env.REVIEW_POLL_MS ?? 1000);
+// An agent that never reports working within this long is taken as done.
+const WAIT_START_MS = Number(process.env.REVIEW_START_MS ?? 20_000);
+
+class Usage extends Error {}
+
+function rexClient(): Client {
+  const session = process.env.REX_SESSION;
+  if (!session) throw new Usage("REX_SESSION is not set");
+  return new Client(session);
+}
+
+function find(block: string): Review {
+  const review = resolve(block);
+  if (review === undefined) throw new Error(`no review is open for ${block}`);
+  return review;
+}
+
+async function open(rex: Client, agent: string, cwd: string, revisions?: string): Promise<void> {
+  const existing = resolve(agent);
+  if (existing?.review !== undefined) {
+    try {
+      await rex.focus(existing.review);
+      return;
+    } catch {
+      remove(existing);
+    }
+  }
+
+  const review: Review = { id: randomUUID(), session: rex.session, agent, cwd, reviewer: "tuicr", revisions, delivered: [] };
+  save(review);
+  const block = await rex.newSplit(agent, cwd, [import.meta.path, "run", review.id]);
+  save({ ...review, review: block });
+}
+
+// Removes the state before closing the pane. `run` then has nothing to dismiss.
+async function finish(rex: Client, review: Review, outcome: NonNullable<Review["outcome"]>, message: string): Promise<void> {
+  save({ ...review, outcome });
+  await rex.submit(review.agent, message);
+  remove(review);
+  await rex.focus(review.agent);
+  if (review.review !== undefined) await rex.closeBlock(review.review);
+}
+
+async function run(rex: Client, id: string): Promise<void> {
+  const review = load(id);
+  if (review === undefined) throw new Error(`no review ${id}`);
+  // Closing the pane hangs up the reviewer and this script. Ignoring the
+  // hangup here lets the close count as a dismissal.
+  process.on("SIGHUP", () => {});
+  process.on("SIGTERM", () => {});
+  const child = Bun.spawn(reviewers[review.reviewer].command(review.revisions), {
+    cwd: review.cwd,
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  const code = await child.exited;
+
+  const current = load(id);
+  if (current === undefined || current.outcome !== undefined) return;
+  if (code === 0 || child.signalCode !== null) {
+    await finish(rex, current, "dismissed", messages.dismissed);
+  } else {
+    await finish(rex, current, "failed", messages.failed(code));
+  }
+}
+
+async function send(rex: Client, block: string): Promise<void> {
+  const review = find(block);
+  const reviewer = reviewers[review.reviewer];
+  if (review.review !== undefined) await reviewer.flush(review.review);
+  const { session, comments } = await reviewer.comments(review.cwd, review.reviewerSession);
+  const fresh = comments.filter((c) => c.author !== AGENT_AUTHOR && !review.delivered.includes(c.id));
+  if (fresh.length === 0) throw new Error("no new comments to send. Approve or dismiss the review instead.");
+
+  save({ ...review, reviewerSession: session, delivered: [...review.delivered, ...fresh.map((c) => c.id)] });
+  await rex.submit(review.agent, messages.changes(fresh, review.cwd));
+  await rex.focus(review.agent);
+  console.log(review.id);
+}
+
+async function agentDone(rex: Client, review: Review): Promise<boolean> {
+  const started = Date.now();
+  let working = false;
+  let failures = 0;
+  while (load(review.id) !== undefined) {
+    let state: string;
+    try {
+      state = await rex.programState(review.agent);
+      failures = 0;
+    } catch {
+      if (++failures >= 10) return false;
+      state = "unknown";
+    }
+    // A permission prompt reads as blocked, and the turn isn't over.
+    if (state === "working" || state === "blocked") working = true;
+    else if (working || Date.now() - started > WAIT_START_MS) return true;
+    await Bun.sleep(WAIT_POLL_MS);
+  }
+  return false;
+}
+
+async function wait(rex: Client, id: string): Promise<void> {
+  const review = load(id);
+  if (review === undefined || !(await agentDone(rex, review))) return;
+  const current = load(id);
+  if (current?.review === undefined) return;
+  await reviewers[current.reviewer].reload(current.review);
+  await rex.focus(current.review);
+}
+
+async function reply(block: string, id: string, text: string): Promise<void> {
+  const review = find(block);
+  const reviewer = reviewers[review.reviewer];
+  const { session, comments } = await reviewer.comments(review.cwd, review.reviewerSession);
+  const comment = comments.find((c) => c.id === id);
+  if (comment === undefined) throw new Error(`no comment ${id} in this review`);
+  await reviewer.reply(review.cwd, session, comment, text);
+}
+
+async function main(argv: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    options: { cwd: { type: "string" }, revisions: { type: "string" } },
+  });
+  const [command, target, ...rest] = positionals;
+  if (target === undefined) throw new Usage("missing argument");
+  const rex = rexClient();
+
+  switch (command) {
+    case "open":
+      if (values.cwd === undefined) throw new Usage("open needs --cwd");
+      return open(rex, target, values.cwd, values.revisions);
+    case "run":
+      return run(rex, target);
+    case "send":
+      return send(rex, target);
+    case "approve":
+      return finish(rex, find(target), "approved", messages.approved);
+    case "dismiss":
+      return finish(rex, find(target), "dismissed", messages.dismissed);
+    case "wait":
+      return wait(rex, target);
+    case "reply":
+      if (rest.length !== 2) throw new Usage("reply needs COMMENT_ID and TEXT");
+      return reply(target, rest[0], rest[1]);
+    default:
+      throw new Usage(`unknown command ${command ?? ""}`);
+  }
+}
+
+try {
+  await main(Bun.argv.slice(2));
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`review: ${message}`);
+  process.exit(err instanceof Usage ? 2 : 1);
+}

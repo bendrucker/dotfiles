@@ -4,7 +4,7 @@ tap 'terraform-linters/tap', trusted: true
 cask 'tflint'
 
 tap 'minamijoyo/hcledit', trusted: true
-brew 'hcledit', ci: :extra
+brew 'minamijoyo/hcledit/hcledit', ci: :extra
 
 tap 'minamijoyo/tfschema', trusted: true
 brew 'tfschema', ci: :extra
