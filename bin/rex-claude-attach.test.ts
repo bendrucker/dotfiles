@@ -2,7 +2,17 @@ import { afterEach, beforeEach, describe as group, expect, test } from "bun:test
 import { join } from "node:path";
 import { run, sandbox, stubGum, type Sandbox } from "#harness";
 import { recorded, recordingStub } from "#harness/recorder";
-import { type Agent, candidates, describe, findAgent, homeSession, type Pane, showsAgent } from "./rex-claude-attach";
+import {
+  type Agent,
+  candidates,
+  describe,
+  findAgent,
+  homeSession,
+  type Pane,
+  parsePick,
+  type Pick,
+  showsAgent,
+} from "./rex-claude-attach";
 
 const script = join(import.meta.dir, "rex-claude-attach");
 
@@ -70,6 +80,18 @@ test("candidates keep background sessions and shown interactive ones, waiting fi
 test("describe shows the waiting reason and a home-relative directory", () => {
   const agent = makeAgent({ waitingFor: "input needed", cwd: "/home/u/src/repo" });
   expect(describe(agent, "/home/u")).toMatchInlineSnapshot(`"fix-thing  ·  input needed  ·  ~/src/repo"`);
+});
+
+group("parsePick", () => {
+  test.each<{ name: string; out: string; pick: Pick | undefined }>([
+    { name: "enter opens a tab", out: "\n2\tfix-thing  ·  busy\n", pick: { index: 2, placement: "tab" } },
+    { name: "ctrl-v splits a pane", out: "ctrl-v\n0\tfix-thing\n", pick: { index: 0, placement: "pane" } },
+    { name: "ctrl-f floats", out: "ctrl-f\n1\tfix-thing\n", pick: { index: 1, placement: "float" } },
+    { name: "a key with no row", out: "ctrl-v\n", pick: undefined },
+    { name: "an unknown key", out: "ctrl-x\n0\tfix-thing\n", pick: undefined },
+  ])("$name", ({ out, pick }) => {
+    expect(parsePick(out)).toEqual(pick);
+  });
 });
 
 group("homeSession", () => {
@@ -192,6 +214,23 @@ group("main", () => {
         },
       },
     });
+  });
+
+  test("the picker's ctrl-v splits a pane beside the given block", () => {
+    stubRex(view(["block:here"]), { "block:here": { foreground: { pid: 5 } } });
+    box.stub("ps", "echo '    5 -zsh'");
+    box.stub("fzf", `cat > '${box.path("rows")}'; printf 'ctrl-v\\n0\\tfix-thing\\n'`);
+    expect(attach("--pick", "--beside", "block:here").status).toBe(0);
+    expect(box.read("rows")).toBe(`0\tfix-thing  ·  working  ·  ${box.path("repo")}\n`);
+    expect(rexCalls().map((call) => call.slice(0, 2))).toEqual([["rex", "split"]]);
+  });
+
+  test("dismissing the picker opens nothing", () => {
+    stubRex(view([]), {});
+    box.stub("ps", "true");
+    box.stub("fzf", "exit 130");
+    expect(attach("--pick").status).toBe(0);
+    expect(rexCalls()).toEqual([]);
   });
 
   test.each<{ name: string; args: string[]; error: string }>([

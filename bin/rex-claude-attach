@@ -11,7 +11,7 @@ import { basename, dirname, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { $ } from "bun";
 import { z } from "zod";
-import { choose, log } from "#gum";
+import { log } from "#gum";
 
 const Agent = z.object({
   id: z.string().optional(),
@@ -193,26 +193,34 @@ async function attach(placement: Placement, request: Attach): Promise<void> {
   return placement === "pane" ? inPane(request, request.beside) : inFloat(request, request.beside);
 }
 
-async function pickAgent(agents: Agent[], panes: Pane[]): Promise<Agent | undefined> {
+const KEYS: Record<string, Placement> = { "": "tab", "ctrl-v": "pane", "ctrl-f": "float" };
+
+export interface Pick {
+  index: number;
+  placement: Placement;
+}
+
+// fzf with --expect prints the key that ended the pick (empty for Enter), then the picked row.
+export function parsePick(out: string): Pick | undefined {
+  const [key = "", row = ""] = out.split("\n");
+  const placement = KEYS[key];
+  const index = Number(row.split("\t")[0]);
+  return placement === undefined || row === "" || !Number.isInteger(index) ? undefined : { index, placement };
+}
+
+async function pickAgent(agents: Agent[], panes: Pane[]): Promise<{ agent: Agent; placement: Placement } | undefined> {
   const options = candidates(agents, panes);
   if (options.length === 0) {
     await log("info", "no Claude sessions to attach");
     return undefined;
   }
-  const labels = options.map((a) => describe(a, process.env.HOME ?? ""));
-  const [picked] = await choose(labels, { header: "Attach to a Claude session" });
-  return picked === undefined ? undefined : options[labels.indexOf(picked)];
-}
-
-// Tab first, so pressing Enter twice keeps the default.
-async function pickPlacement(beside: Pane | undefined): Promise<Placement | undefined> {
-  const options: Record<string, Placement> = { "New tab in its repo's session": "tab" };
-  if (beside !== undefined) {
-    options["Pane beside this one"] = "pane";
-    options["Floating pane"] = "float";
-  }
-  const [picked] = await choose(Object.keys(options), { header: "Open it in" });
-  return picked === undefined ? undefined : options[picked];
+  const rows = new Response(options.map((a, i) => `${i}\t${describe(a, process.env.HOME ?? "")}\n`).join(""));
+  const keys = Object.keys(KEYS).filter((key) => key !== "");
+  const header = "enter: tab · ctrl-v: pane · ctrl-f: float";
+  const result = await $`fzf --delimiter=${"\t"} --with-nth=2.. --no-sort --reverse --expect=${keys.join(",")} --header=${header} < ${rows}`.nothrow();
+  const pick = result.exitCode === 0 ? parsePick(result.stdout.toString()) : undefined;
+  const agent = pick === undefined ? undefined : options[pick.index];
+  return pick === undefined || agent === undefined ? undefined : { agent, placement: pick.placement };
 }
 
 async function findQueried(agents: Agent[], query: string | undefined): Promise<Agent | undefined> {
@@ -223,6 +231,19 @@ async function findQueried(agents: Agent[], query: string | undefined): Promise<
   const agent = findAgent(agents, query);
   if (agent === undefined) await log("error", `no Claude session matches ${query}`);
   return agent;
+}
+
+async function bringUp(agent: Agent, panes: Pane[], placement: Placement, focus: boolean, beside?: Pane): Promise<void> {
+  const shown = panes.find((p) => showsAgent(p, agent));
+  if (shown !== undefined) {
+    if (focus) await show(shown);
+    return;
+  }
+  const target = agent.id ?? agent.sessionId;
+  if (agent.kind !== "background" || target === undefined) {
+    throw new Error(`${agent.name ?? agent.sessionId} runs in a terminal outside Rex, so there is nothing to attach`);
+  }
+  await attach(placement, { agent, target, panes, focus, beside });
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -242,23 +263,14 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
   const [agents, panes] = await Promise.all([listAgents(), listPanes()]);
-  const agent = values.pick ? await pickAgent(agents, panes) : await findQueried(agents, positionals[0]);
+  const picked = values.pick ? await pickAgent(agents, panes) : undefined;
+  const agent = values.pick ? picked?.agent : await findQueried(agents, positionals[0]);
   if (agent === undefined) return values.pick ? 0 : 1;
 
-  const focus = !values["no-focus"];
-  const shown = panes.find((p) => showsAgent(p, agent));
   const beside = panes.find((p) => p.block === (values.beside ?? process.env.REX_BLOCK));
+  const placement = chosen?.data ?? picked?.placement ?? "tab";
   try {
-    if (shown !== undefined) {
-      if (focus) await show(shown);
-      return 0;
-    }
-    const target = agent.id ?? agent.sessionId;
-    if (agent.kind !== "background" || target === undefined) {
-      throw new Error(`${agent.name ?? agent.sessionId} runs in a terminal outside Rex, so there is nothing to attach`);
-    }
-    const placement = chosen?.data ?? (values.pick ? await pickPlacement(beside) : "tab");
-    if (placement !== undefined) await attach(placement, { agent, target, panes, focus, beside });
+    await bringUp(agent, panes, placement, !values["no-focus"], beside);
   } catch (error) {
     await log("error", error instanceof Error ? error.message : String(error));
     return 1;
