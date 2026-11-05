@@ -17,12 +17,20 @@ local function block_dir(block_id)
 end
 
 -- The server's PATH lacks Homebrew and bun. zsh reads ~/.zshenv, which sets them.
-local function review_argv(args)
-  local argv = { "/bin/zsh", "-c", 'exec "$@"', "review", review_cli }
+local function zsh_argv(script, name, args)
+  local argv = { "/bin/zsh", "-c", script, name }
   for _, arg in ipairs(args) do
     argv[#argv + 1] = arg
   end
   return argv
+end
+
+local function review_argv(args)
+  local argv = { review_cli }
+  for _, arg in ipairs(args) do
+    argv[#argv + 1] = arg
+  end
+  return zsh_argv('exec "$@"', "review", argv)
 end
 
 local function review(ctx, args)
@@ -89,11 +97,11 @@ rex.action{
       layout = rex.layout.block{
         flavor = "com.superlogical.terminal.shell",
         options = {
-          command = {
-            "/bin/zsh", "-c",
+          command = zsh_argv(
             '[[ -n $1 ]] && export REX_CLIENT=$1; rex-claude-attach --pick --beside "$2" || read -sk "?Press any key to close"',
-            "rex-claude-attach", ctx.client_id or "", ctx.block_id or "",
-          },
+            "rex-claude-attach",
+            { ctx.client_id or "", ctx.block_id or "" }
+          ),
         },
       },
     }

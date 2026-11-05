@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe as group, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { run, sandbox, stubGum, type Sandbox } from "#harness";
 import { recorded, recordingStub } from "#harness/recorder";
 import {
   type Agent,
   candidates,
-  filtered,
+  FILTERS,
   findAgent,
   homeSession,
   type Pane,
@@ -36,7 +36,7 @@ function makePane(overrides: Partial<Pane> = {}): Pane {
   return { session: "session:a", label: "Work", window: "window:a", block: "block:a", ...overrides };
 }
 
-group("showsAgent", () => {
+describe("showsAgent", () => {
   test.each<{ name: string; pane: Partial<Pane>; agent: Partial<Agent>; shows: boolean }>([
     { name: "interactive session by pid", pane: { pid: 42 }, agent: { kind: "interactive", pid: 42 }, shows: true },
     { name: "another pid", pane: { pid: 43 }, agent: { kind: "interactive", pid: 42 }, shows: false },
@@ -50,7 +50,7 @@ group("showsAgent", () => {
   });
 });
 
-group("findAgent", () => {
+describe("findAgent", () => {
   const agents = [
     makeAgent(),
     makeAgent({ id: "0000aaaa", sessionId: "0000aaaa-1", name: "fix-other" }),
@@ -80,7 +80,7 @@ test("candidates keep background sessions and shown interactive ones, waiting fi
   expect(candidates(agents, [makePane({ pid: 2 })]).map((a) => a.name)).toEqual(["asking", "busy", "shown", "done"]);
 });
 
-group("statusOf", () => {
+describe("statusOf", () => {
   test.each<{ name: string; agent: Partial<Agent>; status: Status }>([
     {
       name: "a permission prompt",
@@ -103,7 +103,7 @@ test("rows align names and statuses, color the status, and dim a home-relative d
     makeAgent({ name: "a", state: "blocked", status: "waiting", waitingFor: "input needed", cwd: "/home/u/src/repo" }),
     makeAgent({ name: "longer-name", cwd: "/elsewhere" }),
   ];
-  expect(rows(agents, "/home/u")).toMatchInlineSnapshot(`
+  expect(rows(agents, "/home/u").map((row) => row.text)).toMatchInlineSnapshot(`
     [
       "0	a          	\x1B[1;31mneeds input: input needed\x1B[0m	\x1B[2m~/src/repo\x1B[0m",
       "1	longer-name	\x1B[33mworking                  \x1B[0m	\x1B[2m/elsewhere\x1B[0m",
@@ -111,22 +111,18 @@ test("rows align names and statuses, color the status, and dim a home-relative d
   `);
 });
 
-test("filters hide finished sessions by default and narrow to the ones needing input", () => {
+test("filters narrow to sessions needing input, hide finished ones, or keep all", () => {
   const agents = [
     makeAgent({ name: "asking", state: "blocked", status: "waiting" }),
     makeAgent({ name: "busy" }),
     makeAgent({ name: "finished", state: "done", status: "idle" }),
   ];
-  const names = (list: string[]) => list.map((row) => row.split("\t").slice(0, 2).map((field) => field.trim()).join(" "));
-  const lists = filtered(agents, "/home/u");
-  expect({ active: names(lists.active), waiting: names(lists.waiting), all: names(lists.all) }).toEqual({
-    active: ["0 asking", "1 busy"],
-    waiting: ["0 asking"],
-    all: ["0 asking", "1 busy", "2 finished"],
-  });
+  const list = rows(agents, "/home/u");
+  const kept = FILTERS.map((filter) => [filter.key, list.filter((row) => filter.keep(row.group)).map((row) => row.text.split("\t")[0])]);
+  expect(Object.fromEntries(kept)).toEqual({ "ctrl-w": ["0"], "ctrl-o": ["0", "1"], "ctrl-a": ["0", "1", "2"] });
 });
 
-group("parsePick", () => {
+describe("parsePick", () => {
   test.each<{ name: string; out: string; pick: Pick | undefined }>([
     { name: "enter opens a tab", out: "\n2\tfix-thing  ·  busy\n", pick: { index: 2, placement: "tab" } },
     { name: "ctrl-v splits a pane", out: "ctrl-v\n0\tfix-thing\n", pick: { index: 0, placement: "pane" } },
@@ -138,7 +134,7 @@ group("parsePick", () => {
   });
 });
 
-group("homeSession", () => {
+describe("homeSession", () => {
   test.each<{ name: string; panes: Partial<Pane>[]; session: string | undefined }>([
     {
       name: "the session labeled for the repo",
@@ -152,7 +148,7 @@ group("homeSession", () => {
   });
 });
 
-group("main", () => {
+describe("main", () => {
   let box: Sandbox;
 
   beforeEach(() => {
