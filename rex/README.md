@@ -10,6 +10,10 @@ Comment in tuicr, then press `y`. The review pastes into the agent's prompt, foc
 
 The action reads the agent's directory from its foreground process. That directory follows an agent that moved into another worktree. `config/review-pane` runs tuicr and hands the review back through Rex's `block.event` paste API, which applies the agent's bracketed paste mode.
 
+## Background Agents
+
+Run **Claude Agents** from the command palette to open `claude agents` in a floating pane along the right edge of the tab, a quarter of its width. It starts in the focused pane's directory, so sessions you dispatch from it start there too. Quitting the agent view closes the pane.
+
 ## Failures
 
 A failed action is logged by the server as `control invoke failed`:

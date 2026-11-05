@@ -15,6 +15,34 @@ local function block_dir(block_id)
 end
 
 rex.action{
+  name = "claude_agents",
+  title = "Claude Agents",
+  description = "Manage background Claude sessions in a narrow floating pane on the right. Quitting the agent view closes it.",
+  category = "Claude",
+  keywords = "claude agents background bg attach daemon float",
+  run = function(ctx)
+    -- New sessions dispatched from the view start in the focused pane's
+    -- directory.
+    local dir = ctx.block_id and block_dir(ctx.block_id)
+
+    local _, err = rex.session.new_layer{
+      bounds = { 0.73, 0.1, 0.25, 0.8 },
+      focus = true,
+      layout = rex.layout.block{
+        flavor = "com.superlogical.terminal.shell",
+        options = {
+          cwd = dir,
+          command = { "claude", "agents" },
+        },
+      },
+    }
+    if err ~= nil then
+      error(err, 0)
+    end
+  end,
+}
+
+rex.action{
   name = "review_changes",
   title = "Review Changes",
   description = "Review the focused pane's uncommitted changes in tuicr to its left. Exporting with y pastes the review back into the pane.",
