@@ -1,1 +1,5 @@
+# The migration off agavra/tap's tuicr needs the tap trusted, and a forced
+# `brew bundle` cleanup fails to untap it while that formula is installed.
+# Remove this line with migrations/202611040001-tuicr-to-core.ts.
+tap 'agavra/tap', trusted: true
 brew 'tuicr'
