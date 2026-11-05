@@ -79,7 +79,10 @@ rex.action{
   description = "Pick a Claude session, waiting ones first, and go to its pane, or attach it in a new tab of its repo's session.",
   category = "Claude",
   keywords = "claude agents background bg attach session pick",
-  run = function()
+  run = function(ctx)
+    -- With several apps connected, the script brings the pick up in the one
+    -- that ran this action. A pane or float goes beside the pane focused when
+    -- the action ran, not the picker's own.
     local _, err = rex.session.new_layer{
       bounds = { 0.2, 0.25, 0.6, 0.5 },
       focus = true,
@@ -88,7 +91,8 @@ rex.action{
         options = {
           command = {
             "/bin/zsh", "-c",
-            'rex-claude-attach --pick || read -sk "?Press any key to close"',
+            '[[ -n $1 ]] && export REX_CLIENT=$1; rex-claude-attach --pick --beside "$2" || read -sk "?Press any key to close"',
+            "rex-claude-attach", ctx.client_id or "", ctx.block_id or "",
           },
         },
       },

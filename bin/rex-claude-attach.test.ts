@@ -112,6 +112,7 @@ group("main", () => {
         `  "api call") cat '${box.path("view.json")}' ;;`,
         `  "block call") cat '${box.path("process-")}'"$6".json ;;`,
         `  "window new") echo '{"window_id":"window:new"}' ;;`,
+        `  "do session.select") [ -f '${box.path("select-fails")}' ] && { echo 'client target default is ambiguous' >&2; exit 3; } ;;`,
         "esac",
       ].join("\n"),
     );
@@ -126,7 +127,7 @@ group("main", () => {
   }
 
   function rexCalls(): string[][] {
-    return recorded(box).filter((call) => !["ls", "api", "block"].includes(call[1] ?? ""));
+    return recorded(box).filter((call) => !["ls", "block"].includes(call[1] ?? "") && !call.includes("session.view"));
   }
 
   test("focuses the pane already attached", () => {
@@ -150,6 +151,58 @@ group("main", () => {
       ],
       ["rex", "do", "session.select", "session_id=session:dot", "window_id=window:new"],
     ]);
+  });
+
+  test("still opens the tab when the app can't be switched to it", () => {
+    stubRex(view([]), {});
+    box.stub("ps", "true");
+    box.write("select-fails", "");
+    const result = attach("cf37276a");
+    expect(result.status).toBe(0);
+    expect(rexCalls().map((call) => call.slice(0, 3))).toEqual([["rex", "window", "new"], ["rex", "do", "session.select"]]);
+    expect(result.stderr).toContain("couldn't switch the app to the tab: client target default is ambiguous");
+  });
+
+  test("splits a pane beside the given block", () => {
+    stubRex(view(["block:here"]), { "block:here": { foreground: { pid: 5 } } });
+    box.stub("ps", "echo '    5 -zsh'");
+    expect(attach("cf37276a", "--as", "pane", "--beside", "block:here").status).toBe(0);
+    expect(rexCalls()).toEqual([
+      [
+        "rex", "split", "-s", "session:dot", "-b", "block:here", "--split=right", "-c", box.path("repo"),
+        "--focus=true", "--json", "--", "claude", "attach", "cf37276a",
+      ],
+    ]);
+  });
+
+  test("floats over the tab of the given block", () => {
+    stubRex(view(["block:here"]), { "block:here": { foreground: { pid: 5 } } });
+    box.stub("ps", "echo '    5 -zsh'");
+    expect(attach("cf37276a", "--as", "float", "--beside", "block:here").status).toBe(0);
+    const [call] = rexCalls();
+    expect(call?.slice(0, 5)).toEqual(["rex", "api", "call", "-s", "session:dot"]);
+    expect(JSON.parse(call?.at(-1) ?? "")).toEqual({
+      window_id: "window:w",
+      bounds: [0.1, 0.1, 0.8, 0.8],
+      focus: true,
+      layout: {
+        block: {
+          flavor: "com.superlogical.terminal.shell",
+          options: { cwd: box.path("repo"), command: ["claude", "attach", "cf37276a"] },
+        },
+      },
+    });
+  });
+
+  test.each<{ name: string; args: string[]; error: string }>([
+    { name: "a pane with no block to place it beside", args: ["--as", "pane"], error: "a pane needs --beside or REX_BLOCK" },
+    { name: "an unknown placement", args: ["--as", "window"], error: "--as takes tab, pane, or float, not window" },
+  ])("refuses $name", ({ args, error }) => {
+    stubRex(view([]), {});
+    box.stub("ps", "true");
+    const result = attach("cf37276a", ...args);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(error);
   });
 
   test("leaves focus alone with --no-focus", () => {

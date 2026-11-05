@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 //
-// Bring a Claude session up in Rex: focus the pane already showing it, or
-// attach it in a new tab of the Rex session for its repo.
+// Bring a Claude session up in Rex. A pane already showing it gets focus.
+// Otherwise it's attached where --as says, with tabs going to the Rex session
+// for its repo and panes or floats beside --beside (default $REX_BLOCK).
 //
-//   rex-claude-attach <id|name> [--no-focus]
-//   rex-claude-attach --pick
+//   rex-claude-attach <id|name> [--as tab|pane|float] [--beside BLOCK] [--no-focus]
+//   rex-claude-attach --pick [--beside BLOCK]
 
 import { basename, dirname, sep } from "node:path";
 import { parseArgs } from "node:util";
@@ -134,64 +135,130 @@ async function repoRoot(cwd: string): Promise<string> {
   return common.exitCode === 0 ? dirname(common.stdout.toString().trim()) : cwd;
 }
 
-async function show(pane: Pane): Promise<void> {
-  await $`rex focus -s ${pane.session} ${pane.block}`.quiet();
-  await $`rex do session.select session_id=${pane.session} window_id=${pane.window}`.quiet();
+// Switch the app to the tab. With several apps connected, Rex needs REX_CLIENT to pick one.
+async function select(session: string, window: string): Promise<void> {
+  const result = await $`rex do session.select session_id=${session} window_id=${window}`.nothrow().quiet();
+  if (result.exitCode !== 0) {
+    await log("warn", `couldn't switch the app to the tab: ${result.stderr.toString().trim()}`);
+  }
 }
 
-async function attach(agent: Agent, panes: Pane[], focus: boolean): Promise<void> {
-  const target = agent.id ?? agent.sessionId;
-  if (agent.kind !== "background" || target === undefined) {
-    throw new Error(`${agent.name ?? agent.sessionId} runs in a terminal outside Rex, so there is nothing to attach`);
-  }
+async function show(pane: Pane): Promise<void> {
+  await $`rex focus -s ${pane.session} ${pane.block}`.quiet();
+  await select(pane.session, pane.window);
+}
+
+const Placement = z.enum(["tab", "pane", "float"]);
+export type Placement = z.infer<typeof Placement>;
+
+interface Attach {
+  agent: Agent;
+  target: string;
+  panes: Pane[];
+  focus: boolean;
+  beside?: Pane;
+}
+
+async function inTab({ agent, target, panes, focus }: Attach): Promise<void> {
   const session = homeSession(await repoRoot(agent.cwd), panes, process.env.REX_SESSION);
   if (session === undefined) throw new Error("no Rex session to open the tab in");
   const label = agent.name ?? target;
   const out = await $`rex window new -s ${session} ${label} -c ${agent.cwd} --focus=${focus} --json -- claude attach ${target}`.text();
   const { window_id } = NewWindow.parse(JSON.parse(out));
-  if (focus) await $`rex do session.select session_id=${session} window_id=${window_id}`.quiet();
+  if (focus) await select(session, window_id);
+}
+
+async function inPane({ agent, target, focus }: Attach, beside: Pane): Promise<void> {
+  await $`rex split -s ${beside.session} -b ${beside.block} --split=right -c ${agent.cwd} --focus=${focus} --json -- claude attach ${target}`.quiet();
+}
+
+async function inFloat({ agent, target, focus }: Attach, beside: Pane): Promise<void> {
+  const layer = JSON.stringify({
+    window_id: beside.window,
+    bounds: [0.1, 0.1, 0.8, 0.8],
+    focus,
+    layout: {
+      block: {
+        flavor: "com.superlogical.terminal.shell",
+        options: { cwd: agent.cwd, command: ["claude", "attach", target] },
+      },
+    },
+  });
+  await $`rex api call -s ${beside.session} session.new_layer ${layer}`.quiet();
+}
+
+async function attach(placement: Placement, request: Attach): Promise<void> {
+  if (placement === "tab") return inTab(request);
+  if (request.beside === undefined) throw new Error(`a ${placement} needs --beside or REX_BLOCK to place it`);
+  return placement === "pane" ? inPane(request, request.beside) : inFloat(request, request.beside);
+}
+
+async function pickAgent(agents: Agent[], panes: Pane[]): Promise<Agent | undefined> {
+  const options = candidates(agents, panes);
+  if (options.length === 0) {
+    await log("info", "no Claude sessions to attach");
+    return undefined;
+  }
+  const labels = options.map((a) => describe(a, process.env.HOME ?? ""));
+  const [picked] = await choose(labels, { header: "Attach to a Claude session" });
+  return picked === undefined ? undefined : options[labels.indexOf(picked)];
+}
+
+// Tab first, so pressing Enter twice keeps the default.
+async function pickPlacement(beside: Pane | undefined): Promise<Placement | undefined> {
+  const options: Record<string, Placement> = { "New tab in its repo's session": "tab" };
+  if (beside !== undefined) {
+    options["Pane beside this one"] = "pane";
+    options["Floating pane"] = "float";
+  }
+  const [picked] = await choose(Object.keys(options), { header: "Open it in" });
+  return picked === undefined ? undefined : options[picked];
+}
+
+async function findQueried(agents: Agent[], query: string | undefined): Promise<Agent | undefined> {
+  if (query === undefined) {
+    await log("error", "usage: rex-claude-attach <id|name> [--as tab|pane|float] [--beside BLOCK] [--no-focus] | --pick");
+    return undefined;
+  }
+  const agent = findAgent(agents, query);
+  if (agent === undefined) await log("error", `no Claude session matches ${query}`);
+  return agent;
 }
 
 export async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
-    options: { pick: { type: "boolean" }, "no-focus": { type: "boolean" } },
+    options: {
+      pick: { type: "boolean" },
+      "no-focus": { type: "boolean" },
+      as: { type: "string" },
+      beside: { type: "string" },
+    },
     allowPositionals: true,
   });
+  const chosen = values.as === undefined ? undefined : Placement.safeParse(values.as);
+  if (chosen?.success === false) {
+    await log("error", `--as takes tab, pane, or float, not ${values.as}`);
+    return 2;
+  }
   const [agents, panes] = await Promise.all([listAgents(), listPanes()]);
+  const agent = values.pick ? await pickAgent(agents, panes) : await findQueried(agents, positionals[0]);
+  if (agent === undefined) return values.pick ? 0 : 1;
 
-  let agent: Agent | undefined;
-  if (values.pick) {
-    const options = candidates(agents, panes);
-    if (options.length === 0) {
-      await log("info", "no Claude sessions to attach");
+  const focus = !values["no-focus"];
+  const shown = panes.find((p) => showsAgent(p, agent));
+  const beside = panes.find((p) => p.block === (values.beside ?? process.env.REX_BLOCK));
+  try {
+    if (shown !== undefined) {
+      if (focus) await show(shown);
       return 0;
     }
-    const labels = options.map((a) => describe(a, process.env.HOME ?? ""));
-    const [picked] = await choose(labels, { header: "Attach to a Claude session" });
-    if (picked === undefined) return 0;
-    agent = options[labels.indexOf(picked)];
-  } else {
-    const query = positionals[0];
-    if (query === undefined) {
-      await log("error", "usage: rex-claude-attach <id|name> [--no-focus] | --pick");
-      return 2;
+    const target = agent.id ?? agent.sessionId;
+    if (agent.kind !== "background" || target === undefined) {
+      throw new Error(`${agent.name ?? agent.sessionId} runs in a terminal outside Rex, so there is nothing to attach`);
     }
-    agent = findAgent(agents, query);
-    if (agent === undefined) {
-      await log("error", `no Claude session matches ${query}`);
-      return 1;
-    }
-  }
-  if (agent === undefined) return 1;
-
-  const pane = panes.find((p) => showsAgent(p, agent));
-  try {
-    if (pane !== undefined) {
-      if (!values["no-focus"]) await show(pane);
-    } else {
-      await attach(agent, panes, !values["no-focus"]);
-    }
+    const placement = chosen?.data ?? (values.pick ? await pickPlacement(beside) : "tab");
+    if (placement !== undefined) await attach(placement, { agent, target, panes, focus, beside });
   } catch (error) {
     await log("error", error instanceof Error ? error.message : String(error));
     return 1;
