@@ -1,0 +1,8 @@
+# mdv doesn't publish releases, so it builds from a pinned commit that Renovate
+# does not track. It renders only on macOS, and draws Mermaid through mmdc.
+# scripts/install runs `mise install` one topic at a time, so the cargo backend
+# finds cargo only when rust is declared beside it.
+[tools]
+rust = "1.99.0"
+"cargo:https://github.com/posaune0423/mdv" = { version = "rev:45a304cb05b85875fdd35e81623525e25f74bbed", os = ["macos"] }
+"npm:@mermaid-js/mermaid-cli" = { version = "11.15.0", os = ["macos"] }
