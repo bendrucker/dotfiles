@@ -5,4 +5,6 @@
 [tools]
 rust = "1.99.0"
 "cargo:https://github.com/posaune0423/mdv" = { version = "rev:45a304cb05b85875fdd35e81623525e25f74bbed", os = ["macos"] }
-"npm:@mermaid-js/mermaid-cli" = { version = "11.15.0", os = ["macos"] }
+# chromium-bidi is published from Chromium's infra without npm provenance, which
+# mise's trust check reads as a downgrade from its older releases.
+"npm:@mermaid-js/mermaid-cli" = { version = "12.2.0", os = ["macos"], trust_policy_excludes = ["chromium-bidi@157.0.8090-0"] }
