@@ -8,7 +8,7 @@ const Review = z.object({
   agent: z.string(),
   review: z.string().optional(),
   cwd: z.string(),
-  reviewer: z.literal("tuicr"),
+  reviewer: z.enum(["hunk", "tuicr"]),
   revisions: z.string().optional(),
   reviewerSession: z.string().optional(),
   delivered: z.array(z.string()),

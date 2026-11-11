@@ -114,9 +114,9 @@ rex.action{
 rex.action{
   name = "review_changes",
   title = "Review Changes",
-  description = "Review an agent pane's changes in tuicr, split to its left. Send, Approve, or Dismiss hands the outcome to the agent.",
+  description = "Review an agent pane's changes in Hunk, split to its left. Send, Approve, or Dismiss hands the outcome to the agent.",
   category = "Git",
-  keywords = "tuicr diff code review agent claude",
+  keywords = "hunk diff code review agent claude",
   args = { block = "string?", revisions = "string?" },
   run = function(ctx, args)
     local block = args.block or ctx.block_id
@@ -138,7 +138,7 @@ rex.action{
   title = "Review: Send",
   description = "Send the review's new comments to the agent, and bring the review back when its turn ends.",
   category = "Git",
-  keywords = "tuicr review submit comments agent",
+  keywords = "hunk review submit comments agent",
   run = function(ctx)
     local id = review(ctx, { "send", ctx.block_id })
     local waiter, err = rex.exec.start(review_argv({ "wait", id }), {
@@ -158,7 +158,7 @@ rex.action{
   title = "Review: Approve",
   description = "Tell the agent the review approved its changes, and close the review.",
   category = "Git",
-  keywords = "tuicr review approve lgtm agent",
+  keywords = "hunk review approve lgtm agent",
   run = function(ctx)
     review(ctx, { "approve", ctx.block_id })
   end,
@@ -169,14 +169,14 @@ rex.action{
   title = "Review: Dismiss",
   description = "Close the review without feedback. The agent treats it as a success.",
   category = "Git",
-  keywords = "tuicr review dismiss close agent",
+  keywords = "hunk review dismiss close agent",
   run = function(ctx)
     review(ctx, { "dismiss", ctx.block_id })
   end,
 }
 
 -- Run by the agent. The server runs the reviewer's CLI outside the agent's
--- sandbox, which can't write the reviewer's storage.
+-- sandbox, which can't reach the reviewer's daemon or storage.
 rex.action{
   name = "review_reply",
   title = "Review: Reply",
