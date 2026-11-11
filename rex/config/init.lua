@@ -176,7 +176,7 @@ rex.action{
 }
 
 -- Run by the agent. The server runs the reviewer's CLI outside the agent's
--- sandbox, which can't reach the reviewer's daemon or storage.
+-- sandbox, which can't write tuicr's storage.
 rex.action{
   name = "review_reply",
   title = "Review: Reply",

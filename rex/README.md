@@ -24,7 +24,7 @@ The action reads the agent's directory from its foreground process. That directo
 
 `config/review/review` runs the loop, and `config/review/hunk.ts` holds everything specific to Hunk, behind the `Reviewer` interface in `config/review/reviewer.ts`. Another reviewer needs one more adapter that starts it, reads its comments, and adds the agent's replies. `config/review/tuicr.ts` adapts [tuicr](../tuicr/), which `DEFAULT_REVIEWER` in `config/review/review` switches back to.
 
-Replies go through a Rex action because the server runs `rex.exec` outside the agent's sandbox, and the sandbox blocks the loopback daemon on `127.0.0.1:47657` that Hunk's `session` commands talk to.
+Replies go through a Rex action, which finds the review's Hunk window from its state, so the agent needs only the comment id. The server runs `rex.exec` outside the agent's sandbox, which tuicr needs to write its storage under `~/Library/Application Support/tuicr`.
 
 ## Background Agents
 
