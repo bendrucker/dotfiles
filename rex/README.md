@@ -4,7 +4,7 @@
 
 ## Review Changes
 
-Run **Review Changes** from the command palette with an agent's pane focused. It opens [Hunk](../hunk/) on the agent's uncommitted changes, in a split taking the left two-thirds of the agent's pane. An agent can open one itself with `rex do review_changes block="$REX_BLOCK" revisions=<base>..HEAD`, where both arguments are optional.
+Run **Review Changes** from the command palette with an agent's pane focused. It opens [Hunk](../hunk/) on the agent's uncommitted changes, in a split taking the right three-quarters of the agent's pane. An agent can open one itself with `rex do review_changes block="$REX_BLOCK" revisions=<base>..HEAD`, where both arguments are optional.
 
 Press `c` on a line to leave a note in Hunk, then end the round with a key from either pane:
 
