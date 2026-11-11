@@ -16,9 +16,12 @@ import * as messages from "./messages";
 import { Client } from "./rex";
 import { AGENT_AUTHOR, type Reviewer } from "./reviewer";
 import { load, remove, resolve, save, type Review } from "./state";
+import { reviewer as hunk } from "./hunk";
 import { reviewer as tuicr } from "./tuicr";
 
-const reviewers: Record<Review["reviewer"], Reviewer> = { tuicr };
+const reviewers: Record<Review["reviewer"], Reviewer> = { hunk, tuicr };
+// tuicr stays as the fallback. Set this to "tuicr" to switch back.
+const DEFAULT_REVIEWER: Review["reviewer"] = "hunk";
 
 const WAIT_POLL_MS = Number(process.env.REVIEW_POLL_MS ?? 1000);
 // An agent that never reports working within this long is taken as done.
@@ -49,7 +52,7 @@ async function open(rex: Client, agent: string, cwd: string, revisions?: string)
     }
   }
 
-  const review: Review = { id: randomUUID(), session: rex.session, agent, cwd, reviewer: "tuicr", revisions, delivered: [] };
+  const review: Review = { id: randomUUID(), session: rex.session, agent, cwd, reviewer: DEFAULT_REVIEWER, revisions, delivered: [] };
   save(review);
   const block = await rex.newSplit(agent, cwd, [import.meta.path, "run", review.id]);
   save({ ...review, review: block });

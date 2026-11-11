@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { quote, repoRoot, run, sandbox, type Sandbox } from "#harness";
 import type { Review } from "./state";
@@ -25,6 +25,7 @@ function readCalls(name: string): string[][] {
 
 const rexCalls = () => readCalls("rex-calls");
 const tuicrCalls = () => readCalls("tuicr-calls");
+const hunkCalls = () => readCalls("hunk-calls");
 
 beforeEach(() => {
   box = sandbox("rex-review");
@@ -33,6 +34,8 @@ beforeEach(() => {
   box.write("tuicr-list", "[]");
   box.write("tuicr-comments", "[]");
   box.write("tuicr-exit", "0");
+  box.write("hunk-sessions", '{"sessions":[]}');
+  box.write("hunk-notes", '{"comments":[]}');
 
   // `rex api call -s SESSION METHOD JSON` answers by method. The first
   // program_status reports working and every later one idle.
@@ -58,6 +61,14 @@ case "$1 $2" in
   "review comments") cat ${quote(box.path("tuicr-comments"))} ;;
   "review add") ;;
   *) exit "$(cat ${quote(box.path("tuicr-exit"))})" ;;
+esac`,
+  );
+  box.stub(
+    "hunk",
+    `${record} >> ${quote(box.path("hunk-calls"))}
+case "$1 $2 $3" in
+  "session list --json") cat ${quote(box.path("hunk-sessions"))} ;;
+  "session comment list") cat ${quote(box.path("hunk-notes"))} ;;
 esac`,
   );
 });
@@ -275,6 +286,7 @@ describe("rex/config/review open", () => {
       agent,
       review: reviewBlock,
       cwd: work,
+      reviewer: "hunk",
       revisions: "HEAD~2..HEAD",
       delivered: [],
     });
@@ -328,5 +340,82 @@ describe("rex/config/review tuicr session choice", () => {
 
     expect(tuicrCalls().find((c) => c[1] === "comments")).toEqual(["review", "comments", "--session", "live"]);
     expect(saved().reviewerSession).toBe("live");
+  });
+});
+
+describe("rex/config/review hunk", () => {
+  function hunkSessions(...rows: { sessionId: string; cwd: string; launchedAt: string }[]): void {
+    box.write("hunk-sessions", JSON.stringify({ sessions: rows }));
+  }
+
+  function notes(...rows: object[]): void {
+    box.write("hunk-notes", JSON.stringify({ comments: rows }));
+  }
+
+  test.each<{ name: string; revisions?: string; args: string[] }>([
+    { name: "the working tree", args: ["diff", "--watch", "--agent-notes"] },
+    { name: "a revision range", revisions: "main..HEAD", args: ["diff", "main..HEAD", "--watch", "--agent-notes"] },
+  ])("run opens $name with agent notes shown", ({ revisions, args }) => {
+    seed(review({ reviewer: "hunk", revisions }));
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    expect(hunkCalls()[0]).toEqual(args);
+  });
+
+  test("send delivers the user's notes from the window open in the review's directory", () => {
+    seed(review({ reviewer: "hunk" }));
+    hunkSessions(
+      { sessionId: "elsewhere", cwd: "/other", launchedAt: "2026-11-02" },
+      { sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" },
+    );
+    notes(
+      { noteId: "user:1", source: "user", filePath: "src/app.ts", hunkIndex: 0, newRange: [2, 3], body: "rename these", author: "user" },
+      { noteId: "user:2", source: "user", filePath: "src/app.ts", hunkIndex: 0, oldRange: [1, 1], body: "why drop this", author: "user" },
+    );
+
+    const result = exec(["send", agent]);
+
+    expect(result.status).toBe(0);
+    expect(hunkCalls().find((c) => c[1] === "comment")).toEqual(["session", "comment", "list", "h1", "--type", "user", "--json"]);
+    const [text] = pasted();
+    expect(text).toContain("## src/app.ts:2-3 (id user:1)\n> two\n> three\nrename these");
+    expect(text).toContain("## src/app.ts:1 (id user:2)\nwhy drop this");
+    expect(saved()).toMatchObject({ reviewerSession: "h1", delivered: ["user:1", "user:2"] });
+  });
+
+  test("send keeps the recorded session while its window is open", () => {
+    seed(review({ reviewer: "hunk", reviewerSession: "h1" }));
+    hunkSessions(
+      { sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" },
+      { sessionId: "h2", cwd: realpathSync(work), launchedAt: "2026-11-02" },
+    );
+    notes({ noteId: "user:1", source: "user", body: "fix", author: "user" });
+
+    expect(exec(["send", agent]).status).toBe(0);
+
+    expect(hunkCalls().find((c) => c[1] === "comment")?.[3]).toBe("h1");
+  });
+
+  test("send fails when no Hunk window is open in the review's directory", () => {
+    seed(review({ reviewer: "hunk" }));
+
+    const result = exec(["send", agent]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("no open Hunk window");
+    expect(pasted()).toEqual([]);
+  });
+
+  test("reply answers the note as Claude", () => {
+    seed(review({ reviewer: "hunk" }));
+    hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
+    notes({ noteId: "user:1", source: "user", filePath: "src/app.ts", newRange: [2, 2], body: "fix", author: "user" });
+
+    expect(exec(["reply", agent, "user:1", "done"]).status).toBe(0);
+
+    expect(hunkCalls().at(-1)).toEqual(
+      ["session", "comment", "add", "h1", "--reply-to", "user:1", "--summary", "done", "--author", "Claude"],
+    );
   });
 });
