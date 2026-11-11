@@ -280,7 +280,7 @@ describe("rex/config/review open", () => {
     const reviewId = box.read(statePath(join("blocks", agent)));
     const [create] = apiCalls("session.new_split");
     const split = JSON.parse(create[5]);
-    expect(split).toMatchObject({ anchor_id: agent, direction: "horizontal", side: "before", focus: true });
+    expect(split).toMatchObject({ anchor_id: agent, direction: "horizontal", side: "after", ratio: 0.75, focus: true });
     expect(split.layout.block.options).toEqual({ cwd: work, command: [script, "run", reviewId] });
     expect(saved(reviewId)).toMatchObject({
       agent,

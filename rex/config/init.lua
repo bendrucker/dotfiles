@@ -114,7 +114,7 @@ rex.action{
 rex.action{
   name = "review_changes",
   title = "Review Changes",
-  description = "Review an agent pane's changes in Hunk, split to its left. Send, Approve, or Dismiss hands the outcome to the agent.",
+  description = "Review an agent pane's changes in Hunk, split to its right. Send, Approve, or Dismiss hands the outcome to the agent.",
   category = "Git",
   keywords = "hunk diff code review agent claude",
   args = { block = "string?", revisions = "string?" },
