@@ -1,5 +1,22 @@
 local terminal = "com.superlogical.terminal"
 local config_dir = debug.getinfo(1, "S").source:match("^@?(.*)/")
+
+-- The server's config path is fixed at startup, so `mise run rex:try` swaps
+-- configs by naming another init.lua here.
+local function tried_config()
+  local pointer = io.open(os.getenv("HOME") .. "/.local/state/rex/try")
+  if not pointer then return nil end
+  local path = pointer:read("*l")
+  pointer:close()
+  if not path or path == config_dir .. "/init.lua" then return nil end
+  local file = io.open(path)
+  if not file then return nil end
+  file:close()
+  return path
+end
+
+local tried = tried_config()
+if tried then return dofile(tried) end
 local review_cli = config_dir .. "/review/review"
 local review_blocks = os.getenv("HOME") .. "/.local/state/rex-review/blocks/"
 

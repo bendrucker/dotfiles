@@ -5,3 +5,13 @@
 run = "./rex/reload.sh"
 dir = "{{config_root}}/.."
 timeout = "60s"
+
+[tasks."rex:try"]
+description = "Load a worktree's Rex config into the running server"
+run = "./rex/try.sh"
+dir = "{{config_root}}/.."
+
+[tasks."rex:restore"]
+description = "Load the deployed Rex config again after rex:try"
+run = "./rex/try.sh --restore"
+dir = "{{config_root}}/.."
