@@ -18,7 +18,7 @@ function tryConfig(args: string[], env: Record<string, string> = {}) {
 }
 
 function pointer(): string {
-  return join(home, ".local", "state", "rex", "try");
+  return join(home, ".local", "state", "rex-try", "config");
 }
 
 beforeEach(() => {
@@ -34,7 +34,7 @@ describe("try", () => {
     const result = tryConfig([worktree]);
 
     expect(result.status).toBe(0);
-    expect(box.read("home/.local/state/rex/try")).toBe(`${worktree}/rex/config/init.lua\n`);
+    expect(box.read("home/.local/state/rex-try/config")).toBe(`${worktree}/rex/config/init.lua\n`);
     expect(box.read("calls")).toBe(`config check ${worktree}/rex/config/init.lua\n--autostart=false config reload\n`);
   });
 
@@ -45,7 +45,7 @@ describe("try", () => {
     const result = tryConfig([], { MISE_ORIGINAL_CWD: join(worktree, "rex") });
 
     expect(result.status).toBe(0);
-    expect(box.read("home/.local/state/rex/try")).toBe(`${top}/rex/config/init.lua\n`);
+    expect(box.read("home/.local/state/rex-try/config")).toBe(`${top}/rex/config/init.lua\n`);
   });
 
   test("refuses a directory without a Rex config", () => {
