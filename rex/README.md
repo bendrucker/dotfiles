@@ -2,6 +2,12 @@
 
 [Rex](https://www.superlogical.com/rex/docs) is a terminal multiplexer configured in Lua. `config/` links to `~/.config/rex`. Rex reads `init.lua` only on `rex config reload`, which the `rex:reload` task runs after a sync.
 
+## Trying a Worktree's Config
+
+Run `mise run rex:try` from a worktree to load its `rex/config` into the running server, and `mise run rex:restore` to go back to the deployed config. Pass a worktree path to `rex:try` to load one other than the current one.
+
+The server fixes its config path when it starts, so `rex:try` leaves `~/.config/rex` alone. It writes the worktree's `init.lua` path to `~/.local/state/rex/try`, and the deployed `init.lua` loads that file instead of itself. Every reload, including the nightly one, keeps loading the worktree until `rex:restore` removes the pointer. A pointer to a removed worktree falls back to the deployed config.
+
 ## Review Changes
 
 Run **Review Changes** from the command palette with an agent's pane focused. It opens [Hunk](../hunk/) on the agent's uncommitted changes, in a split taking the right three-quarters of the agent's pane. An agent can open one itself with `rex do review_changes block="$REX_BLOCK" revisions=<base>..HEAD`, where both arguments are optional.
