@@ -4,7 +4,7 @@ local config_dir = debug.getinfo(1, "S").source:match("^@?(.*)/")
 -- The server's config path is fixed at startup, so `mise run rex:try` swaps
 -- configs by naming another init.lua here.
 local function tried_config()
-  local pointer = io.open(os.getenv("HOME") .. "/.local/state/rex/try")
+  local pointer = io.open(os.getenv("HOME") .. "/.local/state/rex-try/config")
   if not pointer then return nil end
   local path = pointer:read("*l")
   pointer:close()

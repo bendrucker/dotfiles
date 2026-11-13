@@ -6,7 +6,7 @@
 
 Run `mise run rex:try` from a worktree to load its `rex/config` into the running server, and `mise run rex:restore` to go back to the deployed config. Pass a worktree path to `rex:try` to load one other than the current one.
 
-The server fixes its config path when it starts, so `rex:try` leaves `~/.config/rex` alone. It writes the worktree's `init.lua` path to `~/.local/state/rex/try`, and the deployed `init.lua` loads that file instead of itself. Every reload, including the nightly one, keeps loading the worktree until `rex:restore` removes the pointer. A pointer to a removed worktree falls back to the deployed config.
+The server fixes its config path when it starts, so `rex:try` leaves `~/.config/rex` alone. It writes the worktree's `init.lua` path to `~/.local/state/rex-try/config`, and the deployed `init.lua` loads that file instead of itself. Every reload, including the nightly one, keeps loading the worktree until `rex:restore` removes the pointer. A pointer to a removed worktree falls back to the deployed config.
 
 ## Review Changes
 

@@ -5,7 +5,7 @@
 # pointer names.
 set -euo pipefail
 
-pointer="$HOME/.local/state/rex/try"
+pointer="$HOME/.local/state/rex-try/config"
 
 if [[ "${1:-}" == --restore ]]; then
   rm -f "$pointer"
