@@ -1,5 +1,5 @@
 [tools]
-"npm:cf" = "1.0.0-beta.23"
+"npm:cf" = "1.0.0-beta.26"
 
 # Terraform is the only write path to Cloudflare, so cf logs in with read scopes
 # alone and Cloudflare rejects any write it attempts. read-scopes holds every
