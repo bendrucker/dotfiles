@@ -1,5 +1,5 @@
 [tools]
-node = "24.22.1"
+node = "26.13.0"
 "npm:typescript" = "7.0.2"
 "npm:typescript-language-server" = "6.0.2"
 
