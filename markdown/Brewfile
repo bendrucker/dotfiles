@@ -1,0 +1,4 @@
+if OS.mac?
+  tap 'qu8n/tap', trusted: true
+  brew 'qu8n/tap/mddog', ci: :extra
+end
