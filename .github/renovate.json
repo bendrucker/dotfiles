@@ -52,10 +52,9 @@
       "minimumReleaseAge": "3 days"
     },
     {
+      "description": "One PR per tool, so a tool that fails to install holds back only itself.",
       "matchManagers": ["mise"],
-      "groupName": "mise tools",
       "schedule": ["* 0-5 * * 1"],
-      "separateMajorMinor": false,
       "automerge": true,
       "rebaseWhen": "conflicted"
     },
