@@ -134,7 +134,7 @@ rex.action{
   description = "Review an agent pane's changes in Hunk, split to its right. Send, Approve, or Dismiss hands the outcome to the agent.",
   category = "Git",
   keywords = "hunk diff code review agent claude",
-  args = { block = "string?", revisions = "string?" },
+  args = { block = "string?", revisions = "string?", mode = "string?" },
   run = function(ctx, args)
     local block = args.block or ctx.block_id
     local dir = block and block_dir(block)
@@ -145,6 +145,10 @@ rex.action{
     if args.revisions then
       argv[#argv + 1] = "--revisions"
       argv[#argv + 1] = args.revisions
+    end
+    if args.mode then
+      argv[#argv + 1] = "--mode"
+      argv[#argv + 1] = args.mode
     end
     review(ctx, argv)
   end,
@@ -202,6 +206,18 @@ rex.action{
   args = { id = "string", text = "string" },
   run = function(ctx, args)
     review(ctx, { "reply", ctx.block_id, args.id, args.text })
+  end,
+}
+
+-- Run by the agent's watcher, from inside a sandbox that can't write the
+-- review's state.
+rex.action{
+  name = "review_claim",
+  title = "Review: Claim",
+  description = "Print the review's undelivered comments, one line each, and mark them delivered.",
+  category = "Git",
+  run = function(ctx)
+    return review(ctx, { "claim", ctx.block_id })
   end,
 }
 

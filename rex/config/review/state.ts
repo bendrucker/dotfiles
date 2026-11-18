@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -12,6 +12,7 @@ const Review = z.object({
   revisions: z.string().optional(),
   reviewerSession: z.string().optional(),
   delivered: z.array(z.string()),
+  mode: z.enum(["live", "batch"]).default("live"),
   outcome: z.enum(["approved", "dismissed", "failed"]).optional(),
 });
 
@@ -20,6 +21,32 @@ export type Review = z.infer<typeof Review>;
 // init.lua builds this same path from $HOME, ignoring XDG_STATE_HOME.
 export function stateDir(): string {
   return join(process.env.HOME ?? "", ".local", "state", "rex-review");
+}
+
+const LOCK_RETRY_MS = 50;
+// A lock older than this belongs to a process that died holding it.
+const LOCK_STALE_MS = 30_000;
+
+// Serializes read-modify-write of one review across processes. mkdir is atomic.
+export async function locked<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const lock = join(stateDir(), `${id}.lock`);
+  mkdirSync(stateDir(), { recursive: true });
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch {
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { recursive: true, force: true });
+      } catch {}
+      await Bun.sleep(LOCK_RETRY_MS);
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
 }
 
 function reviewPath(id: string): string {
