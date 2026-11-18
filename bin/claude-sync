@@ -52,6 +52,7 @@ import {
   SETTINGS,
   settingsReplaced,
 } from "../claude/settings-link";
+import { withoutInstallerEntries } from "../claude/installer-entries";
 import { installClaudeHooks } from "../moshi/claude-hooks";
 
 const TITLE = "Claude Sync";
@@ -85,23 +86,9 @@ export async function revertCosmeticJsonChanges(repoDir: string): Promise<void> 
   }
 }
 
-// Part of the Rex trial, through 2026-12-15. Rex owns its hook, and setup
-// re-adds it after every sync, so a settings.json that differs from HEAD only
-// in Rex's entries goes back to HEAD. Both sides drop them before comparing,
-// whether or not HEAD still carries one.
-const WITHOUT_REX_HOOKS = `
-  if (.hooks | type) == "object" then
-    .hooks |= (
-      map_values(
-        map(.hooks |= ((. // []) | map(select((.command // "") | contains("rex __internal") | not))))
-        | map(select(.hooks | length > 0))
-      )
-      | with_entries(select(.value | length > 0))
-    )
-    | if .hooks == {} then del(.hooks) else . end
-  else . end`;
-
-export async function revertRexHooks(repoDir: string): Promise<void> {
+// The installers re-add their entries after the sync, so a diff made only of
+// them goes back to HEAD.
+export async function revertInstallerEntries(repoDir: string): Promise<void> {
   const path = join(repoDir, SETTINGS);
   if (!isFile(path)) return;
 
@@ -109,10 +96,10 @@ export async function revertRexHooks(repoDir: string): Promise<void> {
   const working = readText(path);
   if (head.status !== 0 || working === head.stdout) return;
 
-  const stripped = await canonicalJson(working, WITHOUT_REX_HOOKS);
-  if (stripped === undefined || stripped !== (await canonicalJson(head.stdout, WITHOUT_REX_HOOKS))) return;
+  const stripped = withoutInstallerEntries(working);
+  if (stripped === undefined || !Bun.deepEquals(stripped, withoutInstallerEntries(head.stdout))) return;
 
-  await log("info", `Reverting rex's hook in ${SETTINGS}`);
+  await log("info", `Reverting installer-owned entries in ${SETTINGS}`);
   await $`git -C ${repoDir} checkout HEAD -- ${SETTINGS}`.nothrow();
 }
 
@@ -124,7 +111,7 @@ export async function syncRepo(repoDir: string): Promise<boolean> {
   // Before the gate, so a tree dirtied only by a reformat is clean by the time it looks. A dirty tracked file stalls the sync
   // behind it every night.
   await adoptReplacedSettings(repoDir);
-  await revertRexHooks(repoDir);
+  await revertInstallerEntries(repoDir);
   await revertCosmeticJsonChanges(repoDir);
 
   if (!(await reviewDirty(repoDir, TITLE))) return false;
