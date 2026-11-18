@@ -1,5 +1,5 @@
-// Runs after each claude repo pull, which rewrites the settings.json these hooks
-// live in. The edit stays: a diff it leaves is a moshi upgrade to commit there.
+// Runs after each claude repo pull, which can revert the settings.json entries
+// this owns.
 
 import { $ } from "bun";
 import { log } from "#gum";

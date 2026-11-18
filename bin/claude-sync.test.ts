@@ -227,8 +227,11 @@ function settingsJson(command: unknown, extra = "bar"): unknown {
 
 const REX_COMMAND = "/bin/sh -c 'rex __internal session-start --agent claude 2>/dev/null || true'";
 const REX_EVENT = { UserPromptSubmit: [{ hooks: [{ type: "command", command: REX_COMMAND }] }] };
+const MOSHI_COMMAND = "'/opt/homebrew/bin/moshi-hook' claude-hook";
+const WRAPPED_MOSHI_COMMAND = `~/.claude/hooks/unless-desktop.sh ${MOSHI_COMMAND}`;
+const MOSHI_PLUGIN_DIRS = "/home/spec/.claude/moshi-plugin";
 
-function withRexHook(settings: unknown, command = REX_COMMAND): unknown {
+function withHook(settings: unknown, command = REX_COMMAND): unknown {
   const base = settings as { hooks: { SessionStart: unknown[] } };
   const group = { hooks: [{ type: "command", command }] };
   return { ...base, hooks: { ...base.hooks, SessionStart: [...base.hooks.SessionStart, group] } };
@@ -237,6 +240,17 @@ function withRexHook(settings: unknown, command = REX_COMMAND): unknown {
 function withRexEvent(settings: unknown): unknown {
   const base = settings as { hooks: object };
   return { ...base, hooks: { ...base.hooks, ...REX_EVENT } };
+}
+
+function withPluginDirs(settings: unknown, dirs = MOSHI_PLUGIN_DIRS): unknown {
+  const base = settings as { env: object };
+  return { ...base, env: { ...base.env, CLAUDE_CODE_PLUGIN_DIRS: dirs } };
+}
+
+// What the installers leave in the clone: moshi unwraps its committed hook and
+// adds its plugin dir, and rex appends its own hook.
+function installed(settings: unknown): unknown {
+  return withPluginDirs(withHook(withHook(settings, MOSHI_COMMAND)));
 }
 
 function repoSettingsText(): string {
@@ -837,34 +851,58 @@ describe("syncRepo", () => {
     expect(output).toContain("Local changes present - skipping sync");
   });
 
-  // Rex owns its hook and setup re-adds it after the sync, so its entry alone
-  // never holds the gate shut.
+  // The installers re-add their entries after the sync, so those entries alone
+  // never hold the gate shut.
   test.each<{ name: string; settings: unknown }>([
-    { name: "beside a committed hook", settings: withRexHook(settingsJson(HOOK)) },
-    { name: "in an event of its own", settings: withRexEvent(settingsJson(HOOK)) },
-  ])("clears rex's hook before the gate sees it: $name", async ({ settings }) => {
+    { name: "rex beside a committed hook", settings: withHook(settingsJson(HOOK)) },
+    { name: "rex in an event of its own", settings: withRexEvent(settingsJson(HOOK)) },
+    { name: "moshi's hook", settings: withHook(settingsJson(HOOK), MOSHI_COMMAND) },
+    { name: "moshi's plugin dir", settings: withPluginDirs(settingsJson(HOOK)) },
+    { name: "every installer at once", settings: installed(settingsJson(HOOK)) },
+  ])("clears installer-owned entries before the gate sees them: $name", async ({ settings }) => {
     writeRepoSettings(settings);
 
     expect(await syncCall("syncRepo", repo)).toBe(true);
     expect(settingsStatus()).toBe("clean");
   });
 
+  // HEAD carries moshi's hook wrapped, and the installer rewrites it bare. A
+  // failed capture can also leave the edit staged and reformatted.
+  test.each<{ name: string; staged: boolean }>([
+    { name: "unstaged", staged: false },
+    { name: "staged", staged: true },
+  ])("clears installer entries that differ from the ones HEAD carries: $name", async ({ staged }) => {
+    writeRepoSettings(withHook(settingsJson(HOOK), WRAPPED_MOSHI_COMMAND));
+    git("commit", "-q", "-am", "moshi");
+    writeRepoSettings(installed(settingsJson(HOOK)));
+    if (staged) git("add", "user/settings.json");
+    writeRepoSettings(installed(settingsJson(HOOK)), 4);
+
+    expect(await syncCall("syncRepo", repo)).toBe(true);
+    expect(settingsStatus()).toBe("clean");
+    expect(repoSettingsText()).toContain(WRAPPED_MOSHI_COMMAND);
+  });
+
   // A release that changes the command still matches while HEAD carries the
   // entry, which it does until the claude repo drops it.
   test("clears a changed rex hook that HEAD still carries", async () => {
-    writeRepoSettings(withRexHook(settingsJson(HOOK)));
+    writeRepoSettings(withHook(settingsJson(HOOK)));
     git("commit", "-q", "-am", "rex");
-    writeRepoSettings(withRexHook(settingsJson(HOOK), "rex __internal session-start --agent claude --v2"));
+    writeRepoSettings(withHook(settingsJson(HOOK), "rex __internal session-start --agent claude --v2"));
 
     expect(await syncCall("syncRepo", repo)).toBe(true);
     expect(settingsStatus()).toBe("clean");
   });
 
-  test("stops at the gate on a real change beside rex's hook", async () => {
-    writeRepoSettings(withRexHook(settingsJson(HOOK, "changed")));
+  test.each<{ name: string; settings: unknown }>([
+    { name: "a real change beside them", settings: installed(settingsJson(HOOK, "changed")) },
+    { name: "a plugin dir moshi did not add", settings: withPluginDirs(settingsJson(HOOK), "/home/spec/plugins") },
+    { name: "a hook that only names moshi-hook", settings: withHook(settingsJson(HOOK), "moshi-hook status") },
+  ])("stops at the gate beside installer-owned entries on $name", async ({ settings }) => {
+    writeRepoSettings(settings);
 
     expect(await syncCall("syncRepo", repo)).toBe(false);
-    expect(repoSettingsText()).toContain("rex __internal");
+    expect(settingsStatus()).toBe("dirty");
   });
 });
 
@@ -971,7 +1009,7 @@ describe("claudeRepoHome", () => {
 
 // herdr's installer appends a SessionStart entry it cannot recognize in the
 // committed $HOME form, and its status check reads only the script's version
-// marker. moshi's entries are what the committed file is meant to carry.
+// marker. moshi's and rex's edits stay for the next run's gate to revert.
 describe("installAgentHooks", () => {
   function repoSettings(): unknown {
     return JSON.parse(readFileSync(join(repo, "user", "settings.json"), "utf8"));
@@ -1053,8 +1091,7 @@ describe("installAgentHooks", () => {
     expect(readLog("hooks.log")).toBe("");
   });
 
-  // A Rex release that changes its hook leaves the clone dirty, so the sync gate
-  // surfaces the new entry for a commit.
+  // rex's entry stays live until the next run's gate reverts it.
   test("keeps rex's settings edit", async () => {
     const env = without("herdr", "moshi-hook");
 
@@ -1134,7 +1171,7 @@ describe("sync", () => {
     expect(readLog("plugin.log")).toContain("update alpha@first");
   });
 
-  // The gate clears Rex's entry, and setup puts the installed release's back.
+  // The gate clears the installers' entries, and the installers put them back.
   test("leaves rex's hook in place after the run", async () => {
     expect(await syncCall("sync", repo)).toBe(0);
     expect(JSON.parse(repoSettingsText())).toMatchObject({ rex: 1 });
