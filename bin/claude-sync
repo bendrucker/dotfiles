@@ -52,6 +52,7 @@ import {
   SETTINGS,
   settingsReplaced,
 } from "../claude/settings-link";
+import { withoutInstallerEntries } from "../claude/installer-entries";
 import { installClaudeHooks } from "../moshi/claude-hooks";
 
 const TITLE = "Claude Sync";
@@ -85,24 +86,8 @@ export async function revertCosmeticJsonChanges(repoDir: string): Promise<void> 
   }
 }
 
-// Rex and moshi own their entries, and the nightly installers re-add them after
-// the sync, so a settings.json that differs from HEAD only in those entries goes
-// back to HEAD. Both sides drop them before comparing, whatever HEAD carries.
-const WITHOUT_INSTALLER_ENTRIES = `
-  if (.hooks | type) == "object" then
-    .hooks |= (
-      map_values(
-        map(.hooks |= ((. // []) | map(select((.command // "") | test("rex __internal|moshi-hook'? claude-hook") | not))))
-        | map(select(.hooks | length > 0))
-      )
-      | with_entries(select(.value | length > 0))
-    )
-    | if .hooks == {} then del(.hooks) else . end
-  else . end
-  | if (.env | type) == "object" and ((.env.CLAUDE_CODE_PLUGIN_DIRS // "") | endswith("/.claude/moshi-plugin")) then
-    del(.env.CLAUDE_CODE_PLUGIN_DIRS) | if .env == {} then del(.env) else . end
-  else . end`;
-
+// The installers re-add their entries after the sync, so a diff made only of
+// them goes back to HEAD.
 export async function revertInstallerEntries(repoDir: string): Promise<void> {
   const path = join(repoDir, SETTINGS);
   if (!isFile(path)) return;
@@ -111,8 +96,8 @@ export async function revertInstallerEntries(repoDir: string): Promise<void> {
   const working = readText(path);
   if (head.status !== 0 || working === head.stdout) return;
 
-  const stripped = await canonicalJson(working, WITHOUT_INSTALLER_ENTRIES);
-  if (stripped === undefined || stripped !== (await canonicalJson(head.stdout, WITHOUT_INSTALLER_ENTRIES))) return;
+  const stripped = withoutInstallerEntries(working);
+  if (stripped === undefined || !Bun.deepEquals(stripped, withoutInstallerEntries(head.stdout))) return;
 
   await log("info", `Reverting installer-owned entries in ${SETTINGS}`);
   await $`git -C ${repoDir} checkout HEAD -- ${SETTINGS}`.nothrow();
