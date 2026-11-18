@@ -58,7 +58,7 @@ fi`,
     `${record} >> ${quote(box.path("tuicr-calls"))}
 case "$1 $2" in
   "review list") cat ${quote(box.path("tuicr-list"))} ;;
-  "review comments") cat ${quote(box.path("tuicr-comments"))} ;;
+  "review comments") sleep "$(cat ${quote(box.path("tuicr-delay"))} 2>/dev/null || echo 0)"; cat ${quote(box.path("tuicr-comments"))} ;;
   "review add") ;;
   *) exit "$(cat ${quote(box.path("tuicr-exit"))})" ;;
 esac`,
@@ -78,7 +78,7 @@ afterEach(() => {
 });
 
 function review(overrides: Partial<Review> = {}): Review {
-  return { id, session: "sess", agent, review: reviewBlock, cwd: work, reviewer: "tuicr", delivered: [], ...overrides };
+  return { id, session: "sess", agent, review: reviewBlock, cwd: work, reviewer: "tuicr", delivered: [], mode: "live", ...overrides };
 }
 
 // Relative to the sandbox, which is where `box.read` and `box.write` start.
@@ -86,7 +86,7 @@ function statePath(name: string): string {
   return join("home", ".local", "state", "rex-review", name);
 }
 
-function seed(state: Review): void {
+function seed(state: Omit<Review, "mode"> & Partial<Pick<Review, "mode">>): void {
   box.write(statePath(`${state.id}.json`), JSON.stringify(state));
   for (const block of [state.agent, state.review]) if (block) box.write(statePath(join("blocks", block)), state.id);
 }
@@ -99,12 +99,23 @@ function exists(name: string): boolean {
   return existsSync(box.path(statePath(name)));
 }
 
+function execEnv(env: Record<string, string> = {}): Record<string, string> {
+  return { HOME: box.path("home"), REX_SESSION: "sess", ZDOTDIR: box.mkdir("empty"), ...env };
+}
+
 function exec(args: string[], env: Record<string, string> = {}) {
-  return run([script, ...args], {
-    path: [box.bin],
+  return run([script, ...args], { path: [box.bin], cwd: work, env: execEnv(env) });
+}
+
+// `run` blocks, so overlapping calls need their own spawn.
+async function execAsync(args: string[]): Promise<number> {
+  const child = Bun.spawn([script, ...args], {
     cwd: work,
-    env: { HOME: box.path("home"), REX_SESSION: "sess", ZDOTDIR: box.mkdir("empty"), ...env },
+    env: { ...process.env, PATH: `${box.bin}:${process.env.PATH}`, ...execEnv() },
+    stdout: "ignore",
+    stderr: "ignore",
   });
+  return child.exited;
 }
 
 function sessions(...rows: { slug: string; updated_at: string; active: boolean }[]): void {
@@ -218,6 +229,77 @@ describe("rex/config/review new-comment filter", () => {
   });
 });
 
+describe("rex/config/review claim", () => {
+  beforeEach(() => {
+    sessions({ slug: "t1", updated_at: "1", active: true });
+  });
+
+  // Regression: send read `delivered`, listed comments, then saved with no
+  // lock, so two overlapping sends both delivered the same comment.
+  test("concurrent sends deliver a comment once", async () => {
+    seed(review());
+    comments({ id: "c1", author: "Ben", content: "fix" });
+    box.write("tuicr-delay", "0.3");
+
+    const codes = await Promise.all([execAsync(["send", agent]), execAsync(["send", agent])]);
+
+    expect(codes.toSorted()).toEqual([0, 1]);
+    expect(pasted()).toHaveLength(1);
+    expect(saved().delivered).toEqual(["c1"]);
+    expect(exists(`${id}.lock`)).toBe(false);
+  });
+
+  test("prints one live line per new comment and marks it delivered", () => {
+    seed(review());
+    comments(
+      { id: "c1", author: "Ben", path: "src/app.ts", start_line: 2, end_line: 3, side: "new", content: "rename\nthese" },
+      { id: "c2", author: "Ben", content: "overall" },
+      { id: "r", author: "Claude", content: "done" },
+    );
+
+    const result = exec(["claim", agent]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(
+      "[review: comment] src/app.ts:2-3 (id c1) | > two ⏎ > three | rename ⏎ these\n" +
+        "[review: comment] the review (id c2) | overall\n",
+    );
+    expect(pasted()).toEqual([]);
+    expect(saved().delivered).toEqual(["c1", "c2"]);
+  });
+
+  test("claim then send reports no new comments", () => {
+    seed(review());
+    comments({ id: "c1", author: "Ben", content: "fix" });
+
+    expect(exec(["claim", agent]).status).toBe(0);
+    const result = exec(["send", agent]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("no new comments to send");
+    expect(pasted()).toEqual([]);
+  });
+
+  test("claim prints nothing when no comment is new", () => {
+    seed(review({ delivered: ["c1"] }));
+    comments({ id: "c1", author: "Ben", content: "fix" });
+
+    const result = exec(["claim", agent]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("");
+  });
+
+  test("state saved before modes existed loads as live", () => {
+    const { mode: _, ...old } = review();
+    seed(old);
+    comments({ id: "c1", author: "Ben", content: "fix" });
+
+    expect(exec(["claim", agent]).status).toBe(0);
+    expect(saved().mode).toBe("live");
+  });
+});
+
 describe("rex/config/review run", () => {
   test.each<{ name: string; exit: string; message: string }>([
     { name: "a clean exit delivers dismissed", exit: "0", message: "[review: dismissed]" },
@@ -289,8 +371,22 @@ describe("rex/config/review open", () => {
       reviewer: "hunk",
       revisions: "HEAD~2..HEAD",
       delivered: [],
+      mode: "live",
     });
     expect(box.read(statePath(join("blocks", reviewBlock)))).toBe(reviewId);
+  });
+
+  test("records batch mode", () => {
+    expect(exec(["open", agent, "--cwd", work, "--mode", "batch"]).status).toBe(0);
+
+    expect(saved(box.read(statePath(join("blocks", agent)))).mode).toBe("batch");
+  });
+
+  test("rejects an unknown mode", () => {
+    const result = exec(["open", agent, "--cwd", work, "--mode", "eager"]);
+
+    expect(result.status).toBe(2);
+    expect(apiCalls("session.new_split")).toEqual([]);
   });
 });
 
@@ -320,13 +416,22 @@ describe("rex/config/review reply", () => {
 
 describe("rex/config/review wait", () => {
   test("focuses the review once the agent goes from working to idle", () => {
-    seed(review());
+    seed(review({ mode: "batch" }));
 
     const result = exec(["wait", id], { REVIEW_POLL_MS: "10", REVIEW_START_MS: "5000" });
 
     expect(result.status).toBe(0);
     expect(rexCalls().at(-1)).toEqual(["focus", "-s", "sess", reviewBlock]);
     expect(rexCalls().filter((c) => c[0] === "block")).toHaveLength(2);
+  });
+
+  test("returns at once in live mode", () => {
+    seed(review());
+
+    const result = exec(["wait", id], { REVIEW_POLL_MS: "10", REVIEW_START_MS: "5000" });
+
+    expect(result.status).toBe(0);
+    expect(rexCalls()).toEqual([]);
   });
 });
 

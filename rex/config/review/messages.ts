@@ -36,6 +36,15 @@ export function changes(comments: Comment[], cwd: string): string {
   ].join("\n\n");
 }
 
+// One line per note, because each line of a watcher's stdout is one event.
+export function live(comment: Comment, cwd: string): string {
+  const flat = (text: string) => text.replace(/\n/g, " ⏎ ");
+  return [`[review: comment] ${location(comment)} (id ${comment.id})`, quote(comment, cwd), comment.body]
+    .filter((part) => part !== undefined)
+    .map(flat)
+    .join(" | ");
+}
+
 export const approved = `[review: approved] ${HUMAN} approved the changes. Continue.`;
 
 export const dismissed = `[review: dismissed] ${HUMAN} closed the review without feedback. Treat this as a successful outcome and continue.`;

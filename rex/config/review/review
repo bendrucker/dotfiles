@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 //
 // Usage:
-//   review open AGENT_BLOCK --cwd DIR [--revisions REVSET]
+//   review open AGENT_BLOCK --cwd DIR [--revisions REVSET] [--mode live|batch]
 //   review run ID
-//   review send|approve|dismiss BLOCK
+//   review send|claim|approve|dismiss BLOCK
 //   review wait ID
 //   review reply BLOCK COMMENT_ID TEXT
 //
@@ -14,8 +14,8 @@ import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import * as messages from "./messages";
 import { Client } from "./rex";
-import { AGENT_AUTHOR, type Reviewer } from "./reviewer";
-import { load, remove, resolve, save, type Review } from "./state";
+import { AGENT_AUTHOR, type Comment, type Reviewer } from "./reviewer";
+import { load, locked, remove, resolve, save, type Review } from "./state";
 import { reviewer as hunk } from "./hunk";
 import { reviewer as tuicr } from "./tuicr";
 
@@ -41,7 +41,7 @@ function find(block: string): Review {
   return review;
 }
 
-async function open(rex: Client, agent: string, cwd: string, revisions?: string): Promise<void> {
+async function open(rex: Client, agent: string, cwd: string, mode: Review["mode"], revisions?: string): Promise<void> {
   const existing = resolve(agent);
   if (existing?.review !== undefined) {
     try {
@@ -52,7 +52,7 @@ async function open(rex: Client, agent: string, cwd: string, revisions?: string)
     }
   }
 
-  const review: Review = { id: randomUUID(), session: rex.session, agent, cwd, reviewer: DEFAULT_REVIEWER, revisions, delivered: [] };
+  const review: Review = { id: randomUUID(), session: rex.session, agent, cwd, reviewer: DEFAULT_REVIEWER, revisions, delivered: [], mode };
   save(review);
   const block = await rex.newSplit(agent, cwd, [import.meta.path, "run", review.id]);
   save({ ...review, review: block });
@@ -89,18 +89,34 @@ async function run(rex: Client, id: string): Promise<void> {
   }
 }
 
-async function send(rex: Client, block: string): Promise<void> {
-  const review = find(block);
-  const reviewer = reviewers[review.reviewer];
-  if (review.review !== undefined) await reviewer.flush(review.review);
-  const { session, comments } = await reviewer.comments(review.cwd, review.reviewerSession);
-  const fresh = comments.filter((c) => c.author !== AGENT_AUTHOR && !review.delivered.includes(c.id));
-  if (fresh.length === 0) throw new Error("no new comments to send. Approve or dismiss the review instead.");
+// Lists the notes no send or claim has delivered yet and records them as
+// delivered, under the review's lock.
+async function claim(block: string): Promise<{ review: Review; fresh: Comment[] }> {
+  const { id } = find(block);
+  return locked(id, async () => {
+    const review = load(id);
+    if (review === undefined) throw new Error(`review ${id} closed`);
+    const reviewer = reviewers[review.reviewer];
+    if (review.review !== undefined) await reviewer.flush(review.review);
+    const { session, comments } = await reviewer.comments(review.cwd, review.reviewerSession);
+    const fresh = comments.filter((c) => c.author !== AGENT_AUTHOR && !review.delivered.includes(c.id));
+    const next = { ...review, reviewerSession: session, delivered: [...review.delivered, ...fresh.map((c) => c.id)] };
+    if (fresh.length > 0 || session !== review.reviewerSession) save(next);
+    return { review: next, fresh };
+  });
+}
 
-  save({ ...review, reviewerSession: session, delivered: [...review.delivered, ...fresh.map((c) => c.id)] });
+async function send(rex: Client, block: string): Promise<void> {
+  const { review, fresh } = await claim(block);
+  if (fresh.length === 0) throw new Error("no new comments to send. Approve or dismiss the review instead.");
   await rex.submit(review.agent, messages.changes(fresh, review.cwd));
   await rex.focus(review.agent);
   console.log(review.id);
+}
+
+async function claimLines(block: string): Promise<void> {
+  const { review, fresh } = await claim(block);
+  for (const comment of fresh) console.log(messages.live(comment, review.cwd));
 }
 
 async function agentDone(rex: Client, review: Review): Promise<boolean> {
@@ -126,7 +142,8 @@ async function agentDone(rex: Client, review: Review): Promise<boolean> {
 
 async function wait(rex: Client, id: string): Promise<void> {
   const review = load(id);
-  if (review === undefined || !(await agentDone(rex, review))) return;
+  // A live review's agent answers each note as it lands, so focus stays put.
+  if (review === undefined || review.mode === "live" || !(await agentDone(rex, review))) return;
   const current = load(id);
   if (current?.review === undefined) return;
   await reviewers[current.reviewer].reload(current.review);
@@ -146,7 +163,7 @@ async function main(argv: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
-    options: { cwd: { type: "string" }, revisions: { type: "string" } },
+    options: { cwd: { type: "string" }, revisions: { type: "string" }, mode: { type: "string", default: "live" } },
   });
   const [command, target, ...rest] = positionals;
   if (target === undefined) throw new Usage("missing argument");
@@ -155,11 +172,14 @@ async function main(argv: string[]): Promise<void> {
   switch (command) {
     case "open":
       if (values.cwd === undefined) throw new Usage("open needs --cwd");
-      return open(rex, target, values.cwd, values.revisions);
+      if (values.mode !== "live" && values.mode !== "batch") throw new Usage("--mode is live or batch");
+      return open(rex, target, values.cwd, values.mode, values.revisions);
     case "run":
       return run(rex, target);
     case "send":
       return send(rex, target);
+    case "claim":
+      return claimLines(target);
     case "approve":
       return finish(rex, find(target), "approved", messages.approved);
     case "dismiss":
