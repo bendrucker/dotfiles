@@ -17,6 +17,21 @@ end
 
 local tried = tried_config()
 if tried then return dofile(tried) end
+
+-- rex-agent-resume's plugin.lua adds palette actions that rewrite this file,
+-- so start only its watcher. A second watcher for the same server exits.
+local agent_resume = os.getenv("HOME") .. "/.local/share/rex-agent-resume"
+local agent_resume_run = agent_resume .. "/lua/rex-agent-resume/run.lua"
+local agent_resume_file = io.open(agent_resume_run)
+if agent_resume_file then
+  agent_resume_file:close()
+  package.path = agent_resume .. "/lua/?.lua;" .. package.path
+  local rex_bin = require("rex-agent-resume.util").rex_bin()
+  if rex_bin then
+    rex.exec.start({ rex_bin, "--autostart=false", "do", agent_resume_run, "--all", "mode=watch" }, { detach = true })
+  end
+end
+
 local review_cli = config_dir .. "/review/review"
 local review_blocks = os.getenv("HOME") .. "/.local/state/rex-review/blocks/"
 
