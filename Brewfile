@@ -44,7 +44,12 @@ end
 
 # A managed machine, the same test scripts/brew-managed-machine makes. Keep the
 # two in step.
-corporate = Dir.exist?('/Library/Managed Preferences') && !Dir.empty?('/Library/Managed Preferences')
+managed_preferences = '/Library/Managed Preferences'
+screen_time_only = lambda do |dir|
+  File.directory?(dir) && Dir.children(dir).all? { |f| f == 'complete.plist' || f.start_with?('com.apple.familycontrols.') }
+end
+corporate = Dir.exist?(managed_preferences) &&
+            Dir.children(managed_preferences).any? { |entry| !screen_time_only.call(File.join(managed_preferences, entry)) }
 
 cask_args appdir: '/Applications'
 
@@ -61,7 +66,6 @@ brew 'watch'
 cask '1password'
 cask '1password-cli'
 cask 'adobe-creative-cloud' unless corporate
-cask 'android-file-transfer' unless corporate
 cask 'backblaze' unless corporate
 cask 'charles'
 cask 'disk-drill'
