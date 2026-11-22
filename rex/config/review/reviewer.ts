@@ -13,6 +13,8 @@ export interface Comment {
   // The text a note anchors to, when the reviewer records it.
   quote?: string;
   body: string;
+  // Changes when the note is edited. A note without one is never redelivered.
+  version?: string;
 }
 
 // What a review covers: a diff in `cwd`, or one document.
@@ -46,8 +48,6 @@ export interface Reviewer {
   reply(target: Target, session: string, comment: Comment, text: string): Promise<void>;
   // A directory the reviewer writes notes into without signaling `run`.
   watch?(target: Target): string;
-  // False when notes take no replies, so the agent answers in its turn.
-  threads?(target: Target): boolean;
   // The decision a gated reviewer wrote to `result`, if any.
   decision?(result: string): "approved" | "dismissed" | undefined;
 }

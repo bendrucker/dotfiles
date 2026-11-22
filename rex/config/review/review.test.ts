@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { quote, repoRoot, run, sandbox, type Sandbox } from "#harness";
@@ -131,10 +130,6 @@ function saved(reviewId = id): Review {
 
 function deliveredIds(reviewId = id): string[] {
   return saved(reviewId).delivered.map((d) => d.id);
-}
-
-function hash(body: string): string {
-  return createHash("sha256").update(body).digest("hex").slice(0, 16);
 }
 
 function exists(name: string): boolean {
@@ -621,8 +616,11 @@ describe("rex/config/review hunk", () => {
   });
 });
 
+const CREATED = "2026-11-21T00:00:00.000Z";
+const EDITED = "2026-11-21T01:00:00.000Z";
+
 function note(overrides: object = {}): object {
-  return { noteId: "user:1", source: "user", author: "user", filePath: "src/app.ts", newRange: [2, 2], body: "fix", ...overrides };
+  return { noteId: "user:1", source: "user", author: "user", filePath: "src/app.ts", newRange: [2, 2], body: "fix", createdAt: CREATED, ...overrides };
 }
 
 function agentNote(overrides: object = {}): object {
@@ -639,19 +637,19 @@ describe("rex/config/review quitting Hunk", () => {
     { name: "no notes approves", delivered: [], rows: [], message: "[review: approved] Ben approved the changes. Continue." },
     {
       name: "every delivered note answered approves",
-      delivered: [{ id: "user:1", hash: hash("fix") }],
+      delivered: [{ id: "user:1", version: CREATED }],
       rows: [note(), agentNote()],
       message: "[review: approved] Ben approved the changes. Continue.",
     },
     {
       name: "a follow-up answered later in the thread approves",
-      delivered: [{ id: "user:1", hash: hash("fix") }, { id: "user:2", hash: hash("and this") }],
+      delivered: [{ id: "user:1", version: CREATED }, { id: "user:2", version: CREATED }],
       rows: [note(), agentNote(), note({ noteId: "user:2", parentId: "user:1", body: "and this" }), agentNote({ noteId: "mcp:2" })],
       message: "[review: approved]",
     },
     {
       name: "an unanswered delivered note asks how to proceed",
-      delivered: [{ id: "user:1", hash: hash("fix") }],
+      delivered: [{ id: "user:1", version: CREATED }],
       rows: [note()],
       message: "These earlier comments have no reply yet: id user:1.",
     },
@@ -676,7 +674,7 @@ describe("rex/config/review quitting Hunk", () => {
   });
 
   test("a closed review tells the agent to address the notes and ask how to proceed", () => {
-    hunkReview({ delivered: [{ id: "user:1", hash: hash("fix") }], mode: "batch" });
+    hunkReview({ delivered: [{ id: "user:1", version: CREATED }], mode: "batch" });
     notes(note(), note({ noteId: "user:2", newRange: [3, 3], body: "and this" }));
 
     expect(exec(["run", id]).status).toBe(0);
@@ -718,7 +716,7 @@ describe("rex/config/review quitting Hunk", () => {
 
 describe("rex/config/review approve", () => {
   test("delivers unsent notes as approved once they are addressed", () => {
-    hunkReview({ delivered: [{ id: "user:1", hash: hash("fix") }] });
+    hunkReview({ delivered: [{ id: "user:1", version: CREATED }] });
     notes(note(), agentNote(), note({ noteId: "user:2", newRange: [3, 3], body: "rename" }));
 
     expect(exec(["approve", agent]).status).toBe(0);
@@ -738,8 +736,8 @@ describe("rex/config/review approve", () => {
 
 describe("rex/config/review edits and retractions", () => {
   test("claim redelivers an edited note and reports a deleted one", () => {
-    hunkReview({ delivered: [{ id: "user:1", hash: hash("old") }, { id: "user:9", hash: hash("gone") }] });
-    notes(note({ body: "new" }));
+    hunkReview({ delivered: [{ id: "user:1", version: CREATED }, { id: "user:9", version: CREATED }] });
+    notes(note({ body: "new", updatedAt: EDITED }));
 
     const result = exec(["claim", agent]);
 
@@ -749,12 +747,12 @@ describe("rex/config/review edits and retractions", () => {
       [review: comment edited] src/app.ts:2 (id user:1) | > two | new
       "
     `);
-    expect(saved().delivered).toEqual([{ id: "user:1", hash: hash("new") }]);
+    expect(saved().delivered).toEqual([{ id: "user:1", version: EDITED }]);
   });
 
   test("send carries edits and retractions in the batch", () => {
-    hunkReview({ delivered: [{ id: "user:1", hash: hash("old") }, { id: "user:9", hash: hash("gone") }] });
-    notes(note({ body: "new" }));
+    hunkReview({ delivered: [{ id: "user:1", version: CREATED }, { id: "user:9", version: CREATED }] });
+    notes(note({ body: "new", updatedAt: EDITED }));
 
     expect(exec(["send", agent]).status).toBe(0);
 
@@ -773,24 +771,34 @@ describe("rex/config/review edits and retractions", () => {
   });
 
   test("an unchanged note stays delivered", () => {
-    hunkReview({ delivered: [{ id: "user:1", hash: hash("fix") }] });
+    hunkReview({ delivered: [{ id: "user:1", version: CREATED }] });
     notes(note());
 
     expect(exec(["claim", agent]).stdout).toBe("");
   });
 
-  test("ids saved without hashes take a hash without redelivery", () => {
-    box.write(statePath(`${id}.json`), JSON.stringify({ ...review({ reviewer: "hunk", reviewerSession: "h1" }), delivered: ["user:1"] }));
+  test.each<{ name: string; delivered: unknown[] }>([
+    { name: "a bare id", delivered: ["user:1"] },
+    { name: "a body hash", delivered: [{ id: "user:1", hash: "0123456789abcdef" }] },
+  ])("$name saved before versions takes one without redelivery", ({ delivered }) => {
+    box.write(statePath(`${id}.json`), JSON.stringify({ ...review({ reviewer: "hunk", reviewerSession: "h1" }), delivered }));
     box.write(statePath(join("blocks", agent)), id);
     hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
-    notes(note());
+    notes(note({ updatedAt: EDITED }));
 
     expect(exec(["claim", agent]).stdout).toBe("");
-    expect(saved().delivered).toEqual([{ id: "user:1", hash: hash("fix") }]);
+    expect(saved().delivered).toEqual([{ id: "user:1", version: EDITED }]);
+  });
+
+  test("a note with no timestamps is never redelivered", () => {
+    hunkReview({ delivered: [{ id: "user:1" }] });
+    notes(note({ body: "new", createdAt: undefined }));
+
+    expect(exec(["claim", agent]).stdout).toBe("");
   });
 
   test("a different Hunk window retracts nothing", () => {
-    hunkReview({ reviewerSession: "h0", delivered: [{ id: "user:9", hash: hash("gone") }] });
+    hunkReview({ reviewerSession: "h0", delivered: [{ id: "user:9", version: CREATED }] });
 
     const result = exec(["claim", agent]);
 
@@ -804,7 +812,7 @@ describe("rex/config/review thread context", () => {
     { name: "the agent's reply", parentId: "mcp:1" },
     { name: "the thread's root", parentId: "user:1" },
   ])("a reply to $name carries the agent's reply it answers", ({ parentId }) => {
-    hunkReview({ delivered: [{ id: "user:1", hash: hash("fix") }] });
+    hunkReview({ delivered: [{ id: "user:1", version: CREATED }] });
     notes(note(), agentNote({ body: "renamed it to total" }), note({ noteId: "user:2", parentId, body: "not that name" }));
 
     const result = exec(["claim", agent]);
@@ -1060,6 +1068,7 @@ describe("rex/config/review plannotator", () => {
   const docStorePath = join(client, "annotations", "work", "annotate-doc-md-abc", "annotations.json");
   const doc = () => join(work, "doc.md");
   const plannotatorCalls = () => readCalls("plannotator-calls");
+  const DOC_CREATED = "2026-11-21T00:00:00.000Z";
 
   // `onRun` stands in for the TUI's lifetime. A `decision` file becomes the
   // gate's result file.
@@ -1097,12 +1106,12 @@ ${onRun || ":"}`,
     return {
       id: "local_d1",
       document_id: "",
-      anchor: { originalText: "Deferred Work", quote: "## Deferred Work" },
+      anchor: { originalText: "Deferred Work", quote: "## Deferred Work", plannotator_tui: { source: { start: 7 } } },
       body: "rm Work",
       author: null,
       state: "open",
-      created_at: "2026-11-21T00:00:00.000Z",
-      updated_at: "2026-11-21T00:00:00.000Z",
+      created_at: DOC_CREATED,
+      updated_at: DOC_CREATED,
       replies: [],
       ...overrides,
     };
@@ -1156,8 +1165,8 @@ ${onRun || ":"}`,
     expect(await child.exited).toBe(0);
 
     expect(events()).toMatchInlineSnapshot(`
-      "[review: comment] src/app.ts:2 (id local_1) | > two | fix | Reply here in chat. This note takes no review_reply.
-      [review: closed] approved
+      "[review: comment] src/app.ts:2 (id local_1) | > two | fix
+      [review: closed] closed
       "
     `);
   });
@@ -1166,13 +1175,13 @@ ${onRun || ":"}`,
     {
       name: "diff",
       store: () => diffStore(diffNote({ text: "fix it now", plannotator_tui: { patchKey: "k", updatedAt: 2, resolution: "still_there" } })),
-      delivered: [{ id: "local_1", hash: hash("fix") }],
+      delivered: [{ id: "local_1", version: "1" }],
       doc: false,
     },
     {
       name: "doc",
       store: () => docStore(docNote({ body: "drop Work", updated_at: "2026-11-21T01:00:00.000Z" })),
-      delivered: [{ id: "local_d1", hash: hash("rm Work") }],
+      delivered: [{ id: "local_d1", version: DOC_CREATED }],
       doc: true,
     },
   ])("claim redelivers an edited $name note", ({ store, delivered, doc: isDoc }) => {
@@ -1182,53 +1191,157 @@ ${onRun || ":"}`,
     expect(exec(["claim", agent]).stdout).toMatchSnapshot();
   });
 
-  test("claim delivers a doc note with its anchor and a user's reply in its thread", () => {
-    docReview({ delivered: [{ id: "local_d1", hash: hash("rm Work") }] });
-    docStore(
-      docNote({
-        replies: [
-          { id: "reply_claude_1", body: "removed", author: "Claude", created_at: "", updated_at: "" },
-          { id: "reply_2", body: "and the heading", author: null, created_at: "", updated_at: "" },
-        ],
-      }),
-    );
+  // plannotator-tui stores a note the agent left over its link with the link's author.
+  const agentDocNote = () => docNote({ id: "local_c1", author: "pi", author_name: "Claude", body: "removed" });
+  const agentDiffNote = () => diffNote({ id: "local_c1", author: "pi", authorName: "Claude", text: "removed" });
 
-    expect(exec(["claim", agent]).stdout).toMatchInlineSnapshot(`
-      "[review: comment] doc.md (id reply_2) | In reply to your note: removed | and the heading
-      "
-    `);
+  test.each<{ name: string; doc: boolean; store: () => void; delivered: string }>([
+    { name: "doc", doc: true, store: () => docStore(docNote(), agentDocNote()), delivered: "local_d1" },
+    { name: "diff", doc: false, store: () => diffStore(diffNote(), agentDiffNote()), delivered: "local_1" },
+  ])("claim never delivers the agent's own $name notes", ({ doc: isDoc, store, delivered }) => {
+    diffReview({ doc: isDoc ? doc() : undefined });
+    store();
+
+    const result = exec(["claim", agent]);
+
+    expect(result.stdout).not.toContain("removed");
+    expect(deliveredIds()).toEqual([delivered]);
   });
 
-  test("reply appends to the doc note's replies and keeps the store's other fields", () => {
-    docReview();
+  interface Link {
+    port: number;
+    requests: unknown[];
+  }
+
+  let servers: { stop(force?: boolean): void }[] = [];
+
+  afterEach(() => {
+    for (const server of servers) server.stop(true);
+    servers = [];
+  });
+
+  // A plannotator-tui link that answers each request with the next of `answers`, then ok.
+  function listen(answers: object[] = []): Link {
+    const requests: unknown[] = [];
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket, data) {
+          requests.push(JSON.parse(data.toString()));
+          socket.end(`${JSON.stringify(answers.shift() ?? { ok: true })}\n`);
+        },
+      },
+    });
+    servers.push(server);
+    return { port: server.port, requests };
+  }
+
+  function register(pid: number, link: Link, files: string[]): void {
+    const entry = { v: 1, host: "plannotator-tui", pid, cwd: work, port: link.port, token: `token-${pid}`, files, updated: 1 };
+    box.write(join(client, "sessions", "tui", `${pid}.json`), JSON.stringify(entry));
+  }
+
+  // `exec` blocks this process, and with it the listener.
+  async function replyAsync(noteId: string): Promise<{ status: number; stderr: string }> {
+    const child = Bun.spawn([script, "reply", agent, noteId, "done"], {
+      cwd: work,
+      env: { ...process.env, PATH: `${box.bin}:${process.env.PATH}`, ...execEnv({ REVIEW_NOTE_RETRY_MS: "5" }) },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const stderr = await new Response(child.stderr).text();
+    return { status: await child.exited, stderr };
+  }
+
+  const SPAWNED_TUI = 41;
+
+  test.each<{ name: string; doc: boolean; store: () => void; noteId: string; anchor: () => { file: string; quote?: string; line?: number } }>([
+    {
+      name: "a doc note on its quote nearest its line",
+      doc: true,
+      store: () => docStore(docNote()),
+      noteId: "local_d1",
+      anchor: () => ({ file: doc(), quote: "## Deferred Work", line: 3 }),
+    },
+    {
+      name: "a diff note on its new-side line",
+      doc: false,
+      store: () => diffStore(diffNote()),
+      noteId: "local_1",
+      anchor: () => ({ file: join(realpathSync(work), "src/app.ts"), line: 2 }),
+    },
+    {
+      name: "an old-side diff note on its file",
+      doc: false,
+      store: () => diffStore(diffNote({ side: "old" })),
+      noteId: "local_1",
+      anchor: () => ({ file: join(realpathSync(work), "src/app.ts") }),
+    },
+  ])("reply leaves $name in the TUI run spawned", async ({ doc: isDoc, store, noteId, anchor }) => {
+    diffReview({ doc: isDoc ? doc() : undefined, pid: SPAWNED_TUI });
+    store();
+    const own = listen();
+    const other = listen();
+    const { file } = anchor();
+    register(SPAWNED_TUI, own, [file]);
+    register(SPAWNED_TUI + 1, other, [file]);
+
+    expect(await replyAsync(noteId)).toEqual({ status: 0, stderr: "" });
+
+    expect(own.requests).toEqual([{ v: 1, token: `token-${SPAWNED_TUI}`, op: "note", ...anchor(), note: "done", author: "Claude" }]);
+    expect(other.requests).toEqual([]);
+  });
+
+  test.each<{ name: string; answers: object[]; sent: object[] }>([
+    {
+      name: "retries while the reviewer is typing",
+      answers: [{ ok: false, code: "busy" }, { ok: false, code: "busy" }],
+      sent: [
+        { quote: "## Deferred Work", line: 3 },
+        { quote: "## Deferred Work", line: 3 },
+        { quote: "## Deferred Work", line: 3 },
+      ],
+    },
+    {
+      name: "falls back to the line when the quote was edited away",
+      answers: [{ ok: false, code: "quote_not_found" }],
+      sent: [{ quote: "## Deferred Work", line: 3 }, { line: 3 }],
+    },
+  ])("reply $name", async ({ answers, sent }) => {
+    docReview({ pid: SPAWNED_TUI });
+    docStore(docNote());
+    const link = listen(answers);
+    register(SPAWNED_TUI, link, [doc()]);
+
+    expect((await replyAsync("local_d1")).status).toBe(0);
+
+    const base = { v: 1, token: `token-${SPAWNED_TUI}`, op: "note", file: doc(), note: "done", author: "Claude" };
+    expect(link.requests).toEqual(sent.map((anchor) => ({ ...base, ...anchor })));
+  });
+
+  test("reply falls back to another TUI with the doc open when run's is gone", async () => {
+    docReview({ pid: SPAWNED_TUI });
+    docStore(docNote());
+    const gone = listen();
+    servers.pop()?.stop(true);
+    const other = listen();
+    register(SPAWNED_TUI, gone, [doc()]);
+    register(SPAWNED_TUI + 1, other, [doc()]);
+
+    expect((await replyAsync("local_d1")).status).toBe(0);
+
+    expect(other.requests).toHaveLength(1);
+  });
+
+  test("reply fails when no plannotator-tui has the doc open", async () => {
+    docReview({ pid: SPAWNED_TUI });
     docStore(docNote());
 
-    expect(exec(["reply", agent, "local_d1", "done"]).status).toBe(0);
-
-    const store = JSON.parse(box.read(docStorePath));
-    expect(store.deliveries).toEqual([]);
-    expect(store.annotations[0].anchor.originalText).toBe("Deferred Work");
-    // plannotator-tui 0.10's `Reply` struct requires every one of these fields.
-    expect(store.annotations[0].replies).toEqual([
-      {
-        id: expect.stringMatching(/^reply_/),
-        annotation_id: "local_d1",
-        body: "done",
-        author: "Claude",
-        created_at: expect.any(String),
-        updated_at: expect.any(String),
-      },
-    ]);
-  });
-
-  test("reply to a diff note tells the agent to answer in its turn", () => {
-    diffReview();
-    diffStore(diffNote());
-
-    const result = exec(["reply", agent, "local_1", "done"]);
+    const result = await replyAsync("local_d1");
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("Answer in your turn instead.");
+    expect(result.stderr).toContain("no running plannotator-tui has it open");
   });
 
   test.each<{ decision: string; unsent: boolean; message: string }>([
@@ -1240,7 +1353,7 @@ ${onRun || ":"}`,
     },
     { decision: "dismissed", unsent: false, message: "[review: dismissed] Ben dismissed the review." },
   ])("a $decision result file delivers its outcome", ({ decision, unsent, message }) => {
-    docReview({ delivered: [{ id: "local_d1", hash: hash("rm Work") }] });
+    docReview({ delivered: [{ id: "local_d1", version: DOC_CREATED }] });
     docStore(docNote(), ...(unsent ? [docNote({ id: "local_d2", anchor: { quote: "# Doc" }, body: "retitle" })] : []));
     box.write("decision", JSON.stringify({ decision }));
 
@@ -1251,29 +1364,23 @@ ${onRun || ":"}`,
     expect(exists(`${id}.json`)).toBe(false);
   });
 
-  test.each<{ name: string; replies: object[]; message: string }>([
-    {
-      name: "approves when every note has a reply",
-      replies: [{ id: "reply_claude_1", body: "removed", author: "Claude", created_at: "", updated_at: "" }],
-      message: "[review: approved] Ben approved the changes. Continue.",
-    },
-    { name: "asks how to proceed when a note has none", replies: [], message: "These earlier comments have no reply yet: id local_d1." },
-  ])("quitting a doc without a result $name", ({ replies, message }) => {
-    docReview({ delivered: [{ id: "local_d1", hash: hash("rm Work") }] });
-    docStore(docNote({ replies }));
+  test.each<{ name: string; doc: boolean; answered: boolean; message: string }>([
+    { name: "a doc approves when every note has a reply", doc: true, answered: true, message: "[review: approved] Ben approved the changes. Continue." },
+    { name: "a doc asks how to proceed when a note has none", doc: true, answered: false, message: "These earlier comments have no reply yet: id local_d1." },
+    { name: "a diff approves when every note has a reply", doc: false, answered: true, message: "[review: approved] Ben approved the changes. Continue." },
+    { name: "a diff asks how to proceed when a note has none", doc: false, answered: false, message: "These earlier comments have no reply yet: id local_1." },
+  ])("quitting $name", ({ doc: isDoc, answered, message }) => {
+    if (isDoc) {
+      docReview({ delivered: [{ id: "local_d1", version: DOC_CREATED }] });
+      docStore(docNote(), ...(answered ? [agentDocNote()] : []));
+    } else {
+      diffReview({ delivered: [{ id: "local_1", version: "1" }], mode: "batch" });
+      diffStore(diffNote(), ...(answered ? [agentDiffNote()] : []));
+    }
 
     expect(exec(["run", id]).status).toBe(0);
 
     expectDelivered(message);
-  });
-
-  test("quitting a diff approves once every note was delivered", () => {
-    diffReview({ delivered: [{ id: "local_1", hash: hash("fix") }], mode: "batch" });
-    diffStore(diffNote());
-
-    expect(exec(["run", id]).status).toBe(0);
-
-    expectDelivered("[review: approved] Ben approved the changes. Continue.");
   });
 
   test.each<{ name: string; args: string[]; reviewer?: Review["reviewer"]; doc?: string; status: number }>([
