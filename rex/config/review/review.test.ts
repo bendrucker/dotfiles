@@ -1204,8 +1204,16 @@ ${onRun || ":"}`,
     const store = JSON.parse(box.read(docStorePath));
     expect(store.deliveries).toEqual([]);
     expect(store.annotations[0].anchor.originalText).toBe("Deferred Work");
+    // plannotator-tui 0.10's `Reply` struct requires every one of these fields.
     expect(store.annotations[0].replies).toEqual([
-      { id: expect.stringMatching(/^reply_/), body: "done", author: "Claude", created_at: expect.any(String), updated_at: expect.any(String) },
+      {
+        id: expect.stringMatching(/^reply_/),
+        annotation_id: "local_d1",
+        body: "done",
+        author: "Claude",
+        created_at: expect.any(String),
+        updated_at: expect.any(String),
+      },
     ]);
   });
 
