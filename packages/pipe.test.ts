@@ -11,7 +11,7 @@ test("writes everything through a pipe", () => {
 });
 
 test("returns quietly when the reader goes away", () => {
-  const result = shell(`${writer('"x\\n".repeat(1e6)')} | head -1; echo "\${PIPESTATUS[0]}"`, { cwd: repoRoot });
+  const result = shell(`${writer(String.raw`"x\n".repeat(1e6)`)} | head -1; echo "\${PIPESTATUS[0]}"`, { cwd: repoRoot });
   expect(result.stdout).toBe("x\n0\n");
   expect(result.stderr).toBe("");
 });

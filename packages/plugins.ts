@@ -123,7 +123,7 @@ function settingsMap(key: string): Record<string, unknown> | undefined {
   try {
     captured = readFileSync(path, "utf8");
   } catch (error) {
-    throw new Error(`settings.json could not be read: ${describe(error)}`);
+    throw new Error(`settings.json could not be read: ${describe(error)}`, { cause: error });
   }
 
   const settings = parse(captured, "settings.json");
@@ -202,7 +202,7 @@ function chooseInstallPaths(rows: InstalledPlugin[]): InstalledPlugin[] {
 
   // Ordered by code unit, so the rows do not move with the ambient locale's
   // collation.
-  const ids = [...paths.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const ids = [...paths.keys()].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   return ids.map((id) => ({ id, installPath: bestPath(paths.get(id) ?? []) }));
 }
 
@@ -438,7 +438,7 @@ function parse(captured: string, what: string): unknown {
   try {
     return JSON.parse(captured.replace(BYTE_ORDER_MARK, ""));
   } catch (error) {
-    throw new Error(`${what} is not JSON: ${describe(error)}`);
+    throw new Error(`${what} is not JSON: ${describe(error)}`, { cause: error });
   }
 }
 

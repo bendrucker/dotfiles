@@ -28,7 +28,7 @@ afterEach(() => {
 
 describe("machineName", () => {
   test("is the name macOS holds for the computer", async () => {
-    writeStub("scutil", 'printf "Mac Studio\\n"');
+    writeStub("scutil", String.raw`printf "Mac Studio\n"`);
     expect(await machineName()).toBe("Mac Studio");
   });
 
@@ -46,27 +46,27 @@ describe("machineName", () => {
 // to survive that, and a rename of the computer too.
 describe("machineKey", () => {
   test("is stable across two calls", async () => {
-    writeStub("ioreg", 'printf \'"IOPlatformUUID" = "E1B2C3D4-0000-0000-0000-000000000001"\\n\'');
+    writeStub("ioreg", String.raw`printf '"IOPlatformUUID" = "E1B2C3D4-0000-0000-0000-000000000001"\n'`);
     expect(await machineKey()).toBe(await machineKey());
   });
 
   test("separates two machines", async () => {
-    writeStub("ioreg", 'printf \'"IOPlatformUUID" = "AAAA0000-0000-0000-0000-000000000001"\\n\'');
+    writeStub("ioreg", String.raw`printf '"IOPlatformUUID" = "AAAA0000-0000-0000-0000-000000000001"\n'`);
     const studio = await machineKey();
-    writeStub("ioreg", 'printf \'"IOPlatformUUID" = "BBBB0000-0000-0000-0000-000000000002"\\n\'');
+    writeStub("ioreg", String.raw`printf '"IOPlatformUUID" = "BBBB0000-0000-0000-0000-000000000002"\n'`);
     expect(await machineKey()).not.toBe(studio);
   });
 
   test("does not move when the computer is renamed", async () => {
-    writeStub("ioreg", 'printf \'"IOPlatformUUID" = "AAAA0000-0000-0000-0000-000000000001"\\n\'');
-    writeStub("scutil", 'printf "Old Name\\n"');
+    writeStub("ioreg", String.raw`printf '"IOPlatformUUID" = "AAAA0000-0000-0000-0000-000000000001"\n'`);
+    writeStub("scutil", String.raw`printf "Old Name\n"`);
     const before = await machineKey();
-    writeStub("scutil", 'printf "New Name\\n"');
+    writeStub("scutil", String.raw`printf "New Name\n"`);
     expect(await machineKey()).toBe(before);
   });
 
   test("is opaque, carrying nothing of the hardware identifier", async () => {
-    writeStub("ioreg", 'printf \'"IOPlatformUUID" = "AAAA0000-0000-0000-0000-000000000001"\\n\'');
+    writeStub("ioreg", String.raw`printf '"IOPlatformUUID" = "AAAA0000-0000-0000-0000-000000000001"\n'`);
     expect(await machineKey()).not.toContain("AAAA");
     expect(await machineKey()).toMatch(/^[0-9a-f]{8}$/);
   });

@@ -65,7 +65,7 @@ export function discover(root: string): Found[] {
 
     found.push({ version, name: parsed[2] ?? "", file: join(dir, name) });
   }
-  return found.sort((a, b) => a.version - b.version);
+  return found.toSorted((a, b) => a.version - b.version);
 }
 
 export function latestVersion(found: Found[]): number {

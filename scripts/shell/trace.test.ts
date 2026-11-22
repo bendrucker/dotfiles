@@ -44,7 +44,7 @@ describe.each(shells)("trace.sh under %s", (_, interpreter) => {
     });
     expect(r.status).toBe(0);
     expect(r.stdout.trim()).toBe("git=unset");
-    expect(readdirSync(box.dir).sort()).toEqual(["bin"]);
+    expect(readdirSync(box.dir).toSorted()).toEqual(["bin"]);
   });
 
   test("writes B and E lines with increasing nanosecond timestamps", () => {

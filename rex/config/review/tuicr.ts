@@ -35,7 +35,7 @@ async function session(cwd: string, known?: string): Promise<string> {
   const sessions = z.array(Session).parse(JSON.parse(await tuicr(["review", "list"], cwd)));
   const open = sessions
     .filter((s) => s.kind === "local" && s.active)
-    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
+    .toSorted((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
   const slug = open?.slug ?? known;
   if (slug === undefined) throw new Error(`no open tuicr review in ${cwd}`);
   return slug;

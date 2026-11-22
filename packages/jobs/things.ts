@@ -33,14 +33,14 @@ export const THINGS_NOTES_LIMIT = 10_000;
 // an emoji would read shorter than it is and the append would overrun the limit.
 const FIND_OPEN =
   "select uuid as id, notes from TMTask" +
-  " where type = 0 and trashed = 0 and status = 0 and notes like ?1 escape '\\'" +
+  String.raw` where type = 0 and trashed = 0 and status = 0 and notes like ?1 escape '\'` +
   " order by creationDate desc limit 1";
 
 // A marker goes into LIKE as a pattern, where _ matches any character and % any
 // run of them. Both are legal in a job name, and either would widen the match
 // past the one cause the marker names.
 export function markerQuery(marker: string): string {
-  return `%${marker.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+  return `%${marker.replaceAll(/[\\%_]/g, (char) => `\\${char}`)}%`;
 }
 
 const CONTAINERS = join(homedir(), "Library", "Group Containers");
@@ -125,9 +125,9 @@ function toTodo(row: unknown): Todo | undefined {
 // literal % or & behind to split the URL apart. encodeURIComponent spares !'()*,
 // which the unreserved set does not.
 function encodeField(value: string): string {
-  return encodeURIComponent(value).replace(
+  return encodeURIComponent(value).replaceAll(
     /[!'()*]/g,
-    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+    (char) => `%${(char.codePointAt(0) ?? 0).toString(16).toUpperCase()}`,
   );
 }
 

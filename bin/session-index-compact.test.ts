@@ -12,7 +12,7 @@ beforeEach(() => {
   stubGum(box);
   // A to-do is filed by handing a things:/// URL to `open`.
   box.stub("open", `printf '%s\\n' "$2" >>"${box.path("todos")}"`);
-  box.stub("scutil", "printf '%s\\n' Testbox");
+  box.stub("scutil", String.raw`printf '%s\n' Testbox`);
   box.stub("ioreg", `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST`);
 });
 

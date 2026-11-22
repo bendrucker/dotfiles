@@ -186,10 +186,10 @@ export function columnize(rows: string[][]): string[] {
 // agent is silently never removed.
 function escapeCell(cell: string): string {
   return cell
-    .replace(/\\/g, "\\\\")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
+    .replaceAll('\\', String.raw`\\`)
+    .replaceAll('\n', String.raw`\n`)
+    .replaceAll('\r', String.raw`\r`)
+    .replaceAll('	', String.raw`\t`);
 }
 
 export function plural(n: number, noun: string): string {
@@ -332,7 +332,7 @@ export function ghForge(): Forge {
         "--json",
         "number,state",
         "--jq",
-        '.[] | "\\(.number)\\t\\(.state)"',
+        String.raw`.[] | "\(.number)\t\(.state)"`,
       ]);
     },
     async refState(slug: string, number: string): Promise<string> {

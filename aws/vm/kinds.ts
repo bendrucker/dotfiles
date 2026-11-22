@@ -79,7 +79,7 @@ function readKinds(path: string): z.infer<typeof KindsFile> {
   try {
     return KindsFile.parse(Bun.TOML.parse(readFileSync(path, "utf8")));
   } catch (error) {
-    throw new Error(`${path}: ${errorMessage(error)}`);
+    throw new Error(`${path}: ${errorMessage(error)}`, { cause: error });
   }
 }
 

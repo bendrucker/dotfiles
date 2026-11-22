@@ -101,9 +101,9 @@ async function finish(
   save({ ...review, outcome });
   try {
     await rex.submit(review.agent, message, timeoutMs);
-  } catch (err) {
+  } catch (error) {
     save(review);
-    throw err;
+    throw error;
   }
   await locked(review.id, async () => {
     remove(review);
@@ -316,8 +316,8 @@ async function claim(
     try {
       if (review.review !== undefined) await reviewer.flush(review.review);
       read = await reviewer.comments({ ...review, pid: options.pid }, review.reviewerSession ?? options.fallback?.session, options.strict);
-    } catch (err) {
-      if (options.fallback === undefined) throw err;
+    } catch (error) {
+      if (options.fallback === undefined) throw error;
       read = options.fallback;
     }
     const { events, delivered } = reconcile(read.comments, review.delivered, read.session === review.reviewerSession);
@@ -362,10 +362,10 @@ async function approveClaimed(rex: Client, id: string, timeoutMs: number, fallba
   let claimed: Claimed;
   try {
     claimed = await claim(id, { strict: fallback !== undefined, fallback, pid });
-  } catch (err) {
+  } catch (error) {
     const review = load(id);
-    if (review === undefined) throw new Error(`review ${id} closed`);
-    const reason = err instanceof Error ? err.message : String(err);
+    if (review === undefined) throw new Error(`review ${id} closed`, { cause: error });
+    const reason = error instanceof Error ? error.message : String(error);
     return finish(rex, review, "approved", `${messages.approved()} (Unsent comments couldn't be read: ${reason})`, timeoutMs);
   }
   await finish(rex, claimed.review, "approved", messages.approved(claimed.events), timeoutMs);
@@ -473,8 +473,8 @@ async function main(argv: string[]): Promise<void> {
 
 try {
   await main(Bun.argv.slice(2));
-} catch (err) {
-  const message = err instanceof Error ? err.message : String(err);
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
   console.error(`review: ${message}`);
-  process.exit(err instanceof Usage ? 2 : 1);
+  process.exit(error instanceof Usage ? 2 : 1);
 }

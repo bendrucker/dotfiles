@@ -51,7 +51,7 @@ async function session({ cwd, pid }: Target, known?: string, strict = false): Pr
   if (known !== undefined && sessions.some((s) => s.sessionId === known)) return known;
   if (known !== undefined && strict) throw new Error(`Hunk session ${known} is closed`);
   const dir = realpathSync(cwd);
-  const open = sessions.filter((s) => s.cwd === dir).sort((a, b) => b.launchedAt.localeCompare(a.launchedAt))[0];
+  const open = sessions.filter((s) => s.cwd === dir).toSorted((a, b) => b.launchedAt.localeCompare(a.launchedAt))[0];
   if (open === undefined) throw new Error(`no open Hunk window in ${cwd}`);
   return open.sessionId;
 }

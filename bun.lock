@@ -8,11 +8,14 @@
         "zod": "4.6.7",
       },
       "devDependencies": {
+        "@bendrucker/oxlint-config": "github:bendrucker/oxlint-config#05c50644385157e482b3881ddceb27ed0ae50947",
         "oxlint": "1.94.0",
       },
     },
   },
   "packages": {
+    "@bendrucker/oxlint-config": ["@bendrucker/oxlint-config@github:bendrucker/oxlint-config#05c5064", { "peerDependencies": { "oxlint": ">=1.78.0" } }, "bendrucker-oxlint-config-05c5064", "sha512-t6Zwrmpj3nUjTH84+UbPeXT4VvOy8osudUiffED/UanY6frN+s8bqH/+y+H3rjUd4+6omz4XZVz/Bu/5+tZU7Q=="],
+
     "@oxlint/binding-android-arm-eabi": ["@oxlint/binding-android-arm-eabi@1.94.0", "", { "os": "android", "cpu": "arm" }, "sha512-730FKSBsKg/NawYnpI3gXRroXptOVqY32iYBPLUZaSx0vgYzOeiNtwojZL4gJdzo9wDvHUlstShmGRHrWcbRYg=="],
 
     "@oxlint/binding-android-arm64": ["@oxlint/binding-android-arm64@1.94.0", "", { "os": "android", "cpu": "arm64" }, "sha512-8v8TICIiZpXLot1HSq5+vsG9NEKQ5czQBYlUqJR75OVfFDr3cGOmRU/CtHDWnS4tm8nW+Z4Y357qGToSfYqFvA=="],

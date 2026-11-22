@@ -11,7 +11,7 @@ const scripts = must(["git", "ls-files", "--cached", "--others", "--exclude-stan
   .split("\n")
   .filter(Boolean);
 
-type Task = { run?: unknown; dir?: unknown; timeout?: unknown };
+interface Task { run?: unknown; dir?: unknown; timeout?: unknown }
 
 function isTable(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

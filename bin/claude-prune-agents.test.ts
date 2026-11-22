@@ -191,12 +191,12 @@ describe("columnize", () => {
   // picker reads its selection back by whole label.
   test("keeps a cell holding a control character on one line", () => {
     expect(columnize([["id", "two\nlines\there", "age"]])).toEqual([
-      "id  two\\nlines\\there  age",
+      String.raw`id  two\nlines\there  age`,
     ]);
   });
 
   test("escapes a backslash so the escaping is reversible", () => {
-    expect(columnize([["id", "back\\slash"]])).toEqual(["id  back\\\\slash"]);
+    expect(columnize([["id", String.raw`back\slash`]])).toEqual([String.raw`id  back\\slash`]);
   });
 });
 

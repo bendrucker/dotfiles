@@ -122,7 +122,7 @@ function buildRepo(root: string): void {
   mkdirSync(join(repo, "scripts"));
   writeScript(
     join(repo, "bin", "dotfiles-reload"),
-    ['printf \'reloaded\\n\' >>"$RELOAD_LOG"', 'exit "${RELOAD_STATUS:-0}"'].join("\n"),
+    [String.raw`printf 'reloaded\n' >>"$RELOAD_LOG"`, 'exit "${RELOAD_STATUS:-0}"'].join("\n"),
   );
   writeScript(join(repo, "scripts", "bootstrap"), `printf '%s\\n' "$*" >>"$BOOTSTRAP_LOG"`);
 
@@ -161,7 +161,7 @@ beforeEach(() => {
       "      *)     level=INFO ;;",
       "    esac",
       '    for last; do :; done',
-      '    printf "%s %s\\n" "$level" "$last" >&2',
+      String.raw`    printf "%s %s\n" "$level" "$last" >&2`,
       "    ;;",
       "esac",
       "exit 0",

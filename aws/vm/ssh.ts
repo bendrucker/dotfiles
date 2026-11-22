@@ -114,7 +114,7 @@ export function localNames(): string[] {
   return readdirSync(stateDir())
     .filter((file) => file.endsWith(".conf"))
     .map((file) => file.slice(0, -".conf".length))
-    .sort();
+    .toSorted();
 }
 
 export function publicKeys(): string {

@@ -155,7 +155,7 @@ function run(args: string[], extra: Record<string, string> = {}): Outcome {
 function log(name: "WT_LOG" | "WT_ENV_LOG" | "GUM_LOG"): string[] {
   const file = variables[name] as string;
   if (!existsSync(file)) return [];
-  return readFileSync(file, "utf8").split("\n").filter((line) => line !== "").sort();
+  return readFileSync(file, "utf8").split("\n").filter((line) => line !== "").toSorted();
 }
 
 // Assigning undefined to process.env stores the string "undefined", so a

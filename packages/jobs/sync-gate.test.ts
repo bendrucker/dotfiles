@@ -141,15 +141,15 @@ beforeEach(async () => {
       "    # holds even against a prompt that offered nothing of the kind.",
       '    offered=$(cat)',
       '    if [ -n "${GUM_CHOICE:-}" ]; then',
-      '      printf "%s\\n" "$offered" | grep -qxF -- "$GUM_CHOICE" && { printf "%s\\n" "$GUM_CHOICE"; exit 0; }',
-      '      printf "gum choose: %s was not offered\\n" "$GUM_CHOICE" >&2',
+      String.raw`      printf "%s\n" "$offered" | grep -qxF -- "$GUM_CHOICE" && { printf "%s\n" "$GUM_CHOICE"; exit 0; }`,
+      String.raw`      printf "gum choose: %s was not offered\n" "$GUM_CHOICE" >&2`,
       "      exit 1",
       "    fi",
-      '    printf "\\n"',
+      String.raw`    printf "\n"`,
       "    ;;",
       "  log)",
       "    for last; do :; done",
-      '    printf "%s\\n" "$last" >&2',
+      String.raw`    printf "%s\n" "$last" >&2`,
       "    ;;",
       "  spin)",
       '    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done',
@@ -165,7 +165,7 @@ beforeEach(async () => {
     "gh",
     [
       `printf '%s\\n' "$*" >>"${join(sandbox, "gh.log")}"`,
-      "printf 'https://example.test/pr/1\\n'",
+      String.raw`printf 'https://example.test/pr/1\n'`,
     ].join("\n"),
   );
 
@@ -173,7 +173,7 @@ beforeEach(async () => {
   // cover both.
   stub(
     "hostname",
-    ['[ "$1" = "-s" ] && { printf "spechost\\n"; exit 0; }', 'printf "spechost.example.test\\n"'].join(
+    [String.raw`[ "$1" = "-s" ] && { printf "spechost\n"; exit 0; }`, String.raw`printf "spechost.example.test\n"`].join(
       "\n",
     ),
   );
@@ -185,8 +185,8 @@ beforeEach(async () => {
     "scutil",
     [
       'case "$2" in',
-      '  ComputerName)  printf "Spec Machine\\n" ;;',
-      '  LocalHostName) printf "spechost\\n" ;;',
+      String.raw`  ComputerName)  printf "Spec Machine\n" ;;`,
+      String.raw`  LocalHostName) printf "spechost\n" ;;`,
       "  *)             exit 1 ;;",
       "esac",
     ].join("\n"),

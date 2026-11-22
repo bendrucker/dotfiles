@@ -63,7 +63,7 @@ export function ordered(requests: Request[]): Request[] {
     if (!seen.has(request.url)) seen.set(request.url, request);
   }
 
-  return [...seen.values()].sort(
+  return [...seen.values()].toSorted(
     (left, right) =>
       left.bucket.localeCompare(right.bucket) ||
       left.project.localeCompare(right.project) ||
@@ -75,7 +75,7 @@ export function ordered(requests: Request[]): Request[] {
 // row into fields that are not fields and the selection would map back to the
 // wrong request, or to none.
 function escape(cell: string): string {
-  return cell.replace(/[\t\r\n]/g, " ");
+  return cell.replaceAll(/[\t\r\n]/g, " ");
 }
 
 export function pickerRow(request: Request): string {

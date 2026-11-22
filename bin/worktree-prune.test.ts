@@ -263,7 +263,7 @@ interface Pass {
 }
 
 function shQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
+  return `'${value.replaceAll('\'', String.raw`'\''`)}'`;
 }
 
 function passBody(pass: Pass): string {

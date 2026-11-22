@@ -56,5 +56,5 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (!isObject(value)) return value;
-  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys(value[key])]));
+  return Object.fromEntries(Object.keys(value).toSorted().map((key) => [key, sortKeys(value[key])]));
 }

@@ -21,7 +21,7 @@ function topicBins(): string[] {
       found.add(match[0].replace("$ZSH", repoRoot));
     }
   }
-  return [...found].sort();
+  return [...found].toSorted();
 }
 
 // $PATH one entry per line, as a shell of the given shape built it. The shell

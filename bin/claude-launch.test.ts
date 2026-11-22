@@ -176,7 +176,7 @@ function read(name: keyof typeof variables): string {
 }
 
 function dispatched(): string[] {
-  return read("CLAUDE_LOG").split("\n").filter(Boolean)[0]?.split("\t") ?? [];
+  return read("CLAUDE_LOG").split("\n").find(Boolean)?.split("\t") ?? [];
 }
 
 describe("launchDirs", () => {

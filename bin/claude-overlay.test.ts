@@ -23,7 +23,7 @@ function runOverlay(repo: string, ...args: string[]): Run {
 }
 
 function stubBun(): void {
-  box.stub("bun", 'printf "%s\\n" "$@"');
+  box.stub("bun", String.raw`printf "%s\n" "$@"`);
 }
 
 describe("bin/claude-overlay", () => {

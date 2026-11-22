@@ -27,7 +27,7 @@ beforeEach(() => {
       '  tap) echo "$2" >> "$FIXTURES/tapped"',
       '    i=0',
       '    while [ "$i" -lt "${GIT_CONFIG_COUNT:-0}" ]; do',
-      '      eval "key=\\$GIT_CONFIG_KEY_$i value=\\$GIT_CONFIG_VALUE_$i"',
+      String.raw`      eval "key=\$GIT_CONFIG_KEY_$i value=\$GIT_CONFIG_VALUE_$i"`,
       '      echo "$key=$value" >> "$FIXTURES/gitconfig"',
       '      i=$((i + 1))',
       '    done',

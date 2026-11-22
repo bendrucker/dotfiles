@@ -279,7 +279,7 @@ async function fetchRepos(): Promise<string[]> {
     }
   }
   return [...pushedAt.entries()]
-    .sort(([, a], [, b]) => (a < b ? 1 : a > b ? -1 : 0))
+    .toSorted(([, a], [, b]) => (a < b ? 1 : a > b ? -1 : 0))
     .map(([name]) => name);
 }
 

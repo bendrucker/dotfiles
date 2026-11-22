@@ -190,7 +190,7 @@ export function stubGum(box: Sandbox): void {
       "    ;;",
       "  log)",
       '    for last; do :; done',
-      '    printf "%s\\n" "$last" >&2',
+      String.raw`    printf "%s\n" "$last" >&2`,
       "    ;;",
       "esac",
     ].join("\n"),

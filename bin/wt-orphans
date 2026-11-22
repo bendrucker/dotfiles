@@ -197,7 +197,7 @@ function candidates(root: string): Listing {
     // Claude Code keeps its own .claude/ beside the agent worktrees it makes.
     .filter((entry) => !entry.name.startsWith("."))
     .map((entry) => join(root, entry.name))
-    .sort();
+    .toSorted();
   return { paths };
 }
 

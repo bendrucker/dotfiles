@@ -62,7 +62,7 @@ function readJson(path: string): Json {
   return value;
 }
 
-function isObject(value: unknown): value is { [key: string]: Json } {
+function isObject(value: unknown): value is Record<string, Json> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

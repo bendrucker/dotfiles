@@ -85,7 +85,7 @@ function store(target: Target, known?: string, strict = false): string {
   const found = list(base)
     .flatMap((group) => list(join(base, group)).map((entry) => join(base, group, entry, file)))
     .filter((path) => existsSync(path) && matches(target, path))
-    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+    .toSorted((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
   if (found === undefined) throw new Error(`no plannotator notes for ${target.doc ?? target.cwd}`);
   return found;
 }

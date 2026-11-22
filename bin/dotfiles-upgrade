@@ -71,7 +71,7 @@ const TRAILING_NEWLINES = /\n+$/;
 // The trailing space is the encoding: `tr '\n' ' '` converted the final newline
 // too, and it is part of every latch already standing.
 export function driftFingerprint(listing: string): string {
-  return `${listing.split("\n").sort(byCodeUnit).join(" ")} `;
+  return `${listing.split("\n").toSorted(byCodeUnit).join(" ")} `;
 }
 
 // A report row. ~/.ssh is globbed, so a key filename can carry its own spaces,
