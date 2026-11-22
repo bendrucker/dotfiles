@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { must, sandbox, type Sandbox } from "#harness";
-import { reviewer } from "./plannotator";
+
+// A child bun, since the bootstrap job has no node_modules and only `bun run`
+// auto-installs the adapter's zod.
+const REPLY = `
+const { reviewer } = await import(${JSON.stringify(join(import.meta.dir, "plannotator.ts"))});
+const [doc, path, id] = process.argv.slice(1);
+await reviewer.reply({ cwd: process.cwd(), doc }, path, { id, author: "user", body: "" }, "removed it");
+`;
 
 let box: Sandbox;
 let env: Record<string, string>;
@@ -43,7 +50,7 @@ describe("rex/config/review plannotator adapter in plannotator-tui", () => {
     must(["plannotator-tui", "--annotate-block", doc, "1", "rm this"], { cwd: work, env });
     const path = storePath();
     const [note] = JSON.parse(readFileSync(path, "utf8")).annotations;
-    await reviewer.reply({ cwd: work, doc }, path, { id: note.id, author: "user", body: "rm this" }, "removed it");
+    must([process.execPath, "-e", REPLY, doc, path, note.id], { cwd: work });
     const written = replies(path);
 
     let screen = "";
