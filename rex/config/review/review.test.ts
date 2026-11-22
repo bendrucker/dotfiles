@@ -6,6 +6,7 @@ import { quote, repoRoot, run, sandbox, type Sandbox } from "#harness";
 import type { Review } from "./state";
 
 const script = join(repoRoot, "rex", "config", "review", "review");
+const extension = join(repoRoot, "rex", "config", "review", "hunk-extension.ts");
 const agent = "block:agent";
 const reviewBlock = "block:review";
 const id = "review-1";
@@ -96,7 +97,18 @@ afterEach(() => {
 });
 
 function review(overrides: Partial<Review> = {}): Review {
-  return { id, session: "sess", agent, review: reviewBlock, cwd: work, reviewer: "tuicr", delivered: [], mode: "live", ...overrides };
+  return {
+    id,
+    session: "sess",
+    agent,
+    review: reviewBlock,
+    cwd: work,
+    reviewer: "tuicr",
+    delivered: [],
+    mode: "live",
+    held: false,
+    ...overrides,
+  };
 }
 
 // Relative to the sandbox, which is where `box.read` and `box.write` start.
@@ -104,7 +116,7 @@ function statePath(name: string): string {
   return join("home", ".local", "state", "rex-review", name);
 }
 
-function seed(state: Omit<Review, "mode"> & Partial<Pick<Review, "mode">>): void {
+function seed(state: Omit<Review, "mode" | "held"> & Partial<Pick<Review, "mode" | "held">>): void {
   box.write(statePath(`${state.id}.json`), JSON.stringify(state));
   for (const block of [state.agent, state.review]) if (block) box.write(statePath(join("blocks", block)), state.id);
 }
@@ -528,8 +540,12 @@ describe("rex/config/review tuicr session choice", () => {
 
 describe("rex/config/review hunk", () => {
   test.each<{ name: string; revisions?: string; args: string[] }>([
-    { name: "the working tree", args: ["diff", "--watch", "--agent-notes"] },
-    { name: "a revision range", revisions: "main..HEAD", args: ["diff", "main..HEAD", "--watch", "--agent-notes"] },
+    { name: "the working tree", args: ["diff", "--watch", "--agent-notes", "--extension", extension] },
+    {
+      name: "a revision range",
+      revisions: "main..HEAD",
+      args: ["diff", "main..HEAD", "--watch", "--agent-notes", "--extension", extension],
+    },
   ])("run opens $name with agent notes shown", ({ revisions, args }) => {
     seed(review({ reviewer: "hunk", revisions }));
 
@@ -856,6 +872,8 @@ describe("rex/config/review state hygiene", () => {
     box.write(statePath(join("blocks", "block:orphan")), "missing");
     box.write(statePath(join("blocks", "block:gone.events")), "");
     box.write(statePath(join("blocks", "block:live.events")), "");
+    box.write(statePath(join("blocks", "block:gone.status.json")), "{}");
+    box.write(statePath(join("blocks", "block:live.status.json")), "{}");
   });
 
   test("open drops reviews and block files whose blocks are gone", () => {
@@ -868,9 +886,11 @@ describe("rex/config/review state hygiene", () => {
     expect(exists(join("blocks", "block:gone-review"))).toBe(false);
     expect(exists(join("blocks", "block:orphan"))).toBe(false);
     expect(exists(join("blocks", "block:gone.events"))).toBe(false);
+    expect(exists(join("blocks", "block:gone.status.json"))).toBe(false);
     expect(exists("other.json")).toBe(true);
     expect(exists(join("blocks", "block:live"))).toBe(true);
     expect(exists(join("blocks", "block:live.events"))).toBe(true);
+    expect(exists(join("blocks", "block:live.status.json"))).toBe(true);
   });
 
   test("open keeps state when the block list lacks the agent", () => {
@@ -942,6 +962,57 @@ describe("rex/config/review events file", () => {
       "[review: comment] src/app.ts:4 (id user:4) | > four | note 4",
       "[review: closed] closed",
     ]);
+  });
+
+  const statusFile = statePath(join("blocks", `${agent}.status.json`));
+  const status = () => (existsSync(box.path(statusFile)) ? JSON.parse(box.read(statusFile)) : undefined);
+
+  test("held notes wait for release, then arrive in order", async () => {
+    const child = await startRun("live");
+    await until(() => exists(`${id}.json`) && saved().reviewerSession === "h1");
+
+    child.kill("SIGUSR2");
+    await until(() => saved().held);
+    notes(note({ noteId: "user:1", newRange: [1, 1], body: "first" }), note({ noteId: "user:2", newRange: [2, 2], body: "second" }));
+    child.kill("SIGUSR1");
+    await until(() => status()?.pending === 2);
+    expect(lines()).toEqual([]);
+    expect(deliveredIds()).toEqual([]);
+
+    child.kill("SIGUSR2");
+    await until(() => lines().length === 2);
+    expect(saved().held).toBe(false);
+    await quit(child);
+
+    expect(lines()).toEqual([
+      "[review: comment] src/app.ts:1 (id user:1) | > one | first",
+      "[review: comment] src/app.ts:2 (id user:2) | > two | second",
+      "[review: closed] closed",
+    ]);
+  });
+
+  test("writes the extension's status beside the events file", async () => {
+    box.write("program-states", "working\n");
+    const child = await startRun("live");
+    notes(note(), agentNote(), note({ noteId: "user:2", newRange: [3, 3], body: "and this" }));
+    await until(() => status()?.open === 1);
+    const shown = status();
+    await quit(child);
+
+    expect(shown).toEqual({ id, held: false, pending: 0, open: 1, answered: 1, agent: "working" });
+    expect(exists(join("blocks", `${agent}.status.json`))).toBe(false);
+  });
+
+  test("passes the extension the review, its own pid, and the status file", async () => {
+    seed(review({ reviewer: "hunk" }));
+    stubHunk(`env | grep '^REX_REVIEW_' > ${quote(box.path("hunk-env"))}`);
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    const env = Object.fromEntries(box.read("hunk-env").trim().split("\n").map((l) => l.split("=")));
+    expect(env.REX_REVIEW_ID).toBe(id);
+    expect(Number(env.REX_REVIEW_PID)).toBeGreaterThan(0);
+    expect(env.REX_REVIEW_STATUS).toBe(box.path(statusFile));
   });
 
   test("batch mode appends only the closed line", async () => {
