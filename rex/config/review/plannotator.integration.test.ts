@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { z } from "zod";
 import { must, sandbox, type Sandbox } from "#harness";
 
 // A child bun, since the bootstrap job has no node_modules and only `bun run`
@@ -32,12 +31,22 @@ function storePath(): string {
   return join(base, found);
 }
 
-const Store = z.object({
-  annotations: z.array(z.object({ id: z.string(), body: z.string(), author_name: z.string().optional() })),
-});
+interface Annotation {
+  id: string;
+  body: string;
+  author_name?: string;
+}
 
-function annotations(path: string): z.infer<typeof Store>["annotations"] {
-  return Store.parse(JSON.parse(readFileSync(path, "utf8"))).annotations;
+function isAnnotation(v: unknown): v is Annotation {
+  return typeof v === "object" && v !== null && "id" in v && typeof v.id === "string" && "body" in v && typeof v.body === "string";
+}
+
+function annotations(path: string): Annotation[] {
+  const store: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (typeof store !== "object" || store === null || !("annotations" in store) || !Array.isArray(store.annotations)) {
+    throw new Error(`${path} holds no annotations`);
+  }
+  return store.annotations.filter(isAnnotation);
 }
 
 async function until(check: () => boolean, describe: () => string, timeoutMs = 10_000): Promise<void> {
