@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -63,6 +63,23 @@ function reviewPath(id: string): string {
 // init.lua checks a key's pane with a single io.open.
 function blockPath(block: string): string {
   return join(stateDir(), "blocks", block);
+}
+
+const EVENTS = ".events";
+
+// The agent's watcher tails this file. Each line is one event.
+function eventsPath(block: string): string {
+  return blockPath(`${block}${EVENTS}`);
+}
+
+export function resetEvents(block: string): void {
+  mkdirSync(join(stateDir(), "blocks"), { recursive: true });
+  writeFileSync(eventsPath(block), "");
+}
+
+export function appendEvent(block: string, line: string): void {
+  mkdirSync(join(stateDir(), "blocks"), { recursive: true });
+  appendFileSync(eventsPath(block), `${line}\n`);
 }
 
 function blocks(review: Review): string[] {
@@ -131,7 +148,9 @@ export function prune(live: Set<string>): void {
   } catch {
     return;
   }
-  for (const block of files) {
-    if (!live.has(block) || resolve(block) === undefined) rmSync(blockPath(block), { force: true });
+  for (const name of files) {
+    if (name.endsWith(EVENTS)) {
+      if (!live.has(name.slice(0, -EVENTS.length))) rmSync(blockPath(name), { force: true });
+    } else if (!live.has(name) || resolve(name) === undefined) rmSync(blockPath(name), { force: true });
   }
 }

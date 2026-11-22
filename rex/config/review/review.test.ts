@@ -84,7 +84,7 @@ function stubHunk(onDiff = ""): void {
     `${record} >> ${quote(box.path("hunk-calls"))}
 case "$1 $2 $3" in
   "session list --json") cat ${quote(box.path("hunk-sessions"))} ;;
-  "session comment list") cat ${quote(box.path("hunk-notes"))} ;;
+  "session comment list") sleep "$(cat ${quote(box.path("hunk-delay"))} 2>/dev/null || echo 0)"; cat ${quote(box.path("hunk-notes"))} ;;
   "session review "*) cat ${quote(box.path("hunk-review"))} ;;
   diff*) ${onDiff || ":"} ;;
 esac`,
@@ -125,6 +125,12 @@ function exists(name: string): boolean {
   return existsSync(box.path(statePath(name)));
 }
 
+const eventsFile = statePath(join("blocks", `${agent}.events`));
+
+function events(): string {
+  return box.read(eventsFile);
+}
+
 function execEnv(env: Record<string, string> = {}): Record<string, string> {
   return {
     HOME: box.path("home"),
@@ -141,14 +147,25 @@ function exec(args: string[], env: Record<string, string> = {}) {
 }
 
 // `run` blocks, so overlapping calls need their own spawn.
-async function execAsync(args: string[]): Promise<number> {
-  const child = Bun.spawn([script, ...args], {
+function spawn(args: string[], env: Record<string, string> = {}) {
+  return Bun.spawn([script, ...args], {
     cwd: work,
-    env: { ...process.env, PATH: `${box.bin}:${process.env.PATH}`, ...execEnv() },
+    env: { ...process.env, PATH: `${box.bin}:${process.env.PATH}`, ...execEnv(env) },
     stdout: "ignore",
     stderr: "ignore",
   });
-  return child.exited;
+}
+
+async function execAsync(args: string[]): Promise<number> {
+  return spawn(args).exited;
+}
+
+async function until(check: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error("timed out");
+    await Bun.sleep(10);
+  }
 }
 
 function sessions(...rows: { slug: string; updated_at: string; active: boolean }[]): void {
@@ -210,17 +227,29 @@ describe("rex/config/review outcomes", () => {
   test.each<{ command: string; message: string }>([
     { command: "approve", message: "[review: approved]" },
     { command: "dismiss", message: "[review: dismissed]" },
-  ])("$command delivers its message, removes state, and closes the review pane", ({ command, message }) => {
+  ])("$command delivers its message, ends the events file, removes state, and closes the review pane", ({ command, message }) => {
     seed(review());
+    box.write(eventsFile, "[review: comment] the review (id c0) | earlier\n");
 
     const result = exec([command, agent]);
 
     expect(result.status).toBe(0);
     expectDelivered(message);
+    expect(events()).toBe(`[review: comment] the review (id c0) | earlier\n[review: closed] ${command === "approve" ? "approved" : "dismissed"}\n`);
     expect(apiCalls("block.close")).toHaveLength(1);
     expect(exists(`${id}.json`)).toBe(false);
     expect(exists(join("blocks", agent))).toBe(false);
     expect(exists(join("blocks", reviewBlock))).toBe(false);
+  });
+
+  test("a failed paste keeps the events file open", () => {
+    seed(review());
+    box.write(eventsFile, "");
+    box.write("program-states", "blocked\n");
+
+    expect(exec(["dismiss", agent], { REVIEW_SUBMIT_WAIT_MS: "50" }).status).toBe(1);
+
+    expect(events()).toBe("");
   });
 
   test("dismiss succeeds when the review pane is already closed", () => {
@@ -351,7 +380,7 @@ describe("rex/config/review run", () => {
 
     expect(exec(["run", id]).status).toBe(0);
 
-    expect(tuicrCalls()[0]).toEqual(["--no-update-check", "-w"]);
+    expect(tuicrCalls()).toContainEqual(["--no-update-check", "-w"]);
     expectDelivered(message);
     expect(apiCalls("block.close")).toHaveLength(1);
   });
@@ -415,6 +444,14 @@ describe("rex/config/review open", () => {
       mode: "live",
     });
     expect(box.read(statePath(join("blocks", reviewBlock)))).toBe(reviewId);
+  });
+
+  test("empties the agent's events file", () => {
+    box.write(eventsFile, "[review: closed] approved\n");
+
+    expect(exec(["open", agent, "--cwd", work]).status).toBe(0);
+
+    expect(events()).toBe("");
   });
 
   test("records batch mode", () => {
@@ -602,7 +639,7 @@ describe("rex/config/review quitting Hunk", () => {
       absent: "no reply yet",
     },
   ])("$name", ({ delivered, rows, message, absent }) => {
-    hunkReview({ delivered });
+    hunkReview({ delivered, mode: "batch" });
     notes(...rows);
 
     expect(exec(["run", id]).status).toBe(0);
@@ -615,7 +652,7 @@ describe("rex/config/review quitting Hunk", () => {
   });
 
   test("a closed review tells the agent to address the notes and ask how to proceed", () => {
-    hunkReview({ delivered: [{ id: "user:1", hash: hash("fix") }] });
+    hunkReview({ delivered: [{ id: "user:1", hash: hash("fix") }], mode: "batch" });
     notes(note(), note({ noteId: "user:2", newRange: [3, 3], body: "and this" }));
 
     expect(exec(["run", id]).status).toBe(0);
@@ -634,7 +671,7 @@ describe("rex/config/review quitting Hunk", () => {
   });
 
   test("delivers notes from the last snapshot once the window is gone", () => {
-    seed(review({ reviewer: "hunk" }));
+    seed(review({ reviewer: "hunk", mode: "batch" }));
     hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
     notes(note({ body: "written while open" }));
     stubHunk(`sleep 0.4; printf '{"sessions":[]}' > ${quote(box.path("hunk-sessions"))}`);
@@ -817,6 +854,8 @@ describe("rex/config/review state hygiene", () => {
     seed(review({ id: "stale", agent: "block:gone", review: "block:gone-review" }));
     seed(review({ id: "other", agent: "block:live", review: "block:live-review" }));
     box.write(statePath(join("blocks", "block:orphan")), "missing");
+    box.write(statePath(join("blocks", "block:gone.events")), "");
+    box.write(statePath(join("blocks", "block:live.events")), "");
   });
 
   test("open drops reviews and block files whose blocks are gone", () => {
@@ -828,8 +867,10 @@ describe("rex/config/review state hygiene", () => {
     expect(exists(join("blocks", "block:gone"))).toBe(false);
     expect(exists(join("blocks", "block:gone-review"))).toBe(false);
     expect(exists(join("blocks", "block:orphan"))).toBe(false);
+    expect(exists(join("blocks", "block:gone.events"))).toBe(false);
     expect(exists("other.json")).toBe(true);
     expect(exists(join("blocks", "block:live"))).toBe(true);
+    expect(exists(join("blocks", "block:live.events"))).toBe(true);
   });
 
   test("open keeps state when the block list lacks the agent", () => {
@@ -838,5 +879,78 @@ describe("rex/config/review state hygiene", () => {
     expect(exec(["open", agent, "--cwd", work]).status).toBe(0);
 
     expect(exists("stale.json")).toBe(true);
+  });
+});
+
+describe("rex/config/review events file", () => {
+  const quitFile = () => box.path("quit");
+
+  // Hunk stays open until the test writes the quit file. `run` handles the
+  // signal once Hunk is up.
+  async function startRun(mode: Review["mode"], env: Record<string, string> = {}) {
+    seed(review({ reviewer: "hunk", mode }));
+    hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
+    stubHunk(`while [ ! -f ${quote(quitFile())} ]; do sleep 0.02; done`);
+    const child = spawn(["run", id], env);
+    await until(() => existsSync(box.path("hunk-calls")) && hunkCalls().some((c) => c[0] === "diff"));
+    return child;
+  }
+
+  async function quit(child: ReturnType<typeof spawn>): Promise<void> {
+    box.write("quit", "");
+    expect(await child.exited).toBe(0);
+  }
+
+  const lines = () => events().split("\n").filter((l) => l !== "");
+
+  test("a signal claims a saved note before the next tick", async () => {
+    const child = await startRun("live", { REVIEW_SNAPSHOT_MS: "60000" });
+    // The first claim records the window, so a note written after it waits for a signal.
+    await until(() => exists(`${id}.json`) && saved().reviewerSession === "h1");
+    notes(note());
+
+    child.kill("SIGUSR1");
+    await until(() => exists(join("blocks", `${agent}.events`)) && lines().length === 1, 2000);
+    await quit(child);
+
+    expect(events()).toMatchInlineSnapshot(`
+      "[review: comment] src/app.ts:2 (id user:1) | > two | fix
+      [review: closed] closed
+      "
+    `);
+  });
+
+  test("signal and timer claims append each note once, in order", async () => {
+    box.write("hunk-delay", "0.05");
+    const child = await startRun("live");
+    const rows: object[] = [];
+    for (const n of [1, 2, 3, 4]) {
+      rows.push(note({ noteId: `user:${n}`, newRange: [n, n], body: `note ${n}` }));
+      notes(...rows);
+      for (let i = 0; i < 5; i++) {
+        child.kill("SIGUSR1");
+        await Bun.sleep(5);
+      }
+      await until(() => exists(join("blocks", `${agent}.events`)) && lines().length === n);
+    }
+    await quit(child);
+
+    expect(lines()).toEqual([
+      "[review: comment] src/app.ts:1 (id user:1) | > one | note 1",
+      "[review: comment] src/app.ts:2 (id user:2) | > two | note 2",
+      "[review: comment] src/app.ts:3 (id user:3) | > three | note 3",
+      "[review: comment] src/app.ts:4 (id user:4) | > four | note 4",
+      "[review: closed] closed",
+    ]);
+  });
+
+  test("batch mode appends only the closed line", async () => {
+    const child = await startRun("batch");
+    notes(note());
+    child.kill("SIGUSR1");
+    await until(() => hunkCalls().filter((c) => c[1] === "comment").length > 1);
+    await quit(child);
+
+    expect(events()).toBe("[review: closed] closed\n");
   });
 });
