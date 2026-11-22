@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 //
 // Usage:
-//   review open AGENT_BLOCK --cwd DIR [--revisions REVSET] [--mode live|batch]
+//   review open AGENT_BLOCK --cwd DIR [--revisions REVSET] [--mode batch|live]
 //               [--reviewer hunk|plannotator] [--doc FILE]
 //   review run ID
 //   review send|claim|approve|dismiss BLOCK
@@ -431,7 +431,7 @@ async function main(argv: string[]): Promise<void> {
     options: {
       cwd: { type: "string" },
       revisions: { type: "string" },
-      mode: { type: "string", default: "live" },
+      mode: { type: "string", default: "batch" },
       reviewer: { type: "string" },
       doc: { type: "string" },
     },

@@ -457,7 +457,7 @@ describe("rex/config/review open", () => {
       reviewer: "hunk",
       revisions: "HEAD~2..HEAD",
       delivered: [],
-      mode: "live",
+      mode: "batch",
     });
     expect(box.read(statePath(join("blocks", reviewBlock)))).toBe(reviewId);
   });
@@ -470,10 +470,14 @@ describe("rex/config/review open", () => {
     expect(events()).toBe("");
   });
 
-  test("records batch mode", () => {
-    expect(exec(["open", agent, "--cwd", work, "--mode", "batch"]).status).toBe(0);
+  test.each<{ name: string; flags: string[]; mode: Review["mode"] }>([
+    { name: "defaults to batch", flags: [], mode: "batch" },
+    { name: "records batch", flags: ["--mode", "batch"], mode: "batch" },
+    { name: "records live", flags: ["--mode", "live"], mode: "live" },
+  ])("$name mode", ({ flags, mode }) => {
+    expect(exec(["open", agent, "--cwd", work, ...flags]).status).toBe(0);
 
-    expect(saved(box.read(statePath(join("blocks", agent)))).mode).toBe("batch");
+    expect(saved(box.read(statePath(join("blocks", agent)))).mode).toBe(mode);
   });
 
   test("rejects an unknown mode", () => {
