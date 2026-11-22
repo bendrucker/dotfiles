@@ -124,9 +124,11 @@ async function run(rex: Client, id: string): Promise<void> {
   const live = review.mode === "live";
   let done = false;
   let snapshot: Comments | undefined;
+  let pid: number | undefined;
   const stream = serialized(async () => {
+    if (pid === undefined) return;
     try {
-      const claimed = await claim(id, { strict: true, stream: true });
+      const claimed = await claim(id, { strict: true, stream: true, pid });
       snapshot = { session: claimed.session, comments: claimed.comments };
       writeStatus(claimed.review.agent, await status(rex, claimed));
     } catch {}
@@ -152,6 +154,7 @@ async function run(rex: Client, id: string): Promise<void> {
     },
     stdio: ["inherit", "inherit", "inherit"],
   });
+  pid = child.pid;
   const exited = child.exited.finally(() => {
     done = true;
     watcher?.close();
@@ -161,7 +164,7 @@ async function run(rex: Client, id: string): Promise<void> {
     else {
       try {
         const known = snapshot?.session ?? load(id)?.reviewerSession;
-        snapshot = await reviewer.comments(review, known, snapshot !== undefined);
+        snapshot = await reviewer.comments({ ...review, pid }, known, snapshot !== undefined);
       } catch {}
     }
     await Promise.race([exited, new Promise((wake) => setTimeout(wake, SNAPSHOT_MS).unref())]);
@@ -170,7 +173,7 @@ async function run(rex: Client, id: string): Promise<void> {
   await stream.idle();
   const decision = reviewer.decision?.(result);
   rmSync(result, { force: true });
-  await settle(rex, id, decision ?? (code === 0 || child.signalCode !== null ? "quit" : code), snapshot);
+  await settle(rex, id, decision ?? (code === 0 || child.signalCode !== null ? "quit" : code), snapshot, pid);
 }
 
 // The timer still claims notes when the directory can't be watched.
@@ -185,12 +188,18 @@ function watchStore(dir: string | undefined, wake: () => void): FSWatcher | unde
 }
 
 // `exit` is the reviewer's decision, or its status when it failed.
-async function settle(rex: Client, id: string, exit: "approved" | "dismissed" | "quit" | number, snapshot?: Comments): Promise<void> {
+async function settle(
+  rex: Client,
+  id: string,
+  exit: "approved" | "dismissed" | "quit" | number,
+  snapshot?: Comments,
+  pid?: number,
+): Promise<void> {
   const current = load(id);
   if (current === undefined || current.outcome !== undefined) return;
-  if (exit === "approved") await approveClaimed(rex, id, Infinity, snapshot);
+  if (exit === "approved") await approveClaimed(rex, id, Infinity, snapshot, pid);
   else if (exit === "dismissed") await finish(rex, current, "dismissed", messages.dismissed(current.delivered.length > 0), Infinity);
-  else if (exit === "quit") await quit(rex, id, snapshot);
+  else if (exit === "quit") await quit(rex, id, snapshot, pid);
   else await finish(rex, current, "failed", messages.failed(exit), Infinity);
 }
 
@@ -248,10 +257,10 @@ function serialized(fn: () => Promise<void>): { call: () => Promise<void>; idle:
 // Quitting approves once every note has an answer, or every note was sent
 // when the reviewer takes no replies. Otherwise the agent gets what's pending
 // and asks how to proceed.
-async function quit(rex: Client, id: string, snapshot?: Comments): Promise<void> {
+async function quit(rex: Client, id: string, snapshot?: Comments, pid?: number): Promise<void> {
   let claimed: Claimed | undefined;
   try {
-    claimed = await claim(id, { strict: true, fallback: snapshot });
+    claimed = await claim(id, { strict: true, fallback: snapshot, pid });
   } catch {}
   const review = claimed?.review ?? load(id);
   if (review === undefined || review.outcome !== undefined) return;
@@ -294,8 +303,11 @@ async function quote(reviewer: Reviewer, review: Review, session: string, events
 // Lists the notes no send or claim has delivered yet, or that changed since,
 // and records them as delivered, under the review's lock. `fallback` stands in
 // when the reviewer can't be read. `stream` appends each event to the agent's
-// events file, unless the review is held.
-async function claim(id: string, options: { strict?: boolean; fallback?: Comments; stream?: boolean } = {}): Promise<Claimed> {
+// events file, unless the review is held. `pid` is the reviewer `run` spawned.
+async function claim(
+  id: string,
+  options: { strict?: boolean; fallback?: Comments; stream?: boolean; pid?: number } = {},
+): Promise<Claimed> {
   return locked(id, async () => {
     const review = load(id);
     if (review === undefined) throw new Error(`review ${id} closed`);
@@ -303,7 +315,7 @@ async function claim(id: string, options: { strict?: boolean; fallback?: Comment
     let read: Comments;
     try {
       if (review.review !== undefined) await reviewer.flush(review.review);
-      read = await reviewer.comments(review, review.reviewerSession ?? options.fallback?.session, options.strict);
+      read = await reviewer.comments({ ...review, pid: options.pid }, review.reviewerSession ?? options.fallback?.session, options.strict);
     } catch (err) {
       if (options.fallback === undefined) throw err;
       read = options.fallback;
@@ -346,10 +358,10 @@ async function approve(rex: Client, block: string): Promise<void> {
 }
 
 // Approves with whatever notes are still unsent.
-async function approveClaimed(rex: Client, id: string, timeoutMs: number, fallback?: Comments): Promise<void> {
+async function approveClaimed(rex: Client, id: string, timeoutMs: number, fallback?: Comments, pid?: number): Promise<void> {
   let claimed: Claimed;
   try {
-    claimed = await claim(id, { strict: fallback !== undefined, fallback });
+    claimed = await claim(id, { strict: fallback !== undefined, fallback, pid });
   } catch (err) {
     const review = load(id);
     if (review === undefined) throw new Error(`review ${id} closed`);

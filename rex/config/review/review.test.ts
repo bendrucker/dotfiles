@@ -78,16 +78,20 @@ esac`,
   stubHunk();
 });
 
-// `diff` runs `onDiff`, standing in for the Hunk window's lifetime.
+// `diff` runs `onDiff`, standing in for the Hunk window's lifetime. A session
+// listed with pid SPAWNED belongs to that `diff`. A session's notes come from
+// `hunk-notes-<session>` when it exists.
+const SPAWNED = -1;
+
 function stubHunk(onDiff = ""): void {
   box.stub(
     "hunk",
     `${record} >> ${quote(box.path("hunk-calls"))}
 case "$1 $2 $3" in
-  "session list --json") cat ${quote(box.path("hunk-sessions"))} ;;
-  "session comment list") sleep "$(cat ${quote(box.path("hunk-delay"))} 2>/dev/null || echo 0)"; cat ${quote(box.path("hunk-notes"))} ;;
+  "session list --json") sed "s/:${SPAWNED},/:$(cat ${quote(box.path("hunk-pid"))} 2>/dev/null || echo 0),/g" ${quote(box.path("hunk-sessions"))} ;;
+  "session comment list") sleep "$(cat ${quote(box.path("hunk-delay"))} 2>/dev/null || echo 0)"; cat ${quote(box.path("hunk-notes"))}-"$4" 2>/dev/null || cat ${quote(box.path("hunk-notes"))} ;;
   "session review "*) cat ${quote(box.path("hunk-review"))} ;;
-  diff*) ${onDiff || ":"} ;;
+  diff*) echo $$ > ${quote(box.path("hunk-pid"))}; ${onDiff || ":"} ;;
 esac`,
   );
 }
@@ -188,7 +192,7 @@ function comments(...rows: object[]): void {
   box.write("tuicr-comments", JSON.stringify(rows));
 }
 
-function hunkSessions(...rows: { sessionId: string; cwd: string; launchedAt: string }[]): void {
+function hunkSessions(...rows: { sessionId: string; pid?: number; cwd: string; launchedAt: string }[]): void {
   box.write("hunk-sessions", JSON.stringify({ sessions: rows }));
 }
 
@@ -623,7 +627,7 @@ function agentNote(overrides: object = {}): object {
 
 function hunkReview(overrides: Partial<Review> = {}): void {
   seed(review({ reviewer: "hunk", reviewerSession: "h1", ...overrides }));
-  hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
+  hunkSessions({ sessionId: "h1", pid: SPAWNED, cwd: realpathSync(work), launchedAt: "2026-11-01" });
 }
 
 describe("rex/config/review quitting Hunk", () => {
@@ -688,7 +692,7 @@ describe("rex/config/review quitting Hunk", () => {
 
   test("delivers notes from the last snapshot once the window is gone", () => {
     seed(review({ reviewer: "hunk", mode: "batch" }));
-    hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
+    hunkSessions({ sessionId: "h1", pid: SPAWNED, cwd: realpathSync(work), launchedAt: "2026-11-01" });
     notes(note({ body: "written while open" }));
     stubHunk(`sleep 0.4; printf '{"sessions":[]}' > ${quote(box.path("hunk-sessions"))}`);
 
@@ -909,7 +913,7 @@ describe("rex/config/review events file", () => {
   // signal once Hunk is up.
   async function startRun(mode: Review["mode"], env: Record<string, string> = {}) {
     seed(review({ reviewer: "hunk", mode }));
-    hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
+    hunkSessions({ sessionId: "h1", pid: SPAWNED, cwd: realpathSync(work), launchedAt: "2026-11-01" });
     stubHunk(`while [ ! -f ${quote(quitFile())} ]; do sleep 0.02; done`);
     const child = spawn(["run", id], env);
     await until(() => existsSync(box.path("hunk-calls")) && hunkCalls().some((c) => c[0] === "diff"));
@@ -938,6 +942,26 @@ describe("rex/config/review events file", () => {
       [review: closed] closed
       "
     `);
+  });
+
+  test("binds to the window it spawned, not an earlier one on the same directory", async () => {
+    seed(review({ reviewer: "hunk", mode: "live" }));
+    const stale = { sessionId: "stale", pid: 1, cwd: realpathSync(work), launchedAt: "2026-11-01" };
+    const own = { sessionId: "own", pid: SPAWNED, cwd: realpathSync(work), launchedAt: "2026-11-02" };
+    hunkSessions(stale);
+    box.write("hunk-notes-stale", JSON.stringify({ comments: [note({ body: "from the stale window" })] }));
+    box.write("hunk-notes-own", JSON.stringify({ comments: [note({ noteId: "user:2", body: "from the spawned window" })] }));
+    // The spawned window registers only after `run` has claimed a few times.
+    stubHunk(
+      `sleep 0.3; printf '%s' ${quote(JSON.stringify({ sessions: [stale, own] }))} > ${quote(box.path("hunk-sessions"))}; while [ ! -f ${quote(quitFile())} ]; do sleep 0.02; done`,
+    );
+    const child = spawn(["run", id]);
+    await until(() => exists(join("blocks", `${agent}.events`)) && lines().length === 1);
+    expect(saved().reviewerSession).toBe("own");
+    await quit(child);
+
+    expect(hunkCalls().filter((c) => c[1] === "comment").map((c) => c[3])).not.toContain("stale");
+    expect(lines()).toEqual(["[review: comment] src/app.ts:2 (id user:2) | > two | from the spawned window", "[review: closed] closed"]);
   });
 
   test("signal and timer claims append each note once, in order", async () => {

@@ -1,9 +1,9 @@
 import { realpathSync } from "node:fs";
 import { z } from "zod";
-import { AGENT_AUTHOR, type Comment, type Comments, type Reviewer } from "./reviewer";
+import { AGENT_AUTHOR, type Comment, type Comments, type Reviewer, type Target } from "./reviewer";
 
 const Sessions = z.object({
-  sessions: z.array(z.object({ sessionId: z.string(), cwd: z.string(), launchedAt: z.string() })),
+  sessions: z.array(z.object({ sessionId: z.string(), pid: z.number().nullish(), cwd: z.string(), launchedAt: z.string() })),
 });
 
 const EXTENSION = new URL("./hunk-extension.ts", import.meta.url).pathname;
@@ -40,8 +40,14 @@ async function hunk(args: string[], cwd: string): Promise<string> {
 
 // Notes live in the Hunk window, so the session must still be open. `run`
 // launches Hunk in the review's directory, which the daemon reports resolved.
-async function session(cwd: string, known?: string, strict = false): Promise<string> {
+// Another window can be open there, so `run` matches its own by pid.
+async function session({ cwd, pid }: Target, known?: string, strict = false): Promise<string> {
   const { sessions } = Sessions.parse(JSON.parse(await hunk(["session", "list", "--json"], cwd)));
+  if (pid !== undefined) {
+    const own = sessions.find((s) => s.pid === pid);
+    if (own === undefined) throw new Error(`Hunk process ${pid} has no open session`);
+    return own.sessionId;
+  }
   if (known !== undefined && sessions.some((s) => s.sessionId === known)) return known;
   if (known !== undefined && strict) throw new Error(`Hunk session ${known} is closed`);
   const dir = realpathSync(cwd);
@@ -77,9 +83,9 @@ export const reviewer: Reviewer = {
   async flush() {},
 
   // The user's notes and the agent's replies. Other agents' notes are skipped.
-  async comments({ cwd }, known, strict): Promise<Comments> {
-    const id = await session(cwd, known, strict);
-    const raw: unknown = JSON.parse(await hunk(["session", "comment", "list", id, "--type", "all", "--json"], cwd));
+  async comments(target, known, strict): Promise<Comments> {
+    const id = await session(target, known, strict);
+    const raw: unknown = JSON.parse(await hunk(["session", "comment", "list", id, "--type", "all", "--json"], target.cwd));
     const notes = Notes.parse(raw).comments.filter((n) => n.source === "user" || n.author === AGENT_AUTHOR);
     return { session: id, comments: notes.map(normalize) };
   },

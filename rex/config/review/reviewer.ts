@@ -20,6 +20,8 @@ export interface Target {
   cwd: string;
   revisions?: string;
   doc?: string;
+  // The reviewer process `run` spawned, whose record is the only one to read.
+  pid?: number;
 }
 
 // `session` names the reviewer's own record of the review. Later calls pass it
