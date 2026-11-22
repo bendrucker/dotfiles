@@ -1025,3 +1025,233 @@ describe("rex/config/review events file", () => {
     expect(events()).toBe("[review: closed] closed\n");
   });
 });
+
+describe("rex/config/review plannotator", () => {
+  const client = join("home", ".plannotator", "clients", "plannotator-tui");
+  const diffStorePath = join(client, "reviews", "work", "uncommitted-abc", "review.json");
+  const docStorePath = join(client, "annotations", "work", "annotate-doc-md-abc", "annotations.json");
+  const doc = () => join(work, "doc.md");
+  const plannotatorCalls = () => readCalls("plannotator-calls");
+
+  // `onRun` stands in for the TUI's lifetime. A `decision` file becomes the
+  // gate's result file.
+  function stubPlannotator(onRun = ""): void {
+    box.stub(
+      "plannotator-tui",
+      `${record} >> ${quote(box.path("plannotator-calls"))}
+decision=${quote(box.path("decision"))}
+while [ $# -gt 0 ]; do
+  if [ "$1" = --result-file ] && [ -f "$decision" ]; then cp "$decision" "$2"; fi
+  shift
+done
+${onRun || ":"}`,
+    );
+  }
+
+  function diffNote(overrides: object = {}): object {
+    return {
+      id: "local_1",
+      type: "comment",
+      scope: "line",
+      filePath: "src/app.ts",
+      lineStart: 2,
+      lineEnd: 2,
+      side: "new",
+      text: "fix",
+      anchorText: "two",
+      createdAt: 1,
+      plannotator_tui: { patchKey: "k", updatedAt: 1, resolution: "still_there" },
+      ...overrides,
+    };
+  }
+
+  function docNote(overrides: object = {}): object {
+    return {
+      id: "local_d1",
+      document_id: "",
+      anchor: { originalText: "Deferred Work", quote: "## Deferred Work" },
+      body: "rm Work",
+      author: null,
+      state: "open",
+      created_at: "2026-11-21T00:00:00.000Z",
+      updated_at: "2026-11-21T00:00:00.000Z",
+      replies: [],
+      ...overrides,
+    };
+  }
+
+  function diffStore(...annotations: object[]): void {
+    box.write(diffStorePath, JSON.stringify({ repo: realpathSync(work), scope: { kind: "uncommitted" }, annotations, deliveries: [], archived: [] }));
+  }
+
+  function docStore(...annotations: object[]): void {
+    box.write(docStorePath, JSON.stringify({ path: doc(), annotations, deliveries: [] }));
+  }
+
+  function diffReview(overrides: Partial<Review> = {}): void {
+    seed(review({ reviewer: "plannotator", ...overrides }));
+  }
+
+  function docReview(overrides: Partial<Review> = {}): void {
+    seed(review({ reviewer: "plannotator", doc: doc(), mode: "batch", ...overrides }));
+  }
+
+  beforeEach(() => {
+    box.write("work/doc.md", "# Doc\n\n## Deferred Work\n");
+    stubPlannotator();
+  });
+
+  test.each<{ name: string; revisions?: string; doc?: boolean; args: string[] }>([
+    { name: "the working tree", args: ["review"] },
+    { name: "a base ref", revisions: "main", args: ["review", "--base", "main"] },
+    { name: "a doc behind an approval gate", doc: true, args: ["doc.md", "--gate", "--json", "--require-approval", "--result-file", "result"] },
+  ])("run opens $name", ({ revisions, doc: isDoc, args }) => {
+    diffReview({ revisions, doc: isDoc ? doc() : undefined, mode: "batch" });
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    const result = box.path(statePath(`${id}.result.json`));
+    const [call] = plannotatorCalls();
+    expect(call.map((arg) => (arg === doc() ? "doc.md" : arg === result ? "result" : arg))).toEqual(args);
+  });
+
+  test("a store write claims a new diff note without waiting for the timer", async () => {
+    diffReview();
+    stubPlannotator(`while [ ! -f ${quote(box.path("quit"))} ]; do sleep 0.02; done`);
+    const child = spawn(["run", id], { REVIEW_SNAPSHOT_MS: "60000" });
+    await until(() => existsSync(box.path("plannotator-calls")));
+    const lines = () => (exists(join("blocks", `${agent}.events`)) ? events().split("\n").filter((l) => l !== "") : []);
+
+    diffStore(diffNote());
+    await until(() => lines().length === 1, 2000);
+    box.write("quit", "");
+    expect(await child.exited).toBe(0);
+
+    expect(events()).toMatchInlineSnapshot(`
+      "[review: comment] src/app.ts:2 (id local_1) | > two | fix | Reply here in chat. This note takes no review_reply.
+      [review: closed] approved
+      "
+    `);
+  });
+
+  test.each<{ name: string; store: () => void; delivered: Review["delivered"]; doc: boolean }>([
+    {
+      name: "diff",
+      store: () => diffStore(diffNote({ text: "fix it now", plannotator_tui: { patchKey: "k", updatedAt: 2, resolution: "still_there" } })),
+      delivered: [{ id: "local_1", hash: hash("fix") }],
+      doc: false,
+    },
+    {
+      name: "doc",
+      store: () => docStore(docNote({ body: "drop Work", updated_at: "2026-11-21T01:00:00.000Z" })),
+      delivered: [{ id: "local_d1", hash: hash("rm Work") }],
+      doc: true,
+    },
+  ])("claim redelivers an edited $name note", ({ store, delivered, doc: isDoc }) => {
+    diffReview({ doc: isDoc ? doc() : undefined, delivered });
+    store();
+
+    expect(exec(["claim", agent]).stdout).toMatchSnapshot();
+  });
+
+  test("claim delivers a doc note with its anchor and a user's reply in its thread", () => {
+    docReview({ delivered: [{ id: "local_d1", hash: hash("rm Work") }] });
+    docStore(
+      docNote({
+        replies: [
+          { id: "reply_claude_1", body: "removed", author: "Claude", created_at: "", updated_at: "" },
+          { id: "reply_2", body: "and the heading", author: null, created_at: "", updated_at: "" },
+        ],
+      }),
+    );
+
+    expect(exec(["claim", agent]).stdout).toMatchInlineSnapshot(`
+      "[review: comment] doc.md (id reply_2) | In reply to your note: removed | and the heading
+      "
+    `);
+  });
+
+  test("reply appends to the doc note's replies and keeps the store's other fields", () => {
+    docReview();
+    docStore(docNote());
+
+    expect(exec(["reply", agent, "local_d1", "done"]).status).toBe(0);
+
+    const store = JSON.parse(box.read(docStorePath));
+    expect(store.deliveries).toEqual([]);
+    expect(store.annotations[0].anchor.originalText).toBe("Deferred Work");
+    expect(store.annotations[0].replies).toEqual([
+      { id: expect.stringMatching(/^reply_/), body: "done", author: "Claude", created_at: expect.any(String), updated_at: expect.any(String) },
+    ]);
+  });
+
+  test("reply to a diff note tells the agent to answer in its turn", () => {
+    diffReview();
+    diffStore(diffNote());
+
+    const result = exec(["reply", agent, "local_1", "done"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Answer in your turn instead.");
+  });
+
+  test.each<{ decision: string; unsent: boolean; message: string }>([
+    { decision: "approved", unsent: false, message: "[review: approved] Ben approved the changes. Continue." },
+    {
+      decision: "approved-with-notes",
+      unsent: true,
+      message: "[review: approved] Ben approved the changes, once you address the 1 comment below.\n\n## doc.md (id local_d2)\n> # Doc\nretitle",
+    },
+    { decision: "dismissed", unsent: false, message: "[review: dismissed] Ben dismissed the review." },
+  ])("a $decision result file delivers its outcome", ({ decision, unsent, message }) => {
+    docReview({ delivered: [{ id: "local_d1", hash: hash("rm Work") }] });
+    docStore(docNote(), ...(unsent ? [docNote({ id: "local_d2", anchor: { quote: "# Doc" }, body: "retitle" })] : []));
+    box.write("decision", JSON.stringify({ decision }));
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    expectDelivered(message);
+    expect(exists(`${id}.result.json`)).toBe(false);
+    expect(exists(`${id}.json`)).toBe(false);
+  });
+
+  test.each<{ name: string; replies: object[]; message: string }>([
+    {
+      name: "approves when every note has a reply",
+      replies: [{ id: "reply_claude_1", body: "removed", author: "Claude", created_at: "", updated_at: "" }],
+      message: "[review: approved] Ben approved the changes. Continue.",
+    },
+    { name: "asks how to proceed when a note has none", replies: [], message: "These earlier comments have no reply yet: id local_d1." },
+  ])("quitting a doc without a result $name", ({ replies, message }) => {
+    docReview({ delivered: [{ id: "local_d1", hash: hash("rm Work") }] });
+    docStore(docNote({ replies }));
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    expectDelivered(message);
+  });
+
+  test("quitting a diff approves once every note was delivered", () => {
+    diffReview({ delivered: [{ id: "local_1", hash: hash("fix") }], mode: "batch" });
+    diffStore(diffNote());
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    expectDelivered("[review: approved] Ben approved the changes. Continue.");
+  });
+
+  test.each<{ name: string; args: string[]; reviewer?: Review["reviewer"]; doc?: string; status: number }>([
+    { name: "--reviewer plannotator reviews the diff", args: ["--reviewer", "plannotator"], reviewer: "plannotator", status: 0 },
+    { name: "--doc picks plannotator", args: ["--doc", "doc.md"], reviewer: "plannotator", doc: "doc.md", status: 0 },
+    { name: "--doc rejects hunk", args: ["--doc", "doc.md", "--reviewer", "hunk"], status: 2 },
+    { name: "an unknown reviewer is rejected", args: ["--reviewer", "vim"], status: 2 },
+  ])("open: $name", ({ args, reviewer, doc: file, status }) => {
+    const result = exec(["open", agent, "--cwd", work, ...args]);
+
+    expect(result.status).toBe(status);
+    if (status !== 0) return;
+    const state = saved(box.read(statePath(join("blocks", agent))));
+    expect(state.reviewer).toBe(reviewer);
+    expect(state.doc).toBe(file && join(work, file));
+  });
+});

@@ -10,7 +10,16 @@ export interface Comment {
   startLine?: number;
   endLine?: number;
   side?: "old" | "new";
+  // The text a note anchors to, when the reviewer records it.
+  quote?: string;
   body: string;
+}
+
+// What a review covers: a diff in `cwd`, or one document.
+export interface Target {
+  cwd: string;
+  revisions?: string;
+  doc?: string;
 }
 
 // `session` names the reviewer's own record of the review. Later calls pass it
@@ -23,13 +32,20 @@ export interface Comments {
 export interface Reviewer {
   // Notes vanish when the reviewer exits, so `run` snapshots them while it runs.
   ephemeral: boolean;
-  command(revisions?: string): string[];
+  // `result` is where a gated reviewer writes its decision.
+  command(target: Target, result: string): string[];
   flush(block: string): Promise<void>;
   // Includes the agent's replies. `strict` fails rather than fall back to
   // another record when `session` is gone.
-  comments(cwd: string, session?: string, strict?: boolean): Promise<Comments>;
+  comments(target: Target, session?: string, strict?: boolean): Promise<Comments>;
   // The unified diff the reviewer shows, keyed by path.
-  patches?(cwd: string, session: string): Promise<Record<string, string>>;
+  patches?(target: Target, session: string): Promise<Record<string, string>>;
   reload(block: string): Promise<void>;
-  reply(cwd: string, session: string, comment: Comment, text: string): Promise<void>;
+  reply(target: Target, session: string, comment: Comment, text: string): Promise<void>;
+  // A directory the reviewer writes notes into without signaling `run`.
+  watch?(target: Target): string;
+  // False when notes take no replies, so the agent answers in its turn.
+  threads?(target: Target): boolean;
+  // The decision a gated reviewer wrote to `result`, if any.
+  decision?(result: string): "approved" | "dismissed" | undefined;
 }

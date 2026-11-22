@@ -68,7 +68,7 @@ export const reviewer: Reviewer = {
   ephemeral: true,
 
   // A revisions string like `main..HEAD` is one Hunk target.
-  command(revisions) {
+  command({ revisions }) {
     const target = revisions === undefined ? [] : [revisions];
     return ["hunk", "diff", ...target, "--watch", "--agent-notes", "--extension", EXTENSION];
   },
@@ -77,14 +77,14 @@ export const reviewer: Reviewer = {
   async flush() {},
 
   // The user's notes and the agent's replies. Other agents' notes are skipped.
-  async comments(cwd, known, strict): Promise<Comments> {
+  async comments({ cwd }, known, strict): Promise<Comments> {
     const id = await session(cwd, known, strict);
     const raw: unknown = JSON.parse(await hunk(["session", "comment", "list", id, "--type", "all", "--json"], cwd));
     const notes = Notes.parse(raw).comments.filter((n) => n.source === "user" || n.author === AGENT_AUTHOR);
     return { session: id, comments: notes.map(normalize) };
   },
 
-  async patches(cwd, id) {
+  async patches({ cwd }, id) {
     const { review } = Review.parse(JSON.parse(await hunk(["session", "review", id, "--include-patch", "--json"], cwd)));
     return Object.fromEntries(review.files.flatMap((f) => (f.patch ? [[f.path, f.patch]] : [])));
   },
@@ -92,7 +92,7 @@ export const reviewer: Reviewer = {
   // `--watch` reloads the diff, and a reply shows up as soon as it is added.
   async reload() {},
 
-  async reply(cwd, id, comment, text) {
+  async reply({ cwd }, id, comment, text) {
     await hunk(
       ["session", "comment", "add", id, "--reply-to", comment.id, "--summary", text, "--author", AGENT_AUTHOR],
       cwd,

@@ -35,6 +35,13 @@ export function sides(patch: string): Sides {
   return result;
 }
 
+export function blockquote(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => `> ${line}`)
+    .join("\n");
+}
+
 function fileLines(cwd: string, path: string, side: "old" | "new"): string[] | undefined {
   if (side === "new") {
     try {
