@@ -25,9 +25,10 @@ afterEach(() => {
   box.remove();
 });
 
-function backdate(path: string, days: number): void {
+function backdate(path: string, days: number): number {
   const when = nowSeconds() - days * DAY;
   utimesSync(path, when, when);
+  return when;
 }
 
 describe("statusPaths", () => {
@@ -50,16 +51,16 @@ describe("newestChange", () => {
     writeFileSync(join(repo, "tracked"), "two");
     writeFileSync(join(repo, "untracked"), "new");
     backdate(join(repo, "tracked"), 10);
-    backdate(join(repo, "untracked"), 3);
-    expect(await newestChange(repo)).toBe(nowSeconds() - 3 * DAY);
+    const newest = backdate(join(repo, "untracked"), 3);
+    expect(await newestChange(repo)).toBe(newest);
   });
 
   test("dates a fresh edit inside an old untracked directory by the file", async () => {
     const dir = box.mkdir("repo", "scratch");
     writeFileSync(join(dir, "inner"), "x");
-    backdate(join(dir, "inner"), 1);
+    const newest = backdate(join(dir, "inner"), 1);
     backdate(dir, 20);
-    expect(await newestChange(repo)).toBe(nowSeconds() - DAY);
+    expect(await newestChange(repo)).toBe(newest);
   });
 
   test("dates a deleted path by the directory it was removed from", async () => {
@@ -68,8 +69,8 @@ describe("newestChange", () => {
     must(["git", "-C", repo, "add", "sub/gone"]);
     must(["git", "-C", repo, "commit", "-q", "-m", "sub"]);
     must(["rm", join(dir, "gone")]);
-    backdate(dir, 4);
-    expect(await newestChange(repo)).toBe(nowSeconds() - 4 * DAY);
+    const removed = backdate(dir, 4);
+    expect(await newestChange(repo)).toBe(removed);
   });
 });
 
