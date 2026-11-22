@@ -134,7 +134,7 @@ rex.action{
   description = "Review an agent pane's changes in Hunk, split to its right. Send, Approve, or Dismiss hands the outcome to the agent.",
   category = "Git",
   keywords = "hunk diff code review agent claude",
-  args = { block = "string?", revisions = "string?", mode = "string?" },
+  args = { block = "string?", revisions = "string?", mode = "string?", reviewer = "string?", doc = "string?" },
   run = function(ctx, args)
     local block = args.block or ctx.block_id
     local dir = block and block_dir(block)
@@ -146,9 +146,11 @@ rex.action{
       argv[#argv + 1] = "--revisions"
       argv[#argv + 1] = args.revisions
     end
-    if args.mode then
-      argv[#argv + 1] = "--mode"
-      argv[#argv + 1] = args.mode
+    for _, flag in ipairs({ "mode", "reviewer", "doc" }) do
+      if args[flag] then
+        argv[#argv + 1] = "--" .. flag
+        argv[#argv + 1] = args[flag]
+      end
     end
     review(ctx, argv)
   end,

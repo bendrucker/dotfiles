@@ -67,7 +67,7 @@ function location(comment: Comment): string[] {
 export const reviewer: Reviewer = {
   ephemeral: false,
 
-  command(revisions) {
+  command({ revisions }) {
     return revisions === undefined
       ? ["tuicr", "--no-update-check", "-w"]
       : ["tuicr", "--no-update-check", "-r", revisions, "-w"];
@@ -76,7 +76,7 @@ export const reviewer: Reviewer = {
   // tuicr writes the session each time a comment is saved.
   async flush() {},
 
-  async comments(cwd, known): Promise<Comments> {
+  async comments({ cwd }, known): Promise<Comments> {
     const slug = await session(cwd, known);
     const raw: unknown = JSON.parse(await tuicr(["review", "comments", "--session", slug], cwd));
     return { session: slug, comments: z.array(TuicrComment).parse(raw).map(normalize) };
@@ -86,7 +86,7 @@ export const reviewer: Reviewer = {
   // for comments added from outside.
   async reload() {},
 
-  async reply(cwd, slug, comment, text) {
+  async reply({ cwd }, slug, comment, text) {
     await tuicr(["review", "add", "--session", slug, "--username", AGENT_AUTHOR, ...location(comment), text], cwd);
   },
 };

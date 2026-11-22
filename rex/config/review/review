@@ -2,6 +2,7 @@
 //
 // Usage:
 //   review open AGENT_BLOCK --cwd DIR [--revisions REVSET] [--mode live|batch]
+//               [--reviewer hunk|plannotator] [--doc FILE]
 //   review run ID
 //   review send|claim|approve|dismiss BLOCK
 //   review wait ID
@@ -12,11 +13,13 @@
 // notes at once, and SIGUSR2 holds or releases them.
 
 import { randomUUID } from "node:crypto";
+import { mkdirSync, rmSync, watch, type FSWatcher } from "node:fs";
+import { join, resolve as resolvePath } from "node:path";
 import { parseArgs } from "node:util";
 import * as messages from "./messages";
 import { Client } from "./rex";
 import { reconcile, unanswered, type Event } from "./delivery";
-import { quoter } from "./quote";
+import { blockquote, quoter } from "./quote";
 import type { Comment, Comments, Reviewer } from "./reviewer";
 import {
   appendEvent,
@@ -27,15 +30,17 @@ import {
   resetEvents,
   resolve,
   save,
+  stateDir,
   statusPath,
   writeStatus,
   type Review,
   type Status,
 } from "./state";
 import { reviewer as hunk } from "./hunk";
+import { reviewer as plannotator } from "./plannotator";
 import { reviewer as tuicr } from "./tuicr";
 
-const reviewers: Record<Review["reviewer"], Reviewer> = { hunk, tuicr };
+const reviewers: Record<Review["reviewer"], Reviewer> = { hunk, plannotator, tuicr };
 // tuicr stays as the fallback. Set this to "tuicr" to switch back.
 const DEFAULT_REVIEWER: Review["reviewer"] = "hunk";
 
@@ -60,7 +65,9 @@ function find(block: string): Review {
   return review;
 }
 
-async function open(rex: Client, agent: string, cwd: string, mode: Review["mode"], revisions?: string): Promise<void> {
+type Opening = Pick<Review, "cwd" | "mode" | "reviewer" | "revisions" | "doc">;
+
+async function open(rex: Client, agent: string, opening: Opening): Promise<void> {
   try {
     const live = await rex.blocks();
     if (live.has(agent)) prune(live);
@@ -77,9 +84,9 @@ async function open(rex: Client, agent: string, cwd: string, mode: Review["mode"
   }
 
   resetEvents(agent);
-  const review: Review = { id: randomUUID(), session: rex.session, agent, cwd, reviewer: DEFAULT_REVIEWER, revisions, delivered: [], mode, held: false };
+  const review: Review = { id: randomUUID(), session: rex.session, agent, ...opening, delivered: [], held: false };
   save(review);
-  const block = await rex.newSplit(agent, cwd, [import.meta.path, "run", review.id]);
+  const block = await rex.newSplit(agent, opening.cwd, [import.meta.path, "run", review.id]);
   save({ ...review, review: block });
 }
 
@@ -125,13 +132,17 @@ async function run(rex: Client, id: string): Promise<void> {
     } catch {}
   });
   // The reviewer signals a saved note, so it reaches the agent before the next tick.
-  process.on("SIGUSR1", () => {
+  const wake = () => {
     if (live && !done) void stream.call();
-  });
+  };
+  process.on("SIGUSR1", wake);
   process.on("SIGUSR2", () => {
     if (live && !done) void toggleHold(id).then(stream.call);
   });
-  const child = Bun.spawn(reviewer.command(review.revisions), {
+  const watcher = live ? watchStore(reviewer.watch?.(review), wake) : undefined;
+  const result = join(stateDir(), `${id}.result.json`);
+  rmSync(result, { force: true });
+  const child = Bun.spawn(reviewer.command(review, result), {
     cwd: review.cwd,
     env: {
       ...process.env,
@@ -143,27 +154,44 @@ async function run(rex: Client, id: string): Promise<void> {
   });
   const exited = child.exited.finally(() => {
     done = true;
+    watcher?.close();
   });
   while ((live || reviewer.ephemeral) && !done) {
     if (live) await stream.call();
     else {
       try {
         const known = snapshot?.session ?? load(id)?.reviewerSession;
-        snapshot = await reviewer.comments(review.cwd, known, snapshot !== undefined);
+        snapshot = await reviewer.comments(review, known, snapshot !== undefined);
       } catch {}
     }
     await Promise.race([exited, new Promise((wake) => setTimeout(wake, SNAPSHOT_MS).unref())]);
   }
   const code = await exited;
   await stream.idle();
+  const decision = reviewer.decision?.(result);
+  rmSync(result, { force: true });
+  await settle(rex, id, decision ?? (code === 0 || child.signalCode !== null ? "quit" : code), snapshot);
+}
 
+// The timer still claims notes when the directory can't be watched.
+function watchStore(dir: string | undefined, wake: () => void): FSWatcher | undefined {
+  if (dir === undefined) return undefined;
+  try {
+    mkdirSync(dir, { recursive: true });
+    return watch(dir, { recursive: true }, wake).on("error", () => {});
+  } catch {
+    return undefined;
+  }
+}
+
+// `exit` is the reviewer's decision, or its status when it failed.
+async function settle(rex: Client, id: string, exit: "approved" | "dismissed" | "quit" | number, snapshot?: Comments): Promise<void> {
   const current = load(id);
   if (current === undefined || current.outcome !== undefined) return;
-  if (code === 0 || child.signalCode !== null) {
-    await quit(rex, id, snapshot);
-  } else {
-    await finish(rex, current, "failed", messages.failed(code), Infinity);
-  }
+  if (exit === "approved") await approveClaimed(rex, id, Infinity, snapshot);
+  else if (exit === "dismissed") await finish(rex, current, "dismissed", messages.dismissed(current.delivered.length > 0), Infinity);
+  else if (exit === "quit") await quit(rex, id, snapshot);
+  else await finish(rex, current, "failed", messages.failed(exit), Infinity);
 }
 
 async function toggleHold(id: string): Promise<void> {
@@ -217,8 +245,9 @@ function serialized(fn: () => Promise<void>): { call: () => Promise<void>; idle:
   return { call, idle: () => running ?? Promise.resolve() };
 }
 
-// Quitting approves once every note has an answer. Otherwise the agent gets
-// what's pending and asks how to proceed.
+// Quitting approves once every note has an answer, or every note was sent
+// when the reviewer takes no replies. Otherwise the agent gets what's pending
+// and asks how to proceed.
 async function quit(rex: Client, id: string, snapshot?: Comments): Promise<void> {
   let claimed: Claimed | undefined;
   try {
@@ -228,9 +257,9 @@ async function quit(rex: Client, id: string, snapshot?: Comments): Promise<void>
   if (review === undefined || review.outcome !== undefined) return;
   const events = claimed?.events ?? [];
   const sent = new Set(events.flatMap((e) => (e.kind === "retracted" ? [] : [e.comment.id])));
-  const open = (claimed ? unanswered(claimed.comments, review.delivered) : review.delivered.map((d) => d.id)).filter(
-    (noteId) => !sent.has(noteId),
-  );
+  const threads = reviewers[review.reviewer].threads?.(review) ?? true;
+  const answerable = claimed ? unanswered(claimed.comments, review.delivered) : review.delivered.map((d) => d.id);
+  const open = (threads ? answerable : []).filter((noteId) => !sent.has(noteId));
   if (events.length === 0 && open.length === 0) {
     await finish(rex, review, "approved", messages.approved(), Infinity);
   } else {
@@ -247,14 +276,19 @@ interface Claimed {
   pending: number;
 }
 
-async function quote(reviewer: Reviewer, cwd: string, session: string, events: Event[]): Promise<void> {
-  if (!events.some((e) => e.kind !== "retracted" && e.comment.startLine !== undefined)) return;
-  let patches: Record<string, string> | undefined;
-  try {
-    patches = await reviewer.patches?.(cwd, session);
-  } catch {}
-  const lines = quoter(cwd, patches);
-  for (const event of events) if (event.kind !== "retracted") event.quote = lines(event.comment);
+async function quote(reviewer: Reviewer, review: Review, session: string, events: Event[]): Promise<void> {
+  let lines: ReturnType<typeof quoter> | undefined;
+  if (events.some((e) => e.kind !== "retracted" && e.comment.startLine !== undefined)) {
+    let patches: Record<string, string> | undefined;
+    try {
+      patches = await reviewer.patches?.(review, session);
+    } catch {}
+    lines = quoter(review.cwd, patches);
+  }
+  for (const event of events) {
+    if (event.kind === "retracted") continue;
+    event.quote = event.comment.quote === undefined ? lines?.(event.comment) : blockquote(event.comment.quote);
+  }
 }
 
 // Lists the notes no send or claim has delivered yet, or that changed since,
@@ -269,7 +303,7 @@ async function claim(id: string, options: { strict?: boolean; fallback?: Comment
     let read: Comments;
     try {
       if (review.review !== undefined) await reviewer.flush(review.review);
-      read = await reviewer.comments(review.cwd, review.reviewerSession ?? options.fallback?.session, options.strict);
+      read = await reviewer.comments(review, review.reviewerSession ?? options.fallback?.session, options.strict);
     } catch (err) {
       if (options.fallback === undefined) throw err;
       read = options.fallback;
@@ -280,10 +314,11 @@ async function claim(id: string, options: { strict?: boolean; fallback?: Comment
       if (JSON.stringify(next) !== JSON.stringify(review)) save(next);
       return { review: next, events: [], session: read.session, comments: read.comments, pending: events.length };
     }
-    await quote(reviewer, review.cwd, read.session, events);
+    await quote(reviewer, review, read.session, events);
     const next = { ...review, reviewerSession: read.session, delivered };
     if (JSON.stringify(next) !== JSON.stringify(review)) save(next);
-    if (options.stream) for (const event of events) appendEvent(review.agent, messages.live(event));
+    const threads = reviewer.threads?.(review) ?? true;
+    if (options.stream) for (const event of events) appendEvent(review.agent, messages.live(event, threads));
     return { review: next, events, session: read.session, comments: read.comments, pending: 0 };
   });
 }
@@ -299,22 +334,29 @@ async function send(rex: Client, block: string): Promise<void> {
 }
 
 async function claimLines(block: string): Promise<void> {
-  const { events } = await claim(find(block).id);
-  for (const event of events) console.log(messages.live(event));
+  const { review, events } = await claim(find(block).id);
+  const threads = reviewers[review.reviewer].threads?.(review) ?? true;
+  for (const event of events) console.log(messages.live(event, threads));
 }
 
 async function approve(rex: Client, block: string): Promise<void> {
   const { id, agent } = find(block);
   await rex.unblocked(agent, SUBMIT_WAIT_MS);
+  await approveClaimed(rex, id, SUBMIT_WAIT_MS);
+}
+
+// Approves with whatever notes are still unsent.
+async function approveClaimed(rex: Client, id: string, timeoutMs: number, fallback?: Comments): Promise<void> {
   let claimed: Claimed;
   try {
-    claimed = await claim(id);
+    claimed = await claim(id, { strict: fallback !== undefined, fallback });
   } catch (err) {
-    const review = find(block);
+    const review = load(id);
+    if (review === undefined) throw new Error(`review ${id} closed`);
     const reason = err instanceof Error ? err.message : String(err);
-    return finish(rex, review, "approved", `${messages.approved()} (Unsent comments couldn't be read: ${reason})`);
+    return finish(rex, review, "approved", `${messages.approved()} (Unsent comments couldn't be read: ${reason})`, timeoutMs);
   }
-  await finish(rex, claimed.review, "approved", messages.approved(claimed.events));
+  await finish(rex, claimed.review, "approved", messages.approved(claimed.events), timeoutMs);
 }
 
 async function dismiss(rex: Client, block: string): Promise<void> {
@@ -356,17 +398,31 @@ async function wait(rex: Client, id: string): Promise<void> {
 async function reply(block: string, id: string, text: string): Promise<void> {
   const review = find(block);
   const reviewer = reviewers[review.reviewer];
-  const { session, comments } = await reviewer.comments(review.cwd, review.reviewerSession);
+  const { session, comments } = await reviewer.comments(review, review.reviewerSession);
   const comment = comments.find((c) => c.id === id);
   if (comment === undefined) throw new Error(`no comment ${id} in this review`);
-  await reviewer.reply(review.cwd, session, comment, text);
+  await reviewer.reply(review, session, comment, text);
+}
+
+// Only plannotator-tui reviews a document, so --doc picks it.
+function chooseReviewer(name: string | undefined, doc: string | undefined): Review["reviewer"] {
+  if (name === undefined) return doc === undefined ? DEFAULT_REVIEWER : "plannotator";
+  if (name !== "hunk" && name !== "plannotator") throw new Usage("--reviewer is hunk or plannotator");
+  if (doc !== undefined && name !== "plannotator") throw new Usage("--doc needs --reviewer plannotator");
+  return name;
 }
 
 async function main(argv: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
-    options: { cwd: { type: "string" }, revisions: { type: "string" }, mode: { type: "string", default: "live" } },
+    options: {
+      cwd: { type: "string" },
+      revisions: { type: "string" },
+      mode: { type: "string", default: "live" },
+      reviewer: { type: "string" },
+      doc: { type: "string" },
+    },
   });
   const [command, target, ...rest] = positionals;
   if (target === undefined) throw new Usage("missing argument");
@@ -376,7 +432,13 @@ async function main(argv: string[]): Promise<void> {
     case "open":
       if (values.cwd === undefined) throw new Usage("open needs --cwd");
       if (values.mode !== "live" && values.mode !== "batch") throw new Usage("--mode is live or batch");
-      return open(rex, target, values.cwd, values.mode, values.revisions);
+      return open(rex, target, {
+        cwd: values.cwd,
+        mode: values.mode,
+        reviewer: chooseReviewer(values.reviewer, values.doc),
+        revisions: values.revisions,
+        doc: values.doc === undefined ? undefined : resolvePath(values.cwd, values.doc),
+      });
     case "run":
       return run(rex, target);
     case "send":
