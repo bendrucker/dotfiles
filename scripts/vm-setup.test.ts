@@ -12,6 +12,7 @@ let out: string;
 beforeEach(() => {
   box = sandbox("vm-setup");
   box.write("dotfiles/system/mise.toml", "");
+  box.write("dotfiles/claude/mise.macos.toml", "");
   box.mkdir("claude-repo");
   box.stub("dotfiles/claude/link", `echo "$CLAUDE_REPO_HOME $*" > ${box.path("linked")}`);
   box.write("dotfiles/vale/vale.ini", "");
@@ -78,7 +79,7 @@ describe("vm-setup", () => {
 
   test("installs mise into the bin directory when it is missing", () => {
     // The installer mise.run serves, reduced to writing a mise stub where it is told.
-    box.stub("curl", `cat <<'EOF'\nprintf '%s\\n' '${mise()}' > "$MISE_INSTALL_PATH"\nchmod +x "$MISE_INSTALL_PATH"\nEOF`);
+    box.stub("curl", `while [ "$1" != -o ]; do shift; done\ncat > "$2" <<'EOF'\nprintf '%s\\n' '${mise()}' > "$MISE_INSTALL_PATH"\nchmod +x "$MISE_INSTALL_PATH"\nEOF`);
 
     expect(setup().status).toBe(0);
     expect(readlinkSync(join(out, "prek"))).toBe(join(tools, "prek"));
