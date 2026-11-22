@@ -50,14 +50,14 @@ export class Client {
     await rex(["focus", "-s", this.session, block]);
   }
 
-  // The right three-quarters of the agent's pane, leaving the agent a narrow column.
+  // Rex gives ratio to the anchor, so the agent keeps a quarter and the review takes the right three-quarters.
   async newSplit(anchor: string, cwd: string, command: string[]): Promise<string> {
     const created = z.object({ block_ids: z.array(z.string()).min(1) }).parse(
       await call(this.session, "session.new_split", {
         anchor_id: anchor,
         direction: "horizontal",
         side: "after",
-        ratio: 0.75,
+        ratio: 0.25,
         focus: true,
         layout: { block: { flavor: TERMINAL, label: "Review", options: { cwd, command } } },
       }),
