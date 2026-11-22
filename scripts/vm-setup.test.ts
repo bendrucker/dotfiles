@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { repoRoot, run, sandbox, type Sandbox } from "#harness";
 import { recorded, recordingStub } from "#harness/recorder";
@@ -38,10 +38,12 @@ function mise(installStatus = 0): string {
 // missing whatever the machine running it has installed.
 function systemWithout(...names: string[]): string {
   const system = box.mkdir("system");
+  const linked = new Set(names);
   for (const dir of ["/usr/bin", "/bin"]) {
     for (const entry of readdirSync(dir)) {
-      const link = join(system, entry);
-      if (!names.includes(entry) && !existsSync(link)) symlinkSync(join(dir, entry), link);
+      if (linked.has(entry)) continue;
+      linked.add(entry);
+      symlinkSync(join(dir, entry), join(system, entry));
     }
   }
   return system;
