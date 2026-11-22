@@ -137,7 +137,7 @@ export const reviewer: Reviewer = {
     const note = doc.annotations.find((a) => a.id === id);
     if (note === undefined) throw new Error(`no note ${id} in ${path}`);
     const now = new Date().toISOString();
-    note.replies.push({ id: `reply_${randomUUID()}`, body: text, author: AGENT_AUTHOR, created_at: now, updated_at: now });
+    note.replies.push({ id: `reply_${randomUUID()}`, annotation_id: id, body: text, author: AGENT_AUTHOR, created_at: now, updated_at: now });
     writeFileSync(`${path}.tmp`, `${JSON.stringify(doc, null, 2)}\n`);
     renameSync(`${path}.tmp`, path);
   },
