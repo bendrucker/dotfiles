@@ -1,19 +1,14 @@
-import { createHash } from "node:crypto";
 import { AGENT_AUTHOR, type Comment } from "./reviewer";
 
-// State saved before edits were tracked has no hash.
+// State saved before versions were tracked has none, and takes one without an edit.
 export interface Delivered {
   id: string;
-  hash?: string;
+  version?: string;
 }
 
 export type Event =
   | { kind: "comment" | "edited"; comment: Comment; context?: string; quote?: string }
   | { kind: "retracted"; id: string };
-
-export function hash(body: string): string {
-  return createHash("sha256").update(body).digest("hex").slice(0, 16);
-}
 
 function root(comment: Comment, byId: Map<string, Comment>): string {
   let current = comment;
@@ -58,12 +53,11 @@ export function reconcile(
     else next.push(d);
   }
   for (const comment of mine) {
-    const sum = hash(comment.body);
     const before = previous.get(comment.id);
     if (before === undefined) events.push({ kind: "comment", comment, context: context(comment, comments) });
-    else if (before.hash !== undefined && before.hash !== sum)
+    else if (before.version !== undefined && comment.version !== undefined && before.version !== comment.version)
       events.push({ kind: "edited", comment, context: context(comment, comments) });
-    next.push({ id: comment.id, hash: sum });
+    next.push(comment.version === undefined ? { id: comment.id } : { id: comment.id, version: comment.version });
   }
   return { events, delivered: next };
 }

@@ -5,10 +5,11 @@ import type { Status } from "./hunk-extension";
 
 export type { Status };
 
-// A bare id is a delivery recorded before edits were tracked.
+// A bare id, or one saved with a body hash, is a delivery recorded before
+// versions were tracked.
 const Delivered = z.union([
   z.string().transform((id) => ({ id })),
-  z.object({ id: z.string(), hash: z.string().optional() }),
+  z.object({ id: z.string(), version: z.string().optional() }),
 ]);
 
 const Review = z.object({
@@ -21,6 +22,8 @@ const Review = z.object({
   revisions: z.string().optional(),
   doc: z.string().optional(),
   reviewerSession: z.string().optional(),
+  // The reviewer process `run` spawned, while it runs.
+  pid: z.number().optional(),
   delivered: z.array(Delivered),
   mode: z.enum(["live", "batch"]).default("live"),
   held: z.boolean().default(false),

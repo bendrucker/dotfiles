@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { AGENT_AUTHOR, type Comment, type Comments, type Reviewer } from "./reviewer";
 
@@ -50,6 +51,8 @@ function normalize(c: z.infer<typeof TuicrComment>): Comment {
     endLine: c.end_line ?? undefined,
     side: c.side ?? undefined,
     body: c.content,
+    // tuicr records no edit time, so the body stands in.
+    version: createHash("sha256").update(c.content).digest("hex").slice(0, 16),
   };
 }
 

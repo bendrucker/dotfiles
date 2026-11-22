@@ -1,5 +1,5 @@
-// Loaded into the Hunk window `review run` launches. It signals `run` when a
-// note is saved, toggles holding notes on ctrl+g, and shows the review's
+// Loaded into the Hunk window `review run` launches. It signals `run` when the
+// user saves or deletes a note, toggles holding notes on ctrl+g, and shows the review's
 // status. Hunk may load it from a clone without node_modules. It imports only
 // node builtins and declares the slice of Hunk's API it uses.
 import { readFileSync } from "node:fs";
@@ -18,13 +18,15 @@ interface Context {
   notify(message: string, type?: "info" | "warning"): void;
 }
 
-interface Note {
-  draft?: boolean;
+// Hunk emits this only for saved notes, never drafts.
+interface NoteChange {
+  kind: "created" | "updated" | "removed";
+  note: { source: string };
 }
 
 export interface HunkAPI {
   on(event: "startup" | "session_reload" | "shutdown", handler: (payload: unknown, ctx: Context) => void): void;
-  on(event: "note_created" | "note_edited", handler: (payload: { note: Note }, ctx: Context) => void): void;
+  on(event: "note_changed", handler: (payload: NoteChange, ctx: Context) => void): void;
   registerCommand(command: { id: string; title: string; key: string }, handler: (ctx: Context) => void): void;
 }
 
@@ -124,13 +126,12 @@ export function extension(hunk: HunkAPI, { env, kill, refreshMs }: Options): voi
   hunk.on("session_reload", (_payload, ctx) => adopt(ctx));
   hunk.on("shutdown", () => clearInterval(timer));
 
-  const saved = ({ note }: { note: Note }, ctx: Context): void => {
-    if (note.draft === true) return;
+  // `run` reads the notes back from `comment list`. This is only the wake-up.
+  hunk.on("note_changed", ({ note }, ctx) => {
+    if (note.source !== "user") return;
     signal("SIGUSR1");
     adopt(ctx);
-  };
-  hunk.on("note_created", saved);
-  hunk.on("note_edited", saved);
+  });
 
   hunk.registerCommand({ id: "hold", title: "Hold notes / release", key: "ctrl+g" }, (ctx) => {
     const status = read();

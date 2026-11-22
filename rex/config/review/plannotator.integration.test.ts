@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import { must, sandbox, type Sandbox } from "#harness";
 
 // A child bun, since the bootstrap job has no node_modules and only `bun run`
 // auto-installs the adapter's zod.
 const REPLY = `
 const { reviewer } = await import(${JSON.stringify(join(import.meta.dir, "plannotator.ts"))});
-const [doc, path, id] = process.argv.slice(1);
-await reviewer.reply({ cwd: process.cwd(), doc }, path, { id, author: "user", body: "" }, "removed it");
+const [doc, path, id, pid] = process.argv.slice(1);
+await reviewer.reply({ cwd: process.cwd(), doc, pid: Number(pid) }, path, { id, author: "user", body: "" }, "removed it");
 `;
 
 let box: Sandbox;
@@ -31,8 +32,12 @@ function storePath(): string {
   return join(base, found);
 }
 
-function replies(path: string): unknown[] {
-  return JSON.parse(readFileSync(path, "utf8")).annotations[0].replies;
+const Store = z.object({
+  annotations: z.array(z.object({ id: z.string(), body: z.string(), author_name: z.string().optional() })),
+});
+
+function annotations(path: string): z.infer<typeof Store>["annotations"] {
+  return Store.parse(JSON.parse(readFileSync(path, "utf8"))).annotations;
 }
 
 async function until(check: () => boolean, describe: () => string, timeoutMs = 10_000): Promise<void> {
@@ -44,14 +49,12 @@ async function until(check: () => boolean, describe: () => string, timeoutMs = 1
 }
 
 describe("rex/config/review plannotator adapter in plannotator-tui", () => {
-  test("the TUI opens a store holding the adapter's reply and keeps it on save", async () => {
+  test("the TUI shows the adapter's reply at once and keeps it on save", async () => {
     const work = box.mkdir("work");
     const doc = box.write("work/doc.md", "# Doc\n\nFirst paragraph here.\n\n## Deferred Work\n");
     must(["plannotator-tui", "--annotate-block", doc, "1", "rm this"], { cwd: work, env });
     const path = storePath();
-    const [note] = JSON.parse(readFileSync(path, "utf8")).annotations;
-    must([process.execPath, "-e", REPLY, doc, path, note.id], { cwd: work });
-    const written = replies(path);
+    const [note] = annotations(path);
 
     let screen = "";
     const decoder = new TextDecoder();
@@ -67,20 +70,21 @@ describe("rex/config/review plannotator adapter in plannotator-tui", () => {
       },
     });
     const text = () => Bun.stripANSI(screen);
+    const entry = join(env.PLANNOTATOR_DATA_DIR, "clients", "plannotator-tui", "sessions", "tui", `${tui.pid}.json`);
 
     try {
-      // A store the TUI can't parse ends it with the error on screen.
-      await until(() => text().includes("Deferred Work") || tui.exitCode !== null, text);
+      await until(() => existsSync(entry) || tui.exitCode !== null, text);
       expect(tui.exitCode, text()).toBeNull();
+      must([process.execPath, "-e", REPLY, doc, path, note.id, String(tui.pid)], { cwd: work, env });
+      await until(() => text().includes("· Claude") && annotations(path).length === 2, text);
       tui.terminal?.write("q");
       expect(await tui.exited).toBe(0);
     } finally {
       tui.kill();
     }
-    expect(replies(path)).toEqual(written);
+    expect(annotations(path).map((a) => ({ body: a.body, author_name: a.author_name }))).toEqual([
+      { body: "rm this", author_name: undefined },
+      { body: "removed it", author_name: "Claude" },
+    ]);
   }, 15_000);
-
-  // plannotator-tui rewrites the store from memory on every save, so a reply
-  // the adapter appends while it is open is lost on its next save.
-  test.todo("the TUI keeps a reply the adapter appends while it is open");
 });

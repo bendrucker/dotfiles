@@ -155,6 +155,11 @@ async function run(rex: Client, id: string): Promise<void> {
     stdio: ["inherit", "inherit", "inherit"],
   });
   pid = child.pid;
+  // `reply` runs apart from `run` and finds the reviewer by this pid.
+  await locked(id, async () => {
+    const current = load(id);
+    if (current !== undefined) save({ ...current, pid });
+  });
   const exited = child.exited.finally(() => {
     done = true;
     watcher?.close();
@@ -254,9 +259,8 @@ function serialized(fn: () => Promise<void>): { call: () => Promise<void>; idle:
   return { call, idle: () => running ?? Promise.resolve() };
 }
 
-// Quitting approves once every note has an answer, or every note was sent
-// when the reviewer takes no replies. Otherwise the agent gets what's pending
-// and asks how to proceed.
+// Quitting approves once every note has an answer. Otherwise the agent gets
+// what's pending and asks how to proceed.
 async function quit(rex: Client, id: string, snapshot?: Comments, pid?: number): Promise<void> {
   let claimed: Claimed | undefined;
   try {
@@ -266,9 +270,8 @@ async function quit(rex: Client, id: string, snapshot?: Comments, pid?: number):
   if (review === undefined || review.outcome !== undefined) return;
   const events = claimed?.events ?? [];
   const sent = new Set(events.flatMap((e) => (e.kind === "retracted" ? [] : [e.comment.id])));
-  const threads = reviewers[review.reviewer].threads?.(review) ?? true;
   const answerable = claimed ? unanswered(claimed.comments, review.delivered) : review.delivered.map((d) => d.id);
-  const open = (threads ? answerable : []).filter((noteId) => !sent.has(noteId));
+  const open = answerable.filter((noteId) => !sent.has(noteId));
   if (events.length === 0 && open.length === 0) {
     await finish(rex, review, "approved", messages.approved(), Infinity);
   } else {
@@ -329,8 +332,7 @@ async function claim(
     await quote(reviewer, review, read.session, events);
     const next = { ...review, reviewerSession: read.session, delivered };
     if (JSON.stringify(next) !== JSON.stringify(review)) save(next);
-    const threads = reviewer.threads?.(review) ?? true;
-    if (options.stream) for (const event of events) appendEvent(review.agent, messages.live(event, threads));
+    if (options.stream) for (const event of events) appendEvent(review.agent, messages.live(event));
     return { review: next, events, session: read.session, comments: read.comments, pending: 0 };
   });
 }
@@ -346,9 +348,8 @@ async function send(rex: Client, block: string): Promise<void> {
 }
 
 async function claimLines(block: string): Promise<void> {
-  const { review, events } = await claim(find(block).id);
-  const threads = reviewers[review.reviewer].threads?.(review) ?? true;
-  for (const event of events) console.log(messages.live(event, threads));
+  const { events } = await claim(find(block).id);
+  for (const event of events) console.log(messages.live(event));
 }
 
 async function approve(rex: Client, block: string): Promise<void> {
