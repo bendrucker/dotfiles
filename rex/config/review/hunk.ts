@@ -6,6 +6,8 @@ const Sessions = z.object({
   sessions: z.array(z.object({ sessionId: z.string(), cwd: z.string(), launchedAt: z.string() })),
 });
 
+const EXTENSION = new URL("./hunk-extension.ts", import.meta.url).pathname;
+
 const Range = z.tuple([z.number(), z.number()]);
 
 const Note = z.object({
@@ -68,7 +70,7 @@ export const reviewer: Reviewer = {
   // A revisions string like `main..HEAD` is one Hunk target.
   command(revisions) {
     const target = revisions === undefined ? [] : [revisions];
-    return ["hunk", "diff", ...target, "--watch", "--agent-notes"];
+    return ["hunk", "diff", ...target, "--watch", "--agent-notes", "--extension", EXTENSION];
   },
 
   // Hunk keeps a note in the window from the moment it is saved.

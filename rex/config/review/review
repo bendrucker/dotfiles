@@ -9,7 +9,7 @@
 //
 // Couples a reviewer in a split to an agent's pane. BLOCK is either
 // pane. REX_SESSION names the session. SIGUSR1 makes a live `run` claim new
-// notes at once.
+// notes at once, and SIGUSR2 holds or releases them.
 
 import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
@@ -18,7 +18,20 @@ import { Client } from "./rex";
 import { reconcile, unanswered, type Event } from "./delivery";
 import { quoter } from "./quote";
 import type { Comment, Comments, Reviewer } from "./reviewer";
-import { appendEvent, load, locked, prune, remove, resetEvents, resolve, save, type Review } from "./state";
+import {
+  appendEvent,
+  load,
+  locked,
+  prune,
+  remove,
+  resetEvents,
+  resolve,
+  save,
+  statusPath,
+  writeStatus,
+  type Review,
+  type Status,
+} from "./state";
 import { reviewer as hunk } from "./hunk";
 import { reviewer as tuicr } from "./tuicr";
 
@@ -64,7 +77,7 @@ async function open(rex: Client, agent: string, cwd: string, mode: Review["mode"
   }
 
   resetEvents(agent);
-  const review: Review = { id: randomUUID(), session: rex.session, agent, cwd, reviewer: DEFAULT_REVIEWER, revisions, delivered: [], mode };
+  const review: Review = { id: randomUUID(), session: rex.session, agent, cwd, reviewer: DEFAULT_REVIEWER, revisions, delivered: [], mode, held: false };
   save(review);
   const block = await rex.newSplit(agent, cwd, [import.meta.path, "run", review.id]);
   save({ ...review, review: block });
@@ -106,16 +119,26 @@ async function run(rex: Client, id: string): Promise<void> {
   let snapshot: Comments | undefined;
   const stream = serialized(async () => {
     try {
-      const { session, comments } = await claim(id, { strict: true, stream: true });
-      snapshot = { session, comments };
+      const claimed = await claim(id, { strict: true, stream: true });
+      snapshot = { session: claimed.session, comments: claimed.comments };
+      writeStatus(claimed.review.agent, await status(rex, claimed));
     } catch {}
   });
   // The reviewer signals a saved note, so it reaches the agent before the next tick.
   process.on("SIGUSR1", () => {
     if (live && !done) void stream.call();
   });
+  process.on("SIGUSR2", () => {
+    if (live && !done) void toggleHold(id).then(stream.call);
+  });
   const child = Bun.spawn(reviewer.command(review.revisions), {
     cwd: review.cwd,
+    env: {
+      ...process.env,
+      REX_REVIEW_ID: id,
+      REX_REVIEW_PID: String(process.pid),
+      REX_REVIEW_STATUS: statusPath(review.agent),
+    },
     stdio: ["inherit", "inherit", "inherit"],
   });
   const exited = child.exited.finally(() => {
@@ -141,6 +164,33 @@ async function run(rex: Client, id: string): Promise<void> {
   } else {
     await finish(rex, current, "failed", messages.failed(code), Infinity);
   }
+}
+
+async function toggleHold(id: string): Promise<void> {
+  await locked(id, async () => {
+    const review = load(id);
+    if (review !== undefined) save({ ...review, held: !review.held });
+  });
+}
+
+async function status(rex: Client, claimed: Claimed): Promise<Status> {
+  const { review, comments, pending } = claimed;
+  const present = new Set(comments.map((c) => c.id));
+  const open = unanswered(comments, review.delivered).length;
+  let agent: string;
+  try {
+    agent = await rex.programState(review.agent);
+  } catch {
+    agent = "unknown";
+  }
+  return {
+    id: review.id,
+    held: review.held,
+    pending,
+    open,
+    answered: review.delivered.filter((d) => present.has(d.id)).length - open,
+    agent,
+  };
 }
 
 // Runs `fn` one call at a time. Calls that arrive mid-run share one rerun.
@@ -193,6 +243,8 @@ interface Claimed {
   events: Event[];
   session: string;
   comments: Comment[];
+  // Events a held stream left undelivered.
+  pending: number;
 }
 
 async function quote(reviewer: Reviewer, cwd: string, session: string, events: Event[]): Promise<void> {
@@ -208,7 +260,7 @@ async function quote(reviewer: Reviewer, cwd: string, session: string, events: E
 // Lists the notes no send or claim has delivered yet, or that changed since,
 // and records them as delivered, under the review's lock. `fallback` stands in
 // when the reviewer can't be read. `stream` appends each event to the agent's
-// events file.
+// events file, unless the review is held.
 async function claim(id: string, options: { strict?: boolean; fallback?: Comments; stream?: boolean } = {}): Promise<Claimed> {
   return locked(id, async () => {
     const review = load(id);
@@ -223,11 +275,16 @@ async function claim(id: string, options: { strict?: boolean; fallback?: Comment
       read = options.fallback;
     }
     const { events, delivered } = reconcile(read.comments, review.delivered, read.session === review.reviewerSession);
+    if (options.stream && review.held) {
+      const next = { ...review, reviewerSession: read.session };
+      if (JSON.stringify(next) !== JSON.stringify(review)) save(next);
+      return { review: next, events: [], session: read.session, comments: read.comments, pending: events.length };
+    }
     await quote(reviewer, review.cwd, read.session, events);
     const next = { ...review, reviewerSession: read.session, delivered };
     if (JSON.stringify(next) !== JSON.stringify(review)) save(next);
     if (options.stream) for (const event of events) appendEvent(review.agent, messages.live(event));
-    return { review: next, events, session: read.session, comments: read.comments };
+    return { review: next, events, session: read.session, comments: read.comments, pending: 0 };
   });
 }
 

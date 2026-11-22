@@ -22,6 +22,8 @@ Press `c` on a line to leave a note in Hunk, then end the round with a key from 
 
 Each message is submitted to the agent and explains itself, without a prompt or rule on the agent's side. Send focuses the agent. The agent fixes each comment and answers it with `rex do review_reply id=<id> text=<reply>`. When its turn ends, focus returns to the review, with the agent's answers shown as `Claude` replies under each note. Hunk keeps notes only while its window is open. Approve and Dismiss close the review. Quitting Hunk or closing its pane dismisses it.
 
+Hunk loads `config/review/hunk-extension.ts`. In a live review, saving a note signals `run` to deliver it at once, and `ctrl+g` holds notes until pressed again, when the backlog arrives in order. The status line shows whether notes are live or held, how many delivered notes are open or answered, and when Claude is working. `run` keeps that status in `<agent-block>.status.json` beside the events file.
+
 Outside a review's two panes, Rex sends the keys to the program. A review records its panes in `~/.local/state/rex-review/blocks/`, which `init.lua` checks on each key press.
 
 The action reads the agent's directory from its foreground process. That directory follows an agent that moved into another worktree.

@@ -1,6 +1,9 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import type { Status } from "./hunk-extension";
+
+export type { Status };
 
 // A bare id is a delivery recorded before edits were tracked.
 const Delivered = z.union([
@@ -19,6 +22,7 @@ const Review = z.object({
   reviewerSession: z.string().optional(),
   delivered: z.array(Delivered),
   mode: z.enum(["live", "batch"]).default("live"),
+  held: z.boolean().default(false),
   outcome: z.enum(["approved", "closed", "dismissed", "failed"]).optional(),
 });
 
@@ -66,10 +70,22 @@ function blockPath(block: string): string {
 }
 
 const EVENTS = ".events";
+const STATUS = ".status.json";
+const SIDECARS = [EVENTS, STATUS];
 
 // The agent's watcher tails this file. Each line is one event.
 function eventsPath(block: string): string {
   return blockPath(`${block}${EVENTS}`);
+}
+
+// The Hunk extension reads this for its status line.
+export function statusPath(block: string): string {
+  return blockPath(`${block}${STATUS}`);
+}
+
+export function writeStatus(block: string, status: Status): void {
+  mkdirSync(join(stateDir(), "blocks"), { recursive: true });
+  writeAtomic(statusPath(block), `${JSON.stringify(status)}\n`);
 }
 
 export function resetEvents(block: string): void {
@@ -121,6 +137,7 @@ export function resolve(block: string): Review | undefined {
 
 export function remove(review: Review): void {
   for (const block of blocks(review)) rmSync(blockPath(block), { force: true });
+  rmSync(statusPath(review.agent), { force: true });
   rmSync(reviewPath(review.id), { force: true });
 }
 
@@ -149,8 +166,9 @@ export function prune(live: Set<string>): void {
     return;
   }
   for (const name of files) {
-    if (name.endsWith(EVENTS)) {
-      if (!live.has(name.slice(0, -EVENTS.length))) rmSync(blockPath(name), { force: true });
+    const sidecar = SIDECARS.find((suffix) => name.endsWith(suffix));
+    if (sidecar !== undefined) {
+      if (!live.has(name.slice(0, -sidecar.length))) rmSync(blockPath(name), { force: true });
     } else if (!live.has(name) || resolve(name) === undefined) rmSync(blockPath(name), { force: true });
   }
 }
