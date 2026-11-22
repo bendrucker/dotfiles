@@ -36,14 +36,43 @@ async function call(session: string, method: string, args: Record<string, unknow
 }
 
 export class Client {
-  constructor(readonly session: string) {}
+  constructor(
+    readonly session: string,
+    private readonly pollMs = 1000,
+  ) {}
+
+  // A blocked agent shows a permission prompt, which the Enter would answer.
+  async unblocked(block: string, timeoutMs: number): Promise<void> {
+    const started = Date.now();
+    for (;;) {
+      let state: string;
+      try {
+        state = await this.programState(block);
+      } catch {
+        return;
+      }
+      if (state !== "blocked") return;
+      if (Date.now() - started >= timeoutMs) {
+        throw new Error("the agent is waiting on a permission prompt. Answer it, then try again.");
+      }
+      await Bun.sleep(this.pollMs);
+    }
+  }
 
   // A paste goes through the agent's bracketed paste mode. Its newlines don't
   // submit the prompt. The pause lets the paste settle before Enter.
-  async submit(block: string, text: string): Promise<void> {
+  async submit(block: string, text: string, timeoutMs = Infinity): Promise<void> {
+    await this.unblocked(block, timeoutMs);
     await call(this.session, "block.event", { block_id: block, event: { type: "paste", payload: { text } } });
     await Bun.sleep(400);
+    await this.unblocked(block, timeoutMs);
     await rex(["send-key", "-s", this.session, "-b", block, "enter"]);
+  }
+
+  // Every block the server has, in any session.
+  async blocks(): Promise<Set<string>> {
+    const out = await rex(["block", "ls", "--all", "--quiet", "--short=false"]);
+    return new Set(out.split("\n").map((line) => line.trim()).filter((line) => line !== ""));
   }
 
   async focus(block: string): Promise<void> {
@@ -58,7 +87,7 @@ export class Client {
         direction: "horizontal",
         side: "after",
         ratio: 0.25,
-        focus: true,
+        focus: false,
         layout: { block: { flavor: TERMINAL, label: "Review", options: { cwd, command } } },
       }),
     );

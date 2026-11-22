@@ -1,6 +1,12 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+
+// A bare id is a delivery recorded before edits were tracked.
+const Delivered = z.union([
+  z.string().transform((id) => ({ id })),
+  z.object({ id: z.string(), hash: z.string().optional() }),
+]);
 
 const Review = z.object({
   id: z.string(),
@@ -11,9 +17,9 @@ const Review = z.object({
   reviewer: z.enum(["hunk", "tuicr"]),
   revisions: z.string().optional(),
   reviewerSession: z.string().optional(),
-  delivered: z.array(z.string()),
+  delivered: z.array(Delivered),
   mode: z.enum(["live", "batch"]).default("live"),
-  outcome: z.enum(["approved", "dismissed", "failed"]).optional(),
+  outcome: z.enum(["approved", "closed", "dismissed", "failed"]).optional(),
 });
 
 export type Review = z.infer<typeof Review>;
@@ -99,4 +105,33 @@ export function resolve(block: string): Review | undefined {
 export function remove(review: Review): void {
   for (const block of blocks(review)) rmSync(blockPath(block), { force: true });
   rmSync(reviewPath(review.id), { force: true });
+}
+
+// Drops reviews and block files naming a block that no longer exists, as
+// after a Rex restart.
+export function prune(live: Set<string>): void {
+  let names: string[];
+  try {
+    names = readdirSync(stateDir());
+  } catch {
+    return;
+  }
+  for (const name of names.filter((n) => n.endsWith(".json"))) {
+    let review: Review | undefined;
+    try {
+      review = load(name.slice(0, -".json".length));
+    } catch {
+      continue;
+    }
+    if (review !== undefined && blocks(review).some((b) => !live.has(b))) remove(review);
+  }
+  let files: string[];
+  try {
+    files = readdirSync(join(stateDir(), "blocks"));
+  } catch {
+    return;
+  }
+  for (const block of files) {
+    if (!live.has(block) || resolve(block) === undefined) rmSync(blockPath(block), { force: true });
+  }
 }

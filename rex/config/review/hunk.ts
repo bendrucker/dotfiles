@@ -10,6 +10,7 @@ const Range = z.tuple([z.number(), z.number()]);
 
 const Note = z.object({
   noteId: z.string(),
+  parentId: z.string().nullish(),
   source: z.string(),
   filePath: z.string().nullish(),
   oldRange: Range.nullish(),
@@ -19,6 +20,10 @@ const Note = z.object({
 });
 
 const Notes = z.object({ comments: z.array(Note) });
+
+const Review = z.object({
+  review: z.object({ files: z.array(z.object({ path: z.string(), patch: z.string().nullish() })) }),
+});
 
 async function hunk(args: string[], cwd: string): Promise<string> {
   const child = Bun.spawn(["hunk", ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -33,9 +38,10 @@ async function hunk(args: string[], cwd: string): Promise<string> {
 
 // Notes live in the Hunk window, so the session must still be open. `run`
 // launches Hunk in the review's directory, which the daemon reports resolved.
-async function session(cwd: string, known?: string): Promise<string> {
+async function session(cwd: string, known?: string, strict = false): Promise<string> {
   const { sessions } = Sessions.parse(JSON.parse(await hunk(["session", "list", "--json"], cwd)));
   if (known !== undefined && sessions.some((s) => s.sessionId === known)) return known;
+  if (known !== undefined && strict) throw new Error(`Hunk session ${known} is closed`);
   const dir = realpathSync(cwd);
   const open = sessions.filter((s) => s.cwd === dir).sort((a, b) => b.launchedAt.localeCompare(a.launchedAt))[0];
   if (open === undefined) throw new Error(`no open Hunk window in ${cwd}`);
@@ -47,6 +53,7 @@ function normalize(note: z.infer<typeof Note>): Comment {
   return {
     id: note.noteId,
     author: note.author ?? note.source,
+    parentId: note.parentId ?? undefined,
     path: note.filePath ?? undefined,
     startLine: range?.[0],
     endLine: range?.[1],
@@ -56,6 +63,8 @@ function normalize(note: z.infer<typeof Note>): Comment {
 }
 
 export const reviewer: Reviewer = {
+  ephemeral: true,
+
   // A revisions string like `main..HEAD` is one Hunk target.
   command(revisions) {
     const target = revisions === undefined ? [] : [revisions];
@@ -65,11 +74,17 @@ export const reviewer: Reviewer = {
   // Hunk keeps a note in the window from the moment it is saved.
   async flush() {},
 
-  // Agent notes and replies are skipped. Only notes the user wrote are comments.
-  async comments(cwd, known): Promise<Comments> {
-    const id = await session(cwd, known);
-    const raw: unknown = JSON.parse(await hunk(["session", "comment", "list", id, "--type", "user", "--json"], cwd));
-    return { session: id, comments: Notes.parse(raw).comments.map(normalize) };
+  // The user's notes and the agent's replies. Other agents' notes are skipped.
+  async comments(cwd, known, strict): Promise<Comments> {
+    const id = await session(cwd, known, strict);
+    const raw: unknown = JSON.parse(await hunk(["session", "comment", "list", id, "--type", "all", "--json"], cwd));
+    const notes = Notes.parse(raw).comments.filter((n) => n.source === "user" || n.author === AGENT_AUTHOR);
+    return { session: id, comments: notes.map(normalize) };
+  },
+
+  async patches(cwd, id) {
+    const { review } = Review.parse(JSON.parse(await hunk(["session", "review", id, "--include-patch", "--json"], cwd)));
+    return Object.fromEntries(review.files.flatMap((f) => (f.patch ? [[f.path, f.patch]] : [])));
   },
 
   // `--watch` reloads the diff, and a reply shows up as soon as it is added.
