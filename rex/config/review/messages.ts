@@ -45,6 +45,11 @@ export function live(event: Event): string {
   return [head, ...parts(event)].map(flat).join(" | ");
 }
 
+// The last line of the events file, which tells the watcher to stop.
+export function ended(outcome: string): string {
+  return `[review: closed] ${outcome}`;
+}
+
 export function approved(events: Event[] = []): string {
   if (events.length === 0) return `[review: approved] ${HUMAN} approved the changes. Continue.`;
   return [
