@@ -18,4 +18,18 @@ if ! profiles=$(ls -A "$managed" 2>/dev/null); then
   exit 0
 fi
 
-[ -n "$profiles" ]
+# Screen Time on a personal Mac writes a per-user directory holding only its
+# content-filter profile and the complete.plist index, which no employer sets.
+screen_time_only() {
+  [ -d "$1" ] || return 1
+  files=$(ls -A "$1" 2>/dev/null) || return 1
+  ! printf '%s\n' "$files" | grep -v -e '^$' -e '^complete\.plist$' -e '^com\.apple\.familycontrols\.' >/dev/null
+}
+
+set -f
+IFS='
+'
+for entry in $profiles; do
+  screen_time_only "$managed/$entry" || exit 0
+done
+exit 1
