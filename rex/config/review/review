@@ -14,8 +14,10 @@ import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import * as messages from "./messages";
 import { Client } from "./rex";
-import { AGENT_AUTHOR, type Comment, type Reviewer } from "./reviewer";
-import { load, locked, remove, resolve, save, type Review } from "./state";
+import { reconcile, unanswered, type Event } from "./delivery";
+import { quoter } from "./quote";
+import type { Comment, Comments, Reviewer } from "./reviewer";
+import { load, locked, prune, remove, resolve, save, type Review } from "./state";
 import { reviewer as hunk } from "./hunk";
 import { reviewer as tuicr } from "./tuicr";
 
@@ -26,13 +28,16 @@ const DEFAULT_REVIEWER: Review["reviewer"] = "hunk";
 const WAIT_POLL_MS = Number(process.env.REVIEW_POLL_MS ?? 1000);
 // An agent that never reports working within this long is taken as done.
 const WAIT_START_MS = Number(process.env.REVIEW_START_MS ?? 20_000);
+const SNAPSHOT_MS = Number(process.env.REVIEW_SNAPSHOT_MS ?? 1000);
+// Rex stops an action's command after 25 seconds.
+const SUBMIT_WAIT_MS = Number(process.env.REVIEW_SUBMIT_WAIT_MS ?? 15_000);
 
 class Usage extends Error {}
 
 function rexClient(): Client {
   const session = process.env.REX_SESSION;
   if (!session) throw new Usage("REX_SESSION is not set");
-  return new Client(session);
+  return new Client(session, WAIT_POLL_MS);
 }
 
 function find(block: string): Review {
@@ -42,6 +47,11 @@ function find(block: string): Review {
 }
 
 async function open(rex: Client, agent: string, cwd: string, mode: Review["mode"], revisions?: string): Promise<void> {
+  try {
+    const live = await rex.blocks();
+    if (live.has(agent)) prune(live);
+  } catch {}
+
   const existing = resolve(agent);
   if (existing?.review !== undefined) {
     try {
@@ -59,9 +69,20 @@ async function open(rex: Client, agent: string, cwd: string, mode: Review["mode"
 }
 
 // Removes the state before closing the pane. `run` then has nothing to dismiss.
-async function finish(rex: Client, review: Review, outcome: NonNullable<Review["outcome"]>, message: string): Promise<void> {
+async function finish(
+  rex: Client,
+  review: Review,
+  outcome: NonNullable<Review["outcome"]>,
+  message: string,
+  timeoutMs = SUBMIT_WAIT_MS,
+): Promise<void> {
   save({ ...review, outcome });
-  await rex.submit(review.agent, message);
+  try {
+    await rex.submit(review.agent, message, timeoutMs);
+  } catch (err) {
+    save(review);
+    throw err;
+  }
   remove(review);
   await rex.focus(review.agent);
   if (review.review !== undefined) await rex.closeBlock(review.review);
@@ -71,52 +92,130 @@ async function run(rex: Client, id: string): Promise<void> {
   const review = load(id);
   if (review === undefined) throw new Error(`no review ${id}`);
   // Closing the pane hangs up the reviewer and this script. Ignoring the
-  // hangup here lets the close count as a dismissal.
+  // hangup here lets the close count as quitting.
   process.on("SIGHUP", () => {});
   process.on("SIGTERM", () => {});
-  const child = Bun.spawn(reviewers[review.reviewer].command(review.revisions), {
+  const reviewer = reviewers[review.reviewer];
+  const child = Bun.spawn(reviewer.command(review.revisions), {
     cwd: review.cwd,
     stdio: ["inherit", "inherit", "inherit"],
   });
-  const code = await child.exited;
+  let done = false;
+  const exited = child.exited.finally(() => {
+    done = true;
+  });
+  let snapshot: Comments | undefined;
+  while (reviewer.ephemeral && !done) {
+    try {
+      const known = snapshot?.session ?? load(id)?.reviewerSession;
+      snapshot = await reviewer.comments(review.cwd, known, snapshot !== undefined);
+    } catch {}
+    await Promise.race([exited, Bun.sleep(SNAPSHOT_MS)]);
+  }
+  const code = await exited;
 
   const current = load(id);
   if (current === undefined || current.outcome !== undefined) return;
   if (code === 0 || child.signalCode !== null) {
-    await finish(rex, current, "dismissed", messages.dismissed);
+    await quit(rex, id, snapshot);
   } else {
-    await finish(rex, current, "failed", messages.failed(code));
+    await finish(rex, current, "failed", messages.failed(code), Infinity);
   }
 }
 
-// Lists the notes no send or claim has delivered yet and records them as
-// delivered, under the review's lock.
-async function claim(block: string): Promise<{ review: Review; fresh: Comment[] }> {
-  const { id } = find(block);
+// Quitting approves once every note has an answer. Otherwise the agent gets
+// what's pending and asks how to proceed.
+async function quit(rex: Client, id: string, snapshot?: Comments): Promise<void> {
+  let claimed: Claimed | undefined;
+  try {
+    claimed = await claim(id, { strict: true, fallback: snapshot });
+  } catch {}
+  const review = claimed?.review ?? load(id);
+  if (review === undefined || review.outcome !== undefined) return;
+  const events = claimed?.events ?? [];
+  const sent = new Set(events.flatMap((e) => (e.kind === "retracted" ? [] : [e.comment.id])));
+  const open = (claimed ? unanswered(claimed.comments, review.delivered) : review.delivered.map((d) => d.id)).filter(
+    (noteId) => !sent.has(noteId),
+  );
+  if (events.length === 0 && open.length === 0) {
+    await finish(rex, review, "approved", messages.approved(), Infinity);
+  } else {
+    await finish(rex, review, "closed", messages.closed(events, open), Infinity);
+  }
+}
+
+interface Claimed {
+  review: Review;
+  events: Event[];
+  comments: Comment[];
+}
+
+async function quote(reviewer: Reviewer, cwd: string, session: string, events: Event[]): Promise<void> {
+  if (!events.some((e) => e.kind !== "retracted" && e.comment.startLine !== undefined)) return;
+  let patches: Record<string, string> | undefined;
+  try {
+    patches = await reviewer.patches?.(cwd, session);
+  } catch {}
+  const lines = quoter(cwd, patches);
+  for (const event of events) if (event.kind !== "retracted") event.quote = lines(event.comment);
+}
+
+// Lists the notes no send or claim has delivered yet, or that changed since,
+// and records them as delivered, under the review's lock. `fallback` stands in
+// when the reviewer can't be read.
+async function claim(id: string, options: { strict?: boolean; fallback?: Comments } = {}): Promise<Claimed> {
   return locked(id, async () => {
     const review = load(id);
     if (review === undefined) throw new Error(`review ${id} closed`);
     const reviewer = reviewers[review.reviewer];
-    if (review.review !== undefined) await reviewer.flush(review.review);
-    const { session, comments } = await reviewer.comments(review.cwd, review.reviewerSession);
-    const fresh = comments.filter((c) => c.author !== AGENT_AUTHOR && !review.delivered.includes(c.id));
-    const next = { ...review, reviewerSession: session, delivered: [...review.delivered, ...fresh.map((c) => c.id)] };
-    if (fresh.length > 0 || session !== review.reviewerSession) save(next);
-    return { review: next, fresh };
+    let read: Comments;
+    try {
+      if (review.review !== undefined) await reviewer.flush(review.review);
+      read = await reviewer.comments(review.cwd, review.reviewerSession ?? options.fallback?.session, options.strict);
+    } catch (err) {
+      if (options.fallback === undefined) throw err;
+      read = options.fallback;
+    }
+    const { events, delivered } = reconcile(read.comments, review.delivered, read.session === review.reviewerSession);
+    await quote(reviewer, review.cwd, read.session, events);
+    const next = { ...review, reviewerSession: read.session, delivered };
+    if (JSON.stringify(next) !== JSON.stringify(review)) save(next);
+    return { review: next, events, comments: read.comments };
   });
 }
 
 async function send(rex: Client, block: string): Promise<void> {
-  const { review, fresh } = await claim(block);
-  if (fresh.length === 0) throw new Error("no new comments to send. Approve or dismiss the review instead.");
-  await rex.submit(review.agent, messages.changes(fresh, review.cwd));
+  const { id, agent } = find(block);
+  await rex.unblocked(agent, SUBMIT_WAIT_MS);
+  const { review, events } = await claim(id);
+  if (events.length === 0) throw new Error("no new comments to send. Approve or dismiss the review instead.");
+  await rex.submit(review.agent, messages.changes(events), SUBMIT_WAIT_MS);
   await rex.focus(review.agent);
   console.log(review.id);
 }
 
 async function claimLines(block: string): Promise<void> {
-  const { review, fresh } = await claim(block);
-  for (const comment of fresh) console.log(messages.live(comment, review.cwd));
+  const { events } = await claim(find(block).id);
+  for (const event of events) console.log(messages.live(event));
+}
+
+async function approve(rex: Client, block: string): Promise<void> {
+  const { id, agent } = find(block);
+  await rex.unblocked(agent, SUBMIT_WAIT_MS);
+  let claimed: Claimed;
+  try {
+    claimed = await claim(id);
+  } catch (err) {
+    const review = find(block);
+    const reason = err instanceof Error ? err.message : String(err);
+    return finish(rex, review, "approved", `${messages.approved()} (Unsent comments couldn't be read: ${reason})`);
+  }
+  await finish(rex, claimed.review, "approved", messages.approved(claimed.events));
+}
+
+async function dismiss(rex: Client, block: string): Promise<void> {
+  const review = find(block);
+  await finish(rex, review, "dismissed", messages.dismissed(review.delivered.length > 0));
 }
 
 async function agentDone(rex: Client, review: Review): Promise<boolean> {
@@ -181,9 +280,9 @@ async function main(argv: string[]): Promise<void> {
     case "claim":
       return claimLines(target);
     case "approve":
-      return finish(rex, find(target), "approved", messages.approved);
+      return approve(rex, target);
     case "dismiss":
-      return finish(rex, find(target), "dismissed", messages.dismissed);
+      return dismiss(rex, target);
     case "wait":
       return wait(rex, target);
     case "reply":

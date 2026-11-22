@@ -65,6 +65,8 @@ function location(comment: Comment): string[] {
 }
 
 export const reviewer: Reviewer = {
+  ephemeral: false,
+
   command(revisions) {
     return revisions === undefined
       ? ["tuicr", "--no-update-check", "-w"]

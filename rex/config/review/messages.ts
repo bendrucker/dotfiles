@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import type { Event } from "./delivery";
 import type { Comment } from "./reviewer";
 
 const HUMAN = "Ben";
@@ -11,43 +10,66 @@ function location(comment: Comment): string {
   return end === comment.startLine ? `${comment.path}:${end}` : `${comment.path}:${comment.startLine}-${end}`;
 }
 
-// The commented lines as they read in the working tree. Old-side lines are gone from it.
-function quote(comment: Comment, cwd: string): string | undefined {
-  if (comment.path === undefined || comment.startLine === undefined || comment.side === "old") return undefined;
-  let text: string;
-  try {
-    text = readFileSync(join(cwd, comment.path), "utf8");
-  } catch {
-    return undefined;
-  }
-  const lines = text.split("\n").slice(comment.startLine - 1, comment.endLine ?? comment.startLine);
-  return lines.map((line) => `> ${line}`).join("\n");
+function heading(event: Event): string {
+  if (event.kind === "retracted") return `[review: retracted] (id ${event.id})`;
+  const where = `${location(event.comment)} (id ${event.comment.id})`;
+  return event.kind === "edited" ? `[review: comment edited] ${where}` : where;
 }
 
-export function changes(comments: Comment[], cwd: string): string {
-  const count = comments.length === 1 ? "1 comment" : `${comments.length} comments`;
-  const blocks = comments.map((c) =>
-    [`## ${location(c)} (id ${c.id})`, quote(c, cwd), c.body].filter((part) => part !== undefined).join("\n"),
-  );
+function parts(event: Event): string[] {
+  if (event.kind === "retracted") return [`${HUMAN} deleted this comment. Drop it.`];
+  const reply = event.context === undefined ? undefined : `In reply to your note: ${event.context}`;
+  return [event.quote, reply, event.comment.body].filter((part) => part !== undefined);
+}
+
+function blocks(events: Event[]): string[] {
+  return events.map((event) => [`## ${heading(event)}`, ...parts(event)].join("\n"));
+}
+
+function count(events: Event[]): string {
+  return events.length === 1 ? "1 comment" : `${events.length} comments`;
+}
+
+export function changes(events: Event[]): string {
   return [
-    `[review: changes] ${HUMAN} left ${count} on your changes.`,
-    ...blocks,
+    `[review: changes] ${HUMAN} left ${count(events)} on your changes.`,
+    ...blocks(events),
     `Fix each one, then answer it with \`rex do review_reply id=<id> text="<reply>"\`. Don't commit. End your turn when every comment has an answer, and ${HUMAN} will see the review again.`,
   ].join("\n\n");
 }
 
 // One line per note, because each line of a watcher's stdout is one event.
-export function live(comment: Comment, cwd: string): string {
+export function live(event: Event): string {
   const flat = (text: string) => text.replace(/\n/g, " ⏎ ");
-  return [`[review: comment] ${location(comment)} (id ${comment.id})`, quote(comment, cwd), comment.body]
-    .filter((part) => part !== undefined)
-    .map(flat)
-    .join(" | ");
+  const head = event.kind === "edited" || event.kind === "retracted" ? heading(event) : `[review: comment] ${heading(event)}`;
+  return [head, ...parts(event)].map(flat).join(" | ");
 }
 
-export const approved = `[review: approved] ${HUMAN} approved the changes. Continue.`;
+export function approved(events: Event[] = []): string {
+  if (events.length === 0) return `[review: approved] ${HUMAN} approved the changes. Continue.`;
+  return [
+    `[review: approved] ${HUMAN} approved the changes, once you address the ${count(events)} below.`,
+    ...blocks(events),
+    `The review is closed, so fix each one without replying, then continue.`,
+  ].join("\n\n");
+}
 
-export const dismissed = `[review: dismissed] ${HUMAN} closed the review without feedback. Treat this as a successful outcome and continue.`;
+// Hunk quit without Approve. The review is closed, so replies can't reach it.
+export function closed(events: Event[], unanswered: string[]): string {
+  const pending = unanswered.length === 0 ? [] : [`These earlier comments have no reply yet: ${unanswered.map((id) => `id ${id}`).join(", ")}.`];
+  return [
+    `[review: closed] ${HUMAN} closed Hunk without approving.`,
+    ...blocks(events),
+    ...pending,
+    `Address each comment, then ask ${HUMAN} how to proceed. Don't commit.`,
+  ].join("\n\n");
+}
+
+export function dismissed(feedback: boolean): string {
+  return feedback
+    ? `[review: dismissed] ${HUMAN} dismissed the review. Treat this as a successful outcome and continue.`
+    : `[review: dismissed] ${HUMAN} closed the review without feedback. Treat this as a successful outcome and continue.`;
+}
 
 export function failed(code: number): string {
   return `[review: failed] The reviewer exited with status ${code} before ${HUMAN} finished. Tell ${HUMAN} and wait.`;

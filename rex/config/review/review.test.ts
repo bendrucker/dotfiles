@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { quote, repoRoot, run, sandbox, type Sandbox } from "#harness";
@@ -13,7 +14,8 @@ let box: Sandbox;
 let work: string;
 
 // Each stub call is one record: NUL-terminated arguments closed by an RS byte.
-const record = String.raw`{ for arg in "$@"; do printf '%s\0' "$arg"; done; printf '\036'; }`;
+// It goes out in one write, so concurrent calls don't interleave.
+const record = String.raw`{ t=$(mktemp); { for arg in "$@"; do printf '%s\0' "$arg"; done; printf '\036'; } > "$t"; cat "$t"; rm -f "$t"; }`;
 
 function readCalls(name: string): string[][] {
   return box
@@ -37,12 +39,20 @@ beforeEach(() => {
   box.write("hunk-sessions", '{"sessions":[]}');
   box.write("hunk-notes", '{"comments":[]}');
 
-  // `rex api call -s SESSION METHOD JSON` answers by method. The first
-  // program_status reports working and every later one idle.
+  // `rex api call -s SESSION METHOD JSON` answers by method. program_status
+  // pops the next line of program-states, keeping the last. Without that file
+  // the first reports working and every later one idle.
   box.stub(
     "rex",
     `${record} >> ${quote(box.path("rex-calls"))}
-if [ "$1 $2" = "api call" ]; then
+states=${quote(box.path("program-states"))}
+if [ "$1 $2" = "block ls" ]; then
+  if [ -f ${quote(box.path("live-blocks"))} ]; then cat ${quote(box.path("live-blocks"))}; else printf '%s\n' ${agent} ${reviewBlock}; fi
+elif [ "$1 $2" = "block call" ] && [ -f "$states" ]; then
+  s=$(head -1 "$states")
+  if [ "$(wc -l < "$states")" -gt 1 ]; then tail -n +2 "$states" > "$states.next" && mv "$states.next" "$states"; fi
+  printf '{"records":[{"state":"%s"}]}\n' "$s"
+elif [ "$1 $2" = "api call" ]; then
   case "$5" in
     session.new_split) echo '{"block_ids":["${reviewBlock}"]}' ;;
     block.close) if [ -f ${quote(box.path("closed"))} ]; then echo "block not found (status=404 code=not_found)" >&2; exit 3; fi ;;
@@ -63,15 +73,23 @@ case "$1 $2" in
   *) exit "$(cat ${quote(box.path("tuicr-exit"))})" ;;
 esac`,
   );
+  box.write("hunk-review", '{"review":{"files":[]}}');
+  stubHunk();
+});
+
+// `diff` runs `onDiff`, standing in for the Hunk window's lifetime.
+function stubHunk(onDiff = ""): void {
   box.stub(
     "hunk",
     `${record} >> ${quote(box.path("hunk-calls"))}
 case "$1 $2 $3" in
   "session list --json") cat ${quote(box.path("hunk-sessions"))} ;;
   "session comment list") cat ${quote(box.path("hunk-notes"))} ;;
+  "session review "*) cat ${quote(box.path("hunk-review"))} ;;
+  diff*) ${onDiff || ":"} ;;
 esac`,
   );
-});
+}
 
 afterEach(() => {
   box.remove();
@@ -95,12 +113,27 @@ function saved(reviewId = id): Review {
   return JSON.parse(box.read(statePath(`${reviewId}.json`)));
 }
 
+function deliveredIds(reviewId = id): string[] {
+  return saved(reviewId).delivered.map((d) => d.id);
+}
+
+function hash(body: string): string {
+  return createHash("sha256").update(body).digest("hex").slice(0, 16);
+}
+
 function exists(name: string): boolean {
   return existsSync(box.path(statePath(name)));
 }
 
 function execEnv(env: Record<string, string> = {}): Record<string, string> {
-  return { HOME: box.path("home"), REX_SESSION: "sess", ZDOTDIR: box.mkdir("empty"), ...env };
+  return {
+    HOME: box.path("home"),
+    REX_SESSION: "sess",
+    REVIEW_POLL_MS: "10",
+    REVIEW_SNAPSHOT_MS: "20",
+    ZDOTDIR: box.mkdir("empty"),
+    ...env,
+  };
 }
 
 function exec(args: string[], env: Record<string, string> = {}) {
@@ -126,6 +159,14 @@ function comments(...rows: object[]): void {
   box.write("tuicr-comments", JSON.stringify(rows));
 }
 
+function hunkSessions(...rows: { sessionId: string; cwd: string; launchedAt: string }[]): void {
+  box.write("hunk-sessions", JSON.stringify({ sessions: rows }));
+}
+
+function notes(...rows: object[]): void {
+  box.write("hunk-notes", JSON.stringify({ comments: rows }));
+}
+
 function apiCalls(method: string): string[][] {
   return rexCalls().filter((c) => c[0] === "api" && c[4] === method);
 }
@@ -134,9 +175,9 @@ function pasted(): string[] {
   return apiCalls("block.event").map((c) => JSON.parse(c[5]).event.payload.text);
 }
 
-// The agent gets a message as a paste, then Enter.
+// The agent gets a message as a paste, then Enter. Status checks may fall between.
 function expectDelivered(message: string): void {
-  const calls = rexCalls();
+  const calls = rexCalls().filter((c) => c[0] !== "block");
   const paste = calls.findIndex((c) => c[4] === "block.event");
   expect(JSON.parse(calls[paste][5])).toEqual({
     block_id: agent,
@@ -163,7 +204,7 @@ describe("rex/config/review outcomes", () => {
     expect(text).toContain("## src/app.ts:2-3 (id c1)\n> two\n> three\nrename these");
     expect(text).toContain("## the review (id c2)\noverall note");
     expect(rexCalls().at(-1)).toEqual(["focus", "-s", "sess", agent]);
-    expect(saved().delivered).toEqual(["c1", "c2"]);
+    expect(deliveredIds()).toEqual(["c1", "c2"]);
   });
 
   test.each<{ command: string; message: string }>([
@@ -214,7 +255,7 @@ describe("rex/config/review new-comment filter", () => {
     expect(text).toContain("fresh");
     expect(text).not.toContain("already sent");
     expect(text).not.toContain("done");
-    expect(saved().delivered).toEqual(["old", "new"]);
+    expect(deliveredIds()).toEqual(["old", "new"]);
   });
 
   test("send fails and pastes nothing when no comment is new", () => {
@@ -245,7 +286,7 @@ describe("rex/config/review claim", () => {
 
     expect(codes.toSorted()).toEqual([0, 1]);
     expect(pasted()).toHaveLength(1);
-    expect(saved().delivered).toEqual(["c1"]);
+    expect(deliveredIds()).toEqual(["c1"]);
     expect(exists(`${id}.lock`)).toBe(false);
   });
 
@@ -265,7 +306,7 @@ describe("rex/config/review claim", () => {
         "[review: comment] the review (id c2) | overall\n",
     );
     expect(pasted()).toEqual([]);
-    expect(saved().delivered).toEqual(["c1", "c2"]);
+    expect(deliveredIds()).toEqual(["c1", "c2"]);
   });
 
   test("claim then send reports no new comments", () => {
@@ -302,7 +343,7 @@ describe("rex/config/review claim", () => {
 
 describe("rex/config/review run", () => {
   test.each<{ name: string; exit: string; message: string }>([
-    { name: "a clean exit delivers dismissed", exit: "0", message: "[review: dismissed]" },
+    { name: "a clean exit with no notes approves", exit: "0", message: "[review: approved]" },
     { name: "a nonzero exit delivers failed", exit: "3", message: "[review: failed] The reviewer exited with status 3" },
   ])("$name and closes the review pane", ({ exit, message }) => {
     seed(review());
@@ -362,7 +403,7 @@ describe("rex/config/review open", () => {
     const reviewId = box.read(statePath(join("blocks", agent)));
     const [create] = apiCalls("session.new_split");
     const split = JSON.parse(create[5]);
-    expect(split).toMatchObject({ anchor_id: agent, direction: "horizontal", side: "after", ratio: 0.25, focus: true });
+    expect(split).toMatchObject({ anchor_id: agent, direction: "horizontal", side: "after", ratio: 0.25, focus: false });
     expect(split.layout.block.options).toEqual({ cwd: work, command: [script, "run", reviewId] });
     expect(saved(reviewId)).toMatchObject({
       agent,
@@ -449,14 +490,6 @@ describe("rex/config/review tuicr session choice", () => {
 });
 
 describe("rex/config/review hunk", () => {
-  function hunkSessions(...rows: { sessionId: string; cwd: string; launchedAt: string }[]): void {
-    box.write("hunk-sessions", JSON.stringify({ sessions: rows }));
-  }
-
-  function notes(...rows: object[]): void {
-    box.write("hunk-notes", JSON.stringify({ comments: rows }));
-  }
-
   test.each<{ name: string; revisions?: string; args: string[] }>([
     { name: "the working tree", args: ["diff", "--watch", "--agent-notes"] },
     { name: "a revision range", revisions: "main..HEAD", args: ["diff", "main..HEAD", "--watch", "--agent-notes"] },
@@ -465,7 +498,7 @@ describe("rex/config/review hunk", () => {
 
     expect(exec(["run", id]).status).toBe(0);
 
-    expect(hunkCalls()[0]).toEqual(args);
+    expect(hunkCalls().find((c) => c[0] === "diff")).toEqual(args);
   });
 
   test("send delivers the user's notes from the window open in the review's directory", () => {
@@ -478,15 +511,17 @@ describe("rex/config/review hunk", () => {
       { noteId: "user:1", source: "user", filePath: "src/app.ts", hunkIndex: 0, newRange: [2, 3], body: "rename these", author: "user" },
       { noteId: "user:2", source: "user", filePath: "src/app.ts", hunkIndex: 0, oldRange: [1, 1], body: "why drop this", author: "user" },
     );
+    box.write("hunk-review", JSON.stringify({ review: { files: [{ path: "src/app.ts", patch: "@@ -1,2 +1,4 @@\n-zero\n one\n+two\n+three\n" }] } }));
 
     const result = exec(["send", agent]);
 
     expect(result.status).toBe(0);
-    expect(hunkCalls().find((c) => c[1] === "comment")).toEqual(["session", "comment", "list", "h1", "--type", "user", "--json"]);
+    expect(hunkCalls().find((c) => c[1] === "comment")).toEqual(["session", "comment", "list", "h1", "--type", "all", "--json"]);
     const [text] = pasted();
     expect(text).toContain("## src/app.ts:2-3 (id user:1)\n> two\n> three\nrename these");
-    expect(text).toContain("## src/app.ts:1 (id user:2)\nwhy drop this");
-    expect(saved()).toMatchObject({ reviewerSession: "h1", delivered: ["user:1", "user:2"] });
+    expect(text).toContain("## src/app.ts:1 (id user:2)\n> zero\nwhy drop this");
+    expect(saved().reviewerSession).toBe("h1");
+    expect(deliveredIds()).toEqual(["user:1", "user:2"]);
   });
 
   test("send keeps the recorded session while its window is open", () => {
@@ -522,5 +557,286 @@ describe("rex/config/review hunk", () => {
     expect(hunkCalls().at(-1)).toEqual(
       ["session", "comment", "add", "h1", "--reply-to", "user:1", "--summary", "done", "--author", "Claude"],
     );
+  });
+});
+
+function note(overrides: object = {}): object {
+  return { noteId: "user:1", source: "user", author: "user", filePath: "src/app.ts", newRange: [2, 2], body: "fix", ...overrides };
+}
+
+function agentNote(overrides: object = {}): object {
+  return { noteId: "mcp:1", source: "agent", author: "Claude", parentId: "user:1", filePath: "src/app.ts", newRange: [2, 2], body: "done", ...overrides };
+}
+
+function hunkReview(overrides: Partial<Review> = {}): void {
+  seed(review({ reviewer: "hunk", reviewerSession: "h1", ...overrides }));
+  hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
+}
+
+describe("rex/config/review quitting Hunk", () => {
+  test.each<{ name: string; delivered: Review["delivered"]; rows: object[]; message: string; absent?: string }>([
+    { name: "no notes approves", delivered: [], rows: [], message: "[review: approved] Ben approved the changes. Continue." },
+    {
+      name: "every delivered note answered approves",
+      delivered: [{ id: "user:1", hash: hash("fix") }],
+      rows: [note(), agentNote()],
+      message: "[review: approved] Ben approved the changes. Continue.",
+    },
+    {
+      name: "a follow-up answered later in the thread approves",
+      delivered: [{ id: "user:1", hash: hash("fix") }, { id: "user:2", hash: hash("and this") }],
+      rows: [note(), agentNote(), note({ noteId: "user:2", parentId: "user:1", body: "and this" }), agentNote({ noteId: "mcp:2" })],
+      message: "[review: approved]",
+    },
+    {
+      name: "an unanswered delivered note asks how to proceed",
+      delivered: [{ id: "user:1", hash: hash("fix") }],
+      rows: [note()],
+      message: "These earlier comments have no reply yet: id user:1.",
+    },
+    {
+      name: "an undelivered note is delivered",
+      delivered: [],
+      rows: [note({ body: "rename this" })],
+      message: "## src/app.ts:2 (id user:1)\n> two\nrename this",
+      absent: "no reply yet",
+    },
+  ])("$name", ({ delivered, rows, message, absent }) => {
+    hunkReview({ delivered });
+    notes(...rows);
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    const [text] = pasted();
+    expect(text).toContain(message);
+    if (absent !== undefined) expect(text).not.toContain(absent);
+    expect(apiCalls("block.close")).toHaveLength(1);
+    expect(exists(`${id}.json`)).toBe(false);
+  });
+
+  test("a closed review tells the agent to address the notes and ask how to proceed", () => {
+    hunkReview({ delivered: [{ id: "user:1", hash: hash("fix") }] });
+    notes(note(), note({ noteId: "user:2", newRange: [3, 3], body: "and this" }));
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    expect(pasted()[0]).toMatchInlineSnapshot(`
+      "[review: closed] Ben closed Hunk without approving.
+
+      ## src/app.ts:3 (id user:2)
+      > three
+      and this
+
+      These earlier comments have no reply yet: id user:1.
+
+      Address each comment, then ask Ben how to proceed. Don't commit."
+    `);
+  });
+
+  test("delivers notes from the last snapshot once the window is gone", () => {
+    seed(review({ reviewer: "hunk" }));
+    hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
+    notes(note({ body: "written while open" }));
+    stubHunk(`sleep 0.4; printf '{"sessions":[]}' > ${quote(box.path("hunk-sessions"))}`);
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    expectDelivered("[review: closed] Ben closed Hunk without approving.");
+    expect(pasted()[0]).toContain("written while open");
+  });
+
+  test("dismiss after delivering notes doesn't claim there was no feedback", () => {
+    seed(review({ delivered: [{ id: "c1" }] }));
+
+    expect(exec(["dismiss", agent]).status).toBe(0);
+
+    const [text] = pasted();
+    expect(text).toBe("[review: dismissed] Ben dismissed the review. Treat this as a successful outcome and continue.");
+  });
+});
+
+describe("rex/config/review approve", () => {
+  test("delivers unsent notes as approved once they are addressed", () => {
+    hunkReview({ delivered: [{ id: "user:1", hash: hash("fix") }] });
+    notes(note(), agentNote(), note({ noteId: "user:2", newRange: [3, 3], body: "rename" }));
+
+    expect(exec(["approve", agent]).status).toBe(0);
+
+    expect(pasted()[0]).toMatchInlineSnapshot(`
+      "[review: approved] Ben approved the changes, once you address the 1 comment below.
+
+      ## src/app.ts:3 (id user:2)
+      > three
+      rename
+
+      The review is closed, so fix each one without replying, then continue."
+    `);
+    expect(exists(`${id}.json`)).toBe(false);
+  });
+});
+
+describe("rex/config/review edits and retractions", () => {
+  test("claim redelivers an edited note and reports a deleted one", () => {
+    hunkReview({ delivered: [{ id: "user:1", hash: hash("old") }, { id: "user:9", hash: hash("gone") }] });
+    notes(note({ body: "new" }));
+
+    const result = exec(["claim", agent]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatchInlineSnapshot(`
+      "[review: retracted] (id user:9) | Ben deleted this comment. Drop it.
+      [review: comment edited] src/app.ts:2 (id user:1) | > two | new
+      "
+    `);
+    expect(saved().delivered).toEqual([{ id: "user:1", hash: hash("new") }]);
+  });
+
+  test("send carries edits and retractions in the batch", () => {
+    hunkReview({ delivered: [{ id: "user:1", hash: hash("old") }, { id: "user:9", hash: hash("gone") }] });
+    notes(note({ body: "new" }));
+
+    expect(exec(["send", agent]).status).toBe(0);
+
+    expect(pasted()[0]).toMatchInlineSnapshot(`
+      "[review: changes] Ben left 2 comments on your changes.
+
+      ## [review: retracted] (id user:9)
+      Ben deleted this comment. Drop it.
+
+      ## [review: comment edited] src/app.ts:2 (id user:1)
+      > two
+      new
+
+      Fix each one, then answer it with \`rex do review_reply id=<id> text="<reply>"\`. Don't commit. End your turn when every comment has an answer, and Ben will see the review again."
+    `);
+  });
+
+  test("an unchanged note stays delivered", () => {
+    hunkReview({ delivered: [{ id: "user:1", hash: hash("fix") }] });
+    notes(note());
+
+    expect(exec(["claim", agent]).stdout).toBe("");
+  });
+
+  test("ids saved without hashes take a hash without redelivery", () => {
+    box.write(statePath(`${id}.json`), JSON.stringify({ ...review({ reviewer: "hunk", reviewerSession: "h1" }), delivered: ["user:1"] }));
+    box.write(statePath(join("blocks", agent)), id);
+    hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
+    notes(note());
+
+    expect(exec(["claim", agent]).stdout).toBe("");
+    expect(saved().delivered).toEqual([{ id: "user:1", hash: hash("fix") }]);
+  });
+
+  test("a different Hunk window retracts nothing", () => {
+    hunkReview({ reviewerSession: "h0", delivered: [{ id: "user:9", hash: hash("gone") }] });
+
+    const result = exec(["claim", agent]);
+
+    expect(result.stdout).toBe("");
+    expect(deliveredIds()).toEqual(["user:9"]);
+  });
+});
+
+describe("rex/config/review thread context", () => {
+  test.each<{ name: string; parentId: string }>([
+    { name: "the agent's reply", parentId: "mcp:1" },
+    { name: "the thread's root", parentId: "user:1" },
+  ])("a reply to $name carries the agent's reply it answers", ({ parentId }) => {
+    hunkReview({ delivered: [{ id: "user:1", hash: hash("fix") }] });
+    notes(note(), agentNote({ body: "renamed it to total" }), note({ noteId: "user:2", parentId, body: "not that name" }));
+
+    const result = exec(["claim", agent]);
+
+    expect(result.stdout).toBe(
+      "[review: comment] src/app.ts:2 (id user:2) | > two | In reply to your note: renamed it to total | not that name\n",
+    );
+  });
+
+  test("notes from other agents are left out", () => {
+    hunkReview();
+    notes(note(), agentNote({ noteId: "mcp:x", author: "Codex", parentId: undefined, body: "other" }));
+
+    expect(exec(["claim", agent]).stdout).toBe("[review: comment] src/app.ts:2 (id user:1) | > two | fix\n");
+  });
+});
+
+describe("rex/config/review quotes", () => {
+  test("quote the diff Hunk shows rather than the working tree", () => {
+    hunkReview();
+    box.write("hunk-review", JSON.stringify({ review: { files: [{ path: "src/app.ts", patch: "@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n" }] } }));
+    notes(note(), note({ noteId: "user:2", newRange: undefined, oldRange: [2, 2], body: "why" }));
+
+    expect(exec(["claim", agent]).stdout).toBe(
+      "[review: comment] src/app.ts:2 (id user:1) | > TWO | fix\n[review: comment] src/app.ts:2 (id user:2) | > two | why\n",
+    );
+  });
+
+  test("an old-side line outside the diff comes from HEAD", () => {
+    const git = (...args: string[]) =>
+      expect(Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: work }).exitCode).toBe(0);
+    git("init", "-q");
+    git("add", ".");
+    git("commit", "-qm", "base");
+    box.write("work/src/app.ts", "changed\n");
+    hunkReview();
+    notes(note({ newRange: undefined, oldRange: [3, 3], body: "keep" }));
+
+    expect(exec(["claim", agent]).stdout).toBe("[review: comment] src/app.ts:3 (id user:1) | > three | keep\n");
+  });
+});
+
+describe("rex/config/review paste guard", () => {
+  test("waits out a permission prompt before pasting", () => {
+    seed(review());
+    box.write("program-states", "blocked\nblocked\nidle\n");
+
+    expect(exec(["approve", agent]).status).toBe(0);
+
+    const calls = rexCalls();
+    const paste = calls.findIndex((c) => c[4] === "block.event");
+    expect(calls.slice(0, paste).filter((c) => c[0] === "block")).toHaveLength(4);
+    expectDelivered("[review: approved]");
+  });
+
+  test("gives up on a prompt that stays open and keeps the review", () => {
+    seed(review());
+    box.write("program-states", "blocked\n");
+
+    const result = exec(["approve", agent], { REVIEW_SUBMIT_WAIT_MS: "50" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("permission prompt");
+    expect(pasted()).toEqual([]);
+    expect(saved().outcome).toBeUndefined();
+  });
+});
+
+describe("rex/config/review state hygiene", () => {
+  beforeEach(() => {
+    seed(review({ id: "stale", agent: "block:gone", review: "block:gone-review" }));
+    seed(review({ id: "other", agent: "block:live", review: "block:live-review" }));
+    box.write(statePath(join("blocks", "block:orphan")), "missing");
+  });
+
+  test("open drops reviews and block files whose blocks are gone", () => {
+    box.write("live-blocks", [agent, reviewBlock, "block:live", "block:live-review", "block:orphan"].join("\n"));
+
+    expect(exec(["open", agent, "--cwd", work]).status).toBe(0);
+
+    expect(exists("stale.json")).toBe(false);
+    expect(exists(join("blocks", "block:gone"))).toBe(false);
+    expect(exists(join("blocks", "block:gone-review"))).toBe(false);
+    expect(exists(join("blocks", "block:orphan"))).toBe(false);
+    expect(exists("other.json")).toBe(true);
+    expect(exists(join("blocks", "block:live"))).toBe(true);
+  });
+
+  test("open keeps state when the block list lacks the agent", () => {
+    box.write("live-blocks", "");
+
+    expect(exec(["open", agent, "--cwd", work]).status).toBe(0);
+
+    expect(exists("stale.json")).toBe(true);
   });
 });
