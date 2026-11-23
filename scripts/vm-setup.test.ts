@@ -50,7 +50,7 @@ function systemWithout(...names: string[]): string {
 }
 
 const packageCommands = ["rsync", "bwrap", "socat"];
-const install = ["apt-get", "install", "-y", "--no-install-recommends", "rsync", "bubblewrap", "socat"];
+const install = ["apt-get", "install", "--yes", "--no-install-recommends", "rsync", "bubblewrap", "socat"];
 
 // Only the sandbox and the system directories, so a mise installed on the
 // machine running the tests never resolves.
@@ -100,10 +100,34 @@ describe("vm-setup", () => {
 
   test("installs mise into the bin directory when it is missing", () => {
     // The installer mise.run serves, reduced to writing a mise stub where it is told.
-    box.stub("curl", `while [ "$1" != -o ]; do shift; done\ncat > "$2" <<'EOF'\nprintf '%s\\n' '${mise()}' > "$MISE_INSTALL_PATH"\nchmod +x "$MISE_INSTALL_PATH"\nEOF`);
+    box.stub("curl", `while [ "$1" != --output ]; do shift; done\ncat > "$2" <<'EOF'\nprintf '%s\\n' '${mise()}' > "$MISE_INSTALL_PATH"\nchmod +x "$MISE_INSTALL_PATH"\nEOF`);
 
     expect(setup().status).toBe(0);
     expect(readlinkSync(join(out, "prek"))).toBe(join(tools, "prek"));
+  });
+
+  test("retries a clone that fails, backing off between attempts", () => {
+    box.stub("mise", mise());
+    rmSync(box.path("claude-repo"), { recursive: true });
+    box.stub("sleep", `echo "$1" >> ${box.path("sleeps")}`);
+    box.stub(
+      "git",
+      `n=$(cat ${box.path("clones")} 2>/dev/null || echo 0)\necho $((n + 1)) > ${box.path("clones")}\n[ "$n" -ge 2 ] && mkdir -p "$6"`,
+    );
+
+    expect(setup().status).toBe(0);
+    expect(box.read("clones")).toBe("3\n");
+    expect(box.read("sleeps")).toBe("2\n4\n");
+    expect(box.read("linked")).toBe(`${box.path("claude-repo")} remote\n`);
+  });
+
+  test("warns and exits 0 when every clone attempt fails", () => {
+    box.stub("mise", mise());
+    rmSync(box.path("claude-repo"), { recursive: true });
+    box.stub("sleep", "");
+    box.stub("git", "exit 128");
+
+    expect(setup()).toMatchObject({ status: 0, stderr: "vm-setup: claude clone failed\n" });
   });
 
   test("warns and exits 0 when the install fails, so the VM still boots", () => {
