@@ -8,7 +8,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@bendrucker/oxlint-config": "github:bendrucker/oxlint-config#05c50644385157e482b3881ddceb27ed0ae50947",
+    "@bendrucker/oxlint-config": "0.1.0",
     "oxlint": "1.94.0"
   },
   "imports": {
