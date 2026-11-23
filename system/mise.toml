@@ -12,7 +12,7 @@
 "aqua:koalaman/shellcheck" = "0.11.0"
 "aqua:mikefarah/yq" = "4.54.2"
 "aqua:rhysd/actionlint" = "1.7.12"
-"aqua:sharkdp/fd" = "10.5.0"
+"aqua:sharkdp/fd" = "10.5.2"
 "aqua:sharkdp/hyperfine" = "2.0.0"
 
 [dotfiles]
