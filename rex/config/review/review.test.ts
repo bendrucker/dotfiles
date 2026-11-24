@@ -942,6 +942,9 @@ describe("rex/config/review events file", () => {
   test("a signal claims a saved note before the next tick", async () => {
     const child = await startRun("live", { REVIEW_SNAPSHOT_MS: "60000" });
     // The first claim records the window, so a note written after it waits for a signal.
+    // Under load that claim can run before the window registers its pid, so signal once it has.
+    await until(() => existsSync(box.path("hunk-pid")));
+    child.kill("SIGUSR1");
     await until(() => exists(`${id}.json`) && saved().reviewerSession === "h1");
     notes(note());
 
