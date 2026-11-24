@@ -23,11 +23,8 @@
     "max-lines-per-function": ["error", { "max": 90, "skipBlankLines": true, "skipComments": true }],
     "max-lines": ["error", { "max": 600, "skipBlankLines": true, "skipComments": true }],
 
-    // Installers and jobs run their steps in order on purpose.
     "no-await-in-loop": "off",
-    // Tests stub shell commands, whose `${VAR}` is shell syntax.
     "no-template-curly-in-string": "off",
-    // Off in @bendrucker/oxlint-config from the next release; drop this line on that bump.
     "oxc/no-map-spread": "off"
   },
   "overrides": [
