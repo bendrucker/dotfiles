@@ -24,8 +24,7 @@
     "max-lines": ["error", { "max": 600, "skipBlankLines": true, "skipComments": true }],
 
     "no-await-in-loop": "off",
-    "no-template-curly-in-string": "off",
-    "oxc/no-map-spread": "off"
+    "no-template-curly-in-string": "off"
   },
   "overrides": [
     {
