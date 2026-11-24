@@ -41,7 +41,7 @@ const ZERO_TALLY = new RegExp(`\\b(?:0|no)\\s+(?:\\w+\\s+)?(?:${FAILURE_WORDS})\
 // Spans that differ between two runs of one unchanged failure. Ordered so the
 // wider shapes are consumed before the narrower ones can eat into them: a
 // duration is digits, and a timestamp is digits and colons.
-const VOLATILE: Array<[RegExp, string]> = [
+const VOLATILE: [RegExp, string][] = [
   // 2026-09-11T03:00:04Z, and the same date and clock time spelled apart.
   [/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?/g, "<time>"],
   [/\b\d{4}-\d{2}-\d{2}\b/g, "<date>"],
@@ -63,7 +63,9 @@ function unhome(line: string): string {
 }
 
 export function normalizeVolatile(line: string): string {
-  return VOLATILE.reduce((text, [pattern, shape]) => text.replace(pattern, shape), unhome(line));
+  let text = unhome(line);
+  for (const [pattern, shape] of VOLATILE) text = text.replace(pattern, shape);
+  return text;
 }
 
 // The line of a log that says what went wrong. The last line carrying a word a
@@ -85,11 +87,11 @@ export function distinctiveLine(output: string): string {
   if (lines.length === 0) return "";
 
   const diagnosis = lines.findLast(diagnoses);
-  return diagnosis ?? lines[lines.length - 1];
+  return diagnosis ?? lines.at(-1);
 }
 
 function diagnoses(line: string): boolean {
-  return !GUM_LEVEL.test(line) && DIAGNOSIS.test(line.replace(ZERO_TALLY, ""));
+  return !GUM_LEVEL.test(line) && DIAGNOSIS.test(line.replaceAll(ZERO_TALLY, ""));
 }
 
 // The identity of a failure: which command broke, and the one line saying how,

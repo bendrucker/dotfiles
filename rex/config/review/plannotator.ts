@@ -94,8 +94,8 @@ function parse<T>(schema: z.ZodType<T>, path: string): T {
 function matches(target: Target, path: string): boolean {
   try {
     if (target.doc !== undefined) return real(parse(DocStore, path).path) === real(target.doc);
-    const store = parse(DiffStore, path);
-    return real(store.repo) === real(target.cwd) && (store.scope.kind === "uncommitted") === (target.revisions === undefined);
+    const diffStore = parse(DiffStore, path);
+    return real(diffStore.repo) === real(target.cwd) && (diffStore.scope.kind === "uncommitted") === (target.revisions === undefined);
   } catch {
     return false;
   }
@@ -110,7 +110,7 @@ function store(target: Target, known?: string, strict = false): string {
   const found = list(base)
     .flatMap((group) => list(join(base, group)).map((entry) => join(base, group, entry, file)))
     .filter((path) => existsSync(path) && matches(target, path))
-    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+    .toSorted((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
   if (found === undefined) throw new Error(`no plannotator notes for ${target.doc ?? target.cwd}`);
   return found;
 }
@@ -174,17 +174,19 @@ function diffAnchor(target: Target, comment: Comment): NoteRequest {
 
 // A doc note answers on its quote, nearest the line it was left on.
 function docAnchor(doc: string, path: string, comment: Comment): NoteRequest {
-  const note = parse(DocStore, path).annotations.find((a) => a.id === comment.id);
-  if (note === undefined) throw new Error(`no note ${comment.id} in ${path}`);
-  const start = note.anchor?.plannotator_tui?.source?.start;
+  const annotation = parse(DocStore, path).annotations.find((a) => a.id === comment.id);
+  if (annotation === undefined) throw new Error(`no note ${comment.id} in ${path}`);
+  const start = annotation.anchor?.plannotator_tui?.source?.start;
   let line: number | undefined;
   if (start !== undefined) {
     try {
       const before = readFileSync(doc).subarray(0, start).toString("utf8");
       line = before.split("\n").length;
-    } catch {}
+    } catch {
+      // An unreadable doc leaves the note anchored by its quote alone.
+    }
   }
-  return { file: doc, quote: note.anchor?.quote ?? undefined, line };
+  return { file: doc, quote: annotation.anchor?.quote ?? undefined, line };
 }
 
 function entries(): Entry[] {
@@ -232,7 +234,7 @@ async function note(entry: Entry, request: object): Promise<Answer> {
 }
 
 // plannotator-tui diffs from one base ref, so a range has to end at HEAD.
-function base(revisions: string): string {
+function baseRef(revisions: string): string {
   const range = /^(.+?)\.{2,3}(?:HEAD)?$/.exec(revisions);
   if (range !== null) return range[1];
   if (revisions.includes("..")) throw new Error(`plannotator-tui reviews from a base ref, not the range ${revisions}`);
@@ -240,20 +242,25 @@ function base(revisions: string): string {
 }
 
 export const reviewer: Reviewer = {
+  ephemeral: false,
+
   command({ revisions, doc }, result) {
     if (doc !== undefined) return ["plannotator-tui", doc, "--gate", "--json", "--require-approval", "--result-file", result];
-    return ["plannotator-tui", "review", ...(revisions === undefined ? [] : ["--base", base(revisions)])];
+    return ["plannotator-tui", "review", ...(revisions === undefined ? [] : ["--base", baseRef(revisions)])];
   },
 
-  // plannotator-tui rewrites its store on every save.
-  async flush() {},
+  async flush() {
+    // plannotator-tui rewrites its store on every save.
+  },
 
   async comments(target, known, strict): Promise<Comments> {
     const path = store(target, known, strict);
     return { session: path, comments: target.doc === undefined ? diffComments(path) : docComments(target.cwd, path) };
   },
 
-  async reload() {},
+  async reload() {
+    // Nothing to do.
+  },
 
   // plannotator-tui adds the reply as its own note, which keeps it across saves.
   async reply(target, path, comment, text) {
@@ -266,8 +273,8 @@ export const reviewer: Reviewer = {
         answer = await note(entry, request);
         // The agent may have edited the quoted text away. The line still places it.
         if (answer.code === "quote_not_found" && anchor.line !== undefined) answer = await note(entry, { ...request, quote: undefined });
-      } catch (err) {
-        reason = err instanceof Error ? err.message : String(err);
+      } catch (error) {
+        reason = error instanceof Error ? error.message : String(error);
         continue;
       }
       if (answer.ok) return;

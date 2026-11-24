@@ -163,8 +163,8 @@ describe("main", () => {
 
   afterEach(() => box.remove());
 
-  function stubRex(view: object, processes: Record<string, object>): void {
-    box.write("view.json", JSON.stringify(view));
+  function stubRex(viewJson: object, processes: Record<string, object>): void {
+    box.write("view.json", JSON.stringify(viewJson));
     for (const [block, body] of Object.entries(processes)) box.write(`process-${block}.json`, JSON.stringify(body));
     recordingStub(
       box,

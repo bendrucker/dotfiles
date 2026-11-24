@@ -38,9 +38,12 @@ export function changes(events: Event[]): string {
   ].join("\n\n");
 }
 
+function flat(text: string): string {
+  return text.replaceAll("\n", " ⏎ ");
+}
+
 // One line per note, because each line of a watcher's stdout is one event.
 export function live(event: Event): string {
-  const flat = (text: string) => text.replace(/\n/g, " ⏎ ");
   const head = event.kind === "edited" || event.kind === "retracted" ? heading(event) : `[review: comment] ${heading(event)}`;
   return [head, ...parts(event)].map(flat).join(" | ");
 }
@@ -59,11 +62,11 @@ export function approved(events: Event[] = []): string {
   ].join("\n\n");
 }
 
-// The reviewer quit without Approve. The review is closed, so replies can't reach it.
+// Hunk quit without Approve. The review is closed, so replies can't reach it.
 export function closed(events: Event[], unanswered: string[]): string {
   const pending = unanswered.length === 0 ? [] : [`These earlier comments have no reply yet: ${unanswered.map((id) => `id ${id}`).join(", ")}.`];
   return [
-    `[review: closed] ${HUMAN} closed the review without approving.`,
+    `[review: closed] ${HUMAN} closed Hunk without approving.`,
     ...blocks(events),
     ...pending,
     `Address each comment, then ask ${HUMAN} how to proceed. Don't commit.`,

@@ -21,7 +21,7 @@ function env(): Record<string, string | undefined> {
 
 describe("log", () => {
   test("lets gum write the line", async () => {
-    box.stub("gum", 'printf "%s %s\\n" "$3" "$4" >&2');
+    box.stub("gum", String.raw`printf "%s %s\n" "$3" "$4" >&2`);
 
     const { output } = await call(module, "log", ["warn", "Failed to update alpha"], env());
     expect(output).toBe("warn Failed to update alpha\n");
@@ -37,7 +37,7 @@ describe("log", () => {
 
 describe("choose", () => {
   // Echoes the first offered item, after recording its flags.
-  const picker = ['printf "%s\\n" "$*" >"$ARGS_LOG"', "head -n 1", 'printf "drawn\\n" >&2'].join("\n");
+  const picker = [String.raw`printf "%s\n" "$*" >"$ARGS_LOG"`, "head -n 1", String.raw`printf "drawn\n" >&2`].join("\n");
 
   test("returns what gum printed and hands it the items on stdin", async () => {
     box.stub("gum", picker);
@@ -80,7 +80,7 @@ describe("choose", () => {
   });
 
   test("returns nothing when dismissed", async () => {
-    box.stub("gum", 'printf "one\\n"; exit 130');
+    box.stub("gum", String.raw`printf "one\n"; exit 130`);
 
     const { value } = await call<string[]>(module, "choose", [["one"]], env());
     expect(value).toEqual([]);

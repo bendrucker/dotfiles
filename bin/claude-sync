@@ -519,7 +519,7 @@ export async function versionMeta(): Promise<string> {
 // shell's `awk | sort | shasum | cut -c1-12` produced. An empty extraction still
 // yields a stable value.
 export function failureFingerprint(extracted: string[]): string {
-  const sorted = [...extracted].sort(byCodeUnit);
+  const sorted = [...extracted].toSorted(byCodeUnit);
   const digest = createHash("sha1")
     .update(sorted.map((line) => `${line}\n`).join(""))
     .digest("hex");

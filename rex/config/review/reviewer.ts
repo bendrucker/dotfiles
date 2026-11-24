@@ -34,12 +34,16 @@ export interface Comments {
 }
 
 export interface Reviewer {
+  // Notes vanish when the reviewer exits, so `run` snapshots them while it runs.
+  ephemeral: boolean;
   // `result` is where a gated reviewer writes its decision.
   command(target: Target, result: string): string[];
   flush(block: string): Promise<void>;
   // Includes the agent's replies. `strict` fails rather than fall back to
   // another record when `session` is gone.
   comments(target: Target, session?: string, strict?: boolean): Promise<Comments>;
+  // The unified diff the reviewer shows, keyed by path.
+  patches?(target: Target, session: string): Promise<Record<string, string>>;
   reload(block: string): Promise<void>;
   reply(target: Target, session: string, comment: Comment, text: string): Promise<void>;
   // A directory the reviewer writes notes into without signaling `run`.

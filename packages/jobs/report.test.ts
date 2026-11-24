@@ -51,7 +51,7 @@ beforeEach(() => {
   writeStub(join(stubs, "osascript"), `printf '%s\\n' "$2" >> "${join(sandbox, "notifications")}"`);
   writeStub(join(stubs, "gum"), "exit 0");
   // Nothing can be appended without the token, so the default is the machine that has one.
-  writeStub(join(stubs, "security"), 'printf "token-abc\\n"');
+  writeStub(join(stubs, "security"), String.raw`printf "token-abc\n"`);
 
   // Nothing but the stubs is reachable, so a call that escapes one fails loudly
   // instead of reaching Things or the notification centre.
@@ -404,7 +404,7 @@ describe("reportFailure escalation", () => {
     standInThings();
     await fail("boom");
 
-    writeStub(stub("security"), 'printf "token-abc\\n"');
+    writeStub(stub("security"), String.raw`printf "token-abc\n"`);
     standInThings();
     await fail("boom");
 
@@ -784,8 +784,8 @@ describe("notificationScript", () => {
   // Titles are built by interpolation at the call sites, and an invalid script
   // fails silently, so the notification would simply never appear.
   test("escapes quotes and backslashes so a caller cannot break the script", async () => {
-    expect(notificationScript('a "b" c', "back\\slash", "Basso")).toBe(
-      'display notification "back\\\\slash" with title "a \\"b\\" c" sound name "Basso"',
+    expect(notificationScript('a "b" c', String.raw`back\slash`, "Basso")).toBe(
+      String.raw`display notification "back\\slash" with title "a \"b\" c" sound name "Basso"`,
     );
   });
 });

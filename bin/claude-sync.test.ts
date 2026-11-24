@@ -81,14 +81,14 @@ function settingsStatus(): "clean" | "dirty" {
 // `claude plugin list --json` and the marketplace manifests are the whole of what
 // the inventory reads, so a file the example writes is what the CLI reports.
 const claudeStub = [
-  '[ "$1" = "--version" ] && { printf "claude 1.2.3\\n"; exit 0; }',
+  String.raw`[ "$1" = "--version" ] && { printf "claude 1.2.3\n"; exit 0; }`,
   '[ -n "$CLAUDE_DRAINS_STDIN" ] && cat >/dev/null',
   'case "$2" in',
   '  list)   cat "$HOME/plugin-list.json" ;;',
   "  update)",
   // The id is the last argument, because the call names its scope in front of it.
   "    for last; do :; done",
-  "    printf 'update %s\\n' \"$last\" >>\"$CLAUDE_PLUGIN_LOG\"",
+  String.raw`    printf 'update %s\n' "$last" >>"$CLAUDE_PLUGIN_LOG"`,
   '    case " $CLAUDE_UPDATE_FAILS " in *" $last "*) exit 1 ;; esac',
   // The intermittent shape the retry exists for: the first attempt refuses and
   // the next one takes.
@@ -98,25 +98,25 @@ const claudeStub = [
   "        ;;",
   "    esac",
   "    ;;",
-  "  install) printf 'install %s\\n' \"$3\" >>\"$CLAUDE_PLUGIN_LOG\" ;;",
+  String.raw`  install) printf 'install %s\n' "$3" >>"$CLAUDE_PLUGIN_LOG" ;;`,
   "  prune)",
-  "    printf 'prune\\n' >>\"$CLAUDE_PLUGIN_LOG\"",
+  String.raw`    printf 'prune\n' >>"$CLAUDE_PLUGIN_LOG"`,
   // The real CLI declines with exit 0 when an installed plugin fails to load.
-  '    [ -n "$CLAUDE_PRUNE_SKIPS" ] && { printf "Skipped — cannot determine orphans\\n"; exit 0; }',
-  '    printf "Nothing to prune.\\n"',
+  String.raw`    [ -n "$CLAUDE_PRUNE_SKIPS" ] && { printf "Skipped — cannot determine orphans\n"; exit 0; }`,
+  String.raw`    printf "Nothing to prune.\n"`,
   "    ;;",
   // The name follows the verb, so a remove is `plugin marketplace remove <name>`.
   "  marketplace)",
-  '    [ "$3" = "update" ] && printf \'update %s\\n\' "$4" >>"$HOME/refresh.log"',
+  String.raw`    [ "$3" = "update" ] && printf 'update %s\n' "$4" >>"$HOME/refresh.log"`,
   '    [ "$3" = "update" ] && [ -n "$CLAUDE_REFRESH_FAILS" ] && exit 1',
   '    [ "$3" = "remove" ] || exit 0',
-  "    printf 'marketplace remove %s\\n' \"$4\" >>\"$CLAUDE_PLUGIN_LOG\"",
+  String.raw`    printf 'marketplace remove %s\n' "$4" >>"$CLAUDE_PLUGIN_LOG"`,
   '    case " $CLAUDE_REMOVE_FAILS " in *" $4 "*) exit 1 ;; esac',
   "    ;;",
   "  uninstall)",
   // The id is the last argument, because the call names its scope in front of it.
   "    for last; do :; done",
-  "    printf 'uninstall %s\\n' \"$last\" >>\"$CLAUDE_PLUGIN_LOG\"",
+  String.raw`    printf 'uninstall %s\n' "$last" >>"$CLAUDE_PLUGIN_LOG"`,
   '    case " $CLAUDE_UNINSTALL_FAILS " in *" $last "*) exit 1 ;; esac',
   "    ;;",
   "esac",
@@ -276,20 +276,20 @@ function writeRepoSettings(settings: unknown, indent = 2): void {
 
 // The repo `~/.claude/settings.json` links into.
 function buildRepo(root: string): void {
-  const repo = join(root, "repo");
+  const repoDir = join(root, "repo");
   const origin = join(root, "origin.git");
   run(["git", "init", "-q", "--bare", "-b", "main", origin]);
-  run(["git", "init", "-q", "-b", "main", repo]);
-  run(["git", "-C", repo, "config", "user.email", "spec@example.test"]);
-  run(["git", "-C", repo, "config", "user.name", "Spec"]);
-  run(["git", "-C", repo, "config", "commit.gpgsign", "false"]);
-  run(["git", "-C", repo, "remote", "add", "origin", origin]);
-  mkdirSync(join(repo, "user"));
-  writeFileSync(join(repo, "user", "settings.json"), `${JSON.stringify(settingsJson(HOOK), null, 2)}\n`);
-  run(["git", "-C", repo, "add", "-A"]);
-  run(["git", "-C", repo, "commit", "-q", "-m", "settings"]);
-  run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
-  run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+  run(["git", "init", "-q", "-b", "main", repoDir]);
+  run(["git", "-C", repoDir, "config", "user.email", "spec@example.test"]);
+  run(["git", "-C", repoDir, "config", "user.name", "Spec"]);
+  run(["git", "-C", repoDir, "config", "commit.gpgsign", "false"]);
+  run(["git", "-C", repoDir, "remote", "add", "origin", origin]);
+  mkdirSync(join(repoDir, "user"));
+  writeFileSync(join(repoDir, "user", "settings.json"), `${JSON.stringify(settingsJson(HOOK), null, 2)}\n`);
+  run(["git", "-C", repoDir, "add", "-A"]);
+  run(["git", "-C", repoDir, "commit", "-q", "-m", "settings"]);
+  run(["git", "-C", repoDir, "push", "-q", "-u", "origin", "main"]);
+  run(["git", "-C", repoDir, "remote", "set-head", "origin", "main"]);
 }
 
 const copyRepo = fixture(buildRepo);
@@ -335,7 +335,7 @@ beforeEach(() => {
       "    ;;",
       "  log)",
       '    for last; do :; done',
-      '    printf "%s\\n" "$last" >&2',
+      String.raw`    printf "%s\n" "$last" >&2`,
       "    ;;",
       "esac",
       "exit 0",
@@ -354,13 +354,13 @@ beforeEach(() => {
   // take back. rex writes through the link and moshi-hook replaces it, as the
   // real ones do.
   const hookLog = join(sandbox, "hooks.log");
-  const replaceLink = (name: string) =>
+  const replaceNamed = (name: string) =>
     `jq '. + {"${name}":1}' "$HOME/.claude/settings.json" >"$HOME/.claude/settings.json.new" && mv "$HOME/.claude/settings.json.new" "$HOME/.claude/settings.json"`;
   writeStub(
     join(stubs, "herdr"),
     [
       `printf '%s %s\\n' "herdr" "$*" >>"${hookLog}"`,
-      `if [ -n "$HERDR_REPLACES" ]; then ${replaceLink("herdr")}; else printf '{"herdr":1}\\n' >"$AGENT_HOOK_REPO/user/settings.json"; fi`,
+      `if [ -n "$HERDR_REPLACES" ]; then ${replaceNamed("herdr")}; else printf '{"herdr":1}\\n' >"$AGENT_HOOK_REPO/user/settings.json"; fi`,
       `[ -n "$HERDR_LOCKS" ] && chmod 0444 "$AGENT_HOOK_REPO/user/settings.json"`,
       '[ -n "$HERDR_STDERR" ] && cat "$HERDR_STDERR" >&2',
       '[ -n "$HERDR_FAILS" ] && exit 1',
@@ -372,7 +372,7 @@ beforeEach(() => {
     join(stubs, "moshi-hook"),
     [
       `printf '%s %s\\n' "moshi-hook" "$*" >>"${hookLog}"`,
-      replaceLink("moshi-hook"),
+      replaceNamed("moshi-hook"),
       "exit 0",
     ].join("\n"),
   );

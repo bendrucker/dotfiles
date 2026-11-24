@@ -78,7 +78,7 @@ function parseOutput<T>(args: string[], stdout: string, schema: z.ZodType<T>): T
   try {
     return schema.parse(stdout.trim() ? JSON.parse(stdout) : undefined);
   } catch (error) {
-    throw new Error(`aws ${args.slice(0, 2).join(" ")} returned unexpected output: ${errorMessage(error)}`);
+    throw new Error(`aws ${args.slice(0, 2).join(" ")} returned unexpected output: ${errorMessage(error)}`, { cause: error });
   }
 }
 

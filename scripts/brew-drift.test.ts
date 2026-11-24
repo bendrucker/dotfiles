@@ -176,7 +176,7 @@ describe("report", () => {
   // whose name carries an apostrophe rendered a line Ruby cannot parse.
   test("escapes a quote in a Mac App Store name", () => {
     expect(brewfileEntry({ kind: "mas", name: "Sam's App", id: "123" })).toBe(
-      "mas 'Sam\\'s App', id: 123",
+      String.raw`mas 'Sam\'s App', id: 123`,
     );
   });
 });

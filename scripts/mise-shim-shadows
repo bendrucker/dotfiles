@@ -24,7 +24,7 @@ import { accessSync, constants, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 
-export type Shadow = { name: string; target: string };
+export interface Shadow { name: string; target: string }
 
 export function miseDataDir(env: NodeJS.ProcessEnv): string {
   return env.MISE_DATA_DIR ?? join(env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "mise");
@@ -47,7 +47,7 @@ function entries(dir: string): string[] {
   }
 }
 
-export type SearchPath = { ahead: string[]; behind: string[] };
+export interface SearchPath { ahead: string[]; behind: string[] }
 
 // $PATH split at the shims directory, without mise's own directories. An
 // install directory is on it only where mise's hook put it for the current
@@ -72,7 +72,7 @@ function locate(dirs: string[], name: string): string | undefined {
 export function findShadows(shims: string[], active: Set<string>, path: SearchPath): Shadow[] {
   return shims
     .filter((name) => !active.has(name) && locate(path.ahead, name) === undefined)
-    .sort()
+    .toSorted()
     .flatMap((name) => {
       const dir = locate(path.behind, name);
       return dir === undefined ? [] : [{ name, target: join(dir, name) }];

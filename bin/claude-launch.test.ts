@@ -141,12 +141,12 @@ afterEach(() => {
 // look like it passed.
 function proveStubs(): void {
   for (const name of Object.keys(STUBS)) {
-    const run = Bun.spawnSync({
+    const result = Bun.spawnSync({
       cmd: [name, "--stub-check"],
       env: { PATH: path },
       stdin: "ignore",
     });
-    const said = run.stdout.toString().trim();
+    const said = result.stdout.toString().trim();
     if (said !== `${name} stub`) {
       throw new Error(`the ${name} stub is not on PATH: --stub-check said ${JSON.stringify(said)}`);
     }
@@ -176,7 +176,7 @@ function read(name: keyof typeof variables): string {
 }
 
 function dispatched(): string[] {
-  return read("CLAUDE_LOG").split("\n").filter(Boolean)[0]?.split("\t") ?? [];
+  return read("CLAUDE_LOG").split("\n").find(Boolean)?.split("\t") ?? [];
 }
 
 describe("launchDirs", () => {

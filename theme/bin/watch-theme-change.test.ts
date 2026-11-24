@@ -16,9 +16,9 @@ describe("watch-theme-change", () => {
       "theme-sync",
       [
         "cat >/dev/null",
-        'printf "start %s\\n" "$1" >>"$SYNC_LOG"',
+        String.raw`printf "start %s\n" "$1" >>"$SYNC_LOG"`,
         "sleep 0.1",
-        'printf "end %s\\n" "$1" >>"$SYNC_LOG"',
+        String.raw`printf "end %s\n" "$1" >>"$SYNC_LOG"`,
         '[ "$1" != "$SYNC_FAIL" ]',
       ].join("\n"),
     );

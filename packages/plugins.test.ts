@@ -118,7 +118,7 @@ function writeInstalled(installed: unknown): void {
 function declared(): string[] {
   const read = declaredPlugins();
   if (!read.ok) throw new Error(`declaration failed: ${read.reason}`);
-  return [...read.ids].sort();
+  return [...read.ids].toSorted();
 }
 
 function writeRegistry(registry: unknown): void {
@@ -446,7 +446,7 @@ describe("declaredMarketplaces", () => {
     writeSettings({ extraKnownMarketplaces: { first: {}, second: {} } });
     const read = declaredMarketplaces();
     if (!read.ok) throw new Error(read.reason);
-    expect([...read.ids].sort()).toEqual(["first", "second"]);
+    expect([...read.ids].toSorted()).toEqual(["first", "second"]);
   });
 
   test("declares nothing when the file names no marketplaces", () => {
@@ -478,7 +478,7 @@ describe("knownMarketplaces", () => {
     writeRegistry({ first: { source: {} }, second: { source: {} } });
     const read = knownMarketplaces();
     if (!read.ok) throw new Error(read.reason);
-    expect(read.names.sort()).toEqual(["first", "second"]);
+    expect(read.names.toSorted()).toEqual(["first", "second"]);
   });
 
   test("names nothing when the registry is not there", () => {
@@ -512,7 +512,7 @@ describe("localMarketplaces", () => {
       manifest: { source: { source: "file", path: "/srv/marketplace.json" } },
       odd: { source: "directory" },
     });
-    expect([...localMarketplaces()].sort()).toEqual(["folder", "manifest"]);
+    expect([...localMarketplaces()].toSorted()).toEqual(["folder", "manifest"]);
   });
 
   test("names none when the registry cannot be read", async () => {
@@ -525,7 +525,7 @@ describe("pluginMarketplaces", () => {
   async function used(): Promise<string[]> {
     const read = await pluginMarketplaces();
     if (!read.ok) throw new Error(read.reason);
-    return [...read.names].sort();
+    return [...read.names].toSorted();
   }
 
   // Removing one out from under a project plugin leaves it with no source.
@@ -554,7 +554,7 @@ describe("autoInstalledPlugins", () => {
   function auto(): string[] {
     const read = autoInstalledPlugins();
     if (!read.ok) throw new Error(`auto failed: ${read.reason}`);
-    return [...read.ids].sort();
+    return [...read.ids].toSorted();
   }
 
   test("reads the older array form of the record", () => {

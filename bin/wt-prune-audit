@@ -93,13 +93,13 @@ export interface Facts {
 // call to remove it. Pure given its two resolvers, which is what lets the rules
 // be exercised without a repo, a clock, or a forge.
 export async function classify(facts: Facts): Promise<string | undefined> {
-  if (INTEGRATED.has(facts.mainState)) {
-    // An age the filesystem cannot report counts as old enough, so an
-    // unreadable clock never hides drift.
-    if (((await facts.age()) ?? facts.grace) >= facts.grace) return `integrated (${facts.mainState})`;
-    // Still inside grace on the integration rule. Fall through to the forge: a
-    // merged PR is removed at any age, so grace does not apply to it and a
-    // young merged worktree that survived the prune is still a real miss.
+  // An age the filesystem cannot report counts as old enough, so an
+  // unreadable clock never hides drift. Inside grace on the integration rule,
+  // fall through to the forge: a merged PR is removed at any age, so grace does
+  // not apply to it and a young merged worktree that survived the prune is
+  // still a real miss.
+  if (INTEGRATED.has(facts.mainState) && ((await facts.age()) ?? facts.grace) >= facts.grace) {
+    return `integrated (${facts.mainState})`;
   }
 
   return (await facts.forge()) === "MERGED" ? "merged PR survived" : undefined;

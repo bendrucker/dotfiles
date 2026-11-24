@@ -267,8 +267,8 @@ async function launch(args: string[]): Promise<number> {
     log(`launch failed, so destroying ${name}`);
     try {
       destroy([name]);
-    } catch (cleanup) {
-      log(`destroy failed too, so ${launched.id} is still running: ${errorMessage(cleanup)}`);
+    } catch (error_) {
+      log(`destroy failed too, so ${launched.id} is still running: ${errorMessage(error_)}`);
     }
     throw error;
   }
@@ -424,7 +424,7 @@ export function rows(vms: Instance[], local: { name: string; kind: string }[], m
   const gone = local
     .filter(({ name }) => !vms.some((vm) => vm.name === name))
     .map(({ name, kind }) => ({ name, kind, herdr: label(name), instance: "", type: "", state: "gone", expiresAt: "", remaining: "" }));
-  return [...live, ...gone].sort((a, b) => a.name.localeCompare(b.name));
+  return [...live, ...gone].toSorted((a, b) => a.name.localeCompare(b.name));
 }
 
 function liveInstances(kinds: Kinds): { vms: Instance[]; complete: boolean } {

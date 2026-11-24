@@ -8,11 +8,14 @@
         "zod": "4.6.7",
       },
       "devDependencies": {
+        "@bendrucker/oxlint-config": "0.1.2",
         "oxlint": "1.95.0",
       },
     },
   },
   "packages": {
+    "@bendrucker/oxlint-config": ["@bendrucker/oxlint-config@0.1.2", "", { "peerDependencies": { "oxlint": ">=1.78.0" } }, "sha512-BBgCvNMLJOe/SWfKfymHk4WkmmvESB54Y/wqPgY9hSf46eKAOLY4+qXZiTU7F2JXLnkbd35urYWIbWGclkaIFA=="],
+
     "@oxlint/binding-android-arm-eabi": ["@oxlint/binding-android-arm-eabi@1.95.0", "", { "os": "android", "cpu": "arm" }, "sha512-hJna6w3COWJjfMPxomjZL82klTdrITm56PEpCsfO/xMkzQw/fNtJWauQ/YEwQqVttj0L5vDIa8rCcuhfAE3L4w=="],
 
     "@oxlint/binding-android-arm64": ["@oxlint/binding-android-arm64@1.95.0", "", { "os": "android", "cpu": "arm64" }, "sha512-uAIGZQ9uJVUeogeWOSboI3F7twOuM4mNuZcHXD9+LdYLcWp7J6kbtRUXJ6GVqcs5E0Cjb4emmSBK9FNrkGuhqQ=="],

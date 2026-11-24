@@ -32,7 +32,7 @@ function modified(path: string): bigint | undefined {
 function candidates(transcript: string, cwd: string | undefined, stamp: string | undefined): string[] {
   const since = stamp === undefined ? undefined : modified(stamp);
   const paths = new Set(readFileSync(transcript, "utf8").split("\n").flatMap(edits));
-  return [...paths].sort().filter((path) => {
+  return [...paths].toSorted().filter((path) => {
     const changed = modified(path);
     if (changed === undefined) return false;
     if (cwd !== undefined && !path.startsWith(`${cwd}/`)) return false;

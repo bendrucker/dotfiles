@@ -10,9 +10,7 @@
 export function alignColumns(rows: string[][]): string[] {
   const widths: number[] = [];
   for (const row of rows) {
-    row.forEach((cell, column) => {
-      widths[column] = Math.max(widths[column] ?? 0, cell.length);
-    });
+    for (const [column, cell] of row.entries()) widths[column] = Math.max(widths[column] ?? 0, cell.length);
   }
 
   return rows.map((row) =>

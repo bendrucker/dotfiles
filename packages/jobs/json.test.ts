@@ -80,7 +80,7 @@ describe("canonicalJson", () => {
 // collation.
 describe("byCodeUnit", () => {
   test("orders uppercase ahead of lowercase", () => {
-    expect(["b", "A", "a", "B"].sort(byCodeUnit)).toEqual(["A", "B", "a", "b"]);
+    expect(["b", "A", "a", "B"].toSorted(byCodeUnit)).toEqual(["A", "B", "a", "b"]);
   });
 
   test("reports equal values as equal", () => {

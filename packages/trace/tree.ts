@@ -52,7 +52,7 @@ function covered(node: Node): number {
   const intervals = node.children
     .map((child) => [Math.max(start, child.span.start), Math.min(end, child.span.end)] as const)
     .filter(([a, b]) => b > a)
-    .sort((x, y) => x[0] - y[0]);
+    .toSorted((x, y) => x[0] - y[0]);
   let total = 0;
   let reach = start;
   for (const [a, b] of intervals) {

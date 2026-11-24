@@ -119,10 +119,10 @@ describe("renderMarkdown", () => {
   });
 
   test("emits a note instead of empty scaffolding when nothing parses", () => {
-    const md = renderMarkdown(parse("nothing here"));
-    expect(md).toContain("No zprof profile captured");
-    expect(md).not.toContain("```mermaid");
-    expect(md).not.toContain("| # |");
+    const rendered = renderMarkdown(parse("nothing here"));
+    expect(rendered).toContain("No zprof profile captured");
+    expect(rendered).not.toContain("```mermaid");
+    expect(rendered).not.toContain("| # |");
   });
 });
 

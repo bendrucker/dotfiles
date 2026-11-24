@@ -26,7 +26,7 @@ export async function log(level: Level, message: string): Promise<void> {
 export async function choose(items: string[], options: ChooseOptions = {}): Promise<string[]> {
   const input = new Response(items.map((item) => `${item}\n`).join(""));
   const flags = [
-    ...(options.limit === "none" ? ["--no-limit"] : options.limit === undefined ? [] : [`--limit=${options.limit}`]),
+    ...limitFlags(options.limit),
     ...(options.selected === undefined || options.selected.length === 0 ? [] : [`--selected=${[options.selected].flat().join(",")}`]),
     ...(options.header === undefined ? [] : ["--header", options.header]),
   ];
@@ -34,6 +34,11 @@ export async function choose(items: string[], options: ChooseOptions = {}): Prom
   const terminal = options.terminal === undefined ? openTerminal() : options.terminal;
   const result = await $`cat < ${input} | gum choose ${flags} 2> ${terminal ?? Bun.stderr}`.nothrow().quiet();
   return result.exitCode === 0 ? result.stdout.toString().split("\n").filter((line) => line !== "") : [];
+}
+
+function limitFlags(limit: ChooseOptions["limit"]): string[] {
+  if (limit === undefined) return [];
+  return limit === "none" ? ["--no-limit"] : [`--limit=${limit}`];
 }
 
 function openTerminal(): string | null {

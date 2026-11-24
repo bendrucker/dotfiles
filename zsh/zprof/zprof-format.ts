@@ -89,7 +89,7 @@ export function parse(raw: string): Profile {
 }
 
 function bySelfDesc(rows: Row[]): Row[] {
-  return [...rows].sort((a, b) => b.selfMs - a.selfMs);
+  return [...rows].toSorted((a, b) => b.selfMs - a.selfMs);
 }
 
 export function bar(pct: number, max: number, width = 10): string {
@@ -101,7 +101,7 @@ export function bar(pct: number, max: number, width = 10): string {
 const NOTE = "_No zprof profile captured._";
 
 function escapeCell(name: string): string {
-  return name.replace(/\|/g, "\\|");
+  return name.replaceAll('|', String.raw`\|`);
 }
 
 export function renderMarkdown(profile: Profile, top = 8): string {
@@ -118,20 +118,20 @@ export function renderMarkdown(profile: Profile, top = 8): string {
     "| # | Function | Calls | Self (ms) | Self % | Total (ms) |",
     "|---|----------|------:|----------:|--------|-----------:|",
   );
-  rows.forEach((row, index) => {
+  for (const [index, row] of rows.entries()) {
     const pct = `${bar(row.selfPct, maxPct)} ${row.selfPct.toFixed(1)}%`;
     out.push(
       `| ${index + 1} | ${escapeCell(row.name)} | ${row.calls} | ` +
         `${row.selfMs.toFixed(2)} | ${pct} | ${row.totalMs.toFixed(2)} |`,
     );
-  });
+  }
   out.push("");
 
   const slices = rows.slice(0, top);
   const rest = rows.slice(top).reduce((sum, row) => sum + row.selfMs, 0);
   out.push("```mermaid", "pie showData title Self time (ms)");
   for (const row of slices) {
-    out.push(`    "${row.name.replace(/"/g, "'")}" : ${row.selfMs.toFixed(2)}`);
+    out.push(`    "${row.name.replaceAll('"', "'")}" : ${row.selfMs.toFixed(2)}`);
   }
   if (rest > 0) {
     out.push(`    "other" : ${rest.toFixed(2)}`);
@@ -203,5 +203,5 @@ if (import.meta.main) {
     values.format === "terminal"
       ? renderTerminal(profile, top)
       : renderMarkdown(profile, top);
-  process.stdout.write(rendered + "\n");
+  process.stdout.write(`${rendered  }\n`);
 }

@@ -1,0 +1,3 @@
+# Follows the terminal palette, Catppuccin Latte or Mocha with the system appearance.
+theme = "terminal"
+agent_notes = true

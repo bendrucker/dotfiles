@@ -17,11 +17,11 @@ import {
   openSync,
   readFileSync,
   readSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { choose, log } from "#gum";
@@ -144,7 +144,7 @@ function* fileChunks(path: string): Generator<string> {
       carry = text.slice(-OVERLAP);
     }
   } catch {
-    return;
+    // An unreadable log ends the scan with what was read so far.
   } finally {
     closeSync(handle);
   }
@@ -300,7 +300,7 @@ export async function reviewBlocking(repoDir: string, branch = ""): Promise<stri
   const untracked = lines((await gitQuiet(others, repoDir)).stdout);
   if (exclude !== "") rmSync(exclude, { force: true });
 
-  return tracked.concat(untracked);
+  return [...tracked, ...untracked];
 }
 
 // The incoming rules have to reach ls-files as a real file. Handed a process
@@ -433,7 +433,9 @@ function clearSkips(repoDir: string): void {
 function bestEffort(store: () => void): void {
   try {
     store();
-  } catch {}
+  } catch {
+    // Best effort by definition: the caller proceeds without it.
+  }
 }
 
 function skipBucket(skips: number): number {
@@ -480,7 +482,7 @@ function wholeWord(name: string): RegExp {
 }
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 // A changed .json renders as the difference between its sorted form at HEAD and
@@ -536,8 +538,11 @@ async function mergedOutput(cmd: string[], cwd: string): Promise<{ status: numbe
   };
 }
 
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
 function branchTimestamp(at = new Date()): string {
-  const pad = (value: number): string => String(value).padStart(2, "0");
   return (
     `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-` +
     `${pad(at.getHours())}${pad(at.getMinutes())}${pad(at.getSeconds())}`

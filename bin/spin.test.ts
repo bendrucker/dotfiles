@@ -25,7 +25,7 @@ function runSpin(...args: string[]): Run {
 
 describe("bin/spin", () => {
   test("runs the command and passes its output through", () => {
-    const r = runSpin("--title", "Working", "--", "printf", "ran\\n");
+    const r = runSpin("--title", "Working", "--", "printf", String.raw`ran\n`);
     expect(r.status).toBe(0);
     expect(r.stdout.trim()).toBe("ran");
     expect(r.stderr).not.toBe("");
@@ -48,7 +48,7 @@ describe("bin/spin", () => {
   // A value carrying spaces has to arrive as one argument, or a title becomes
   // a command and the spinner runs the wrong thing.
   test("keeps a quoted argument whole", () => {
-    const r = runSpin("--title", "Fetching origin/main (attempt 1/4)", "--", "printf", "%s\\n", "one two");
+    const r = runSpin("--title", "Fetching origin/main (attempt 1/4)", "--", "printf", String.raw`%s\n`, "one two");
     expect(r.stdout.trim()).toBe("one two");
     expect(r.stderr).toContain("Fetching origin/main (attempt 1/4)");
   });

@@ -94,7 +94,7 @@ function attempted(): string[] {
     .split("\n")
     .filter(Boolean)
     .map((line) => line.split(" ").at(-1) as string)
-    .sort();
+    .toSorted();
 }
 
 /** Every stubbed command the run reached, in the order it reached them. */

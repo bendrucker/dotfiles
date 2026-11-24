@@ -63,14 +63,14 @@ function stub(name: string, body: string): void {
 }
 
 function git(...args: string[]): { status: number; stdout: string } {
-  const run = Bun.spawnSync({
+  const result = Bun.spawnSync({
     cmd: ["git", "-C", repo, ...args],
     env: process.env,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
-  return { status: run.exitCode, stdout: run.stdout.toString() };
+  return { status: result.exitCode, stdout: result.stdout.toString() };
 }
 
 function notifications(): string {
@@ -103,19 +103,19 @@ function run(cmd: string[]): void {
 }
 
 function buildRepo(root: string): void {
-  const repo = join(root, "repo");
-  const origin = join(root, "origin.git");
-  run(["git", "init", "-q", "--bare", "-b", "main", origin]);
-  run(["git", "init", "-q", "-b", "main", repo]);
-  run(["git", "-C", repo, "config", "user.email", "spec@example.test"]);
-  run(["git", "-C", repo, "config", "user.name", "Spec"]);
-  run(["git", "-C", repo, "config", "commit.gpgsign", "false"]);
-  run(["git", "-C", repo, "remote", "add", "origin", origin]);
-  writeFileSync(join(repo, "file.txt"), "tracked\n");
-  run(["git", "-C", repo, "add", "-A"]);
-  run(["git", "-C", repo, "commit", "-q", "-m", "initial"]);
-  run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
-  run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+  const repoDir = join(root, "repo");
+  const originDir = join(root, "origin.git");
+  run(["git", "init", "-q", "--bare", "-b", "main", originDir]);
+  run(["git", "init", "-q", "-b", "main", repoDir]);
+  run(["git", "-C", repoDir, "config", "user.email", "spec@example.test"]);
+  run(["git", "-C", repoDir, "config", "user.name", "Spec"]);
+  run(["git", "-C", repoDir, "config", "commit.gpgsign", "false"]);
+  run(["git", "-C", repoDir, "remote", "add", "origin", originDir]);
+  writeFileSync(join(repoDir, "file.txt"), "tracked\n");
+  run(["git", "-C", repoDir, "add", "-A"]);
+  run(["git", "-C", repoDir, "commit", "-q", "-m", "initial"]);
+  run(["git", "-C", repoDir, "push", "-q", "-u", "origin", "main"]);
+  run(["git", "-C", repoDir, "remote", "set-head", "origin", "main"]);
 }
 
 const copyRepo = fixture(buildRepo);
@@ -141,15 +141,15 @@ beforeEach(async () => {
       "    # holds even against a prompt that offered nothing of the kind.",
       '    offered=$(cat)',
       '    if [ -n "${GUM_CHOICE:-}" ]; then',
-      '      printf "%s\\n" "$offered" | grep -qxF -- "$GUM_CHOICE" && { printf "%s\\n" "$GUM_CHOICE"; exit 0; }',
-      '      printf "gum choose: %s was not offered\\n" "$GUM_CHOICE" >&2',
+      String.raw`      printf "%s\n" "$offered" | grep -qxF -- "$GUM_CHOICE" && { printf "%s\n" "$GUM_CHOICE"; exit 0; }`,
+      String.raw`      printf "gum choose: %s was not offered\n" "$GUM_CHOICE" >&2`,
       "      exit 1",
       "    fi",
-      '    printf "\\n"',
+      String.raw`    printf "\n"`,
       "    ;;",
       "  log)",
       "    for last; do :; done",
-      '    printf "%s\\n" "$last" >&2',
+      String.raw`    printf "%s\n" "$last" >&2`,
       "    ;;",
       "  spin)",
       '    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done',
@@ -165,7 +165,7 @@ beforeEach(async () => {
     "gh",
     [
       `printf '%s\\n' "$*" >>"${join(sandbox, "gh.log")}"`,
-      "printf 'https://example.test/pr/1\\n'",
+      String.raw`printf 'https://example.test/pr/1\n'`,
     ].join("\n"),
   );
 
@@ -173,7 +173,7 @@ beforeEach(async () => {
   // cover both.
   stub(
     "hostname",
-    ['[ "$1" = "-s" ] && { printf "spechost\\n"; exit 0; }', 'printf "spechost.example.test\\n"'].join(
+    [String.raw`[ "$1" = "-s" ] && { printf "spechost\n"; exit 0; }`, String.raw`printf "spechost.example.test\n"`].join(
       "\n",
     ),
   );
@@ -185,8 +185,8 @@ beforeEach(async () => {
     "scutil",
     [
       'case "$2" in',
-      '  ComputerName)  printf "Spec Machine\\n" ;;',
-      '  LocalHostName) printf "spechost\\n" ;;',
+      String.raw`  ComputerName)  printf "Spec Machine\n" ;;`,
+      String.raw`  LocalHostName) printf "spechost\n" ;;`,
       "  *)             exit 1 ;;",
       "esac",
     ].join("\n"),
@@ -574,7 +574,7 @@ describe("reviewDirty", () => {
   test("escalates on a lengthening cadence while the skips continue", async () => {
     writeFileSync(join(repo, "stray.txt"), "stray\n");
     const skips: string[] = [];
-    for (let run = 0; run < 8; run += 1) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
       await gateCall("reviewDirty", repo, "Title", { interactive: false });
       skips.push(output.match(/Sync skipped (\d+) runs in a row/)?.[1] ?? "");
     }

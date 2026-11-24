@@ -36,7 +36,7 @@ async function session(cwd: string, known?: string): Promise<string> {
   const sessions = z.array(Session).parse(JSON.parse(await tuicr(["review", "list"], cwd)));
   const open = sessions
     .filter((s) => s.kind === "local" && s.active)
-    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
+    .toSorted((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
   const slug = open?.slug ?? known;
   if (slug === undefined) throw new Error(`no open tuicr review in ${cwd}`);
   return slug;
@@ -68,14 +68,17 @@ function location(comment: Comment): string[] {
 }
 
 export const reviewer: Reviewer = {
+  ephemeral: false,
+
   command({ revisions }) {
     return revisions === undefined
       ? ["tuicr", "--no-update-check", "-w"]
       : ["tuicr", "--no-update-check", "-r", revisions, "-w"];
   },
 
-  // tuicr writes the session each time a comment is saved.
-  async flush() {},
+  async flush() {
+    // tuicr writes the session each time a comment is saved.
+  },
 
   async comments({ cwd }, known): Promise<Comments> {
     const slug = await session(cwd, known);
@@ -83,9 +86,10 @@ export const reviewer: Reviewer = {
     return { session: slug, comments: z.array(TuicrComment).parse(raw).map(normalize) };
   },
 
-  // tuicr/config.toml sets diff_watch_interval_ms, and tuicr polls the session
-  // for comments added from outside.
-  async reload() {},
+  async reload() {
+    // tuicr/config.toml sets diff_watch_interval_ms, and tuicr polls the session
+    // for comments added from outside.
+  },
 
   async reply({ cwd }, slug, comment, text) {
     await tuicr(["review", "add", "--session", slug, "--username", AGENT_AUTHOR, ...location(comment), text], cwd);

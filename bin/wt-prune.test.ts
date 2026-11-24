@@ -99,8 +99,8 @@ beforeEach(() => {
   delete process.env.WT_ALL;
   delete process.env.WT_PRUNE_MIN_AGE;
 
-  for (const log of ["WT_REMOVE_LOG", "WT_STEP_LOG", "GH_LOG", "GUM_LOG"]) {
-    writeFileSync(process.env[log] as string, "");
+  for (const logVar of ["WT_REMOVE_LOG", "WT_STEP_LOG", "GH_LOG", "GUM_LOG"]) {
+    writeFileSync(process.env[logVar] as string, "");
   }
   writeFileSync(process.env.PR_STATE_FILE, "MERGED");
 
