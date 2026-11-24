@@ -231,12 +231,18 @@ async function note(entry: Entry, request: object): Promise<Answer> {
   }
 }
 
-export const reviewer: Reviewer = {
-  ephemeral: false,
+// plannotator-tui diffs from one base ref, so a range has to end at HEAD.
+function base(revisions: string): string {
+  const range = /^(.+?)\.{2,3}(?:HEAD)?$/.exec(revisions);
+  if (range !== null) return range[1];
+  if (revisions.includes("..")) throw new Error(`plannotator-tui reviews from a base ref, not the range ${revisions}`);
+  return revisions;
+}
 
+export const reviewer: Reviewer = {
   command({ revisions, doc }, result) {
     if (doc !== undefined) return ["plannotator-tui", doc, "--gate", "--json", "--require-approval", "--result-file", result];
-    return ["plannotator-tui", "review", ...(revisions === undefined ? [] : ["--base", revisions])];
+    return ["plannotator-tui", "review", ...(revisions === undefined ? [] : ["--base", base(revisions)])];
   },
 
   // plannotator-tui rewrites its store on every save.

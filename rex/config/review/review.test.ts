@@ -5,7 +5,6 @@ import { quote, repoRoot, run, sandbox, type Sandbox } from "#harness";
 import type { Review } from "./state";
 
 const script = join(repoRoot, "rex", "config", "review", "review");
-const extension = join(repoRoot, "rex", "config", "review", "hunk-extension.ts");
 const agent = "block:agent";
 const reviewBlock = "block:review";
 const id = "review-1";
@@ -27,7 +26,6 @@ function readCalls(name: string): string[][] {
 
 const rexCalls = () => readCalls("rex-calls");
 const tuicrCalls = () => readCalls("tuicr-calls");
-const hunkCalls = () => readCalls("hunk-calls");
 
 beforeEach(() => {
   box = sandbox("rex-review");
@@ -36,8 +34,6 @@ beforeEach(() => {
   box.write("tuicr-list", "[]");
   box.write("tuicr-comments", "[]");
   box.write("tuicr-exit", "0");
-  box.write("hunk-sessions", '{"sessions":[]}');
-  box.write("hunk-notes", '{"comments":[]}');
 
   // `rex api call -s SESSION METHOD JSON` answers by method. program_status
   // pops the next line of program-states, keeping the last. Without that file
@@ -73,27 +69,7 @@ case "$1 $2" in
   *) exit "$(cat ${quote(box.path("tuicr-exit"))})" ;;
 esac`,
   );
-  box.write("hunk-review", '{"review":{"files":[]}}');
-  stubHunk();
 });
-
-// `diff` runs `onDiff`, standing in for the Hunk window's lifetime. A session
-// listed with pid SPAWNED belongs to that `diff`. A session's notes come from
-// `hunk-notes-<session>` when it exists.
-const SPAWNED = -1;
-
-function stubHunk(onDiff = ""): void {
-  box.stub(
-    "hunk",
-    `${record} >> ${quote(box.path("hunk-calls"))}
-case "$1 $2 $3" in
-  "session list --json") sed "s/:${SPAWNED},/:$(cat ${quote(box.path("hunk-pid"))} 2>/dev/null || echo 0),/g" ${quote(box.path("hunk-sessions"))} ;;
-  "session comment list") sleep "$(cat ${quote(box.path("hunk-delay"))} 2>/dev/null || echo 0)"; cat ${quote(box.path("hunk-notes"))}-"$4" 2>/dev/null || cat ${quote(box.path("hunk-notes"))} ;;
-  "session review "*) cat ${quote(box.path("hunk-review"))} ;;
-  diff*) echo $$ > ${quote(box.path("hunk-pid"))}; ${onDiff || ":"} ;;
-esac`,
-  );
-}
 
 afterEach(() => {
   box.remove();
@@ -109,7 +85,6 @@ function review(overrides: Partial<Review> = {}): Review {
     reviewer: "tuicr",
     delivered: [],
     mode: "live",
-    held: false,
     ...overrides,
   };
 }
@@ -119,7 +94,7 @@ function statePath(name: string): string {
   return join("home", ".local", "state", "rex-review", name);
 }
 
-function seed(state: Omit<Review, "mode" | "held"> & Partial<Pick<Review, "mode" | "held">>): void {
+function seed(state: Omit<Review, "mode"> & Partial<Pick<Review, "mode">>): void {
   box.write(statePath(`${state.id}.json`), JSON.stringify(state));
   for (const block of [state.agent, state.review]) if (block) box.write(statePath(join("blocks", block)), state.id);
 }
@@ -185,14 +160,6 @@ function sessions(...rows: { slug: string; updated_at: string; active: boolean }
 
 function comments(...rows: object[]): void {
   box.write("tuicr-comments", JSON.stringify(rows));
-}
-
-function hunkSessions(...rows: { sessionId: string; pid?: number; cwd: string; launchedAt: string }[]): void {
-  box.write("hunk-sessions", JSON.stringify({ sessions: rows }));
-}
-
-function notes(...rows: object[]): void {
-  box.write("hunk-notes", JSON.stringify({ comments: rows }));
 }
 
 function apiCalls(method: string): string[][] {
@@ -272,6 +239,15 @@ describe("rex/config/review outcomes", () => {
     expect(result.status).toBe(0);
     expectDelivered("[review: dismissed]");
     expect(exists(`${id}.json`)).toBe(false);
+  });
+
+  test("dismiss after delivering notes doesn't claim there was no feedback", () => {
+    seed(review({ delivered: [{ id: "c1" }] }));
+
+    expect(exec(["dismiss", agent]).status).toBe(0);
+
+    const [text] = pasted();
+    expect(text).toBe("[review: dismissed] Ben dismissed the review. Treat this as a successful outcome and continue.");
   });
 });
 
@@ -449,7 +425,7 @@ describe("rex/config/review open", () => {
       agent,
       review: reviewBlock,
       cwd: work,
-      reviewer: "hunk",
+      reviewer: "plannotator",
       revisions: "HEAD~2..HEAD",
       delivered: [],
       mode: "batch",
@@ -541,319 +517,6 @@ describe("rex/config/review tuicr session choice", () => {
   });
 });
 
-describe("rex/config/review hunk", () => {
-  test.each<{ name: string; revisions?: string; args: string[] }>([
-    { name: "the working tree", args: ["diff", "--watch", "--agent-notes", "--extension", extension] },
-    {
-      name: "a revision range",
-      revisions: "main..HEAD",
-      args: ["diff", "main..HEAD", "--watch", "--agent-notes", "--extension", extension],
-    },
-  ])("run opens $name with agent notes shown", ({ revisions, args }) => {
-    seed(review({ reviewer: "hunk", revisions }));
-
-    expect(exec(["run", id]).status).toBe(0);
-
-    expect(hunkCalls().find((c) => c[0] === "diff")).toEqual(args);
-  });
-
-  test("send delivers the user's notes from the window open in the review's directory", () => {
-    seed(review({ reviewer: "hunk" }));
-    hunkSessions(
-      { sessionId: "elsewhere", cwd: "/other", launchedAt: "2026-11-02" },
-      { sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" },
-    );
-    notes(
-      { noteId: "user:1", source: "user", filePath: "src/app.ts", hunkIndex: 0, newRange: [2, 3], body: "rename these", author: "user" },
-      { noteId: "user:2", source: "user", filePath: "src/app.ts", hunkIndex: 0, oldRange: [1, 1], body: "why drop this", author: "user" },
-    );
-    box.write("hunk-review", JSON.stringify({ review: { files: [{ path: "src/app.ts", patch: "@@ -1,2 +1,4 @@\n-zero\n one\n+two\n+three\n" }] } }));
-
-    const result = exec(["send", agent]);
-
-    expect(result.status).toBe(0);
-    expect(hunkCalls().find((c) => c[1] === "comment")).toEqual(["session", "comment", "list", "h1", "--type", "all", "--json"]);
-    const [text] = pasted();
-    expect(text).toContain("## src/app.ts:2-3 (id user:1)\n> two\n> three\nrename these");
-    expect(text).toContain("## src/app.ts:1 (id user:2)\n> zero\nwhy drop this");
-    expect(saved().reviewerSession).toBe("h1");
-    expect(deliveredIds()).toEqual(["user:1", "user:2"]);
-  });
-
-  test("send keeps the recorded session while its window is open", () => {
-    seed(review({ reviewer: "hunk", reviewerSession: "h1" }));
-    hunkSessions(
-      { sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" },
-      { sessionId: "h2", cwd: realpathSync(work), launchedAt: "2026-11-02" },
-    );
-    notes({ noteId: "user:1", source: "user", body: "fix", author: "user" });
-
-    expect(exec(["send", agent]).status).toBe(0);
-
-    expect(hunkCalls().find((c) => c[1] === "comment")?.[3]).toBe("h1");
-  });
-
-  test("send fails when no Hunk window is open in the review's directory", () => {
-    seed(review({ reviewer: "hunk" }));
-
-    const result = exec(["send", agent]);
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("no open Hunk window");
-    expect(pasted()).toEqual([]);
-  });
-
-  test("reply answers the note as Claude", () => {
-    seed(review({ reviewer: "hunk" }));
-    hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
-    notes({ noteId: "user:1", source: "user", filePath: "src/app.ts", newRange: [2, 2], body: "fix", author: "user" });
-
-    expect(exec(["reply", agent, "user:1", "done"]).status).toBe(0);
-
-    expect(hunkCalls().at(-1)).toEqual(
-      ["session", "comment", "add", "h1", "--reply-to", "user:1", "--summary", "done", "--author", "Claude"],
-    );
-  });
-});
-
-const CREATED = "2026-11-21T00:00:00.000Z";
-const EDITED = "2026-11-21T01:00:00.000Z";
-
-function note(overrides: object = {}): object {
-  return { noteId: "user:1", source: "user", author: "user", filePath: "src/app.ts", newRange: [2, 2], body: "fix", createdAt: CREATED, ...overrides };
-}
-
-function agentNote(overrides: object = {}): object {
-  return { noteId: "mcp:1", source: "agent", author: "Claude", parentId: "user:1", filePath: "src/app.ts", newRange: [2, 2], body: "done", ...overrides };
-}
-
-function hunkReview(overrides: Partial<Review> = {}): void {
-  seed(review({ reviewer: "hunk", reviewerSession: "h1", ...overrides }));
-  hunkSessions({ sessionId: "h1", pid: SPAWNED, cwd: realpathSync(work), launchedAt: "2026-11-01" });
-}
-
-describe("rex/config/review quitting Hunk", () => {
-  test.each<{ name: string; delivered: Review["delivered"]; rows: object[]; message: string; absent?: string }>([
-    { name: "no notes approves", delivered: [], rows: [], message: "[review: approved] Ben approved the changes. Continue." },
-    {
-      name: "every delivered note answered approves",
-      delivered: [{ id: "user:1", version: CREATED }],
-      rows: [note(), agentNote()],
-      message: "[review: approved] Ben approved the changes. Continue.",
-    },
-    {
-      name: "a follow-up answered later in the thread approves",
-      delivered: [{ id: "user:1", version: CREATED }, { id: "user:2", version: CREATED }],
-      rows: [note(), agentNote(), note({ noteId: "user:2", parentId: "user:1", body: "and this" }), agentNote({ noteId: "mcp:2" })],
-      message: "[review: approved]",
-    },
-    {
-      name: "an unanswered delivered note asks how to proceed",
-      delivered: [{ id: "user:1", version: CREATED }],
-      rows: [note()],
-      message: "These earlier comments have no reply yet: id user:1.",
-    },
-    {
-      name: "an undelivered note is delivered",
-      delivered: [],
-      rows: [note({ body: "rename this" })],
-      message: "## src/app.ts:2 (id user:1)\n> two\nrename this",
-      absent: "no reply yet",
-    },
-  ])("$name", ({ delivered, rows, message, absent }) => {
-    hunkReview({ delivered, mode: "batch" });
-    notes(...rows);
-
-    expect(exec(["run", id]).status).toBe(0);
-
-    const [text] = pasted();
-    expect(text).toContain(message);
-    if (absent !== undefined) expect(text).not.toContain(absent);
-    expect(apiCalls("block.close")).toHaveLength(1);
-    expect(exists(`${id}.json`)).toBe(false);
-  });
-
-  test("a closed review tells the agent to address the notes and ask how to proceed", () => {
-    hunkReview({ delivered: [{ id: "user:1", version: CREATED }], mode: "batch" });
-    notes(note(), note({ noteId: "user:2", newRange: [3, 3], body: "and this" }));
-
-    expect(exec(["run", id]).status).toBe(0);
-
-    expect(pasted()[0]).toMatchInlineSnapshot(`
-      "[review: closed] Ben closed Hunk without approving.
-
-      ## src/app.ts:3 (id user:2)
-      > three
-      and this
-
-      These earlier comments have no reply yet: id user:1.
-
-      Address each comment, then ask Ben how to proceed. Don't commit."
-    `);
-  });
-
-  test("delivers notes from the last snapshot once the window is gone", () => {
-    seed(review({ reviewer: "hunk", mode: "batch" }));
-    hunkSessions({ sessionId: "h1", pid: SPAWNED, cwd: realpathSync(work), launchedAt: "2026-11-01" });
-    notes(note({ body: "written while open" }));
-    stubHunk(`sleep 0.4; printf '{"sessions":[]}' > ${quote(box.path("hunk-sessions"))}`);
-
-    expect(exec(["run", id]).status).toBe(0);
-
-    expectDelivered("[review: closed] Ben closed Hunk without approving.");
-    expect(pasted()[0]).toContain("written while open");
-  });
-
-  test("dismiss after delivering notes doesn't claim there was no feedback", () => {
-    seed(review({ delivered: [{ id: "c1" }] }));
-
-    expect(exec(["dismiss", agent]).status).toBe(0);
-
-    const [text] = pasted();
-    expect(text).toBe("[review: dismissed] Ben dismissed the review. Treat this as a successful outcome and continue.");
-  });
-});
-
-describe("rex/config/review approve", () => {
-  test("delivers unsent notes as approved once they are addressed", () => {
-    hunkReview({ delivered: [{ id: "user:1", version: CREATED }] });
-    notes(note(), agentNote(), note({ noteId: "user:2", newRange: [3, 3], body: "rename" }));
-
-    expect(exec(["approve", agent]).status).toBe(0);
-
-    expect(pasted()[0]).toMatchInlineSnapshot(`
-      "[review: approved] Ben approved the changes, once you address the 1 comment below.
-
-      ## src/app.ts:3 (id user:2)
-      > three
-      rename
-
-      The review is closed, so fix each one without replying, then continue."
-    `);
-    expect(exists(`${id}.json`)).toBe(false);
-  });
-});
-
-describe("rex/config/review edits and retractions", () => {
-  test("claim redelivers an edited note and reports a deleted one", () => {
-    hunkReview({ delivered: [{ id: "user:1", version: CREATED }, { id: "user:9", version: CREATED }] });
-    notes(note({ body: "new", updatedAt: EDITED }));
-
-    const result = exec(["claim", agent]);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toMatchInlineSnapshot(`
-      "[review: retracted] (id user:9) | Ben deleted this comment. Drop it.
-      [review: comment edited] src/app.ts:2 (id user:1) | > two | new
-      "
-    `);
-    expect(saved().delivered).toEqual([{ id: "user:1", version: EDITED }]);
-  });
-
-  test("send carries edits and retractions in the batch", () => {
-    hunkReview({ delivered: [{ id: "user:1", version: CREATED }, { id: "user:9", version: CREATED }] });
-    notes(note({ body: "new", updatedAt: EDITED }));
-
-    expect(exec(["send", agent]).status).toBe(0);
-
-    expect(pasted()[0]).toMatchInlineSnapshot(`
-      "[review: changes] Ben left 2 comments on your changes.
-
-      ## [review: retracted] (id user:9)
-      Ben deleted this comment. Drop it.
-
-      ## [review: comment edited] src/app.ts:2 (id user:1)
-      > two
-      new
-
-      Fix each one, then answer it with \`rex do review_reply id=<id> text="<reply>"\`. Don't commit. End your turn when every comment has an answer, and Ben will see the review again."
-    `);
-  });
-
-  test("an unchanged note stays delivered", () => {
-    hunkReview({ delivered: [{ id: "user:1", version: CREATED }] });
-    notes(note());
-
-    expect(exec(["claim", agent]).stdout).toBe("");
-  });
-
-  test.each<{ name: string; delivered: unknown[] }>([
-    { name: "a bare id", delivered: ["user:1"] },
-    { name: "a body hash", delivered: [{ id: "user:1", hash: "0123456789abcdef" }] },
-  ])("$name saved before versions takes one without redelivery", ({ delivered }) => {
-    box.write(statePath(`${id}.json`), JSON.stringify({ ...review({ reviewer: "hunk", reviewerSession: "h1" }), delivered }));
-    box.write(statePath(join("blocks", agent)), id);
-    hunkSessions({ sessionId: "h1", cwd: realpathSync(work), launchedAt: "2026-11-01" });
-    notes(note({ updatedAt: EDITED }));
-
-    expect(exec(["claim", agent]).stdout).toBe("");
-    expect(saved().delivered).toEqual([{ id: "user:1", version: EDITED }]);
-  });
-
-  test("a note with no timestamps is never redelivered", () => {
-    hunkReview({ delivered: [{ id: "user:1" }] });
-    notes(note({ body: "new", createdAt: undefined }));
-
-    expect(exec(["claim", agent]).stdout).toBe("");
-  });
-
-  test("a different Hunk window retracts nothing", () => {
-    hunkReview({ reviewerSession: "h0", delivered: [{ id: "user:9", version: CREATED }] });
-
-    const result = exec(["claim", agent]);
-
-    expect(result.stdout).toBe("");
-    expect(deliveredIds()).toEqual(["user:9"]);
-  });
-});
-
-describe("rex/config/review thread context", () => {
-  test.each<{ name: string; parentId: string }>([
-    { name: "the agent's reply", parentId: "mcp:1" },
-    { name: "the thread's root", parentId: "user:1" },
-  ])("a reply to $name carries the agent's reply it answers", ({ parentId }) => {
-    hunkReview({ delivered: [{ id: "user:1", version: CREATED }] });
-    notes(note(), agentNote({ body: "renamed it to total" }), note({ noteId: "user:2", parentId, body: "not that name" }));
-
-    const result = exec(["claim", agent]);
-
-    expect(result.stdout).toBe(
-      "[review: comment] src/app.ts:2 (id user:2) | > two | In reply to your note: renamed it to total | not that name\n",
-    );
-  });
-
-  test("notes from other agents are left out", () => {
-    hunkReview();
-    notes(note(), agentNote({ noteId: "mcp:x", author: "Codex", parentId: undefined, body: "other" }));
-
-    expect(exec(["claim", agent]).stdout).toBe("[review: comment] src/app.ts:2 (id user:1) | > two | fix\n");
-  });
-});
-
-describe("rex/config/review quotes", () => {
-  test("quote the diff Hunk shows rather than the working tree", () => {
-    hunkReview();
-    box.write("hunk-review", JSON.stringify({ review: { files: [{ path: "src/app.ts", patch: "@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n" }] } }));
-    notes(note(), note({ noteId: "user:2", newRange: undefined, oldRange: [2, 2], body: "why" }));
-
-    expect(exec(["claim", agent]).stdout).toBe(
-      "[review: comment] src/app.ts:2 (id user:1) | > TWO | fix\n[review: comment] src/app.ts:2 (id user:2) | > two | why\n",
-    );
-  });
-
-  test("an old-side line outside the diff comes from HEAD", () => {
-    const git = (...args: string[]) =>
-      expect(Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: work }).exitCode).toBe(0);
-    git("init", "-q");
-    git("add", ".");
-    git("commit", "-qm", "base");
-    box.write("work/src/app.ts", "changed\n");
-    hunkReview();
-    notes(note({ newRange: undefined, oldRange: [3, 3], body: "keep" }));
-
-    expect(exec(["claim", agent]).stdout).toBe("[review: comment] src/app.ts:3 (id user:1) | > three | keep\n");
-  });
-});
 
 describe("rex/config/review paste guard", () => {
   test("waits out a permission prompt before pasting", () => {
@@ -888,8 +551,6 @@ describe("rex/config/review state hygiene", () => {
     box.write(statePath(join("blocks", "block:orphan")), "missing");
     box.write(statePath(join("blocks", "block:gone.events")), "");
     box.write(statePath(join("blocks", "block:live.events")), "");
-    box.write(statePath(join("blocks", "block:gone.status.json")), "{}");
-    box.write(statePath(join("blocks", "block:live.status.json")), "{}");
   });
 
   test("open drops reviews and block files whose blocks are gone", () => {
@@ -902,11 +563,9 @@ describe("rex/config/review state hygiene", () => {
     expect(exists(join("blocks", "block:gone-review"))).toBe(false);
     expect(exists(join("blocks", "block:orphan"))).toBe(false);
     expect(exists(join("blocks", "block:gone.events"))).toBe(false);
-    expect(exists(join("blocks", "block:gone.status.json"))).toBe(false);
     expect(exists("other.json")).toBe(true);
     expect(exists(join("blocks", "block:live"))).toBe(true);
     expect(exists(join("blocks", "block:live.events"))).toBe(true);
-    expect(exists(join("blocks", "block:live.status.json"))).toBe(true);
   });
 
   test("open keeps state when the block list lacks the agent", () => {
@@ -915,150 +574,6 @@ describe("rex/config/review state hygiene", () => {
     expect(exec(["open", agent, "--cwd", work]).status).toBe(0);
 
     expect(exists("stale.json")).toBe(true);
-  });
-});
-
-describe("rex/config/review events file", () => {
-  const quitFile = () => box.path("quit");
-
-  // Hunk stays open until the test writes the quit file. `run` handles the
-  // signal once Hunk is up.
-  async function startRun(mode: Review["mode"], env: Record<string, string> = {}) {
-    seed(review({ reviewer: "hunk", mode }));
-    hunkSessions({ sessionId: "h1", pid: SPAWNED, cwd: realpathSync(work), launchedAt: "2026-11-01" });
-    stubHunk(`while [ ! -f ${quote(quitFile())} ]; do sleep 0.02; done`);
-    const child = spawn(["run", id], env);
-    await until(() => existsSync(box.path("hunk-calls")) && hunkCalls().some((c) => c[0] === "diff"));
-    return child;
-  }
-
-  async function quit(child: ReturnType<typeof spawn>): Promise<void> {
-    box.write("quit", "");
-    expect(await child.exited).toBe(0);
-  }
-
-  const lines = () => events().split("\n").filter((l) => l !== "");
-
-  test("a signal claims a saved note before the next tick", async () => {
-    const child = await startRun("live", { REVIEW_SNAPSHOT_MS: "60000" });
-    // The first claim records the window, so a note written after it waits for a signal.
-    await until(() => exists(`${id}.json`) && saved().reviewerSession === "h1");
-    notes(note());
-
-    child.kill("SIGUSR1");
-    await until(() => exists(join("blocks", `${agent}.events`)) && lines().length === 1, 2000);
-    await quit(child);
-
-    expect(events()).toMatchInlineSnapshot(`
-      "[review: comment] src/app.ts:2 (id user:1) | > two | fix
-      [review: closed] closed
-      "
-    `);
-  });
-
-  test("binds to the window it spawned, not an earlier one on the same directory", async () => {
-    seed(review({ reviewer: "hunk", mode: "live" }));
-    const stale = { sessionId: "stale", pid: 1, cwd: realpathSync(work), launchedAt: "2026-11-01" };
-    const own = { sessionId: "own", pid: SPAWNED, cwd: realpathSync(work), launchedAt: "2026-11-02" };
-    hunkSessions(stale);
-    box.write("hunk-notes-stale", JSON.stringify({ comments: [note({ body: "from the stale window" })] }));
-    box.write("hunk-notes-own", JSON.stringify({ comments: [note({ noteId: "user:2", body: "from the spawned window" })] }));
-    // The spawned window registers only after `run` has claimed a few times.
-    stubHunk(
-      `sleep 0.3; printf '%s' ${quote(JSON.stringify({ sessions: [stale, own] }))} > ${quote(box.path("hunk-sessions"))}; while [ ! -f ${quote(quitFile())} ]; do sleep 0.02; done`,
-    );
-    const child = spawn(["run", id]);
-    await until(() => exists(join("blocks", `${agent}.events`)) && lines().length === 1);
-    expect(saved().reviewerSession).toBe("own");
-    await quit(child);
-
-    expect(hunkCalls().filter((c) => c[1] === "comment").map((c) => c[3])).not.toContain("stale");
-    expect(lines()).toEqual(["[review: comment] src/app.ts:2 (id user:2) | > two | from the spawned window", "[review: closed] closed"]);
-  });
-
-  test("signal and timer claims append each note once, in order", async () => {
-    box.write("hunk-delay", "0.05");
-    const child = await startRun("live");
-    const rows: object[] = [];
-    for (const n of [1, 2, 3, 4]) {
-      rows.push(note({ noteId: `user:${n}`, newRange: [n, n], body: `note ${n}` }));
-      notes(...rows);
-      for (let i = 0; i < 5; i++) {
-        child.kill("SIGUSR1");
-        await Bun.sleep(5);
-      }
-      await until(() => exists(join("blocks", `${agent}.events`)) && lines().length === n);
-    }
-    await quit(child);
-
-    expect(lines()).toEqual([
-      "[review: comment] src/app.ts:1 (id user:1) | > one | note 1",
-      "[review: comment] src/app.ts:2 (id user:2) | > two | note 2",
-      "[review: comment] src/app.ts:3 (id user:3) | > three | note 3",
-      "[review: comment] src/app.ts:4 (id user:4) | > four | note 4",
-      "[review: closed] closed",
-    ]);
-  });
-
-  const statusFile = statePath(join("blocks", `${agent}.status.json`));
-  const status = () => (existsSync(box.path(statusFile)) ? JSON.parse(box.read(statusFile)) : undefined);
-
-  test("held notes wait for release, then arrive in order", async () => {
-    const child = await startRun("live");
-    await until(() => exists(`${id}.json`) && saved().reviewerSession === "h1");
-
-    child.kill("SIGUSR2");
-    await until(() => saved().held);
-    notes(note({ noteId: "user:1", newRange: [1, 1], body: "first" }), note({ noteId: "user:2", newRange: [2, 2], body: "second" }));
-    child.kill("SIGUSR1");
-    await until(() => status()?.pending === 2);
-    expect(lines()).toEqual([]);
-    expect(deliveredIds()).toEqual([]);
-
-    child.kill("SIGUSR2");
-    await until(() => lines().length === 2);
-    expect(saved().held).toBe(false);
-    await quit(child);
-
-    expect(lines()).toEqual([
-      "[review: comment] src/app.ts:1 (id user:1) | > one | first",
-      "[review: comment] src/app.ts:2 (id user:2) | > two | second",
-      "[review: closed] closed",
-    ]);
-  });
-
-  test("writes the extension's status beside the events file", async () => {
-    box.write("program-states", "working\n");
-    const child = await startRun("live");
-    notes(note(), agentNote(), note({ noteId: "user:2", newRange: [3, 3], body: "and this" }));
-    await until(() => status()?.open === 1);
-    const shown = status();
-    await quit(child);
-
-    expect(shown).toEqual({ id, held: false, pending: 0, open: 1, answered: 1, agent: "working" });
-    expect(exists(join("blocks", `${agent}.status.json`))).toBe(false);
-  });
-
-  test("passes the extension the review, its own pid, and the status file", async () => {
-    seed(review({ reviewer: "hunk" }));
-    stubHunk(`env | grep '^REX_REVIEW_' > ${quote(box.path("hunk-env"))}`);
-
-    expect(exec(["run", id]).status).toBe(0);
-
-    const env = Object.fromEntries(box.read("hunk-env").trim().split("\n").map((l) => l.split("=")));
-    expect(env.REX_REVIEW_ID).toBe(id);
-    expect(Number(env.REX_REVIEW_PID)).toBeGreaterThan(0);
-    expect(env.REX_REVIEW_STATUS).toBe(box.path(statusFile));
-  });
-
-  test("batch mode appends only the closed line", async () => {
-    const child = await startRun("batch");
-    notes(note());
-    child.kill("SIGUSR1");
-    await until(() => hunkCalls().filter((c) => c[1] === "comment").length > 1);
-    await quit(child);
-
-    expect(events()).toBe("[review: closed] closed\n");
   });
 });
 
@@ -1141,6 +656,8 @@ ${onRun || ":"}`,
   test.each<{ name: string; revisions?: string; doc?: boolean; args: string[] }>([
     { name: "the working tree", args: ["review"] },
     { name: "a base ref", revisions: "main", args: ["review", "--base", "main"] },
+    { name: "a range ending at HEAD", revisions: "HEAD~2..HEAD", args: ["review", "--base", "HEAD~2"] },
+    { name: "a symmetric range ending at HEAD", revisions: "main...HEAD", args: ["review", "--base", "main"] },
     { name: "a doc behind an approval gate", doc: true, args: ["doc.md", "--gate", "--json", "--require-approval", "--result-file", "result"] },
   ])("run opens $name", ({ revisions, doc: isDoc, args }) => {
     diffReview({ revisions, doc: isDoc ? doc() : undefined, mode: "batch" });
@@ -1384,17 +901,172 @@ ${onRun || ":"}`,
   });
 
   test.each<{ name: string; args: string[]; reviewer?: Review["reviewer"]; doc?: string; status: number }>([
-    { name: "--reviewer plannotator reviews the diff", args: ["--reviewer", "plannotator"], reviewer: "plannotator", status: 0 },
-    { name: "--doc picks plannotator", args: ["--doc", "doc.md"], reviewer: "plannotator", doc: "doc.md", status: 0 },
-    { name: "--doc rejects hunk", args: ["--doc", "doc.md", "--reviewer", "hunk"], status: 2 },
-    { name: "an unknown reviewer is rejected", args: ["--reviewer", "vim"], status: 2 },
+    { name: "reviews the diff by default", args: [], reviewer: "plannotator", status: 0 },
+    { name: "--doc reviews the document", args: ["--doc", "doc.md"], reviewer: "plannotator", doc: "doc.md", status: 0 },
+    { name: "a range not ending at HEAD is rejected", args: ["--revisions", "main..feature"], status: 1 },
   ])("open: $name", ({ args, reviewer, doc: file, status }) => {
     const result = exec(["open", agent, "--cwd", work, ...args]);
 
     expect(result.status).toBe(status);
-    if (status !== 0) return;
+    if (status !== 0) {
+      expect(apiCalls("session.new_split")).toEqual([]);
+      return;
+    }
     const state = saved(box.read(statePath(join("blocks", agent))));
     expect(state.reviewer).toBe(reviewer);
     expect(state.doc).toBe(file && join(work, file));
+  });
+  const storeFile = () => box.path(diffStorePath);
+
+  test("a closed review tells the agent to address the notes and ask how to proceed", () => {
+    diffReview({ delivered: [{ id: "local_1", version: "1" }], mode: "batch" });
+    diffStore(diffNote(), diffNote({ id: "local_2", lineStart: 3, lineEnd: 3, text: "and this" }));
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    expect(pasted()[0]).toMatchInlineSnapshot(`
+      "[review: closed] Ben closed the review without approving.
+
+      ## src/app.ts:3 (id local_2)
+      > three
+      and this
+
+      These earlier comments have no reply yet: id local_1.
+
+      Address each comment, then ask Ben how to proceed. Don't commit."
+    `);
+  });
+
+  test("approve delivers unsent notes once the delivered ones are addressed", () => {
+    diffReview({ delivered: [{ id: "local_1", version: "1" }] });
+    diffStore(diffNote(), agentDiffNote(), diffNote({ id: "local_2", lineStart: 3, lineEnd: 3, text: "rename" }));
+
+    expect(exec(["approve", agent]).status).toBe(0);
+
+    expect(pasted()[0]).toMatchInlineSnapshot(`
+      "[review: approved] Ben approved the changes, once you address the 1 comment below.
+
+      ## src/app.ts:3 (id local_2)
+      > three
+      rename
+
+      The review is closed, so fix each one without replying, then continue."
+    `);
+    expect(exists(`${id}.json`)).toBe(false);
+  });
+
+  const edited = () => diffNote({ text: "new", plannotator_tui: { patchKey: "k", updatedAt: 2, resolution: "still_there" } });
+
+  test("claim redelivers an edited note and reports a deleted one", () => {
+    diffReview({ reviewerSession: storeFile(), delivered: [{ id: "local_1", version: "1" }, { id: "local_9", version: "1" }] });
+    diffStore(edited());
+
+    const result = exec(["claim", agent]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatchInlineSnapshot(`
+      "[review: retracted] (id local_9) | Ben deleted this comment. Drop it.
+      [review: comment edited] src/app.ts:2 (id local_1) | > two | new
+      "
+    `);
+    expect(saved().delivered).toEqual([{ id: "local_1", version: "2" }]);
+  });
+
+  test("send carries edits and retractions in the batch", () => {
+    diffReview({ reviewerSession: storeFile(), delivered: [{ id: "local_1", version: "1" }, { id: "local_9", version: "1" }] });
+    diffStore(edited());
+
+    expect(exec(["send", agent]).status).toBe(0);
+
+    expect(pasted()[0]).toMatchInlineSnapshot(`
+      "[review: changes] Ben left 2 comments on your changes.
+
+      ## [review: retracted] (id local_9)
+      Ben deleted this comment. Drop it.
+
+      ## [review: comment edited] src/app.ts:2 (id local_1)
+      > two
+      new
+
+      Fix each one, then answer it with \`rex do review_reply id=<id> text="<reply>"\`. Don't commit. End your turn when every comment has an answer, and Ben will see the review again."
+    `);
+  });
+
+  test.each<{ name: string; delivered: unknown[] }>([
+    { name: "a bare id", delivered: ["local_1"] },
+    { name: "a body hash", delivered: [{ id: "local_1", hash: "0123456789abcdef" }] },
+  ])("$name saved before versions takes one without redelivery", ({ delivered }) => {
+    box.write(statePath(`${id}.json`), JSON.stringify({ ...review({ reviewer: "plannotator" }), delivered }));
+    box.write(statePath(join("blocks", agent)), id);
+    diffStore(edited());
+
+    expect(exec(["claim", agent]).stdout).toBe("");
+    expect(saved().delivered).toEqual([{ id: "local_1", version: "2" }]);
+  });
+
+  test("a note with no timestamps is never redelivered", () => {
+    diffReview({ delivered: [{ id: "local_1" }] });
+    diffStore(diffNote({ text: "new", createdAt: undefined, plannotator_tui: undefined }));
+
+    expect(exec(["claim", agent]).stdout).toBe("");
+  });
+
+  test("a different store retracts nothing", () => {
+    diffReview({ reviewerSession: join(work, "elsewhere.json"), delivered: [{ id: "local_9", version: "1" }] });
+    diffStore();
+
+    expect(exec(["claim", agent]).stdout).toBe("");
+    expect(deliveredIds()).toEqual(["local_9"]);
+  });
+
+  test("an old-side line outside the diff comes from HEAD", () => {
+    const git = (...args: string[]) =>
+      expect(Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: work }).exitCode).toBe(0);
+    git("init", "-q");
+    git("add", ".");
+    git("commit", "-qm", "base");
+    box.write("work/src/app.ts", "changed\n");
+    diffReview();
+    diffStore(diffNote({ side: "old", lineStart: 3, lineEnd: 3, text: "keep" }));
+
+    expect(exec(["claim", agent]).stdout).toBe("[review: comment] src/app.ts:3 (id local_1) | > three | keep\n");
+  });
+
+  test("store writes append each note once, in order", async () => {
+    diffReview();
+    stubPlannotator(`while [ ! -f ${quote(box.path("quit"))} ]; do sleep 0.02; done`);
+    const child = spawn(["run", id]);
+    await until(() => existsSync(box.path("plannotator-calls")));
+    const lines = () => (exists(join("blocks", `${agent}.events`)) ? events().split("\n").filter((l) => l !== "") : []);
+    const rows: object[] = [];
+    for (const n of [1, 2, 3, 4]) {
+      rows.push(diffNote({ id: `local_${n}`, lineStart: n, lineEnd: n, text: `note ${n}` }));
+      diffStore(...rows);
+      await until(() => lines().length === n);
+    }
+    box.write("quit", "");
+    expect(await child.exited).toBe(0);
+
+    expect(lines()).toEqual([
+      "[review: comment] src/app.ts:1 (id local_1) | > one | note 1",
+      "[review: comment] src/app.ts:2 (id local_2) | > two | note 2",
+      "[review: comment] src/app.ts:3 (id local_3) | > three | note 3",
+      "[review: comment] src/app.ts:4 (id local_4) | > four | note 4",
+      "[review: closed] closed",
+    ]);
+  });
+
+  test("batch mode appends only the closed line", async () => {
+    diffReview({ mode: "batch" });
+    diffStore(diffNote());
+    stubPlannotator(`while [ ! -f ${quote(box.path("quit"))} ]; do sleep 0.02; done`);
+    const child = spawn(["run", id]);
+    await until(() => existsSync(box.path("plannotator-calls")));
+    diffStore(diffNote(), diffNote({ id: "local_2" }));
+    await Bun.sleep(100);
+    box.write("quit", "");
+    expect(await child.exited).toBe(0);
+
+    expect(events()).toBe("[review: closed] closed\n");
   });
 });
