@@ -150,7 +150,7 @@ async function pullRequest(branch: string): Promise<PullRequest | undefined> {
     "--json",
     "state,number",
     "--jq",
-    '"\\(.state)\\t\\(.number)"',
+    String.raw`"\(.state)\t\(.number)"`,
   ]} < /dev/null`
     .nothrow()
     .quiet();
@@ -256,7 +256,7 @@ export function readWorktrees(captured: string): Worktree[] {
   try {
     parsed = JSON.parse(captured);
   } catch (error) {
-    throw new Error(`unexpected \`wt list --format=json\` output:\n${String(error)}`);
+    throw new Error(`unexpected \`wt list --format=json\` output:\n${String(error)}`, { cause: error });
   }
   const result = Listing.safeParse(parsed);
   if (!result.success) {
@@ -287,7 +287,7 @@ function toWorktree(item: z.infer<typeof Item>): Worktree {
 
 // Whether another linked worktree that is still on disk sits inside this one.
 // Removing the outer tree would delete the inner one's files with it.
-export function holdsWorktrees(worktree: Worktree, worktrees: Worktree[], gone: Set<string> = new Set()): boolean {
+export function holdsWorktrees(worktree: Worktree, worktrees: Worktree[], gone = new Set<string>()): boolean {
   const prefix = `${worktree.path}/`;
   return worktrees.some(
     (other) => other.kind === "worktree" && other.path.startsWith(prefix) && !gone.has(other.path),

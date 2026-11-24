@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
-type Template = { root: string; configs: string[] };
+interface Template { root: string; configs: string[] }
 
 function buildTemplate(build: (root: string) => void): Template {
   const root = mkdtempSync(join(tmpdir(), "fixture-"));

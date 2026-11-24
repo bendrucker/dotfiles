@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { Status } from "./hunk-extension";
 
-export type { Status };
+export type { Status } from "./hunk-extension";
 
 // A bare id, or one saved with a body hash, is a delivery recorded before
 // versions were tracked.
@@ -52,7 +52,9 @@ export async function locked<T>(id: string, fn: () => Promise<T>): Promise<T> {
     } catch {
       try {
         if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { recursive: true, force: true });
-      } catch {}
+      } catch {
+        // The lock vanished or is held: retry after the sleep.
+      }
       await Bun.sleep(LOCK_RETRY_MS);
     }
   }

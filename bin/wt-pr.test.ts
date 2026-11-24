@@ -88,8 +88,8 @@ beforeEach(() => {
     GUM_LOG: join(sandbox, "gum.log"),
   };
 
-  for (const log of ["GH_LOG", "CLONE_LOG", "WT_LOG", "GUM_LOG"]) {
-    writeFileSync(variables[log] as string, "");
+  for (const logVar of ["GH_LOG", "CLONE_LOG", "WT_LOG", "GUM_LOG"]) {
+    writeFileSync(variables[logVar] as string, "");
   }
   results("GH_MINE", []);
   results("GH_REVIEW", []);
@@ -106,8 +106,8 @@ afterEach(() => {
 // on the terminal, or clone a repository and still look like it passed.
 function proveStubs(): void {
   for (const name of Object.keys(STUBS)) {
-    const run = Bun.spawnSync({ cmd: [name, "--stub-check"], env: { PATH: path }, stdin: "ignore" });
-    const said = run.stdout.toString().trim();
+    const result = Bun.spawnSync({ cmd: [name, "--stub-check"], env: { PATH: path }, stdin: "ignore" });
+    const said = result.stdout.toString().trim();
     if (said !== `${name} stub`) {
       throw new Error(`the ${name} stub is not on PATH: --stub-check said ${JSON.stringify(said)}`);
     }

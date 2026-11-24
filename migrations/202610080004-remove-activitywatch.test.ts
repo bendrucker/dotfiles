@@ -3,8 +3,7 @@ import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
 import { recorded, recordingStub } from "#harness/recorder";
-import type { Context } from "#migrations/migration";
-import { exists } from "#migrations/migration";
+import { type Context, exists } from "#migrations/migration";
 import { AGENTS, LINKS, up } from "./202610080004-remove-activitywatch";
 
 let box: Sandbox;

@@ -3,8 +3,7 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ignoresModes, sandbox, type Sandbox } from "#harness";
 import { recorded, recordingStub } from "#harness/recorder";
-import type { Context } from "#migrations/migration";
-import { exists } from "#migrations/migration";
+import { type Context, exists } from "#migrations/migration";
 import { up } from "./202609100001-remove-utc-bar-wispr-flow";
 
 let box: Sandbox;

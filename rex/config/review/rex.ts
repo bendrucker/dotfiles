@@ -29,8 +29,8 @@ async function call(session: string, method: string, args: Record<string, unknow
   let stdout: string;
   try {
     stdout = await rex(["api", "call", "-s", session, method, JSON.stringify(args)]);
-  } catch (err) {
-    throw new Error(`${method}: ${err instanceof Error ? err.message : String(err)}`);
+  } catch (error) {
+    throw new Error(`${method}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
   return stdout.trim() === "" ? {} : JSON.parse(stdout);
 }
@@ -98,8 +98,8 @@ export class Client {
   async closeBlock(block: string): Promise<void> {
     try {
       await call(this.session, "block.close", { block_id: block });
-    } catch (err) {
-      if (!(err instanceof Error && err.message.includes("not_found"))) throw err;
+    } catch (error) {
+      if (!(error instanceof Error && error.message.includes("not_found"))) throw error;
     }
   }
 

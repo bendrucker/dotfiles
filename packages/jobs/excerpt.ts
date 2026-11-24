@@ -11,7 +11,7 @@ const CSI = /\u001b\[[0-9;]*[a-zA-Z]/g;
 const TRAILING_NEWLINES = /\n+$/;
 
 export function stripCsi(text: string): string {
-  return text.replace(CSI, "");
+  return text.replaceAll(CSI, "");
 }
 
 export function tailLines(text: string, count: number): string {

@@ -49,10 +49,10 @@ function annotations(path: string): Annotation[] {
   return store.annotations.filter(isAnnotation);
 }
 
-async function until(check: () => boolean, describe: () => string, timeoutMs = 10_000): Promise<void> {
+async function until(check: () => boolean, explain: () => string, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!check()) {
-    if (Date.now() > deadline) throw new Error(`timed out. Screen:\n${describe()}`);
+    if (Date.now() > deadline) throw new Error(`timed out. Screen:\n${explain()}`);
     await Bun.sleep(25);
   }
 }

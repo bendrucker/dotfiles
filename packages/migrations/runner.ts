@@ -65,11 +65,11 @@ export function discover(root: string): Found[] {
 
     found.push({ version, name: parsed[2] ?? "", file: join(dir, name) });
   }
-  return found.sort((a, b) => a.version - b.version);
+  return found.toSorted((a, b) => a.version - b.version);
 }
 
 export function latestVersion(found: Found[]): number {
-  return found.reduce((highest, migration) => Math.max(highest, migration.version), 0);
+  return Math.max(0, ...found.map((migration) => migration.version));
 }
 
 // Where the stamp lives on a real machine. The runner is handed the path

@@ -82,7 +82,7 @@ export interface Finding {
   reason: string;
 }
 
-export function findings(matches: string[], today: string): Finding[] {
+export function findings(matches: string[], date: string): Finding[] {
   const found: Finding[] = [];
 
   for (const match of matches) {
@@ -101,7 +101,7 @@ export function findings(matches: string[], today: string): Finding[] {
     }
 
     // The expiry date itself is not yet due.
-    if (marker.date < today) {
+    if (marker.date < date) {
       found.push({ kind: "expired", location, date: marker.date, reason: marker.reason });
     }
   }
@@ -153,6 +153,10 @@ export function report(found: Finding[]): string[] {
   return lines;
 }
 
+function pad(part: number): string {
+  return String(part).padStart(2, "0");
+}
+
 // The date the machine is on, in its own timezone. A UTC reading would expire a
 // marker up to a day early west of Greenwich.
 export function today(): string {
@@ -160,7 +164,6 @@ export function today(): string {
   if (override !== "") return override;
 
   const now = new Date();
-  const pad = (part: number): string => String(part).padStart(2, "0");
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 

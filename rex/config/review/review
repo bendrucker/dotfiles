@@ -15,8 +15,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync, watch, type FSWatcher } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import * as messages from "./messages";
+import { approved, changes, closed, dismissed, ended, failed, live as liveLine } from "./messages";
 import { Client } from "./rex";
 import { reconcile, unanswered, type Event } from "./delivery";
 import { blockquote, quoter } from "./quote";
@@ -51,11 +52,13 @@ const SNAPSHOT_MS = Number(process.env.REVIEW_SNAPSHOT_MS ?? 1000);
 // Rex stops an action's command after 25 seconds.
 const SUBMIT_WAIT_MS = Number(process.env.REVIEW_SUBMIT_WAIT_MS ?? 15_000);
 
-class Usage extends Error {}
+class UsageError extends Error {
+  override name = "UsageError";
+}
 
 function rexClient(): Client {
   const session = process.env.REX_SESSION;
-  if (!session) throw new Usage("REX_SESSION is not set");
+  if (!session) throw new UsageError("REX_SESSION is not set");
   return new Client(session, WAIT_POLL_MS);
 }
 
@@ -71,7 +74,9 @@ async function open(rex: Client, agent: string, opening: Opening): Promise<void>
   try {
     const live = await rex.blocks();
     if (live.has(agent)) prune(live);
-  } catch {}
+  } catch {
+    // rex unreachable: nothing to prune.
+  }
 
   const existing = resolve(agent);
   if (existing?.review !== undefined) {
@@ -101,16 +106,22 @@ async function finish(
   save({ ...review, outcome });
   try {
     await rex.submit(review.agent, message, timeoutMs);
-  } catch (err) {
+  } catch (error) {
     save(review);
-    throw err;
+    throw error;
   }
   await locked(review.id, async () => {
     remove(review);
-    appendEvent(review.agent, messages.ended(outcome));
+    appendEvent(review.agent, ended(outcome));
   });
   await rex.focus(review.agent);
   if (review.review !== undefined) await rex.closeBlock(review.review);
+}
+
+// A listener replaces the default handler: exiting on a signal, throwing on a
+// watcher's error event.
+function ignore(): void {
+  // Intentionally empty.
 }
 
 async function run(rex: Client, id: string): Promise<void> {
@@ -118,12 +129,13 @@ async function run(rex: Client, id: string): Promise<void> {
   if (review === undefined) throw new Error(`no review ${id}`);
   // Closing the pane hangs up the reviewer and this script. Ignoring the
   // hangup here lets the close count as quitting.
-  process.on("SIGHUP", () => {});
-  process.on("SIGTERM", () => {});
+  process.on("SIGHUP", ignore);
+  process.on("SIGTERM", ignore);
   const reviewer = reviewers[review.reviewer];
   const live = review.mode === "live";
   let done = false;
   let snapshot: Comments | undefined;
+  // oxlint-disable-next-line prefer-const -- assigned below once the child spawns, after `stream` captures it.
   let pid: number | undefined;
   const stream = serialized(async () => {
     if (pid === undefined) return;
@@ -131,7 +143,9 @@ async function run(rex: Client, id: string): Promise<void> {
       const claimed = await claim(id, { strict: true, stream: true, pid });
       snapshot = { session: claimed.session, comments: claimed.comments };
       writeStatus(claimed.review.agent, await status(rex, claimed));
-    } catch {}
+    } catch {
+      // The next tick retries.
+    }
   });
   // The reviewer signals a saved note, so it reaches the agent before the next tick.
   const wake = () => {
@@ -164,15 +178,18 @@ async function run(rex: Client, id: string): Promise<void> {
     done = true;
     watcher?.close();
   });
+  // oxlint-disable-next-line no-unmodified-loop-condition -- `exited` sets `done`.
   while ((live || reviewer.ephemeral) && !done) {
     if (live) await stream.call();
     else {
       try {
         const known = snapshot?.session ?? load(id)?.reviewerSession;
         snapshot = await reviewer.comments({ ...review, pid }, known, snapshot !== undefined);
-      } catch {}
+      } catch {
+        // The next tick retries.
+      }
     }
-    await Promise.race([exited, new Promise((wake) => setTimeout(wake, SNAPSHOT_MS).unref())]);
+    await Promise.race([exited, delay(SNAPSHOT_MS, undefined, { ref: false })]);
   }
   const code = await exited;
   await stream.idle();
@@ -186,7 +203,7 @@ function watchStore(dir: string | undefined, wake: () => void): FSWatcher | unde
   if (dir === undefined) return undefined;
   try {
     mkdirSync(dir, { recursive: true });
-    return watch(dir, { recursive: true }, wake).on("error", () => {});
+    return watch(dir, { recursive: true }, wake).on("error", ignore);
   } catch {
     return undefined;
   }
@@ -203,9 +220,9 @@ async function settle(
   const current = load(id);
   if (current === undefined || current.outcome !== undefined) return;
   if (exit === "approved") await approveClaimed(rex, id, Infinity, snapshot, pid);
-  else if (exit === "dismissed") await finish(rex, current, "dismissed", messages.dismissed(current.delivered.length > 0), Infinity);
+  else if (exit === "dismissed") await finish(rex, current, "dismissed", dismissed(current.delivered.length > 0), Infinity);
   else if (exit === "quit") await quit(rex, id, snapshot, pid);
-  else await finish(rex, current, "failed", messages.failed(exit), Infinity);
+  else await finish(rex, current, "failed", failed(exit), Infinity);
 }
 
 async function toggleHold(id: string): Promise<void> {
@@ -218,7 +235,7 @@ async function toggleHold(id: string): Promise<void> {
 async function status(rex: Client, claimed: Claimed): Promise<Status> {
   const { review, comments, pending } = claimed;
   const present = new Set(comments.map((c) => c.id));
-  const open = unanswered(comments, review.delivered).length;
+  const unansweredCount = unanswered(comments, review.delivered).length;
   let agent: string;
   try {
     agent = await rex.programState(review.agent);
@@ -229,8 +246,8 @@ async function status(rex: Client, claimed: Claimed): Promise<Status> {
     id: review.id,
     held: review.held,
     pending,
-    open,
-    answered: review.delivered.filter((d) => present.has(d.id)).length - open,
+    open: unansweredCount,
+    answered: review.delivered.filter((d) => present.has(d.id)).length - unansweredCount,
     agent,
   };
 }
@@ -265,18 +282,19 @@ async function quit(rex: Client, id: string, snapshot?: Comments, pid?: number):
   let claimed: Claimed | undefined;
   try {
     claimed = await claim(id, { strict: true, fallback: snapshot, pid });
-  } catch {}
+  } catch {
+    // Falls back to the stored review below.
+  }
   const review = claimed?.review ?? load(id);
   if (review === undefined || review.outcome !== undefined) return;
   const events = claimed?.events ?? [];
   const sent = new Set(events.flatMap((e) => (e.kind === "retracted" ? [] : [e.comment.id])));
   const answerable = claimed ? unanswered(claimed.comments, review.delivered) : review.delivered.map((d) => d.id);
-  const open = answerable.filter((noteId) => !sent.has(noteId));
-  if (events.length === 0 && open.length === 0) {
-    await finish(rex, review, "approved", messages.approved(), Infinity);
-  } else {
-    await finish(rex, review, "closed", messages.closed(events, open), Infinity);
-  }
+  const pending = answerable.filter((noteId) => !sent.has(noteId));
+  const settled = events.length === 0 && pending.length === 0;
+  await (settled
+    ? finish(rex, review, "approved", approved(), Infinity)
+    : finish(rex, review, "closed", closed(events, pending), Infinity));
 }
 
 interface Claimed {
@@ -294,7 +312,9 @@ async function quote(reviewer: Reviewer, review: Review, session: string, events
     let patches: Record<string, string> | undefined;
     try {
       patches = await reviewer.patches?.(review, session);
-    } catch {}
+    } catch {
+      // Quotes without patches.
+    }
     lines = quoter(review.cwd, patches);
   }
   for (const event of events) {
@@ -319,8 +339,8 @@ async function claim(
     try {
       if (review.review !== undefined) await reviewer.flush(review.review);
       read = await reviewer.comments({ ...review, pid: options.pid }, review.reviewerSession ?? options.fallback?.session, options.strict);
-    } catch (err) {
-      if (options.fallback === undefined) throw err;
+    } catch (error) {
+      if (options.fallback === undefined) throw error;
       read = options.fallback;
     }
     const { events, delivered } = reconcile(read.comments, review.delivered, read.session === review.reviewerSession);
@@ -332,7 +352,7 @@ async function claim(
     await quote(reviewer, review, read.session, events);
     const next = { ...review, reviewerSession: read.session, delivered };
     if (JSON.stringify(next) !== JSON.stringify(review)) save(next);
-    if (options.stream) for (const event of events) appendEvent(review.agent, messages.live(event));
+    if (options.stream) for (const event of events) appendEvent(review.agent, liveLine(event));
     return { review: next, events, session: read.session, comments: read.comments, pending: 0 };
   });
 }
@@ -342,14 +362,14 @@ async function send(rex: Client, block: string): Promise<void> {
   await rex.unblocked(agent, SUBMIT_WAIT_MS);
   const { review, events } = await claim(id);
   if (events.length === 0) throw new Error("no new comments to send. Approve or dismiss the review instead.");
-  await rex.submit(review.agent, messages.changes(events), SUBMIT_WAIT_MS);
+  await rex.submit(review.agent, changes(events), SUBMIT_WAIT_MS);
   await rex.focus(review.agent);
   console.log(review.id);
 }
 
 async function claimLines(block: string): Promise<void> {
   const { events } = await claim(find(block).id);
-  for (const event of events) console.log(messages.live(event));
+  for (const event of events) console.log(liveLine(event));
 }
 
 async function approve(rex: Client, block: string): Promise<void> {
@@ -363,18 +383,18 @@ async function approveClaimed(rex: Client, id: string, timeoutMs: number, fallba
   let claimed: Claimed;
   try {
     claimed = await claim(id, { strict: fallback !== undefined, fallback, pid });
-  } catch (err) {
+  } catch (error) {
     const review = load(id);
-    if (review === undefined) throw new Error(`review ${id} closed`);
-    const reason = err instanceof Error ? err.message : String(err);
-    return finish(rex, review, "approved", `${messages.approved()} (Unsent comments couldn't be read: ${reason})`, timeoutMs);
+    if (review === undefined) throw new Error(`review ${id} closed`, { cause: error });
+    const reason = error instanceof Error ? error.message : String(error);
+    return finish(rex, review, "approved", `${approved()} (Unsent comments couldn't be read: ${reason})`, timeoutMs);
   }
-  await finish(rex, claimed.review, "approved", messages.approved(claimed.events), timeoutMs);
+  await finish(rex, claimed.review, "approved", approved(claimed.events), timeoutMs);
 }
 
 async function dismiss(rex: Client, block: string): Promise<void> {
   const review = find(block);
-  await finish(rex, review, "dismissed", messages.dismissed(review.delivered.length > 0));
+  await finish(rex, review, "dismissed", dismissed(review.delivered.length > 0));
 }
 
 async function agentDone(rex: Client, review: Review): Promise<boolean> {
@@ -387,6 +407,7 @@ async function agentDone(rex: Client, review: Review): Promise<boolean> {
       state = await rex.programState(review.agent);
       failures = 0;
     } catch {
+      // oxlint-disable-next-line no-useless-assignment -- the count carries into the next iteration.
       if (++failures >= 10) return false;
       state = "unknown";
     }
@@ -420,8 +441,8 @@ async function reply(block: string, id: string, text: string): Promise<void> {
 // Only plannotator-tui reviews a document, so --doc picks it.
 function chooseReviewer(name: string | undefined, doc: string | undefined): Review["reviewer"] {
   if (name === undefined) return doc === undefined ? DEFAULT_REVIEWER : "plannotator";
-  if (name !== "hunk" && name !== "plannotator") throw new Usage("--reviewer is hunk or plannotator");
-  if (doc !== undefined && name !== "plannotator") throw new Usage("--doc needs --reviewer plannotator");
+  if (name !== "hunk" && name !== "plannotator") throw new UsageError("--reviewer is hunk or plannotator");
+  if (doc !== undefined && name !== "plannotator") throw new UsageError("--doc needs --reviewer plannotator");
   return name;
 }
 
@@ -438,13 +459,13 @@ async function main(argv: string[]): Promise<void> {
     },
   });
   const [command, target, ...rest] = positionals;
-  if (target === undefined) throw new Usage("missing argument");
+  if (target === undefined) throw new UsageError("missing argument");
   const rex = rexClient();
 
   switch (command) {
     case "open":
-      if (values.cwd === undefined) throw new Usage("open needs --cwd");
-      if (values.mode !== "live" && values.mode !== "batch") throw new Usage("--mode is live or batch");
+      if (values.cwd === undefined) throw new UsageError("open needs --cwd");
+      if (values.mode !== "live" && values.mode !== "batch") throw new UsageError("--mode is live or batch");
       return open(rex, target, {
         cwd: values.cwd,
         mode: values.mode,
@@ -465,17 +486,17 @@ async function main(argv: string[]): Promise<void> {
     case "wait":
       return wait(rex, target);
     case "reply":
-      if (rest.length !== 2) throw new Usage("reply needs COMMENT_ID and TEXT");
+      if (rest.length !== 2) throw new UsageError("reply needs COMMENT_ID and TEXT");
       return reply(target, rest[0], rest[1]);
     default:
-      throw new Usage(`unknown command ${command ?? ""}`);
+      throw new UsageError(`unknown command ${command ?? ""}`);
   }
 }
 
 try {
   await main(Bun.argv.slice(2));
-} catch (err) {
-  const message = err instanceof Error ? err.message : String(err);
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
   console.error(`review: ${message}`);
-  process.exit(err instanceof Usage ? 2 : 1);
+  process.exit(error instanceof UsageError ? 2 : 1);
 }

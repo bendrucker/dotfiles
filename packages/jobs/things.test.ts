@@ -109,7 +109,7 @@ describe("findOpenTodo", () => {
 // any run of them. Both are legal in a job name.
 describe("markerQuery", () => {
   test("escapes the wildcards LIKE would otherwise read", () => {
-    expect(markerQuery("a_b%c")).toBe("%a\\_b\\%c%");
+    expect(markerQuery("a_b%c")).toBe(String.raw`%a\_b\%c%`);
   });
 
   test("does not match a marker that merely fits the pattern", () => {

@@ -65,7 +65,7 @@ describe("osquery", () => {
   // only when its rows change, which a quiet CI runner may never do.
   const [first, { interval }] = queries
     .filter(([, query]) => query.snapshot)
-    .reduce((a, b) => (b[1].interval < a[1].interval ? b : a));
+    .toSorted((a, b) => a[1].interval - b[1].interval)[0];
   const timeoutMs = STARTUP_MS + interval * 2 * 1000;
 
   test(

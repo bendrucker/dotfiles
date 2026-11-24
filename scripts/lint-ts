@@ -123,15 +123,15 @@ function outside(named: string): boolean {
 export async function select(root: string, paths: string[]): Promise<Selection | undefined> {
   const named: string[] = [];
   for (const path of paths) {
-    const relative = within(root, path);
-    if (relative === undefined || outside(relative)) continue;
-    if (relative === CONFIG) return undefined;
-    if (LINTABLE.test(relative) || extname(relative) === "") named.push(relative);
+    const relativePath = within(root, path);
+    if (relativePath === undefined || outside(relativePath)) continue;
+    if (relativePath === CONFIG) return undefined;
+    if (LINTABLE.test(relativePath) || extname(relativePath) === "") named.push(relativePath);
   }
 
   const visible = listed(root, named);
   const selection: Selection = { files: [], scripts: [] };
-  for (const path of named.filter((path) => visible.has(path))) {
+  for (const path of named.filter((file) => visible.has(file))) {
     // git still lists a tracked file that was deleted, and oxlint fails on it.
     if (LINTABLE.test(path)) {
       if (statSync(join(root, path), { throwIfNoEntry: false })?.isFile()) selection.files.push(path);
@@ -141,7 +141,7 @@ export async function select(root: string, paths: string[]): Promise<Selection |
 }
 
 export async function bunScripts(root: string): Promise<string[]> {
-  const listed = Bun.spawnSync({
+  const listing = Bun.spawnSync({
     cmd: ["git", "ls-files", "-z"],
     cwd: root,
     env: process.env,
@@ -149,14 +149,14 @@ export async function bunScripts(root: string): Promise<string[]> {
     stdout: "pipe",
     stderr: "inherit",
   });
-  if (listed.exitCode !== 0) throw new Error(`git ls-files could not read ${root}`);
+  if (listing.exitCode !== 0) throw new Error(`git ls-files could not read ${root}`);
 
-  const paths = listed.stdout.toString().split("\0").filter(Boolean);
+  const paths = listing.stdout.toString().split("\0").filter(Boolean);
   const found: string[] = [];
   for (const path of paths) {
     if (extname(path) === "" && (await readsAsBunScript(root, path))) found.push(path);
   }
-  return found.sort();
+  return found.toSorted();
 }
 
 // Mirror path for a script, keeping its directories so a diagnostic is
@@ -280,12 +280,8 @@ export async function lint(root: string, flags: string[], write: Write, options:
   // behind, so neither pass depends on the other having finished.
   // Both passes run whatever the first one reports, so a single invocation
   // names every violation rather than one pass worth at a time.
-  const repo =
-    selection === undefined
-      ? oxlint(bin, root, [...rest, `--ignore-pattern=${MIRROR}/**`], write)
-      : selection.files.length === 0
-        ? 0
-        : oxlint(bin, root, [...rest, ...selection.files], write);
+  const targets = selection === undefined ? [`--ignore-pattern=${MIRROR}/**`] : selection.files;
+  const repo = selection?.files.length === 0 ? 0 : oxlint(bin, root, [...rest, ...targets], write);
   if (scripts.length === 0) return repo === 0 ? 0 : 1;
 
   try {

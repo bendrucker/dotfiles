@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sandbox, type Sandbox } from "#harness";
 import { recorded, recordingStub } from "#harness/recorder";
-import type { Context } from "#migrations/migration";
-import { exists } from "#migrations/migration";
+import { type Context, exists } from "#migrations/migration";
 import { up } from "./202610220001-herdr-direct-install";
 
 let box: Sandbox;

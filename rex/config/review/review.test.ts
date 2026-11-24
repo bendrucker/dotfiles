@@ -942,6 +942,9 @@ describe("rex/config/review events file", () => {
   test("a signal claims a saved note before the next tick", async () => {
     const child = await startRun("live", { REVIEW_SNAPSHOT_MS: "60000" });
     // The first claim records the window, so a note written after it waits for a signal.
+    // Under load that claim can run before the window registers its pid, so signal once it has.
+    await until(() => existsSync(box.path("hunk-pid")));
+    child.kill("SIGUSR1");
     await until(() => exists(`${id}.json`) && saved().reviewerSession === "h1");
     notes(note());
 
@@ -1149,7 +1152,11 @@ ${onRun || ":"}`,
 
     const result = box.path(statePath(`${id}.result.json`));
     const [call] = plannotatorCalls();
-    expect(call.map((arg) => (arg === doc() ? "doc.md" : arg === result ? "result" : arg))).toEqual(args);
+    const labels = new Map([
+      [doc(), "doc.md"],
+      [result, "result"],
+    ]);
+    expect(call.map((arg) => labels.get(arg) ?? arg)).toEqual(args);
   });
 
   test("a store write claims a new diff note without waiting for the timer", async () => {

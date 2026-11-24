@@ -10,7 +10,7 @@ beforeEach(() => {
   box = sandbox("agent-prune");
   stubGum(box);
   box.stub("open", `printf '%s\\n' "$2" >>"${box.path("todos")}"`);
-  box.stub("scutil", "printf '%s\\n' Testbox");
+  box.stub("scutil", String.raw`printf '%s\n' Testbox`);
   box.stub("ioreg", `printf '"IOPlatformUUID" = "%s"\\n' 0000-TEST`);
 });
 

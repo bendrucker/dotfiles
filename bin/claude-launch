@@ -51,9 +51,9 @@ export function slugify(prompt: string): string {
     .slice(0, 6)
     .join("-")
     .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+    .replaceAll(/[^a-z0-9-]/g, "-")
+    .replaceAll(/-+/g, "-")
+    .replaceAll(/^-|-$/g, "");
   return slug === "" ? "agent" : slug;
 }
 
@@ -92,7 +92,7 @@ export function launchCommand(launch: Launch): string[] {
 }
 
 export function agentId(dispatched: string): string {
-  const first = (dispatched.split("\n")[0] ?? "").replace(ANSI, "");
+  const first = (dispatched.split("\n")[0] ?? "").replaceAll(ANSI, "");
   return first.split(SEPARATOR)[1] ?? "";
 }
 

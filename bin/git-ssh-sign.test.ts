@@ -22,7 +22,7 @@ afterEach(() => box.remove());
 function canBindSocket() {
   const probe = sandbox("git-ssh-sign-probe");
   try {
-    Bun.listen({ unix: probe.path("s"), socket: { data() {} } }).stop(true);
+    Bun.listen({ unix: probe.path("s"), socket: { data() { /* Only the bind is probed. */ } } }).stop(true);
     return true;
   } catch {
     return false;
@@ -42,7 +42,7 @@ describe("git-ssh-sign", () => {
   test.skipIf(!process.env.CI && !canBindSocket())("signs through Secretive when its socket exists", () => {
     // A socket path is capped near 104 bytes, so the container path links to
     // a short one.
-    const listener = Bun.listen({ unix: box.path("s"), socket: { data() {} } });
+    const listener = Bun.listen({ unix: box.path("s"), socket: { data() { /* Only the path is used. */ } } });
     try {
       box.mkdir(join(secretive, ".."));
       symlinkSync(box.path("s"), box.path(secretive));

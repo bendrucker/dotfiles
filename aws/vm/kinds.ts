@@ -57,7 +57,7 @@ export interface Kinds {
 }
 
 function toKind(name: string, fields: z.infer<typeof KindFields>): Kind {
-  const kind: Kind = {
+  const entry: Kind = {
     name,
     profile: fields.profile,
     region: fields.region,
@@ -66,20 +66,20 @@ function toKind(name: string, fields: z.infer<typeof KindFields>): Kind {
     maxTtl: parseDuration(fields.max_ttl),
     tools: fields.tools,
   };
-  if (kind.defaultTtl > kind.maxTtl) throw new Error(`kind ${name}: default_ttl exceeds max_ttl`);
-  if (fields.disk_gb !== undefined) kind.diskGb = fields.disk_gb;
+  if (entry.defaultTtl > entry.maxTtl) throw new Error(`kind ${name}: default_ttl exceeds max_ttl`);
+  if (fields.disk_gb !== undefined) entry.diskGb = fields.disk_gb;
   if (fields.tailnet) {
     const { tag, role, client_id_parameter, audience_parameter } = fields.tailnet;
-    kind.tailnet = { tag, role, clientIdParameter: client_id_parameter, audienceParameter: audience_parameter };
+    entry.tailnet = { tag, role, clientIdParameter: client_id_parameter, audienceParameter: audience_parameter };
   }
-  return kind;
+  return entry;
 }
 
 function readKinds(path: string): z.infer<typeof KindsFile> {
   try {
     return KindsFile.parse(Bun.TOML.parse(readFileSync(path, "utf8")));
   } catch (error) {
-    throw new Error(`${path}: ${errorMessage(error)}`);
+    throw new Error(`${path}: ${errorMessage(error)}`, { cause: error });
   }
 }
 

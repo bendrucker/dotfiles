@@ -254,9 +254,9 @@ export function parsePick(out: string): Pick | undefined {
 
 // Each key reloads the list with the rows its filter keeps and shows the filter's label in the prompt.
 export const FILTERS = [
-  { key: "ctrl-w", label: "needs input", keep: (group: Group) => group === "waiting" },
-  { key: "ctrl-o", label: "active", keep: (group: Group) => group !== "done" },
-  { key: "ctrl-a", label: "all", keep: () => true },
+  { key: "ctrl-w", label: "needs input", keep: (group: Group): boolean => group === "waiting" },
+  { key: "ctrl-o", label: "active", keep: (group: Group): boolean => group !== "done" },
+  { key: "ctrl-a", label: "all", keep: (): boolean => true },
 ];
 
 const HEADER = [

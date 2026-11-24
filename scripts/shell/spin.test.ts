@@ -32,7 +32,7 @@ describe("spin", () => {
   // the branch the unattended jobs take.
   describe("with no terminal on stderr", () => {
     test("runs the command and passes its output through", () => {
-      const r = spinCall(["--title", "Working", "--", "printf", "ran\\n"]);
+      const r = spinCall(["--title", "Working", "--", "printf", String.raw`ran\n`]);
       expect(r.stdout.trim()).toBe("ran");
       expect(r.stderr).not.toBe("");
     });
@@ -49,7 +49,7 @@ describe("spin", () => {
     });
 
     test("accepts the output flags gum takes", () => {
-      const r = spinCall(["--show-output", "--show-error", "--title", "Syncing", "--", "printf", "ran\\n"]);
+      const r = spinCall(["--show-output", "--show-error", "--title", "Syncing", "--", "printf", String.raw`ran\n`]);
       expect(r.stdout.trim()).toBe("ran");
       expect(r.stderr).toContain("Syncing");
     });
@@ -81,7 +81,7 @@ describe("spin", () => {
     });
 
     test("writes no terminal control sequences", () => {
-      const r = spinCall(["--title", "Working", "--", "printf", "ran\\n"]);
+      const r = spinCall(["--title", "Working", "--", "printf", String.raw`ran\n`]);
       expect(r.stdout).not.toContain(esc);
       expect(r.stderr).not.toContain(esc);
     });

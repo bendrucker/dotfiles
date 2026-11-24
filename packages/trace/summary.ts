@@ -21,7 +21,7 @@ export function formatDuration(us: number): string {
 
 /** Mermaid reads `:` as the start of a task's data and `#`/`;` as comment and statement breaks. */
 function label(text: string): string {
-  return text.replace(/[:;#]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "(unnamed)";
+  return text.replaceAll(/[:;#]/g, " ").replaceAll(/\s+/g, " ").trim().slice(0, 60) || "(unnamed)";
 }
 
 function bounds(tree: Tree): { origin: number; total: number } {
@@ -43,13 +43,13 @@ export function gantt(tree: Tree): string {
   const { origin, total } = bounds(tree);
   const picked = tree.nodes
     .filter((node) => node.depth <= GANTT_DEPTH || duration(node.span) >= total * GANTT_SHARE)
-    .sort((a, b) => duration(b.span) - duration(a.span))
+    .toSorted((a, b) => duration(b.span) - duration(a.span))
     .slice(0, GANTT_BARS);
   const keep = new Set(picked);
 
   const sections = new Map<Node, string[]>();
-  tree.nodes.forEach((node, index) => {
-    if (!keep.has(node)) return;
+  for (const [index, node] of tree.nodes.entries()) {
+    if (!keep.has(node)) continue;
     const start = Math.round((node.span.start - origin) / 1000);
     const end = Math.max(start + 1, Math.round((node.span.end - origin) / 1000));
     const tag = node.span.error ? "crit, " : "";
@@ -57,7 +57,7 @@ export function gantt(tree: Tree): string {
     const lines = sections.get(section) ?? [];
     sections.set(section, lines);
     lines.push(`    ${label(`${node.span.name} ${formatDuration(duration(node.span))}`)} :${tag}s${index}, ${start}, ${end}`);
-  });
+  }
 
   const body = [...sections].flatMap(([section, lines]) => [`    section ${label(section.span.name)}`, ...lines]);
   return ["```mermaid", "gantt", "    dateFormat x", "    axisFormat %M:%S", "    todayMarker off", ...body, "```"].join(
@@ -68,11 +68,11 @@ export function gantt(tree: Tree): string {
 /** The spans holding the most time of their own. */
 export function topTable(tree: Tree, count: number): string {
   const rows = [...tree.nodes]
-    .sort((a, b) => b.self - a.self)
+    .toSorted((a, b) => b.self - a.self)
     .slice(0, count)
     .map((node) => {
       const cells = [node.span.name, node.parent?.span.name ?? "", formatDuration(duration(node.span)), formatDuration(node.self)];
-      return `| ${cells.map((cell) => cell.replace(/\|/g, "\\|")).join(" | ")} |`;
+      return `| ${cells.map((cell) => cell.replaceAll('|', String.raw`\|`)).join(" | ")} |`;
     });
   return ["| span | parent | total | self |", "| --- | --- | ---: | ---: |", ...rows].join("\n");
 }

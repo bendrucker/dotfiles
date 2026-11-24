@@ -424,7 +424,7 @@ async function forgePass(
       idleExceeded: exceeds(idle, options.archiveAfter),
     });
 
-    const state = pr === undefined ? "-" : pr.number === "" ? pr.state : `${pr.state}#${pr.number}`;
+    const state = pr === undefined ? "-" : [pr.state, pr.number].filter((part) => part !== "").join("#");
     if (explaining) {
       report.reasons.push([dir(worktree), worktree.branch, state, decision.action, decision.reason]);
     }
@@ -542,8 +542,7 @@ export async function checklist(candidates: Candidate[], options: Options, repor
   // Labels are unique because worktree directory names are, which is what lets
   // a selection map back to the handle `wt remove` is given.
   const labels = alignColumns(candidates.map((candidate) => candidate.row));
-  const handles = new Map<string, Candidate>();
-  labels.forEach((label, index) => handles.set(label, candidates[index]));
+  const handles = new Map(labels.map((label, index) => [label, candidates[index]]));
 
   const selected = (
     await choose(labels, { limit: "none", header: "Select worktrees to remove (esc/none keeps all)" })
@@ -631,8 +630,8 @@ function dir(worktree: Worktree): string {
 // not installed exits nonzero, so a machine without worktrunk gets a prune that
 // removes nothing rather than one that aborts mid-sweep.
 async function silently(cmd: string[]): Promise<boolean> {
-  const run = await $`${cmd} < /dev/null`.nothrow().quiet();
-  return run.exitCode === 0;
+  const result = await $`${cmd} < /dev/null`.nothrow().quiet();
+  return result.exitCode === 0;
 }
 
 function remove(args: string[]): Promise<boolean> {

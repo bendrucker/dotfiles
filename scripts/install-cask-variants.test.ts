@@ -46,11 +46,11 @@ afterEach(() => {
 });
 
 function declared(...casks: string[]) {
-  box.write("declared", casks.length ? `${casks.join("\n")}\n` : "");
+  box.write("declared", casks.length > 0 ? `${casks.join("\n")}\n` : "");
 }
 
 function installed(...casks: string[]) {
-  box.write("installed", casks.length ? `${casks.join("\n")}\n` : "");
+  box.write("installed", casks.length > 0 ? `${casks.join("\n")}\n` : "");
 }
 
 function conflicts(cask: string) {
