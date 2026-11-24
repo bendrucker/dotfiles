@@ -63,7 +63,9 @@ function unhome(line: string): string {
 }
 
 export function normalizeVolatile(line: string): string {
-  return VOLATILE.reduce((text, [pattern, shape]) => text.replace(pattern, shape), unhome(line));
+  let text = unhome(line);
+  for (const [pattern, shape] of VOLATILE) text = text.replace(pattern, shape);
+  return text;
 }
 
 // The line of a log that says what went wrong. The last line carrying a word a

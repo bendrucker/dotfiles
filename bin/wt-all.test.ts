@@ -88,8 +88,8 @@ beforeEach(() => {
     WT_ALL_JOBS: "",
   };
 
-  for (const log of ["WT_LOG", "WT_ENV_LOG", "GUM_LOG"]) {
-    writeFileSync(variables[log] as string, "");
+  for (const logVar of ["WT_LOG", "WT_ENV_LOG", "GUM_LOG"]) {
+    writeFileSync(variables[logVar] as string, "");
   }
 
   proveStubs();
@@ -104,12 +104,12 @@ afterEach(() => {
 // repo on this machine.
 function proveStubs(): void {
   for (const name of Object.keys(STUBS)) {
-    const run = Bun.spawnSync({
+    const result = Bun.spawnSync({
       cmd: [name, "--stub-check"],
       env: { PATH: path },
       stdin: "ignore",
     });
-    const said = run.stdout.toString().trim();
+    const said = result.stdout.toString().trim();
     if (said !== `${name} stub`) {
       throw new Error(`the ${name} stub is not on PATH: --stub-check said ${JSON.stringify(said)}`);
     }
@@ -219,7 +219,7 @@ describe("jobs", () => {
 
 describe("discover", () => {
   function tree(...paths: string[]): void {
-    for (const path of paths) mkdirSync(join(root, path), { recursive: true });
+    for (const dir of paths) mkdirSync(join(root, dir), { recursive: true });
   }
 
   test("finds a repo by the .git directory it holds", () => {

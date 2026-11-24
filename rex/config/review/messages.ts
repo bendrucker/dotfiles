@@ -38,9 +38,12 @@ export function changes(events: Event[]): string {
   ].join("\n\n");
 }
 
+function flat(text: string): string {
+  return text.replaceAll("\n", " ⏎ ");
+}
+
 // One line per note, because each line of a watcher's stdout is one event.
 export function live(event: Event): string {
-  const flat = (text: string) => text.replaceAll("\n", " ⏎ ");
   const head = event.kind === "edited" || event.kind === "retracted" ? heading(event) : `[review: comment] ${heading(event)}`;
   return [head, ...parts(event)].map(flat).join(" | ");
 }

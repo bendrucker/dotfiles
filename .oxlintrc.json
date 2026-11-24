@@ -27,34 +27,8 @@
     "no-await-in-loop": "off",
     // Tests stub shell commands, whose `${VAR}` is shell syntax.
     "no-template-curly-in-string": "off",
-
-    // Not yet fixed. Delete a line once its violations are gone.
-    "no-shadow": "off",
-    "no-empty-function": "off",
-    "no-nested-ternary": "off",
-    "no-empty": "off",
-    "oxc/no-map-spread": "off",
-    "no-duplicate-imports": "off",
-    "unicorn/no-array-reduce": "off",
-    "unicorn/no-array-for-each": "off",
-    "unicorn/custom-error-definition": "off",
-    "unicorn/consistent-function-scoping": "off",
-    "typescript/explicit-module-boundary-types": "off",
-    "unicorn/prefer-spread": "off",
-    "unicorn/prefer-ternary": "off",
-    "no-useless-assignment": "off",
-    "no-unmodified-loop-condition": "off",
-    "unicorn/prefer-logical-operator-over-ternary": "off",
-    "unicorn/prefer-export-from": "off",
-    "unicorn/no-unreadable-array-destructuring": "off",
-    "unicorn/no-object-as-default-parameter": "off",
-    "unicorn/no-lonely-if": "off",
-    "promise/avoid-new": "off",
-    "import/no-namespace": "off",
-    "prefer-template": "off",
-    "prefer-const": "off",
-    "no-useless-return": "off",
-    "no-promise-executor-return": "off"
+    // Off in @bendrucker/oxlint-config from the next release; drop this line on that bump.
+    "oxc/no-map-spread": "off"
   },
   "overrides": [
     {

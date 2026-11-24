@@ -94,8 +94,8 @@ function parse<T>(schema: z.ZodType<T>, path: string): T {
 function matches(target: Target, path: string): boolean {
   try {
     if (target.doc !== undefined) return real(parse(DocStore, path).path) === real(target.doc);
-    const store = parse(DiffStore, path);
-    return real(store.repo) === real(target.cwd) && (store.scope.kind === "uncommitted") === (target.revisions === undefined);
+    const diffStore = parse(DiffStore, path);
+    return real(diffStore.repo) === real(target.cwd) && (diffStore.scope.kind === "uncommitted") === (target.revisions === undefined);
   } catch {
     return false;
   }
@@ -174,17 +174,19 @@ function diffAnchor(target: Target, comment: Comment): NoteRequest {
 
 // A doc note answers on its quote, nearest the line it was left on.
 function docAnchor(doc: string, path: string, comment: Comment): NoteRequest {
-  const note = parse(DocStore, path).annotations.find((a) => a.id === comment.id);
-  if (note === undefined) throw new Error(`no note ${comment.id} in ${path}`);
-  const start = note.anchor?.plannotator_tui?.source?.start;
+  const annotation = parse(DocStore, path).annotations.find((a) => a.id === comment.id);
+  if (annotation === undefined) throw new Error(`no note ${comment.id} in ${path}`);
+  const start = annotation.anchor?.plannotator_tui?.source?.start;
   let line: number | undefined;
   if (start !== undefined) {
     try {
       const before = readFileSync(doc).subarray(0, start).toString("utf8");
       line = before.split("\n").length;
-    } catch {}
+    } catch {
+      // An unreadable doc leaves the note anchored by its quote alone.
+    }
   }
-  return { file: doc, quote: note.anchor?.quote ?? undefined, line };
+  return { file: doc, quote: annotation.anchor?.quote ?? undefined, line };
 }
 
 function entries(): Entry[] {
@@ -239,15 +241,18 @@ export const reviewer: Reviewer = {
     return ["plannotator-tui", "review", ...(revisions === undefined ? [] : ["--base", revisions])];
   },
 
-  // plannotator-tui rewrites its store on every save.
-  async flush() {},
+  async flush() {
+    // plannotator-tui rewrites its store on every save.
+  },
 
   async comments(target, known, strict): Promise<Comments> {
     const path = store(target, known, strict);
     return { session: path, comments: target.doc === undefined ? diffComments(path) : docComments(target.cwd, path) };
   },
 
-  async reload() {},
+  async reload() {
+    // Nothing to do.
+  },
 
   // plannotator-tui adds the reply as its own note, which keeps it across saves.
   async reply(target, path, comment, text) {

@@ -31,10 +31,7 @@ export const THINGS_NOTES_LIMIT = 10_000;
 // The notes come back whole rather than as a `length(notes)`, which SQLite counts
 // in Unicode code points where Things counts UTF-16 code units. A note carrying
 // an emoji would read shorter than it is and the append would overrun the limit.
-const FIND_OPEN =
-  "select uuid as id, notes from TMTask" +
-  String.raw` where type = 0 and trashed = 0 and status = 0 and notes like ?1 escape '\'` +
-  " order by creationDate desc limit 1";
+const FIND_OPEN = String.raw`select uuid as id, notes from TMTask where type = 0 and trashed = 0 and status = 0 and notes like ?1 escape '\' order by creationDate desc limit 1`;
 
 // A marker goes into LIKE as a pattern, where _ matches any character and % any
 // run of them. Both are legal in a job name, and either would widen the match
@@ -178,7 +175,7 @@ export async function editTodo(edit: TodoEdit): Promise<boolean> {
 export async function authToken(): Promise<string | undefined> {
   const found = await $`security find-generic-password -a ${user()} -s ${KEYCHAIN_SERVICE} -w < /dev/null`.nothrow().quiet();
   const token = found.exitCode === 0 ? found.stdout.toString().trim() : "";
-  return token ? token : undefined;
+  return token || undefined;
 }
 
 function user(): string {

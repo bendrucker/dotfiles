@@ -6,6 +6,7 @@ import { $ } from "bun";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { byCodeUnit } from "#jobs/json";
 
 export interface InstalledPlugin {
   id: string;
@@ -58,7 +59,7 @@ export function claudePluginsDir(): string {
 export async function pluginInventory(): Promise<Inventory> {
   let rows: InstalledPlugin[];
   try {
-    rows = (await listedPlugins()).concat(enabledPlugins());
+    rows = [...(await listedPlugins()), ...enabledPlugins()];
   } catch (error) {
     return { ok: false, reason: describe(error) };
   }
@@ -202,7 +203,7 @@ function chooseInstallPaths(rows: InstalledPlugin[]): InstalledPlugin[] {
 
   // Ordered by code unit, so the rows do not move with the ambient locale's
   // collation.
-  const ids = [...paths.keys()].toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const ids = [...paths.keys()].toSorted(byCodeUnit);
   return ids.map((id) => ({ id, installPath: bestPath(paths.get(id) ?? []) }));
 }
 

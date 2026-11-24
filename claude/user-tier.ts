@@ -43,10 +43,8 @@ export function mergeSettings(base: Json, over: Json): Json {
 // the repo. An unchanged file is left alone, since Claude Code reloads on a write.
 export function writeUserTierSettings(repoDir: string, home: string): void {
   const marketplace = { extraKnownMarketplaces: { bendrucker: { source: { source: "directory", path: repoDir } } } };
-  const merged = [readJson(join(repoDir, "managed/settings.json")), marketplace].reduce(
-    mergeSettings,
-    readJson(join(repoDir, "user/settings.json")),
-  );
+  const user = readJson(join(repoDir, "user/settings.json"));
+  const merged = mergeSettings(mergeSettings(user, readJson(join(repoDir, "managed/settings.json"))), marketplace);
   const text = `${JSON.stringify(merged, null, 2)}\n`;
 
   const target = join(home, ".claude", "settings.json");

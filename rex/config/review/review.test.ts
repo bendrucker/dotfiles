@@ -1149,7 +1149,11 @@ ${onRun || ":"}`,
 
     const result = box.path(statePath(`${id}.result.json`));
     const [call] = plannotatorCalls();
-    expect(call.map((arg) => (arg === doc() ? "doc.md" : arg === result ? "result" : arg))).toEqual(args);
+    const labels = new Map([
+      [doc(), "doc.md"],
+      [result, "result"],
+    ]);
+    expect(call.map((arg) => labels.get(arg) ?? arg)).toEqual(args);
   });
 
   test("a store write claims a new diff note without waiting for the timer", async () => {

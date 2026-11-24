@@ -69,7 +69,7 @@ export function discover(root: string): Found[] {
 }
 
 export function latestVersion(found: Found[]): number {
-  return found.reduce((highest, migration) => Math.max(highest, migration.version), 0);
+  return Math.max(0, ...found.map((migration) => migration.version));
 }
 
 // Where the stamp lives on a real machine. The runner is handed the path

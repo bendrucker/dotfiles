@@ -166,9 +166,7 @@ export function columnize(rows: string[][]): string[] {
   const escaped = rows.map((row) => row.map(escapeCell));
   const widths: number[] = [];
   for (const row of escaped) {
-    row.forEach((cell, index) => {
-      widths[index] = Math.max(widths[index] ?? 0, cell.length);
-    });
+    for (const [index, cell] of row.entries()) widths[index] = Math.max(widths[index] ?? 0, cell.length);
   }
   return escaped.map((row) =>
     row
@@ -625,7 +623,7 @@ export async function run(
 
   let stdout = dryRun ? decisionTable(rows) : "";
 
-  let removeIds: string[] = [];
+  let removeIds: string[];
   if (stale.length === 0 || dryRun) {
     removeIds = [];
   } else if (force) {

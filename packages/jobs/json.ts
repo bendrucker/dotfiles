@@ -44,5 +44,6 @@ export async function canonicalJson(text: string, filter = "."): Promise<string 
 }
 
 export function byCodeUnit(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
 }

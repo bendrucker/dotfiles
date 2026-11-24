@@ -22,19 +22,19 @@ export interface Tools {
 
 // herdr's server runs under launchd, whose PATH holds neither aws nor the
 // Session Manager plugin, so both go in by absolute path.
-export function proxyCommand(tools: Tools): string {
-  const env = [`PATH=${dirname(tools.plugin)}:/usr/bin:/bin`];
-  if (tools.configFile) env.push(`AWS_CONFIG_FILE=${tools.configFile}`);
+export function proxyCommand(toolPaths: Tools): string {
+  const env = [`PATH=${dirname(toolPaths.plugin)}:/usr/bin:/bin`];
+  if (toolPaths.configFile) env.push(`AWS_CONFIG_FILE=${toolPaths.configFile}`);
   const proxy = [
     "/usr/bin/env",
     ...env,
-    tools.aws,
+    toolPaths.aws,
     "ssm",
     "start-session",
     "--profile",
-    tools.profile,
+    toolPaths.profile,
     "--region",
-    tools.region,
+    toolPaths.region,
     "--target",
     "%h",
     "--document-name",
@@ -53,7 +53,7 @@ function tailnetMatch(host: string, tailnetIp: string): string[] {
 
 // The -ssm alias always goes through Session Manager, which needs no secret
 // and survives a VM whose tailscale up failed.
-export function sshEntry(host: string, instanceId: string, tailnetIp: string | undefined, knownHosts: string, tools: Tools): string {
+export function sshEntry(host: string, instanceId: string, tailnetIp: string | undefined, knownHosts: string, toolPaths: Tools): string {
   const common = [
     "  User ec2-user",
     `  HostKeyAlias ${host}`,
@@ -67,7 +67,7 @@ export function sshEntry(host: string, instanceId: string, tailnetIp: string | u
     `  ControlPath ${quote(`${stateDir()}/%C`)}`,
     "  ControlPersist 10m",
   ];
-  const viaSsm = [`  HostName ${instanceId}`, `  ProxyCommand ${proxyCommand(tools)}`];
+  const viaSsm = [`  HostName ${instanceId}`, `  ProxyCommand ${proxyCommand(toolPaths)}`];
   return [
     ...(tailnetIp ? tailnetMatch(host, tailnetIp) : []),
     `Host ${host}`,

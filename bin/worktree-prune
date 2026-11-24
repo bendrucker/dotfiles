@@ -154,10 +154,10 @@ export function findingsTable(findings: Finding[]): string {
 }
 
 function columns(rows: string[][]): string {
-  const widths = rows.reduce(
-    (widest, row) => row.map((cell, index) => Math.max(widest[index] ?? 0, cell.length)),
-    [] as number[],
-  );
+  const widths: number[] = [];
+  for (const row of rows) {
+    for (const [index, cell] of row.entries()) widths[index] = Math.max(widths[index] ?? 0, cell.length);
+  }
   return rows
     .map((row) =>
       row

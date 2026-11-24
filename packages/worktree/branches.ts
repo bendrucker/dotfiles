@@ -54,6 +54,11 @@ async function archiveTarget(name: string, tip: string): Promise<string> {
   return `${target}-${short}`;
 }
 
+// Deletes a backed-up branch and archives a local-only one.
+async function removeBranch(action: Decision["action"], name: string, tip: string): Promise<boolean> {
+  return action === "delete" ? git(["branch", "-D", name]) : archive(name, tip);
+}
+
 async function archive(name: string, tip: string): Promise<boolean> {
   const target = await archiveTarget(name, tip);
   // A same-value update-ref writes no reflog entry, so recreate to restart expiry.
@@ -90,12 +95,7 @@ export async function pruneBranches(
     const decision = decideBranch(await isBackedUp(branch.tip, defaultName));
     if (explaining) report.reasons.push(["-", branch.name, "-", decision.action, decision.reason]);
 
-    const done = dryRun
-      ? true
-      : decision.action === "delete"
-        ? await git(["branch", "-D", branch.name])
-        : await archive(branch.name, branch.tip);
-    if (done) report.branches += 1;
+    if (dryRun || (await removeBranch(decision.action, branch.name, branch.tip))) report.branches += 1;
   }
 
   await expireArchives(dryRun, explaining, report);
@@ -106,7 +106,7 @@ async function expireArchives(dryRun: boolean, explaining: boolean, report: Bran
   const captured = await capture(["git", "for-each-ref", "refs/archive", "--format=%(refname)%09%(subject)"]);
   if (captured === "") return;
 
-  for (const line of captured.split("\n").filter((line) => line !== "")) {
+  for (const line of captured.split("\n").filter((entry) => entry !== "")) {
     const [ref = "", subject = ""] = line.split("\t");
     if (isSnapshot(ref, subject)) continue;
     const times = await reflogTimes(ref);

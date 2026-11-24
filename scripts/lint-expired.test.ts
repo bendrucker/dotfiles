@@ -19,8 +19,8 @@ afterEach(() => {
 });
 
 function git(args: string[]): void {
-  const run = Bun.spawnSync({ cmd: ["git", ...args], env: process.env, stdin: "ignore" });
-  if (run.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr.toString()}`);
+  const result = Bun.spawnSync({ cmd: ["git", ...args], env: process.env, stdin: "ignore" });
+  if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr.toString()}`);
 }
 
 // git grep only sees tracked files, so a fixture has to be staged.

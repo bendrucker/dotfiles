@@ -76,8 +76,9 @@ export const reviewer: Reviewer = {
       : ["tuicr", "--no-update-check", "-r", revisions, "-w"];
   },
 
-  // tuicr writes the session each time a comment is saved.
-  async flush() {},
+  async flush() {
+    // tuicr writes the session each time a comment is saved.
+  },
 
   async comments({ cwd }, known): Promise<Comments> {
     const slug = await session(cwd, known);
@@ -85,9 +86,10 @@ export const reviewer: Reviewer = {
     return { session: slug, comments: z.array(TuicrComment).parse(raw).map(normalize) };
   },
 
-  // tuicr/config.toml sets diff_watch_interval_ms, and tuicr polls the session
-  // for comments added from outside.
-  async reload() {},
+  async reload() {
+    // tuicr/config.toml sets diff_watch_interval_ms, and tuicr polls the session
+    // for comments added from outside.
+  },
 
   async reply({ cwd }, slug, comment, text) {
     await tuicr(["review", "add", "--session", slug, "--username", AGENT_AUTHOR, ...location(comment), text], cwd);

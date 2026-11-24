@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
 import { recorded, recordingStub } from "#harness/recorder";
-import type { Context } from "#migrations/migration";
-import { exists } from "#migrations/migration";
+import { type Context, exists } from "#migrations/migration";
 import { RETIRED, up } from "./202610080003-launchd-agents-to-mise";
 
 let box: Sandbox;

@@ -118,13 +118,13 @@ export function renderMarkdown(profile: Profile, top = 8): string {
     "| # | Function | Calls | Self (ms) | Self % | Total (ms) |",
     "|---|----------|------:|----------:|--------|-----------:|",
   );
-  rows.forEach((row, index) => {
+  for (const [index, row] of rows.entries()) {
     const pct = `${bar(row.selfPct, maxPct)} ${row.selfPct.toFixed(1)}%`;
     out.push(
       `| ${index + 1} | ${escapeCell(row.name)} | ${row.calls} | ` +
         `${row.selfMs.toFixed(2)} | ${pct} | ${row.totalMs.toFixed(2)} |`,
     );
-  });
+  }
   out.push("");
 
   const slices = rows.slice(0, top);

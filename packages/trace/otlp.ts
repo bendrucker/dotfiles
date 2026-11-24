@@ -19,13 +19,29 @@ function nanos(us: number): string {
   return String(BigInt(Math.round(us)) * 1000n);
 }
 
+interface Span {
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  name: string;
+  kind: number;
+  startTimeUnixNano: string;
+  endTimeUnixNano: string;
+  attributes: Attribute[];
+  status: { code: number; message?: string };
+}
+
+export interface Otlp {
+  resourceSpans: { resource: { attributes: Attribute[] }; scopeSpans: { scope: { name: string }; spans: Span[] }[] }[];
+}
+
 const STATUS_UNSET = 0;
 const STATUS_ERROR = 2;
 const KIND_INTERNAL = 1;
 
 /** The OTLP/JSON export: what Jaeger's "Upload JSON" and otel-desktop-viewer read. */
-export function toOtlp(tree: Tree, resource: Record<string, string>) {
-  const spans = tree.nodes.map(({ span, id, parent }) => {
+export function toOtlp(tree: Tree, resource: Record<string, string>): Otlp {
+  const spans = tree.nodes.map(({ span, id, parent }): Span => {
     const attributes: Attribute[] = [attribute("trace.source", span.source)];
     if (span.pid !== undefined) attributes.push(attribute("process.pid", span.pid));
     if (span.status !== undefined) attributes.push(attribute("process.exit_code", span.status));

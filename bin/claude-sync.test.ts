@@ -276,20 +276,20 @@ function writeRepoSettings(settings: unknown, indent = 2): void {
 
 // The repo `~/.claude/settings.json` links into.
 function buildRepo(root: string): void {
-  const repo = join(root, "repo");
+  const repoDir = join(root, "repo");
   const origin = join(root, "origin.git");
   run(["git", "init", "-q", "--bare", "-b", "main", origin]);
-  run(["git", "init", "-q", "-b", "main", repo]);
-  run(["git", "-C", repo, "config", "user.email", "spec@example.test"]);
-  run(["git", "-C", repo, "config", "user.name", "Spec"]);
-  run(["git", "-C", repo, "config", "commit.gpgsign", "false"]);
-  run(["git", "-C", repo, "remote", "add", "origin", origin]);
-  mkdirSync(join(repo, "user"));
-  writeFileSync(join(repo, "user", "settings.json"), `${JSON.stringify(settingsJson(HOOK), null, 2)}\n`);
-  run(["git", "-C", repo, "add", "-A"]);
-  run(["git", "-C", repo, "commit", "-q", "-m", "settings"]);
-  run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
-  run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+  run(["git", "init", "-q", "-b", "main", repoDir]);
+  run(["git", "-C", repoDir, "config", "user.email", "spec@example.test"]);
+  run(["git", "-C", repoDir, "config", "user.name", "Spec"]);
+  run(["git", "-C", repoDir, "config", "commit.gpgsign", "false"]);
+  run(["git", "-C", repoDir, "remote", "add", "origin", origin]);
+  mkdirSync(join(repoDir, "user"));
+  writeFileSync(join(repoDir, "user", "settings.json"), `${JSON.stringify(settingsJson(HOOK), null, 2)}\n`);
+  run(["git", "-C", repoDir, "add", "-A"]);
+  run(["git", "-C", repoDir, "commit", "-q", "-m", "settings"]);
+  run(["git", "-C", repoDir, "push", "-q", "-u", "origin", "main"]);
+  run(["git", "-C", repoDir, "remote", "set-head", "origin", "main"]);
 }
 
 const copyRepo = fixture(buildRepo);
@@ -354,13 +354,13 @@ beforeEach(() => {
   // take back. rex writes through the link and moshi-hook replaces it, as the
   // real ones do.
   const hookLog = join(sandbox, "hooks.log");
-  const replaceLink = (name: string) =>
+  const replaceNamed = (name: string) =>
     `jq '. + {"${name}":1}' "$HOME/.claude/settings.json" >"$HOME/.claude/settings.json.new" && mv "$HOME/.claude/settings.json.new" "$HOME/.claude/settings.json"`;
   writeStub(
     join(stubs, "herdr"),
     [
       `printf '%s %s\\n' "herdr" "$*" >>"${hookLog}"`,
-      `if [ -n "$HERDR_REPLACES" ]; then ${replaceLink("herdr")}; else printf '{"herdr":1}\\n' >"$AGENT_HOOK_REPO/user/settings.json"; fi`,
+      `if [ -n "$HERDR_REPLACES" ]; then ${replaceNamed("herdr")}; else printf '{"herdr":1}\\n' >"$AGENT_HOOK_REPO/user/settings.json"; fi`,
       `[ -n "$HERDR_LOCKS" ] && chmod 0444 "$AGENT_HOOK_REPO/user/settings.json"`,
       '[ -n "$HERDR_STDERR" ] && cat "$HERDR_STDERR" >&2',
       '[ -n "$HERDR_FAILS" ] && exit 1',
@@ -372,7 +372,7 @@ beforeEach(() => {
     join(stubs, "moshi-hook"),
     [
       `printf '%s %s\\n' "moshi-hook" "$*" >>"${hookLog}"`,
-      replaceLink("moshi-hook"),
+      replaceNamed("moshi-hook"),
       "exit 0",
     ].join("\n"),
   );

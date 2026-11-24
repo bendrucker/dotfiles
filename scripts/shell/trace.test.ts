@@ -51,7 +51,7 @@ describe.each(shells)("trace.sh under %s", (_, interpreter) => {
     const r = traced("trace_begin outer\ntrace_begin inner\ntrace_end\ntrace_end");
     expect(r.status).toBe(0);
     const events = lines();
-    expect(events.map(([kind, , , , name]) => [kind, name])).toEqual([
+    expect(events.map((event) => [event[0], event[4]])).toEqual([
       ["B", "outer"],
       ["B", "inner"],
       ["E", ""],
@@ -71,7 +71,8 @@ describe.each(shells)("trace.sh under %s", (_, interpreter) => {
   test("trace_end keeps the status of the step it closes", () => {
     const r = traced("trace_begin step\n(exit 3)\ntrace_end\necho $?");
     expect(r.stdout.trim()).toBe("3");
-    expect(lines()[1]?.slice(0, 1).concat(lines()[1]?.[3] ?? "")).toEqual(["E", "3"]);
+    const end = lines()[1] ?? [];
+    expect([end[0], end[3]]).toEqual(["E", "3"]);
   });
 
   test("a set -e failure writes an X line carrying the exit status", () => {
