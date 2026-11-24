@@ -1,7 +1,7 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`rex/config/review plannotator claim redelivers an edited diff note 1`] = `
-"[review: comment edited] src/app.ts:2 (id local_1) | > two | fix it now | Reply here in chat. This note takes no review_reply.
+"[review: comment edited] src/app.ts:2 (id local_1) | > two | fix it now
 "
 `;
 

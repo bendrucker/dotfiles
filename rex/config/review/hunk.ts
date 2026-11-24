@@ -19,6 +19,8 @@ const Note = z.object({
   newRange: Range.nullish(),
   body: z.string(),
   author: z.string().nullish(),
+  createdAt: z.string().nullish(),
+  updatedAt: z.string().nullish(),
 });
 
 const Notes = z.object({ comments: z.array(Note) });
@@ -67,6 +69,7 @@ function normalize(note: z.infer<typeof Note>): Comment {
     endLine: range?.[1],
     side: note.newRange ? "new" : note.oldRange ? "old" : undefined,
     body: note.body,
+    version: note.updatedAt ?? note.createdAt ?? undefined,
   };
 }
 

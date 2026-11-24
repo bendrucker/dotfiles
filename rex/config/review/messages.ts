@@ -39,12 +39,10 @@ export function changes(events: Event[]): string {
 }
 
 // One line per note, because each line of a watcher's stdout is one event.
-// `threads` is false when the reviewer can't show the agent's reply.
-export function live(event: Event, threads = true): string {
-  const flat = (text: string) => text.replaceAll('\n', " ⏎ ");
+export function live(event: Event): string {
+  const flat = (text: string) => text.replaceAll("\n", " ⏎ ");
   const head = event.kind === "edited" || event.kind === "retracted" ? heading(event) : `[review: comment] ${heading(event)}`;
-  const chat = threads || event.kind === "retracted" ? [] : ["Reply here in chat. This note takes no review_reply."];
-  return [head, ...parts(event), ...chat].map(flat).join(" | ");
+  return [head, ...parts(event)].map(flat).join(" | ");
 }
 
 // The last line of the events file, which tells the watcher to stop.

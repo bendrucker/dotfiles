@@ -59,14 +59,15 @@ describe("rex/config/review hunk extension", () => {
     expect(hunk.commands.size).toBe(0);
   });
 
-  test.each<{ name: string; event: string; draft: boolean; signals: string[] }>([
-    { name: "a new note", event: "note_created", draft: false, signals: ["SIGUSR1"] },
-    { name: "a saved edit", event: "note_edited", draft: false, signals: ["SIGUSR1"] },
-    { name: "a draft edit", event: "note_edited", draft: true, signals: [] },
-  ])("$name signals run: $signals", ({ event, draft, signals }) => {
+  test.each<{ name: string; kind: string; source: string; signals: string[] }>([
+    { name: "a new note", kind: "created", source: "user", signals: ["SIGUSR1"] },
+    { name: "an edit", kind: "updated", source: "user", signals: ["SIGUSR1"] },
+    { name: "a deletion", kind: "removed", source: "user", signals: ["SIGUSR1"] },
+    { name: "an agent's note", kind: "created", source: "agent", signals: [] },
+  ])("$name signals run: $signals", ({ kind, source, signals }) => {
     const hunk = fakeHunk();
 
-    hunk.emit(event, { note: { draft } });
+    hunk.emit("note_changed", { kind, note: { id: "user:1", source, summary: "fix", createdAt: "2026-11-21T00:00:00.000Z" } });
 
     expect(hunk.signals).toEqual(signals);
   });

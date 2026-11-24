@@ -8,8 +8,8 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@bendrucker/oxlint-config": "0.1.0",
-    "oxlint": "1.94.0"
+    "@bendrucker/oxlint-config": "0.1.1",
+    "oxlint": "1.95.0"
   },
   "imports": {
     "#harness": "./packages/harness/index.ts",
