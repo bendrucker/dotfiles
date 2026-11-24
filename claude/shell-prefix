@@ -2,4 +2,21 @@
 # Runs agent tool calls, hooks, and MCP servers below terminals in CPU and disk
 # priority. Children inherit it. The command is written for the shell Claude
 # Code picked, which CLAUDE_CODE_SHELL overrides.
+#
+# Hooks and MCP servers start no shell config, so they inherit whatever PATH
+# launched Claude Code, including mise install directories activated for that
+# shell's cwd. Swap those for the shims, which resolve each project's version,
+# as mise/path.zsh does for the Bash tool's snapshot.
+mise_data="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
+shimmed="$mise_data/shims"
+set -f
+IFS=:
+for dir in $PATH; do
+  case $dir in
+    "$mise_data/installs/"* | "$mise_data/shims") ;;
+    *) shimmed="$shimmed:$dir" ;;
+  esac
+done
+unset IFS
+export PATH="$shimmed"
 exec taskpolicy -c utility -d utility "${CLAUDE_CODE_SHELL:-${SHELL:-/bin/sh}}" -c "$1"
