@@ -1,0 +1,17 @@
+# Keeps the Plannotator Inbox running. Loads only where mise/miserc.toml.tera
+# finds the plannotator binary and an Inbox the person has already turned on,
+# since a first run turns it on. The Inbox publishes itself over the tailnet
+# when its config says so, which needs tailscale on PATH. It has no port
+# setting and reuses the port its record names.
+#
+# A second "inbox --no-open" exits 0 at once while another Inbox runs, so the
+# agent waits out an Inbox an agent started in the background instead of
+# respawning every ThrottleInterval, then takes over when that one stops.
+[bootstrap.macos.launchd.agents.plannotator-inbox]
+program = "/bin/zsh"
+args = ["-c", 'p="$HOME/.local/bin/plannotator"; while "$p" inbox status >/dev/null 2>&1; do sleep 30; done; exec "$p" inbox --no-open']
+run_at_load = true
+keep_alive = true
+stdout_path = "~/Library/Logs/plannotator-inbox.log"
+stderr_path = "~/Library/Logs/plannotator-inbox.log"
+environment = { PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" }

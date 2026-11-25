@@ -15,6 +15,8 @@ env_conf_d = true
 {% set tailgate_bin = [env.HOME, ".local", "share", "mise", "shims", "tailgate"] | join_path %}
 {% set actions_sandbox_config = [xdg_config_home, "actions-sandbox", "env"] | join_path %}
 {% set container_bin = [get_env(name="HOMEBREW_PREFIX", default="/opt/homebrew"), "bin", "container"] | join_path %}
+{% set plannotator_bin = [env.HOME, ".local", "bin", "plannotator"] | join_path %}
+{% set plannotator_inbox = [env.HOME, ".plannotator", "inbox", "inbox.json"] | join_path %}
 
 env = [
   # [bootstrap.repos] has no os filter.
@@ -28,6 +30,10 @@ env = [
   # Only the machine meant to take jobs has the runner config, and the agent
   # would restart forever without the container tool it runs jobs in.
   {% if container_bin is file and actions_sandbox_config is file %}"actions-sandbox",{% endif %}
+
+  # plannotator installs itself outside this repo. Starting the Inbox turns it
+  # on, so the agent waits until the person has run it once.
+  {% if plannotator_bin is file and plannotator_inbox is file %}"plannotator-inbox",{% endif %}
 
   # The nightly jobs need ~/.dotfiles to be a clone of its own. A symlink means
   # it points into a development checkout they must not sync or prune.
