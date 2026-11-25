@@ -6,7 +6,7 @@
 //   review run ID
 //   review send|claim|approve|dismiss BLOCK
 //   review wait ID
-//   review reply BLOCK COMMENT_ID|PATH:LINE TEXT
+//   review reply BLOCK COMMENT_ID TEXT
 //
 // Couples a reviewer in a split to an agent's pane. BLOCK is either
 // pane. REX_SESSION names the session. SIGUSR1 makes a live `run` claim new
@@ -21,7 +21,7 @@ import { approved, changes, closed, dismissed, ended, failed, live as liveLine }
 import { Client } from "./rex";
 import { reconcile, unanswered, type Event } from "./delivery";
 import { blockquote, quoter } from "./quote";
-import { AGENT_AUTHOR, type Comment, type Comments, type Reviewer } from "./reviewer";
+import type { Comment, Comments, Reviewer } from "./reviewer";
 import {
   appendEvent,
   load,
@@ -447,18 +447,11 @@ async function wait(rex: Client, id: string): Promise<void> {
   await rex.focus(current.review);
 }
 
-// A reviewer's own send names a note by `path:line`, not its id.
-function at(comments: Comment[], target: string): Comment | undefined {
-  const place = /^(.+):(\d+)$/.exec(target);
-  if (place === null) return undefined;
-  return comments.findLast((c) => c.author !== AGENT_AUTHOR && c.path === place[1] && c.startLine === Number(place[2]));
-}
-
 async function reply(block: string, id: string, text: string): Promise<void> {
   const review = find(block);
   const reviewer = reviewers[review.reviewer];
   const { session, comments } = await reviewer.comments(review, review.reviewerSession);
-  const comment = comments.find((c) => c.id === id) ?? at(comments, id);
+  const comment = comments.find((c) => c.id === id);
   if (comment === undefined) throw new Error(`no comment ${id} in this review`);
   await reviewer.reply(review, session, comment, text);
 }
