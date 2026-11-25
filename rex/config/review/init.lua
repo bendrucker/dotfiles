@@ -178,7 +178,7 @@ rex.action{
 rex.action{
   name = "review_reply",
   title = "Review: Reply",
-  description = "Answer a review comment from the agent's pane.",
+  description = "Answer a review comment, by its id or path:line, from the agent's pane.",
   category = "Review",
   args = { id = "string", text = "string" },
   run = function(ctx, args)

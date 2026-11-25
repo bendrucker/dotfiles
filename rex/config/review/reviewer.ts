@@ -15,6 +15,8 @@ export interface Comment {
   body: string;
   // Changes when the note is edited. A note without one is never redelivered.
   version?: string;
+  // The reviewer already sent this version to the agent itself.
+  sent?: boolean;
 }
 
 // What a review covers: a diff in `cwd`, or one document.
@@ -37,6 +39,10 @@ export interface Comments {
 export interface Reviewer {
   // Notes vanish when the reviewer exits, so `run` snapshots them while it runs.
   ephemeral: boolean;
+  // The reviewer sends notes to the agent itself, so `run` streams none and Send refuses.
+  sends?(target: Target): boolean;
+  // The environment that points that send at the agent process `pid` in `block`.
+  sendTo?(block: string, pid: number): Record<string, string>;
   // `result` is where a gated reviewer writes its decision.
   command(target: Target, result: string): string[];
   flush(block: string): Promise<void>;
