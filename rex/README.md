@@ -16,13 +16,13 @@ Select lines with `v` or a drag and press `c` to leave a note (in Hunk, `c` on a
 
 | Key | Action | The agent receives |
 | --- | --- | --- |
-| `cmd+s` | Review: Send | `[review: changes]` with each new comment, its location and quoted code, and how to answer it |
+| `cmd+s` | Review: Send (Hunk) | `[review: changes]` with each new comment, its location and quoted code, and how to answer it |
 | `shift+cmd+a` | Review: Approve | `[review: approved]` |
 | `shift+cmd+x` | Review: Dismiss | `[review: dismissed]`, which it treats as a success |
 
 Each message is submitted to the agent and explains itself, without a prompt or rule on the agent's side. Send focuses the agent. The agent fixes each comment and answers it with `rex do review_reply id=<id> text=<reply>`. When its turn ends, focus returns to the review, with the agent's answers shown as `Claude` replies under each note. Hunk keeps notes only while its window is open. Approve and Dismiss close the review. Quitting the reviewer or closing its pane approves once every note has a reply, and otherwise sends `[review: closed]` with what is still open.
 
-In a live plannotator-tui review, `run` polls its store under `~/.plannotator/clients/plannotator-tui/` every second and delivers each saved note. Hunk loads `config/review/hunk-extension.ts`. In a live Hunk review, saving a note signals `run` to deliver it at once, and `ctrl+g` holds notes until pressed again, when the backlog arrives in order. The status line shows whether notes are live or held, how many delivered notes are open or answered, and when Claude is working. `run` keeps that status in `<agent-block>.status.json` beside the events file.
+plannotator-tui sends notes itself: its `E` pastes them into the agent's pane, and `run` points it there, so it skips its agent picker. Send refuses in a plannotator-tui review, and `run` streams none of its notes in live mode. Approve and closing the pane skip notes it already sent. Hunk loads `config/review/hunk-extension.ts`. In a live Hunk review, saving a note signals `run` to deliver it at once, and `ctrl+g` holds notes until pressed again, when the backlog arrives in order. The status line shows whether notes are live or held, how many delivered notes are open or answered, and when Claude is working. `run` keeps that status in `<agent-block>.status.json` beside the events file.
 
 Outside a review's two panes, Rex sends the keys to the program. A review records its panes in `~/.local/state/rex-review/blocks/`, which `init.lua` checks on each key press.
 

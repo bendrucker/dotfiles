@@ -103,6 +103,14 @@ export class Client {
     }
   }
 
+  // The process in the block's foreground, which plannotator-tui checks is still there before it sends.
+  async foregroundPid(block: string): Promise<number | undefined> {
+    const process = z
+      .object({ foreground: z.object({ pid: z.number() }).nullish() })
+      .parse(JSON.parse(await rex(["block", "call", "-s", this.session, "-b", block, "process"])));
+    return process.foreground?.pid;
+  }
+
   // The state of the record the program itself reports. Claude Code's
   // subagents report their own records, each with an id.
   async programState(block: string): Promise<string> {

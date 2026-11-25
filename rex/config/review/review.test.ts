@@ -48,6 +48,8 @@ beforeEach(() => {
 states=${quote(box.path("program-states"))}
 if [ "$1 $2" = "block ls" ]; then
   if [ -f ${quote(box.path("live-blocks"))} ]; then cat ${quote(box.path("live-blocks"))}; else printf '%s\n' ${agent} ${reviewBlock}; fi
+elif [ "$1 $2 $7" = "block call process" ]; then
+  echo '{"foreground":{"pid":4242}}'
 elif [ "$1 $2" = "block call" ] && [ -f "$states" ]; then
   s=$(head -1 "$states")
   if [ "$(wc -l < "$states")" -gt 1 ]; then tail -n +2 "$states" > "$states.next" && mv "$states.next" "$states"; fi
@@ -1099,6 +1101,7 @@ while [ $# -gt 0 ]; do
   if [ "$1" = --result-file ] && [ -f "$decision" ]; then cp "$decision" "$2"; fi
   shift
 done
+printf '%s %s %s' "$PLANNOTATOR_TUI_REX_BLOCK" "$PLANNOTATOR_TUI_REX_PID" "$REX_SESSION" > ${quote(box.path("plannotator-env"))}
 ${onRun || ":"}`,
     );
   }
@@ -1402,6 +1405,54 @@ ${onRun || ":"}`,
     expect(exec(["run", id]).status).toBe(0);
 
     expectDelivered(message);
+  });
+
+  test("run points plannotator-tui's own send at the agent", () => {
+    diffReview({ mode: "batch" });
+
+    expect(exec(["run", id], { REX_SESSION: "default" }).status).toBe(0);
+
+    expect(box.read("plannotator-env")).toBe(`${agent} 4242 sess`);
+  });
+
+  test("send refuses, since plannotator-tui sends its own notes", () => {
+    diffReview();
+    diffStore(diffNote());
+
+    const result = exec(["send", agent]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Press E");
+    expect(pasted()).toEqual([]);
+  });
+
+  const sentAt = (ms: number) => [{ at: new Date(ms).toISOString(), target: "claude", annotation_ids: ["local_1"] }];
+
+  test.each<{ name: string; deliveries: object[]; archived: boolean; message: string; absent?: string }>([
+    {
+      name: "a note it sent counts as delivered",
+      deliveries: sentAt(1),
+      archived: false,
+      message: "These earlier comments have no reply yet: id local_1.",
+      absent: "## src/app.ts",
+    },
+    {
+      name: "a sent note it archived counts as delivered",
+      deliveries: sentAt(1),
+      archived: true,
+      message: "These earlier comments have no reply yet: id local_1.",
+      absent: "retracted",
+    },
+    { name: "a note edited after its send is new", deliveries: sentAt(0), archived: false, message: "## src/app.ts:2 (id local_1)" },
+  ])("quitting: $name", ({ deliveries, archived, message, absent }) => {
+    diffReview({ mode: "batch" });
+    const placed = archived ? { annotations: [], archived: [diffNote()] } : { annotations: [diffNote()], archived: [] };
+    box.write(diffStorePath, JSON.stringify({ repo: realpathSync(work), scope: { kind: "uncommitted" }, ...placed, deliveries }));
+
+    expect(exec(["run", id]).status).toBe(0);
+
+    expectDelivered(message);
+    if (absent !== undefined) expect(pasted()[0]).not.toContain(absent);
   });
 
   test.each<{ name: string; args: string[]; reviewer?: Review["reviewer"]; doc?: string; status: number }>([

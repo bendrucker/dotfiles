@@ -4,43 +4,62 @@ import { isAbsolute, join, relative } from "node:path";
 import { z } from "zod";
 import { AGENT_AUTHOR, type Comment, type Comments, type Reviewer, type Target } from "./reviewer";
 
+// Each send plannotator-tui made to an agent. `at` is RFC 3339.
+const Deliveries = z.array(z.object({ at: z.string(), annotation_ids: z.array(z.string()) })).default([]);
+
+const DiffNote = z.object({
+  id: z.string(),
+  filePath: z.string().nullish(),
+  lineStart: z.number().nullish(),
+  lineEnd: z.number().nullish(),
+  side: z.enum(["old", "new"]).nullish(),
+  text: z.string(),
+  authorName: z.string().nullish(),
+  createdAt: z.number().nullish(),
+  plannotator_tui: z.object({ updatedAt: z.number().nullish() }).nullish(),
+});
+
+// `archived` holds sent notes the reviewer finished, which still count as sent.
 const DiffStore = z.object({
   repo: z.string(),
   scope: z.object({ kind: z.string(), base: z.string().optional() }),
-  annotations: z.array(
-    z.object({
-      id: z.string(),
-      filePath: z.string().nullish(),
-      lineStart: z.number().nullish(),
-      lineEnd: z.number().nullish(),
-      side: z.enum(["old", "new"]).nullish(),
-      text: z.string(),
-      authorName: z.string().nullish(),
-      createdAt: z.number().nullish(),
-      plannotator_tui: z.object({ updatedAt: z.number().nullish() }).nullish(),
-    }),
-  ),
+  annotations: z.array(DiffNote),
+  archived: z.array(DiffNote).default([]),
+  deliveries: Deliveries,
+});
+
+const DocNote = z.object({
+  id: z.string(),
+  body: z.string(),
+  anchor: z
+    .object({
+      quote: z.string().nullish(),
+      // A byte offset into the document as it was when the note was left.
+      plannotator_tui: z.object({ source: z.object({ start: z.number() }).nullish() }).nullish(),
+    })
+    .nullish(),
+  author_name: z.string().nullish(),
+  created_at: z.string().nullish(),
+  updated_at: z.string().nullish(),
 });
 
 const DocStore = z.object({
   path: z.string(),
-  annotations: z.array(
-    z.object({
-      id: z.string(),
-      body: z.string(),
-      anchor: z
-        .object({
-          quote: z.string().nullish(),
-          // A byte offset into the document as it was when the note was left.
-          plannotator_tui: z.object({ source: z.object({ start: z.number() }).nullish() }).nullish(),
-        })
-        .nullish(),
-      author_name: z.string().nullish(),
-      created_at: z.string().nullish(),
-      updated_at: z.string().nullish(),
-    }),
-  ),
+  annotations: z.array(DocNote),
+  archived: z.array(DocNote).default([]),
+  deliveries: Deliveries,
 });
+
+// Whether plannotator-tui's own send covers a note as of `updated`, in ms: its
+// last send that named the note came at or after the edit.
+function sentBy(deliveries: z.infer<typeof Deliveries>): (id: string, updated: number | undefined) => boolean {
+  const last = new Map<string, number>();
+  for (const d of deliveries) for (const id of d.annotation_ids) last.set(id, Date.parse(d.at));
+  return (id, updated) => {
+    const at = last.get(id);
+    return at !== undefined && !Number.isNaN(at) && (updated === undefined || updated <= at);
+  };
+}
 
 // A running plannotator-tui's entry in its registry. It takes notes over loopback TCP.
 const Entry = z.object({ pid: z.number(), port: z.number(), token: z.string(), files: z.array(z.string()) });
@@ -128,6 +147,11 @@ function author(name: string | null | undefined): string {
   return name === AGENT_AUTHOR ? AGENT_AUTHOR : "user";
 }
 
+function isoMs(iso: string | null | undefined): number | undefined {
+  const ms = iso === null || iso === undefined ? Number.NaN : Date.parse(iso);
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
 function version(stamp: string | number | null | undefined): string | undefined {
   return stamp === null || stamp === undefined ? undefined : String(stamp);
 }
@@ -144,8 +168,10 @@ function thread(comments: Comment[]): Comment[] {
 }
 
 function diffComments(path: string): Comment[] {
+  const record = parse(DiffStore, path);
+  const sent = sentBy(record.deliveries);
   return thread(
-    parse(DiffStore, path).annotations.map((a) => ({
+    [...record.archived, ...record.annotations].map((a) => ({
       id: a.id,
       author: author(a.authorName),
       path: a.filePath ?? undefined,
@@ -154,6 +180,7 @@ function diffComments(path: string): Comment[] {
       side: a.side ?? undefined,
       body: a.text,
       version: version(a.plannotator_tui?.updatedAt ?? a.createdAt),
+      sent: sent(a.id, a.plannotator_tui?.updatedAt ?? a.createdAt ?? undefined),
     })),
   );
 }
@@ -162,14 +189,16 @@ function docComments(cwd: string, path: string): Comment[] {
   const doc = parse(DocStore, path);
   const inside = relative(real(cwd), real(doc.path));
   const shown = inside.startsWith("..") || isAbsolute(inside) ? doc.path : inside;
+  const sent = sentBy(doc.deliveries);
   return thread(
-    doc.annotations.map((a) => ({
+    [...doc.archived, ...doc.annotations].map((a) => ({
       id: a.id,
       author: author(a.author_name),
       path: shown,
       quote: a.anchor?.quote ?? undefined,
       body: a.body,
       version: version(a.updated_at ?? a.created_at),
+      sent: sent(a.id, isoMs(a.updated_at ?? a.created_at)),
     })),
   );
 }
@@ -244,6 +273,11 @@ async function note(entry: Entry, request: object): Promise<Answer> {
 
 export const reviewer: Reviewer = {
   ephemeral: false,
+
+  // plannotator-tui's E pastes into the block and presses Enter, refusing while the agent is at a prompt.
+  sendTo(block, pid) {
+    return { PLANNOTATOR_TUI_REX_BLOCK: block, PLANNOTATOR_TUI_REX_PID: String(pid), PLANNOTATOR_TUI_DELIVER_AGENT: "claude" };
+  },
 
   command({ base, doc }, result) {
     if (doc !== undefined) return ["plannotator-tui", doc, "--gate", "--json", "--require-approval", "--result-file", result];
