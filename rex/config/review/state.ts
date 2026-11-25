@@ -129,22 +129,60 @@ export function load(id: string): Review | undefined {
   return Review.parse(JSON.parse(text));
 }
 
-export function resolve(block: string): Review | undefined {
-  let id: string;
+function all(): Review[] {
+  let names: string[];
+  try {
+    names = readdirSync(stateDir());
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => n.endsWith(".json") && !n.endsWith(".result.json"))
+    .flatMap((name) => {
+      try {
+        return load(name.slice(0, -".json".length)) ?? [];
+      } catch {
+        return [];
+      }
+    });
+}
+
+// The reviews open beside an agent's pane, read from the review files rather
+// than the agent's block file, which stores a single id.
+export function reviewsFor(agent: string): Review[] {
+  return all().filter((r) => r.agent === agent);
+}
+
+// A review pane resolves to its own review, and an agent's pane to every review beside it.
+export function resolveAll(block: string): Review[] {
+  let id: string | undefined;
   try {
     id = readFileSync(blockPath(block), "utf8").trim();
   } catch {
-    return undefined;
+    return [];
   }
-  const review = load(id);
-  if (review === undefined) rmSync(blockPath(block), { force: true });
-  return review;
+  const own = load(id);
+  if (own?.review === block) return [own];
+  const found = reviewsFor(block);
+  if (found.length === 0) rmSync(blockPath(block), { force: true });
+  return found;
+}
+
+// The one review a block names. An agent with several open names none.
+export function resolve(block: string): Review | undefined {
+  const found = resolveAll(block);
+  if (found.length > 1) throw new Error(`${found.length} reviews are open for ${block}. Run this from a review's pane.`);
+  return found[0];
 }
 
 export function remove(review: Review): void {
-  for (const block of blocks(review)) rmSync(blockPath(block), { force: true });
-  rmSync(statusPath(review.agent), { force: true });
   rmSync(reviewPath(review.id), { force: true });
+  if (review.review !== undefined) rmSync(blockPath(review.review), { force: true });
+  const rest = reviewsFor(review.agent);
+  if (rest.length === 0) {
+    rmSync(blockPath(review.agent), { force: true });
+    rmSync(statusPath(review.agent), { force: true });
+  } else writeAtomic(blockPath(review.agent), rest[0].id);
 }
 
 // Drops reviews and block files naming a block that no longer exists, as
@@ -175,6 +213,6 @@ export function prune(live: Set<string>): void {
     const sidecar = SIDECARS.find((suffix) => name.endsWith(suffix));
     if (sidecar !== undefined) {
       if (!live.has(name.slice(0, -sidecar.length))) rmSync(blockPath(name), { force: true });
-    } else if (!live.has(name) || resolve(name) === undefined) rmSync(blockPath(name), { force: true });
+    } else if (!live.has(name) || resolveAll(name).length === 0) rmSync(blockPath(name), { force: true });
   }
 }

@@ -17,7 +17,7 @@ import { mkdirSync, rmSync, watch, type FSWatcher } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { approved, changes, closed, dismissed, ended, failed, live as liveLine } from "./messages";
+import { approved, changes, closed, dismissed, ended, failed, live as liveLine, scoped, subject } from "./messages";
 import { Client } from "./rex";
 import { reconcile, unanswered, type Event } from "./delivery";
 import { blockquote, quoter } from "./quote";
@@ -30,6 +30,8 @@ import {
   remove,
   resetEvents,
   resolve,
+  resolveAll,
+  reviewsFor,
   save,
   stateDir,
   statusPath,
@@ -43,7 +45,7 @@ import { reviewer as tuicr } from "./tuicr";
 
 const reviewers: Record<Review["reviewer"], Reviewer> = { hunk, plannotator, tuicr };
 // tuicr stays as the fallback. Set this to "tuicr" to switch back.
-const DEFAULT_REVIEWER: Review["reviewer"] = "hunk";
+const DEFAULT_REVIEWER: Review["reviewer"] = "plannotator";
 
 // How long a wait for the agent's next status goes before reading it again.
 const WAIT_POLL_MS = Number(process.env.REVIEW_POLL_MS ?? 5000);
@@ -79,21 +81,26 @@ async function open(rex: Client, agent: string, opening: Opening): Promise<void>
     // rex unreachable: nothing to prune.
   }
 
-  const existing = resolve(agent);
-  if (existing?.review !== undefined) {
-    try {
-      await rex.focus(existing.review);
-      return;
-    } catch {
-      remove(existing);
+  // Held across the split, so a concurrent open of the same target finds this one.
+  await locked(`open-${agent}`, async () => {
+    const reviews = reviewsFor(agent);
+    const existing = reviews.find((r) => subject(r) === subject(opening));
+    if (existing?.review !== undefined) {
+      try {
+        await rex.focus(existing.review);
+        return;
+      } catch {
+        remove(existing);
+      }
     }
-  }
 
-  resetEvents(agent);
-  const review: Review = { id: randomUUID(), session: rex.session, agent, ...opening, delivered: [], held: false };
-  save(review);
-  const block = await rex.newSplit(agent, opening.cwd, [import.meta.path, "run", review.id]);
-  save({ ...review, review: block });
+    // The agent's watcher still reads the events of the reviews already open.
+    if (reviews.every((r) => r.id === existing?.id)) resetEvents(agent);
+    const review: Review = { id: randomUUID(), session: rex.session, agent, ...opening, delivered: [], held: false };
+    save(review);
+    const block = await rex.newSplit(agent, opening.cwd, [import.meta.path, "run", review.id]);
+    save({ ...review, review: block });
+  });
 }
 
 // Removes the state before closing the pane. `run` then has nothing to dismiss.
@@ -105,15 +112,16 @@ async function finish(
   timeoutMs = SUBMIT_WAIT_MS,
 ): Promise<void> {
   save({ ...review, outcome });
+  const others = reviewsFor(review.agent).filter((r) => r.id !== review.id);
   try {
-    await rex.submit(review.agent, message, timeoutMs);
+    await rex.submit(review.agent, scoped(message, review, others), timeoutMs);
   } catch (error) {
     save(review);
     throw error;
   }
   await locked(review.id, async () => {
     remove(review);
-    appendEvent(review.agent, ended(outcome));
+    appendEvent(review.agent, ended(outcome, review, reviewsFor(review.agent).length > 0));
   });
   // Closing the focused review returns focus to the pane before it, which can be one other than the agent.
   await rex.focus(review.agent);
@@ -370,8 +378,12 @@ async function send(rex: Client, block: string): Promise<void> {
 }
 
 async function claimLines(block: string): Promise<void> {
-  const { events } = await claim(find(block).id);
-  for (const event of events) console.log(liveLine(event));
+  const reviews = resolveAll(block);
+  if (reviews.length === 0) throw new Error(`no review is open for ${block}`);
+  for (const { id } of reviews) {
+    const { events } = await claim(id);
+    for (const event of events) console.log(liveLine(event));
+  }
 }
 
 async function approve(rex: Client, block: string): Promise<void> {
@@ -431,13 +443,17 @@ async function wait(rex: Client, id: string): Promise<void> {
   await rex.focus(current.review);
 }
 
+// The agent replies from its own pane, so the comment picks the review.
 async function reply(block: string, id: string, text: string): Promise<void> {
-  const review = find(block);
-  const reviewer = reviewers[review.reviewer];
-  const { session, comments } = await reviewer.comments(review, review.reviewerSession);
-  const comment = comments.find((c) => c.id === id);
-  if (comment === undefined) throw new Error(`no comment ${id} in this review`);
-  await reviewer.reply(review, session, comment, text);
+  const reviews = resolveAll(block);
+  if (reviews.length === 0) throw new Error(`no review is open for ${block}`);
+  for (const review of reviews) {
+    const reviewer = reviewers[review.reviewer];
+    const { session, comments } = await reviewer.comments(review, review.reviewerSession);
+    const comment = comments.find((c) => c.id === id);
+    if (comment !== undefined) return reviewer.reply(review, session, comment, text);
+  }
+  throw new Error(`no comment ${id} in ${reviews.length === 1 ? "this review" : "these reviews"}`);
 }
 
 // Only plannotator-tui reviews a document, so --doc picks it.
@@ -446,6 +462,12 @@ function chooseReviewer(name: string | undefined, doc: string | undefined): Revi
   if (name !== "hunk" && name !== "plannotator") throw new UsageError("--reviewer is hunk or plannotator");
   if (doc !== undefined && name !== "plannotator") throw new UsageError("--doc needs --reviewer plannotator");
   return name;
+}
+
+// plannotator-tui takes a base, so a range like main..HEAD reviews from its left side.
+function revisionsFor(reviewer: Review["reviewer"], revisions: string | undefined): string | undefined {
+  if (reviewer !== "plannotator" || revisions === undefined) return revisions;
+  return /^(.+?)\.{2,3}/.exec(revisions)?.[1] ?? revisions;
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -465,16 +487,18 @@ async function main(argv: string[]): Promise<void> {
   const rex = rexClient();
 
   switch (command) {
-    case "open":
+    case "open": {
       if (values.cwd === undefined) throw new UsageError("open needs --cwd");
       if (values.mode !== "live" && values.mode !== "batch") throw new UsageError("--mode is live or batch");
+      const reviewer = chooseReviewer(values.reviewer, values.doc);
       return open(rex, target, {
         cwd: values.cwd,
         mode: values.mode,
-        reviewer: chooseReviewer(values.reviewer, values.doc),
-        revisions: values.revisions,
+        reviewer,
+        revisions: revisionsFor(reviewer, values.revisions),
         doc: values.doc === undefined ? undefined : resolvePath(values.cwd, values.doc),
       });
+    }
     case "run":
       return run(rex, target);
     case "send":

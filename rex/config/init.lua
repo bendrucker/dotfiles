@@ -137,8 +137,8 @@ local function answered(value, why, detail)
 end
 
 local review_reviewers = {
-  { id = "hunk", title = "Hunk", subtitle = "Review a diff", icon = "code" },
   { id = "plannotator", title = "Plannotator", subtitle = "Review a diff in plannotator-tui", icon = "document" },
+  { id = "hunk", title = "Hunk", subtitle = "Review a diff in Hunk", icon = "code" },
 }
 
 local review_modes = {
@@ -177,9 +177,9 @@ end
 rex.action{
   name = "review_changes",
   title = "Review Changes",
-  description = "Review an agent pane's changes in Hunk, split to its right. Send, Approve, or Dismiss hands the outcome to the agent.",
+  description = "Review an agent pane's changes or a doc in Plannotator, or the diff in Hunk, split to its right. Send, Approve, or Dismiss hands the outcome to the agent.",
   category = "Git",
-  keywords = "hunk diff code review agent claude",
+  keywords = "plannotator hunk diff doc code review agent claude",
   args = { block = "string?", revisions = "string?", mode = "string?", reviewer = "string?", doc = "string?" },
   run = function(ctx, args)
     -- An agent's `rex do` passes what it wants and must never wait on a prompt.

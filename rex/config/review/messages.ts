@@ -1,5 +1,6 @@
 import type { Event } from "./delivery";
 import type { Comment } from "./reviewer";
+import type { Review } from "./state";
 
 const HUMAN = "Ben";
 
@@ -48,9 +49,29 @@ export function live(event: Event): string {
   return [head, ...parts(event)].map(flat).join(" | ");
 }
 
-// The last line of the events file, which tells the watcher to stop.
-export function ended(outcome: string): string {
-  return `[review: closed] ${outcome}`;
+type Target = Pick<Review, "doc" | "revisions">;
+
+// A review's document path, or the diff, keys it within its agent.
+export function subject({ doc, revisions }: Target): string {
+  return doc ?? (revisions === undefined ? "diff" : `diff ${revisions}`);
+}
+
+function described(review: Target): string {
+  if (review.doc !== undefined) return review.doc;
+  return review.revisions === undefined ? "the diff" : `the diff of ${review.revisions}`;
+}
+
+// The closed line is the events file's last, which tells the watcher to stop.
+// An ended line marks one review of several, and the watcher keeps reading.
+export function ended(outcome: string, review: Target, othersOpen: boolean): string {
+  return othersOpen ? `[review: ended] ${outcome} ${review.doc ?? "diff"}` : `[review: closed] ${outcome}`;
+}
+
+// Says which review an outcome covers while another is still open.
+export function scoped(message: string, review: Target, others: Target[]): string {
+  if (others.length === 0) return message;
+  const open = others.map(described).join(" and ");
+  return `${message}\n\nThis covers only the review of ${described(review)}. The review of ${open} is still open, so wait for its outcome before you treat the work as approved.`;
 }
 
 export function approved(events: Event[] = []): string {

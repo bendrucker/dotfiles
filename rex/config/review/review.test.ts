@@ -449,8 +449,8 @@ describe("rex/config/review open", () => {
       agent,
       review: reviewBlock,
       cwd: work,
-      reviewer: "hunk",
-      revisions: "HEAD~2..HEAD",
+      reviewer: "plannotator",
+      revisions: "HEAD~2",
       delivered: [],
       mode: "batch",
     });
@@ -480,6 +480,91 @@ describe("rex/config/review open", () => {
 
     expect(result.status).toBe(2);
     expect(apiCalls("session.new_split")).toEqual([]);
+  });
+
+  test.each<{ name: string; reviewer: Review["reviewer"]; revisions: string; stored: string }>([
+    { name: "plannotator takes the left side of a two-dot range", reviewer: "plannotator", revisions: "main..HEAD", stored: "main" },
+    { name: "plannotator takes the left side of a three-dot range", reviewer: "plannotator", revisions: "main...HEAD", stored: "main" },
+    { name: "plannotator passes a bare base through", reviewer: "plannotator", revisions: "main", stored: "main" },
+    { name: "hunk keeps the range", reviewer: "hunk", revisions: "main..HEAD", stored: "main..HEAD" },
+  ])("$name", ({ reviewer, revisions, stored }) => {
+    expect(exec(["open", agent, "--cwd", work, "--reviewer", reviewer, "--revisions", revisions]).status).toBe(0);
+
+    expect(saved(box.read(statePath(join("blocks", agent)))).revisions).toBe(stored);
+  });
+});
+
+describe("rex/config/review several reviews on one agent", () => {
+  const diffBlock = "block:diff";
+  const docPath = () => join(work, "doc.md");
+
+  beforeEach(() => {
+    box.write("live-blocks", [agent, reviewBlock, diffBlock].join("\n"));
+    seed(review({ id: "diff", review: diffBlock, reviewer: "plannotator", revisions: "main" }));
+    box.write(eventsFile, "[review: comment] src/app.ts:2 (id d1) | fix\n");
+  });
+
+  test("open splits a doc review beside an open diff review and keeps the events file", () => {
+    expect(exec(["open", agent, "--cwd", work, "--doc", "doc.md"]).status).toBe(0);
+
+    expect(apiCalls("session.new_split")).toHaveLength(1);
+    expect(events()).toBe("[review: comment] src/app.ts:2 (id d1) | fix\n");
+    const docId = box.read(statePath(join("blocks", reviewBlock)));
+    expect(saved(docId)).toMatchObject({ agent, review: reviewBlock, doc: docPath() });
+    expect(saved("diff").review).toBe(diffBlock);
+  });
+
+  test("open focuses the review already open on the same target", () => {
+    expect(exec(["open", agent, "--cwd", work, "--revisions", "main..HEAD"]).status).toBe(0);
+
+    expect(apiCalls("session.new_split")).toEqual([]);
+    expect(rexCalls()).toContainEqual(["focus", "-s", "sess", diffBlock]);
+  });
+
+  test("ending one review appends an ended line and scopes its message, and ending the last closes", () => {
+    seed(review({ id: "doc", review: reviewBlock, reviewer: "plannotator", doc: docPath(), mode: "batch" }));
+
+    expect(exec(["dismiss", reviewBlock]).status).toBe(0);
+
+    const [message] = pasted();
+    expect(message.replaceAll(work, "<work>")).toMatchInlineSnapshot(`
+      "[review: dismissed] Ben closed the review without feedback. Treat this as a successful outcome and continue.
+
+      This covers only the review of <work>/doc.md. The review of the diff of main is still open, so wait for its outcome before you treat the work as approved."
+    `);
+    expect(exists("doc.json")).toBe(false);
+    expect(exists(join("blocks", reviewBlock))).toBe(false);
+    expect(box.read(statePath(join("blocks", agent)))).toBe("diff");
+
+    expect(exec(["dismiss", diffBlock]).status).toBe(0);
+
+    expect(pasted()[1]).toBe("[review: dismissed] Ben closed the review without feedback. Treat this as a successful outcome and continue.");
+    expect(events().replaceAll(work, "<work>")).toMatchInlineSnapshot(`
+      "[review: comment] src/app.ts:2 (id d1) | fix
+      [review: ended] dismissed <work>/doc.md
+      [review: closed] dismissed
+      "
+    `);
+    expect(exists(join("blocks", agent))).toBe(false);
+  });
+
+  test("an action on the agent's pane fails while several reviews are open", () => {
+    seed(review({ id: "doc", review: reviewBlock, reviewer: "plannotator", doc: docPath(), mode: "batch" }));
+
+    const result = exec(["approve", agent]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("2 reviews are open for block:agent");
+    expect(pasted()).toEqual([]);
+  });
+
+  test("a block file naming one review still finds the other", () => {
+    seed(review({ id: "doc", review: reviewBlock, reviewer: "plannotator", doc: docPath(), mode: "batch" }));
+    box.write(statePath(join("blocks", agent)), "doc");
+
+    expect(exec(["dismiss", diffBlock]).status).toBe(0);
+
+    expect(events()).toBe("[review: comment] src/app.ts:2 (id d1) | fix\n[review: ended] dismissed diff\n");
   });
 });
 
