@@ -5,13 +5,10 @@ import { recorded, recordingStub } from "#harness/recorder";
 import {
   type Agent,
   candidates,
-  FILTERS,
   findAgent,
   homeSession,
+  items,
   type Pane,
-  parsePick,
-  type Pick,
-  rows,
   showsAgent,
   type Status,
   statusOf,
@@ -99,40 +96,31 @@ describe("statusOf", () => {
   });
 });
 
-test("rows align names and statuses, color the status, and dim a home-relative directory", () => {
+test("items name each session by id, with its home-relative directory, status, and whether a pane shows it", () => {
   const agents = [
-    makeAgent({ name: "a", state: "blocked", status: "waiting", waitingFor: "input needed", cwd: "/home/u/src/repo" }),
-    makeAgent({ name: "longer-name", cwd: "/elsewhere" }),
+    makeAgent({ name: "a", state: "blocked", status: "waiting", waitingFor: "input needed", cwd: "/home/u/src/repo", pid: 9 }),
+    makeAgent({ id: undefined, name: "b", cwd: "/elsewhere" }),
   ];
-  expect(rows(agents, "/home/u").map((row) => row.text)).toMatchInlineSnapshot(`
+  expect(items(agents, [makePane({ pid: 9 })], "/home/u")).toMatchInlineSnapshot(`
     [
-      "0	a          	\x1B[1;31mneeds input: input needed\x1B[0m	\x1B[2m~/src/repo\x1B[0m",
-      "1	longer-name	\x1B[33mworking                  \x1B[0m	\x1B[2m/elsewhere\x1B[0m",
+      {
+        "detail": "needs input: input needed",
+        "group": "waiting",
+        "id": "cf37276a",
+        "shown": true,
+        "subtitle": "~/src/repo",
+        "title": "a",
+      },
+      {
+        "detail": "working",
+        "group": "working",
+        "id": "cf37276a-0794-4a4e-b841-b970e2645a07",
+        "shown": false,
+        "subtitle": "/elsewhere",
+        "title": "b",
+      },
     ]
   `);
-});
-
-test("filters narrow to sessions needing input, hide finished ones, or keep all", () => {
-  const agents = [
-    makeAgent({ name: "asking", state: "blocked", status: "waiting" }),
-    makeAgent({ name: "busy" }),
-    makeAgent({ name: "finished", state: "done", status: "idle" }),
-  ];
-  const list = rows(agents, "/home/u");
-  const kept = FILTERS.map((filter) => [filter.key, list.filter((row) => filter.keep(row.group)).map((row) => row.text.split("\t")[0])]);
-  expect(Object.fromEntries(kept)).toEqual({ "ctrl-w": ["0"], "ctrl-o": ["0", "1"], "ctrl-a": ["0", "1", "2"] });
-});
-
-describe("parsePick", () => {
-  test.each<{ name: string; out: string; pick: Pick | undefined }>([
-    { name: "enter opens a tab", out: "\n2\tfix-thing  ·  busy\n", pick: { index: 2, placement: "tab" } },
-    { name: "ctrl-v splits a pane", out: "ctrl-v\n0\tfix-thing\n", pick: { index: 0, placement: "pane" } },
-    { name: "ctrl-f floats", out: "ctrl-f\n1\tfix-thing\n", pick: { index: 1, placement: "float" } },
-    { name: "a key with no row", out: "ctrl-v\n", pick: undefined },
-    { name: "an unknown key", out: "ctrl-x\n0\tfix-thing\n", pick: undefined },
-  ])("$name", ({ out, pick }) => {
-    expect(parsePick(out)).toEqual(pick);
-  });
 });
 
 describe("homeSession", () => {
@@ -265,24 +253,14 @@ describe("main", () => {
     });
   });
 
-  test("the picker's ctrl-v splits a pane beside the given block", () => {
-    stubRex(view(["block:here"]), { "block:here": { foreground: { pid: 5 } } });
-    box.stub("ps", "echo '    5 -zsh'");
-    box.stub("fzf", `cat > '${box.path("rows")}'; printf 'ctrl-v\\n0\\tfix-thing\\n'`);
-    expect(attach("--pick", "--beside", "block:here").status).toBe(0);
-    expect(box.read("rows").split("\t").slice(0, 2)).toEqual(["0", "fix-thing"]);
-    expect(rexCalls().map((call) => call.slice(0, 2))).toEqual([["rex", "split"]]);
-  });
-
-  test.each<{ name: string; exit: number; status: number }>([
-    { name: "dismissing the picker", exit: 130, status: 0 },
-    { name: "a query with no match", exit: 1, status: 0 },
-    { name: "a broken picker", exit: 2, status: 1 },
-  ])("$name opens nothing and exits $status", ({ exit, status }) => {
-    stubRex(view([]), {});
-    box.stub("ps", "true");
-    box.stub("fzf", `exit ${exit}`);
-    expect(attach("--pick").status).toBe(status);
+  test("--list prints the candidates as picker items", () => {
+    stubRex(view(["block:b"]), { "block:b": { foreground: { pid: 77 } } });
+    box.stub("ps", "echo '   77 claude attach cf37276a'");
+    const result = attach("--list");
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([
+      { id: "cf37276a", title: "fix-thing", subtitle: box.path("repo"), detail: "working", group: "working", shown: true },
+    ]);
     expect(rexCalls()).toEqual([]);
   });
 
@@ -295,15 +273,6 @@ describe("main", () => {
     const result = attach("cf37276a", ...args);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(error);
-  });
-
-  test("fails the picker when there is nothing to attach", () => {
-    box.write("agents.json", JSON.stringify([makeAgent({ kind: "interactive", pid: 1 })]));
-    stubRex(view([]), {});
-    box.stub("ps", "true");
-    const result = attach("--pick");
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("no Claude sessions to attach");
   });
 
   test.each<{ placement: string; created: string[]; unread: string }>([

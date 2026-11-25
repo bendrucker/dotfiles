@@ -5,11 +5,10 @@
 // for its repo and panes or floats beside --beside (default $REX_BLOCK).
 //
 //   rex-claude-attach <id|name> [--as tab|pane|float] [--beside BLOCK] [--no-focus]
-//   rex-claude-attach --pick [--beside BLOCK]
+//   rex-claude-attach --list
 
-import { mkdtemp, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, sep } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { $ } from "bun";
 import { z } from "zod";
@@ -99,30 +98,31 @@ export function candidates(agents: Agent[], panes: Pane[]): Agent[] {
     .toSorted((a, b) => rank(a) - rank(b) || (a.name ?? "").localeCompare(b.name ?? ""));
 }
 
-const COLOR: Record<Group, string> = { waiting: "1;31", working: "33", failed: "31", idle: "2", done: "32" };
-
-function paint(code: string, text: string): string {
-  return `\x1b[${code}m${text}\x1b[0m`;
-}
-
-export interface Row {
-  group: Group;
-  text: string;
-}
-
 function nameOf(agent: Agent): string {
   return agent.name ?? agent.id ?? agent.sessionId ?? "";
 }
 
-// Each fzf row leads with the agent's index, which the picker hides, and pads name and status into columns.
-export function rows(agents: Agent[], home: string): Row[] {
-  const entries = agents.map((agent) => ({ agent, name: nameOf(agent), status: statusOf(agent) }));
-  const nameWidth = Math.max(0, ...entries.map((e) => e.name.length));
-  const statusWidth = Math.max(0, ...entries.map((e) => e.status.text.length));
-  return entries.map(({ agent, name, status }, i) => {
-    const cwd = agent.cwd.startsWith(home + sep) ? `~${agent.cwd.slice(home.length)}` : agent.cwd;
-    const text = [i, name.padEnd(nameWidth), paint(COLOR[status.group], status.text.padEnd(statusWidth)), paint("2", cwd)];
-    return { group: status.group, text: text.join("\t") };
+// A rex.ui.pick item, plus the fields the action filters and places by.
+export interface Item {
+  id: string;
+  title: string;
+  subtitle: string;
+  detail: string;
+  group: Group;
+  shown: boolean;
+}
+
+export function items(agents: Agent[], panes: Pane[], home: string): Item[] {
+  return agents.map((agent) => {
+    const status = statusOf(agent);
+    return {
+      id: agent.id ?? agent.sessionId ?? nameOf(agent),
+      title: nameOf(agent),
+      subtitle: agent.cwd.startsWith(home + sep) ? `~${agent.cwd.slice(home.length)}` : agent.cwd,
+      detail: status.text,
+      group: status.group,
+      shown: panes.some((p) => showsAgent(p, agent)),
+    };
   });
 }
 
@@ -252,89 +252,14 @@ async function attach(placement: Placement, request: Attach): Promise<Unread | u
   return (placement === "pane" ? inPane : inFloat)(request, beside);
 }
 
-// Enter ends an fzf pick with an empty key.
-const KEYS = new Map<string, Placement>([
-  ["", "tab"],
-  ["ctrl-v", "pane"],
-  ["ctrl-f", "float"],
-]);
-
-export interface Pick {
-  index: number;
-  placement: Placement;
-}
-
-// fzf with --expect prints the key that ended the pick (empty for Enter), then the picked row.
-export function parsePick(out: string): Pick | undefined {
-  const [key = "", row = ""] = out.split("\n");
-  const placement = KEYS.get(key);
-  const index = Number(row.split("\t")[0]);
-  return placement === undefined || row === "" || !Number.isInteger(index) ? undefined : { index, placement };
-}
-
-// Each key reloads the list with the rows its filter keeps and shows the filter's label in the prompt.
-export const FILTERS = [
-  { key: "ctrl-w", label: "needs input", keep: (group: Group): boolean => group === "waiting" },
-  { key: "ctrl-o", label: "active", keep: (group: Group): boolean => group !== "done" },
-  { key: "ctrl-a", label: "all", keep: (): boolean => true },
-];
-
-const HEADER = [
-  [...KEYS].map(([key, placement]) => `${key || "enter"}: ${placement}`),
-  FILTERS.map((filter) => `${filter.key}: ${filter.label}`),
-]
-  .map((line) => line.join(" · "))
-  .join("\n");
-
-function lines(list: Row[]): string {
-  return list.map((row) => `${row.text}\n`).join("");
-}
-
-async function runFzf(list: Row[], dir: string): Promise<string | undefined> {
-  const binds = await Promise.all(
-    FILTERS.map(async (filter, i) => {
-      const file = join(dir, String(i));
-      await Bun.write(file, lines(list.filter((row) => filter.keep(row.group))));
-      return `${filter.key}:reload(cat '${file}')+change-prompt(${filter.label}> )`;
-    }),
-  );
-  const expect = [...KEYS.keys()].filter((key) => key !== "");
-  const input = new Response(lines(list));
-  const result = await $`fzf --ansi --delimiter=${"\t"} --with-nth=2.. --nth=1 --reverse --expect=${expect.join(",")} --header=${HEADER} --bind=${binds.join(",")} < ${input}`.nothrow();
-  // fzf exits 1 with no match and 130 on Esc. Anything else is a failure.
-  if (result.exitCode === 1 || result.exitCode === 130) return undefined;
-  if (result.exitCode !== 0) throw new Error(`fzf exited ${result.exitCode}: ${result.stderr.toString().trim()}`);
-  return result.stdout.toString();
-}
-
-interface Found {
-  agent: Agent;
-  placement: Placement;
-}
-
-async function pickAgent(agents: Agent[], panes: Pane[]): Promise<Found | undefined> {
-  const options = candidates(agents, panes);
-  // The picker's float closes on success before anyone reads a message.
-  if (options.length === 0) throw new Error("no Claude sessions to attach");
-  const dir = await mkdtemp(join(tmpdir(), "rex-claude-attach-"));
-  try {
-    const out = await runFzf(rows(options, homedir()), dir);
-    const pick = out === undefined ? undefined : parsePick(out);
-    const agent = pick && options[pick.index];
-    return agent && { agent, placement: pick.placement };
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
-async function findQueried(agents: Agent[], query: string | undefined): Promise<Found | undefined> {
+async function findQueried(agents: Agent[], query: string | undefined): Promise<Agent | undefined> {
   if (query === undefined) {
-    await log("error", "usage: rex-claude-attach <id|name> [--as tab|pane|float] [--beside BLOCK] [--no-focus] | --pick");
+    await log("error", "usage: rex-claude-attach <id|name> [--as tab|pane|float] [--beside BLOCK] [--no-focus] | --list");
     return undefined;
   }
   const agent = findAgent(agents, query);
   if (agent === undefined) await log("error", `no Claude session matches ${query}`);
-  return agent && { agent, placement: "tab" };
+  return agent;
 }
 
 async function bringUp(agent: Agent, panes: Pane[], placement: Placement, focus: boolean, beside?: Pane): Promise<void> {
@@ -356,7 +281,7 @@ export async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
     options: {
-      pick: { type: "boolean" },
+      list: { type: "boolean" },
       "no-focus": { type: "boolean" },
       as: { type: "string" },
       beside: { type: "string" },
@@ -370,11 +295,14 @@ export async function main(argv: string[]): Promise<number> {
   }
   try {
     const [agents, panes] = await Promise.all([listAgents(), listPanes()]);
-    const found = values.pick ? await pickAgent(agents, panes) : await findQueried(agents, positionals[0]);
-    // Dismissing the picker isn't an error.
-    if (found === undefined) return values.pick ? 0 : 1;
+    if (values.list) {
+      console.log(JSON.stringify(items(candidates(agents, panes), panes, homedir())));
+      return 0;
+    }
+    const agent = await findQueried(agents, positionals[0]);
+    if (agent === undefined) return 1;
     const beside = panes.find((p) => p.block === (values.beside ?? process.env.REX_BLOCK));
-    await bringUp(found.agent, panes, chosen?.data ?? found.placement, !values["no-focus"], beside);
+    await bringUp(agent, panes, chosen?.data ?? "tab", !values["no-focus"], beside);
   } catch (error) {
     await log("error", error instanceof Error ? error.message : String(error));
     return 1;
