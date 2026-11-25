@@ -34,7 +34,7 @@ export function changes(events: Event[]): string {
   return [
     `[review: changes] ${HUMAN} left ${count(events)} on your changes.`,
     ...blocks(events),
-    `Fix each one, then answer it with \`rex do review_reply id=<id> text="<reply>"\`. Don't commit. End your turn when every comment has an answer, and ${HUMAN} will see the review again.`,
+    `Fix each one, then answer it with JSON on stdin:\n\n\`\`\`sh\nrex do review_reply --args - <<'EOF'\n{"id": "<id>", "text": "<reply>"}\nEOF\n\`\`\`\n\nDon't commit. End your turn when every comment has an answer, and ${HUMAN} will see the review again.`,
   ].join("\n\n");
 }
 

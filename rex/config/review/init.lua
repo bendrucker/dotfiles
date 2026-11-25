@@ -74,8 +74,59 @@ local function branch_base(dir)
   return fork
 end
 
+-- A prompt's answer, or nil when the person cancelled it.
+local function answered(value, why, detail)
+  if value == nil and why ~= "cancelled" then
+    error("no answer: " .. tostring(why) .. (detail and (" " .. detail) or ""), 0)
+  end
+  return value
+end
+
+local review_apps = {
+  { id = "plannotator", title = "Plannotator", subtitle = "Review a diff in plannotator-tui", icon = "document" },
+  { id = "hunk", title = "Hunk", subtitle = "Review a diff", icon = "code" },
+}
+
+local review_modes = {
+  { id = "batch", title = "Batch", subtitle = "Hold notes until Review: Send" },
+  { id = "live", title = "Live", subtitle = "Deliver each note as you save it" },
+}
+
+-- From the palette, asks for each argument left out. Returns nil when cancelled.
+local function ask_review(args, has_base)
+  local asked = {}
+  for key, value in pairs(args) do
+    asked[key] = value
+  end
+  if asked.app == nil and asked.doc == nil then
+    asked.app = answered(rex.ui.pick{ title = "Reviewer", items = review_apps })
+    if asked.app == nil then return nil end
+  end
+  if not has_base and asked.base == nil and asked.doc == nil then
+    local base = answered(rex.ui.input{
+      title = "Base",
+      placeholder = "A ref like main. Empty reviews uncommitted changes.",
+      confirm = "Review",
+    })
+    if base == nil then return nil end
+    asked.base = base:match("^%s*(.-)%s*$")
+    if asked.base == "" then asked.base = nil end
+  end
+  -- Only Hunk has a live mode.
+  if asked.mode == nil and asked.app == "hunk" then
+    asked.mode = answered(rex.ui.pick{ title = "Review mode", items = review_modes })
+    if asked.mode == nil then return nil end
+  end
+  return asked
+end
+
 -- `base` computes the base ref from the pane's directory.
 local function open(ctx, args, base)
+  -- An agent's `rex do` passes what it wants and must never wait on a prompt.
+  if ctx.origin == "palette" then
+    args = ask_review(args, base ~= nil)
+    if args == nil then return end
+  end
   local block = args.block or ctx.block_id
   local dir = block and pane_dir(block)
   if dir == nil then

@@ -97,4 +97,34 @@ rex.action{
   end,
 }
 
+-- The server runs commands without its own directory on PATH, where
+-- terminal-browser would otherwise look for rex.
+local rex_bin_dir = os.getenv("HOME")
+  .. "/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS"
+
+-- terminal-browser splits the block itself, which lets it open a tab in a
+-- browser already beside the block instead of a second browser.
+rex.action{
+  name = "terminal_browser",
+  title = "Open Browser",
+  description = "Open terminal-browser in a split to the right of the focused pane, or a new tab in the browser already there.",
+  category = "Browser",
+  keywords = "terminal-browser web browser url html preview split",
+  run = function(ctx)
+    if ctx.block_id == nil then
+      error("no focused pane to split", 0)
+    end
+    local r, err = rex.exec(zsh_argv('exec terminal-browser open --split right', "terminal-browser", {}), {
+      env = { REX_BLOCK = ctx.block_id, REX_SESSION = ctx.session_id, REX_BIN_DIR = rex_bin_dir },
+      timeout = 25,
+    })
+    if r == nil then
+      error(err, 0)
+    end
+    if not r.ok then
+      error(r.stderr ~= "" and r.stderr or ("terminal-browser exited " .. r.code), 0)
+    end
+  end,
+}
+
 dofile(config_dir .. "/review/init.lua")
