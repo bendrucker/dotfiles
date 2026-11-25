@@ -6,7 +6,7 @@ import { AGENT_AUTHOR, type Comment, type Comments, type Reviewer, type Target }
 
 const DiffStore = z.object({
   repo: z.string(),
-  scope: z.object({ kind: z.string() }),
+  scope: z.object({ kind: z.string(), base: z.string().optional() }),
   annotations: z.array(
     z.object({
       id: z.string(),
@@ -91,11 +91,20 @@ function parse<T>(schema: z.ZodType<T>, path: string): T {
   return schema.parse(JSON.parse(readFileSync(path, "utf8")));
 }
 
+// plannotator-tui names a branch scope's base by its short symbolic name, else as given.
+function scopeBase(cwd: string, ref: string): string {
+  const out = Bun.spawnSync(["git", "rev-parse", "--abbrev-ref", ref], { cwd, stderr: "ignore" });
+  return (out.success ? out.stdout.toString().trim() : "") || ref;
+}
+
 function matches(target: Target, path: string): boolean {
   try {
     if (target.doc !== undefined) return real(parse(DocStore, path).path) === real(target.doc);
-    const diffStore = parse(DiffStore, path);
-    return real(diffStore.repo) === real(target.cwd) && (diffStore.scope.kind === "uncommitted") === (target.revisions === undefined);
+    const { repo, scope } = parse(DiffStore, path);
+    if (real(repo) !== real(target.cwd)) return false;
+    if (target.base === undefined && scope.kind === "uncommitted") return true;
+    // With no uncommitted changes, a plain review opens the branch from origin/HEAD instead.
+    return scope.kind === "branch" && scope.base === scopeBase(target.cwd, target.base ?? "origin/HEAD");
   } catch {
     return false;
   }
@@ -233,20 +242,12 @@ async function note(entry: Entry, request: object): Promise<Answer> {
   }
 }
 
-// plannotator-tui diffs from one base ref, so a range has to end at HEAD.
-function baseRef(revisions: string): string {
-  const range = /^(.+?)\.{2,3}(?:HEAD)?$/.exec(revisions);
-  if (range !== null) return range[1];
-  if (revisions.includes("..")) throw new Error(`plannotator-tui reviews from a base ref, not the range ${revisions}`);
-  return revisions;
-}
-
 export const reviewer: Reviewer = {
   ephemeral: false,
 
-  command({ revisions, doc }, result) {
+  command({ base, doc }, result) {
     if (doc !== undefined) return ["plannotator-tui", doc, "--gate", "--json", "--require-approval", "--result-file", result];
-    return ["plannotator-tui", "review", ...(revisions === undefined ? [] : ["--base", baseRef(revisions)])];
+    return ["plannotator-tui", "review", ...(base === undefined ? [] : ["--base", base])];
   },
 
   async flush() {
@@ -283,8 +284,6 @@ export const reviewer: Reviewer = {
     }
     throw new Error(`plannotator-tui took no reply on ${anchor.file}: ${reason}`);
   },
-
-  watch: storeDir,
 
   decision(result) {
     let decision: string;

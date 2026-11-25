@@ -97,4 +97,4 @@ rex.action{
   end,
 }
 
-dofile(config_dir .. "/review/init.lua").setup()
+dofile(config_dir .. "/review/init.lua")

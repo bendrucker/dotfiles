@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { quote, repoRoot, run, sandbox, type Sandbox } from "#harness";
 import type { Review } from "./state";
@@ -396,6 +396,25 @@ describe("rex/config/review run", () => {
     expect(apiCalls("block.close")).toHaveLength(1);
   });
 
+  test("ends the events file and removes state before a paste that never lands", () => {
+    seed(review());
+    box.write(eventsFile, "");
+    box.write("program-states", "blocked\n");
+
+    expect(exec(["run", id], { REVIEW_SETTLE_WAIT_MS: "50" }).status).toBe(1);
+
+    expect(events()).toBe("[review: closed] approved\n");
+    expect(exists(`${id}.json`)).toBe(false);
+  });
+
+  test("talks to the session open recorded, not the pane's REX_SESSION", () => {
+    seed(review());
+
+    expect(exec(["run", id], { REX_SESSION: "default" }).status).toBe(0);
+
+    expect(rexCalls().find((c) => c[0] === "send-key")).toEqual(["send-key", "-s", "sess", "-b", agent, "enter"]);
+  });
+
   test("delivers nothing once the state is gone", () => {
     seed(review());
     // approve removes the state while the reviewer is still running.
@@ -436,8 +455,8 @@ describe("rex/config/review block resolution", () => {
 });
 
 describe("rex/config/review open", () => {
-  test("splits the agent's pane running the script and records it with the revisions", () => {
-    const result = exec(["open", agent, "--cwd", work, "--revisions", "HEAD~2..HEAD"]);
+  test("splits the agent's pane running the script and records it with the base", () => {
+    const result = exec(["open", agent, "--cwd", work, "--base", "HEAD~2"]);
 
     expect(result.status).toBe(0);
     const reviewId = box.read(statePath(join("blocks", agent)));
@@ -450,7 +469,7 @@ describe("rex/config/review open", () => {
       review: reviewBlock,
       cwd: work,
       reviewer: "plannotator",
-      revisions: "HEAD~2..HEAD",
+      base: "HEAD~2",
       delivered: [],
       mode: "batch",
     });
@@ -542,15 +561,11 @@ describe("rex/config/review tuicr session choice", () => {
 });
 
 describe("rex/config/review hunk", () => {
-  test.each<{ name: string; revisions?: string; args: string[] }>([
+  test.each<{ name: string; base?: string; args: string[] }>([
     { name: "the working tree", args: ["diff", "--watch", "--agent-notes", "--extension", extension] },
-    {
-      name: "a revision range",
-      revisions: "main..HEAD",
-      args: ["diff", "main..HEAD", "--watch", "--agent-notes", "--extension", extension],
-    },
-  ])("run opens $name with agent notes shown", ({ revisions, args }) => {
-    seed(review({ reviewer: "hunk", revisions }));
+    { name: "a base ref", base: "main", args: ["diff", "main", "--watch", "--agent-notes", "--extension", extension] },
+  ])("run opens $name with agent notes shown", ({ base, args }) => {
+    seed(review({ reviewer: "hunk", base }));
 
     expect(exec(["run", id]).status).toBe(0);
 
@@ -680,7 +695,7 @@ describe("rex/config/review quitting Hunk", () => {
     expect(exec(["run", id]).status).toBe(0);
 
     expect(pasted()[0]).toMatchInlineSnapshot(`
-      "[review: closed] Ben closed Hunk without approving.
+      "[review: closed] Ben closed the review without approving.
 
       ## src/app.ts:3 (id user:2)
       > three
@@ -700,7 +715,7 @@ describe("rex/config/review quitting Hunk", () => {
 
     expect(exec(["run", id]).status).toBe(0);
 
-    expectDelivered("[review: closed] Ben closed Hunk without approving.");
+    expectDelivered("[review: closed] Ben closed the review without approving.");
     expect(pasted()[0]).toContain("written while open");
   });
 
@@ -1141,14 +1156,12 @@ ${onRun || ":"}`,
     stubPlannotator();
   });
 
-  test.each<{ name: string; revisions?: string; doc?: boolean; args: string[] }>([
+  test.each<{ name: string; base?: string; doc?: boolean; args: string[] }>([
     { name: "the working tree", args: ["review"] },
-    { name: "a base ref", revisions: "main", args: ["review", "--base", "main"] },
-    { name: "a range ending at HEAD", revisions: "HEAD~2..HEAD", args: ["review", "--base", "HEAD~2"] },
-    { name: "a symmetric range ending at HEAD", revisions: "main...HEAD", args: ["review", "--base", "main"] },
+    { name: "a base ref", base: "main", args: ["review", "--base", "main"] },
     { name: "a doc behind an approval gate", doc: true, args: ["doc.md", "--gate", "--json", "--require-approval", "--result-file", "result"] },
-  ])("run opens $name", ({ revisions, doc: isDoc, args }) => {
-    diffReview({ revisions, doc: isDoc ? doc() : undefined, mode: "batch" });
+  ])("run opens $name", ({ base, doc: isDoc, args }) => {
+    diffReview({ base, doc: isDoc ? doc() : undefined, mode: "batch" });
 
     expect(exec(["run", id]).status).toBe(0);
 
@@ -1161,23 +1174,22 @@ ${onRun || ":"}`,
     expect(call.map((arg) => labels.get(arg) ?? arg)).toEqual(args);
   });
 
-  test("a store write claims a new diff note without waiting for the timer", async () => {
-    diffReview();
-    stubPlannotator(`while [ ! -f ${quote(box.path("quit"))} ]; do sleep 0.02; done`);
-    const child = spawn(["run", id], { REVIEW_SNAPSHOT_MS: "60000" });
-    await until(() => existsSync(box.path("plannotator-calls")));
-    const lines = () => (exists(join("blocks", `${agent}.events`)) ? events().split("\n").filter((l) => l !== "") : []);
+  test.each<{ name: string; base?: string; text: string }>([
+    { name: "a plain review reads the uncommitted store", text: "uncommitted" },
+    { name: "a base review reads the branch store for that base", base: "main", text: "main" },
+    { name: "another base skips the newer branch store", base: "HEAD~1", text: "HEAD~1" },
+  ])("$name", ({ base, text }) => {
+    const write = (dir: string, scope: object, body: string, age: number) => {
+      const path = join(client, "reviews", "work", dir, "review.json");
+      box.write(path, JSON.stringify({ repo: realpathSync(work), scope, annotations: [diffNote({ text: body })] }));
+      utimesSync(box.path(path), age, age);
+    };
+    write("uncommitted-abc", { kind: "uncommitted" }, "uncommitted", 1);
+    write("branch-HEAD~1-abc", { kind: "branch", base: "HEAD~1" }, "HEAD~1", 2);
+    write("branch-main-abc", { kind: "branch", base: "main" }, "main", 3);
+    diffReview({ base });
 
-    diffStore(diffNote());
-    await until(() => lines().length === 1, 2000);
-    box.write("quit", "");
-    expect(await child.exited).toBe(0);
-
-    expect(events()).toMatchInlineSnapshot(`
-      "[review: comment] src/app.ts:2 (id local_1) | > two | fix
-      [review: closed] closed
-      "
-    `);
+    expect(exec(["claim", agent]).stdout).toContain(`| ${text}`);
   });
 
   test.each<{ name: string; store: () => void; delivered: Review["delivered"]; doc: boolean }>([
@@ -1395,7 +1407,6 @@ ${onRun || ":"}`,
   test.each<{ name: string; args: string[]; reviewer?: Review["reviewer"]; doc?: string; status: number }>([
     { name: "reviews the diff in plannotator by default", args: [], reviewer: "plannotator", status: 0 },
     { name: "--app hunk reviews the diff in Hunk", args: ["--app", "hunk"], reviewer: "hunk", status: 0 },
-    { name: "a range not ending at HEAD is rejected", args: ["--revisions", "main..feature"], status: 1 },
     { name: "--doc picks plannotator", args: ["--doc", "doc.md"], reviewer: "plannotator", doc: "doc.md", status: 0 },
     { name: "--doc rejects hunk", args: ["--doc", "doc.md", "--app", "hunk"], status: 2 },
     { name: "an unknown app is rejected", args: ["--app", "vim"], status: 2 },

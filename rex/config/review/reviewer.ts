@@ -20,7 +20,8 @@ export interface Comment {
 // What a review covers: a diff in `cwd`, or one document.
 export interface Target {
   cwd: string;
-  revisions?: string;
+  // A ref the diff runs from, to the working tree.
+  base?: string;
   doc?: string;
   // The reviewer process `run` spawned, whose record is the only one to read.
   pid?: number;
@@ -46,8 +47,6 @@ export interface Reviewer {
   patches?(target: Target, session: string): Promise<Record<string, string>>;
   reload(block: string): Promise<void>;
   reply(target: Target, session: string, comment: Comment, text: string): Promise<void>;
-  // A directory the reviewer writes notes into without signaling `run`.
-  watch?(target: Target): string;
   // The decision a gated reviewer wrote to `result`, if any.
   decision?(result: string): "approved" | "dismissed" | undefined;
 }
