@@ -2,6 +2,14 @@
 
 [Rex](https://www.superlogical.com/rex/docs) is a terminal multiplexer configured in Lua. `config/` links to `~/.config/rex`. Rex reads `init.lua` only on `rex config reload`, which the `rex:reload` task runs after a sync.
 
+## App Settings
+
+`settings.json` holds the Mac app settings shared across machines, keyed by the action name after `client.setting.`. Run `rex -C <client> actions` to list the names and the values each takes. The `rex:settings` task, which runs after every `rex:reload`, sets each one with `rex do client.setting.<name>`. The task passes each action an explicit value rather than letting it toggle, so a setting that already matches stays as it is.
+
+The app accepts these actions only while it's running with Remote Control on, under Settings > General > Client Info. When the server or app is missing, or the app refuses, the task warns and exits 0. A theme name only resolves once the theme is imported on that Mac, and the app rejects it until then. The task skips that setting and keeps going.
+
+Window geometry, the sidebar's state, and server settings stay in `defaults` on each machine.
+
 ## Trying a Worktree's Config
 
 Run `mise run rex:try` from a worktree to load its `rex/config` into the running server, and `mise run rex:restore` to go back to the deployed config. Pass a worktree path to `rex:try` to load one other than the current one.
