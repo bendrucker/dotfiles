@@ -35,10 +35,18 @@ async function call(session: string, method: string, args: Record<string, unknow
   return stdout.trim() === "" ? {} : JSON.parse(stdout);
 }
 
+// Returns when the block reports or clears a program status, or at `timeout` seconds.
+const WAIT_STATUS = `rex.wait("block_event", function(ev)
+  return ev.block_id == rex.args.block
+    and (ev.name == "program_status_changed" or ev.name == "program_status_removed")
+end, rex.args.timeout)`;
+
 export class Client {
+  // A status change can land between reading the state and waiting for the
+  // next one. A wait gives up after `recheckMs`, and the caller reads again.
   constructor(
     readonly session: string,
-    private readonly pollMs = 1000,
+    private readonly recheckMs = 5000,
   ) {}
 
   // A blocked agent shows a permission prompt, which the Enter would answer.
@@ -52,10 +60,21 @@ export class Client {
         return;
       }
       if (state !== "blocked") return;
-      if (Date.now() - started >= timeoutMs) {
+      const left = timeoutMs - (Date.now() - started);
+      if (left <= 0) {
         throw new Error("the agent is waiting on a permission prompt. Answer it, then try again.");
       }
-      await Bun.sleep(this.pollMs);
+      await this.statusChange(block, left);
+    }
+  }
+
+  // Waits up to `limitMs` for the block's program to report a status.
+  async statusChange(block: string, limitMs = Infinity): Promise<void> {
+    const ms = Math.min(limitMs, this.recheckMs);
+    try {
+      await rex(["do", "-s", this.session, "-e", WAIT_STATUS, `block=${block}`, `timeout=${ms / 1000}`]);
+    } catch {
+      await Bun.sleep(ms);
     }
   }
 
