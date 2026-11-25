@@ -1,0 +1,11 @@
+{
+  "interface.toolbar.layout": "left",
+  "interface.appearance.tint": true,
+  "interface.appearance.glass": false,
+  "interface.tabs.color": "never",
+  "interface.active_panes.fade": "both",
+  "interface.active_panes.inactive_window": false,
+  "themes.light.palette": "Catppuccin Latte",
+  "themes.dark.palette": "Catppuccin Mocha",
+  "terminal.typography.font": "MonaspiceNe Nerd Font Mono"
+}
