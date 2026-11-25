@@ -158,10 +158,9 @@ async function run(id: string): Promise<void> {
   process.on("SIGHUP", ignore);
   process.on("SIGTERM", ignore);
   const reviewer = reviewers[review.reviewer];
-  const sends = reviewer.sends?.(review) === true;
-  const target = sends ? await agentPid(rex, review.agent) : undefined;
+  const target = reviewer.sendTo === undefined ? undefined : await agentPid(rex, review.agent);
   const sendEnv = target === undefined ? {} : (reviewer.sendTo?.(review.agent, target) ?? {});
-  const live = review.mode === "live" && !sends;
+  const live = review.mode === "live" && reviewer.sendTo === undefined;
   let done = false;
   let snapshot: Comments | undefined;
   // oxlint-disable-next-line prefer-const -- assigned below once the child spawns, after `stream` captures it.
@@ -376,9 +375,8 @@ async function claim(
 }
 
 async function send(rex: Client, block: string): Promise<void> {
-  const found = find(block);
-  const { id, agent } = found;
-  if (reviewers[found.reviewer].sends?.(found) === true) throw new Error("this reviewer sends its own notes. Press E in it instead.");
+  const { id, agent, reviewer } = find(block);
+  if (reviewers[reviewer].sendTo !== undefined) throw new Error("this reviewer sends its own notes. Press E in it instead.");
   await rex.unblocked(agent, SUBMIT_WAIT_MS);
   const { review, events } = await claim(id);
   if (events.length === 0) throw new Error("no new comments to send. Approve or dismiss the review instead.");

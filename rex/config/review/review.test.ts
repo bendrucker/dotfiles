@@ -1410,15 +1410,12 @@ ${onRun || ":"}`,
     expectDelivered(message);
   });
 
-  test.each<{ name: string; doc: boolean; env: string }>([
-    { name: "points a diff's own send at the agent", doc: false, env: `${agent} 4242 sess` },
-    { name: "leaves a doc's notes to stream with their ids", doc: true, env: "  sess" },
-  ])("run $name", ({ doc: isDoc, env }) => {
-    diffReview({ mode: "batch", doc: isDoc ? doc() : undefined });
+  test("run points plannotator-tui's own send at the agent", () => {
+    diffReview({ mode: "batch" });
 
     expect(exec(["run", id], { REX_SESSION: "default" }).status).toBe(0);
 
-    expect(box.read("plannotator-env")).toBe(env);
+    expect(box.read("plannotator-env")).toBe(`${agent} 4242 sess`);
   });
 
   test("send refuses, since plannotator-tui sends its own notes", () => {

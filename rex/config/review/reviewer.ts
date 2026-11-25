@@ -39,9 +39,8 @@ export interface Comments {
 export interface Reviewer {
   // Notes vanish when the reviewer exits, so `run` snapshots them while it runs.
   ephemeral: boolean;
-  // The reviewer sends notes to the agent itself, so `run` streams none and Send refuses.
-  sends?(target: Target): boolean;
-  // The environment that points that send at the agent process `pid` in `block`.
+  // The environment that points the reviewer's own send at the agent process
+  // `pid` in `block`. With it, `run` streams no notes and Send refuses.
   sendTo?(block: string, pid: number): Record<string, string>;
   // `result` is where a gated reviewer writes its decision.
   command(target: Target, result: string): string[];
