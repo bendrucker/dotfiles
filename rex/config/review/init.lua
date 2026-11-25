@@ -131,7 +131,7 @@ local function actions()
   rex.action{
     name = "review_branch",
     title = "Review Branch",
-    description = "Review everything the agent pane's branch changed since it left the default branch.",
+    description = "Review everything the agent pane's branch changed since it left the default branch, plus uncommitted changes.",
     category = "Review",
     keywords = "plannotator diff code review agent branch pull request pr",
     args = with(),
@@ -143,7 +143,7 @@ local function actions()
   rex.action{
     name = "review_commit",
     title = "Review Last Commit",
-    description = "Review the agent pane's last commit.",
+    description = "Review the agent pane's last commit, plus uncommitted changes.",
     category = "Review",
     keywords = "plannotator diff code review agent commit head",
     args = with(),

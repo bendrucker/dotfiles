@@ -14,7 +14,7 @@ The server fixes its config path when it starts, so `rex:try` leaves `~/.config/
 
 Run **Review Changes** from the command palette with an agent's pane focused. It opens `plannotator-tui review` on the agent's uncommitted changes, in a split taking the right three-quarters of the agent's pane. An agent can open one itself with `rex do review_changes block="$REX_BLOCK" revisions=<base>..HEAD`, where both arguments are optional. plannotator-tui diffs from one base, so a range must end at `HEAD`. `app=hunk` opens [Hunk](../hunk/) instead.
 
-**Review Branch** opens the same review on everything the branch changed since it forked from `origin/HEAD`, and **Review Last Commit** on `HEAD~1`. Both take `app=hunk` too.
+**Review Branch** opens the same review on everything the branch changed since it forked from `origin/HEAD`, and **Review Last Commit** on `HEAD~1`. plannotator-tui diffs a base against the working tree, so both include uncommitted changes. Both take `app=hunk` too.
 
 Select lines with `v` or a drag and press `c` to leave a note (in Hunk, `c` on a line), then end the round with a key from either pane:
 
