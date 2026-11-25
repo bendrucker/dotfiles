@@ -274,6 +274,11 @@ async function note(entry: Entry, request: object): Promise<Answer> {
 export const reviewer: Reviewer = {
   ephemeral: false,
 
+  // A document's notes stream to the agent with ids, which its feedback lacks.
+  sends({ doc }) {
+    return doc === undefined;
+  },
+
   // plannotator-tui's E pastes into the block and presses Enter, refusing while the agent is at a prompt.
   sendTo(block, pid) {
     return { PLANNOTATOR_TUI_REX_BLOCK: block, PLANNOTATOR_TUI_REX_PID: String(pid), PLANNOTATOR_TUI_DELIVER_AGENT: "claude" };
