@@ -156,7 +156,7 @@ describe("main", () => {
     box = sandbox("rex-claude-attach");
     stubGum(box);
     box.write("agents.json", JSON.stringify([makeAgent({ cwd: box.path("repo") })]));
-    box.write("ls.json", JSON.stringify({ sessions: [{ session_id: "session:dot", label: "Repo" }] }));
+    box.write("ls.json", JSON.stringify({ sessions: [{ session_id: "session:dot", label: "Elsewhere" }] }));
     box.stub("claude", `cat '${box.path("agents.json")}'`);
     box.stub("git", "exit 128");
   });
@@ -172,9 +172,10 @@ describe("main", () => {
       [
         'case "$1 $2" in',
         `  "ls --json") cat '${box.path("ls.json")}' ;;`,
-        `  "api call") cat '${box.path("view.json")}' ;;`,
+        `  "api call") [ "$5" = session.new_layer ] && echo '{"layer_id":"layer:new","block_ids":["block:float"],"revision":1}' || cat '${box.path("view.json")}' ;;`,
         `  "block call") cat '${box.path("process-")}'"$6".json ;;`,
         `  "window new") echo '{"window_id":"window:new"}' ;;`,
+        `  "split -s") echo '{"block_ids":["block:split"]}' ;;`,
         `  "do session.select") [ -f '${box.path("select-fails")}' ] && { echo 'client target default is ambiguous' >&2; exit 3; } ;;`,
         "esac",
       ].join("\n"),
@@ -186,7 +187,7 @@ describe("main", () => {
   }
 
   function attach(...args: string[]) {
-    return run([script, ...args], { path: [box.bin], env: { ZDOTDIR: box.mkdir("empty"), REX_SESSION: "session:env" } });
+    return run([script, ...args], { path: [box.bin], env: { ZDOTDIR: box.mkdir("empty"), REX_BLOCK: "block:here" } });
   }
 
   function rexCalls(): string[][] {
@@ -216,9 +217,16 @@ describe("main", () => {
     ]);
   });
 
+  test("opens a tab in the session of the REX_BLOCK pane when nothing ties one to the repo", () => {
+    stubRex(view(["block:here"]), { "block:here": { foreground: { pid: 5, cwd: "/elsewhere" } } });
+    box.stub("ps", "echo '    5 -zsh'");
+    expect(attach("cf37276a").status).toBe(0);
+    expect(rexCalls()[0]?.slice(0, 5)).toEqual(["rex", "window", "new", "-s", "session:dot"]);
+  });
+
   test("still opens the tab when the app can't be switched to it", () => {
-    stubRex(view([]), {});
-    box.stub("ps", "true");
+    stubRex(view(["block:here"]), { "block:here": { foreground: { pid: 5 } } });
+    box.stub("ps", "echo '    5 -zsh'");
     box.write("select-fails", "");
     const result = attach("cf37276a");
     expect(result.status).toBe(0);
@@ -298,12 +306,25 @@ describe("main", () => {
     expect(result.stderr).toContain("no Claude sessions to attach");
   });
 
-  test("leaves focus alone with --no-focus", () => {
-    stubRex(view([]), {});
-    box.stub("ps", "true");
-    expect(attach("cf37276a", "--no-focus").status).toBe(0);
-    expect(rexCalls().map((call) => call.slice(0, 3))).toEqual([["rex", "window", "new"]]);
-    expect(rexCalls()[0]).toContain("--focus=false");
+  test.each<{ placement: string; created: string[]; unread: string }>([
+    { placement: "tab", created: ["rex", "window", "new"], unread: "window_id=window:new" },
+    { placement: "pane", created: ["rex", "split", "-s"], unread: "block_id=block:split" },
+    { placement: "float", created: ["rex", "api", "call"], unread: "block_id=block:float" },
+  ])("--no-focus opens a $placement without focus and marks it unread", ({ placement, created, unread }) => {
+    stubRex(view(["block:here"]), { "block:here": { foreground: { pid: 5 } } });
+    box.stub("ps", "echo '    5 -zsh'");
+    expect(attach("cf37276a", "--as", placement, "--no-focus").status).toBe(0);
+    const [open, mark] = rexCalls();
+    expect(open?.slice(0, 3)).toEqual(created);
+    expect(open?.join(" ")).toMatch(/--focus=false|"focus":false/);
+    expect(mark).toEqual(["rex", "do", "client.tab.unread", unread, "unread=true"]);
+  });
+
+  test("--no-focus marks the pane already attached unread instead of focusing it", () => {
+    stubRex(view(["block:b"]), { "block:b": { foreground: { pid: 77 } } });
+    box.stub("ps", "echo '   77 claude attach cf37276a'");
+    expect(attach("fix-thing", "--no-focus").status).toBe(0);
+    expect(rexCalls()).toEqual([["rex", "do", "client.tab.unread", "block_id=block:b", "unread=true"]]);
   });
 
   test("fails on an unknown session", () => {

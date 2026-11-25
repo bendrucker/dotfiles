@@ -48,7 +48,7 @@ Picking a session focuses the pane already showing it. Otherwise the key you pic
 | Ctrl-V | A pane split to the right of the pane you ran the action from |
 | Ctrl-F | A floating pane over that tab |
 
-`rex-claude-attach <id|name>` does the same from a shell, with `--as tab|pane|float` in place of the key. `--no-focus` leaves focus where it is, for a background session that needs you to pull itself up.
+`rex-claude-attach <id|name>` does the same from a shell, with `--as tab|pane|float` in place of the key. `--no-focus` leaves focus where it is and marks the session's tab or pane unread, so a background session that needs you shows in Activity without pulling you to it.
 
 ## Failures
 

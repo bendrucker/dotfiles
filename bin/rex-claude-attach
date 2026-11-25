@@ -45,6 +45,8 @@ const Process = z.object({
 
 const NewWindow = z.object({ window_id: z.string() });
 
+const NewBlocks = z.object({ block_ids: z.array(z.string().nullable()).nullable() });
+
 export interface Pane {
   session: string;
   label: string;
@@ -197,20 +199,38 @@ interface Attach {
   beside?: Pane;
 }
 
-async function inTab({ agent, target, panes, focus }: Attach): Promise<void> {
-  const session = homeSession(await repoRoot(agent.cwd), panes, process.env.REX_SESSION);
+// The tab or pane to mark unread, as a client.tab.unread argument.
+type Unread = `window_id=${string}` | `block_id=${string}`;
+
+// With several apps connected, Rex needs REX_CLIENT to pick one.
+async function markUnread(target: Unread): Promise<void> {
+  const result = await $`rex do client.tab.unread ${target} unread=true`.nothrow().quiet();
+  if (result.exitCode !== 0) {
+    await log("warn", `couldn't mark the session unread: ${result.stderr.toString().trim()}`);
+  }
+}
+
+function firstBlock(out: string): Unread | undefined {
+  const block = NewBlocks.parse(JSON.parse(out)).block_ids?.[0];
+  return block ? `block_id=${block}` : undefined;
+}
+
+async function inTab({ agent, target, panes, focus, beside }: Attach): Promise<Unread> {
+  const session = homeSession(await repoRoot(agent.cwd), panes, beside?.session);
   if (session === undefined) throw new Error("no Rex session to open the tab in");
   const label = agent.name ?? target;
   const out = await $`rex window new -s ${session} ${label} -c ${agent.cwd} --focus=${focus} --json -- claude attach ${target}`.text();
   const { window_id } = NewWindow.parse(JSON.parse(out));
   if (focus) await select(session, window_id);
+  return `window_id=${window_id}`;
 }
 
-async function inPane({ agent, target, focus }: Attach, beside: Pane): Promise<void> {
-  await $`rex split -s ${beside.session} -b ${beside.block} --split=right -c ${agent.cwd} --focus=${focus} --json -- claude attach ${target}`.quiet();
+async function inPane({ agent, target, focus }: Attach, beside: Pane): Promise<Unread | undefined> {
+  const out = await $`rex split -s ${beside.session} -b ${beside.block} --split=right -c ${agent.cwd} --focus=${focus} --json -- claude attach ${target}`.text();
+  return firstBlock(out);
 }
 
-async function inFloat({ agent, target, focus }: Attach, beside: Pane): Promise<void> {
+async function inFloat({ agent, target, focus }: Attach, beside: Pane): Promise<Unread | undefined> {
   const layer = JSON.stringify({
     window_id: beside.window,
     bounds: [0.1, 0.1, 0.8, 0.8],
@@ -222,10 +242,10 @@ async function inFloat({ agent, target, focus }: Attach, beside: Pane): Promise<
       },
     },
   });
-  await $`rex api call -s ${beside.session} session.new_layer ${layer}`.quiet();
+  return firstBlock(await $`rex api call -s ${beside.session} session.new_layer ${layer}`.text());
 }
 
-async function attach(placement: Placement, request: Attach): Promise<void> {
+async function attach(placement: Placement, request: Attach): Promise<Unread | undefined> {
   if (placement === "tab") return inTab(request);
   const { beside } = request;
   if (beside === undefined) throw new Error(`a ${placement} needs --beside or REX_BLOCK naming a Rex pane to place it`);
@@ -320,14 +340,16 @@ async function findQueried(agents: Agent[], query: string | undefined): Promise<
 async function bringUp(agent: Agent, panes: Pane[], placement: Placement, focus: boolean, beside?: Pane): Promise<void> {
   const shown = panes.find((p) => showsAgent(p, agent));
   if (shown !== undefined) {
-    if (focus) await show(shown);
+    await (focus ? show(shown) : markUnread(`block_id=${shown.block}`));
     return;
   }
   const target = agent.id ?? agent.sessionId;
   if (agent.kind !== "background" || target === undefined) {
     throw new Error(`${nameOf(agent)} runs in a terminal outside Rex, so there is nothing to attach`);
   }
-  await attach(placement, { agent, target, panes, focus, beside });
+  const created = await attach(placement, { agent, target, panes, focus, beside });
+  // A session left in the background shows in Activity without taking focus.
+  if (!focus && created !== undefined) await markUnread(created);
 }
 
 export async function main(argv: string[]): Promise<number> {
