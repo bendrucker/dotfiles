@@ -128,6 +128,52 @@ rex.action{
   end,
 }
 
+-- A prompt's answer, or nil when the person cancelled it.
+local function answered(value, why, detail)
+  if value == nil and why ~= "cancelled" then
+    error("no answer: " .. tostring(why) .. (detail and (" " .. detail) or ""), 0)
+  end
+  return value
+end
+
+local review_reviewers = {
+  { id = "hunk", title = "Hunk", subtitle = "Review a diff", icon = "code" },
+  { id = "plannotator", title = "Plannotator", subtitle = "Review a diff in plannotator-tui", icon = "document" },
+}
+
+local review_modes = {
+  { id = "batch", title = "Batch", subtitle = "Hold notes until Review: Send" },
+  { id = "live", title = "Live", subtitle = "Deliver each note as you save it" },
+}
+
+-- From the palette, asks for each argument left out. Returns nil when cancelled.
+local function ask_review(args)
+  local asked = {}
+  for key, value in pairs(args) do
+    asked[key] = value
+  end
+  if asked.reviewer == nil and asked.doc == nil then
+    asked.reviewer = answered(rex.ui.pick{ title = "Reviewer", items = review_reviewers })
+    if asked.reviewer == nil then return nil end
+  end
+  if asked.revisions == nil and asked.doc == nil then
+    local range = answered(rex.ui.input{
+      title = "Revisions",
+      placeholder = asked.reviewer == "plannotator" and "A base like main. Empty reviews uncommitted changes."
+        or "A range like main..HEAD. Empty reviews uncommitted changes.",
+      confirm = "Review",
+    })
+    if range == nil then return nil end
+    asked.revisions = range:match("^%s*(.-)%s*$")
+    if asked.revisions == "" then asked.revisions = nil end
+  end
+  if asked.mode == nil then
+    asked.mode = answered(rex.ui.pick{ title = "Review mode", items = review_modes })
+    if asked.mode == nil then return nil end
+  end
+  return asked
+end
+
 rex.action{
   name = "review_changes",
   title = "Review Changes",
@@ -136,6 +182,11 @@ rex.action{
   keywords = "hunk diff code review agent claude",
   args = { block = "string?", revisions = "string?", mode = "string?", reviewer = "string?", doc = "string?" },
   run = function(ctx, args)
+    -- An agent's `rex do` passes what it wants and must never wait on a prompt.
+    if ctx.origin == "palette" then
+      args = ask_review(args)
+      if args == nil then return end
+    end
     local block = args.block or ctx.block_id
     local dir = block and block_dir(block)
     if dir == nil then

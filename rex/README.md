@@ -10,7 +10,7 @@ The server fixes its config path when it starts, so `rex:try` leaves `~/.config/
 
 ## Review Changes
 
-Run **Review Changes** from the command palette with an agent's pane focused. It opens [Hunk](../hunk/) on the agent's uncommitted changes, in a split taking the right three-quarters of the agent's pane. An agent can open one itself with `rex do review_changes block="$REX_BLOCK" revisions=<base>..HEAD`, where both arguments are optional.
+Run **Review Changes** from the command palette with an agent's pane focused. The palette asks for a reviewer, a revision range, and a mode, where an empty range reviews uncommitted changes. The review opens in a split taking the right three-quarters of the agent's pane. An agent can open one itself with `rex do review_changes block="$REX_BLOCK" revisions=<base>..HEAD`, where every argument is optional. `rex do` never prompts, and a missing argument takes its default: [Hunk](../hunk/), batch mode, uncommitted changes.
 
 Press `c` on a line to leave a note in Hunk, then end the round with a key from either pane:
 
@@ -20,7 +20,7 @@ Press `c` on a line to leave a note in Hunk, then end the round with a key from 
 | `shift+cmd+a` | Review: Approve | `[review: approved]` |
 | `shift+cmd+x` | Review: Dismiss | `[review: dismissed]`, which it treats as a success |
 
-Each message is submitted to the agent and explains itself, without a prompt or rule on the agent's side. Send focuses the agent. The agent fixes each comment and answers it with `rex do review_reply id=<id> text=<reply>`. When its turn ends, focus returns to the review, with the agent's answers shown as `Claude` replies under each note. Hunk keeps notes only while its window is open. Approve and Dismiss close the review. Quitting Hunk or closing its pane dismisses it.
+Each message is submitted to the agent and explains itself, without a prompt or rule on the agent's side. Send focuses the agent. The agent fixes each comment and answers it by piping `{"id": ..., "text": ...}` to `rex do review_reply --args -`, which keeps the reply out of shell quoting. When its turn ends, focus returns to the review, with the agent's answers shown as `Claude` replies under each note. Hunk keeps notes only while its window is open. Approve and Dismiss close the review. Quitting Hunk or closing its pane dismisses it.
 
 Hunk loads `config/review/hunk-extension.ts`. In a live review, saving a note signals `run` to deliver it at once, and `ctrl+g` holds notes until pressed again, when the backlog arrives in order. The status line shows whether notes are live or held, how many delivered notes are open or answered, and when Claude is working. `run` keeps that status in `<agent-block>.status.json` beside the events file.
 
