@@ -1,3 +1,11 @@
+# A signed and attested release. The verify script fails the install on any
+# other signature, and mise won't run an incomplete install.
+[tools."github:bendrucker/tailgate"]
+version = "0.1.0"
+asset_pattern = "tailgate-darwin-arm64"
+os = ["macos"]
+postinstall = '{{config_root}}/tailgate-verify "$MISE_TOOL_INSTALL_PATH/tailgate"'
+
 [bootstrap.macos.dock]
 autohide = true
 autohide_delay = 0.0
