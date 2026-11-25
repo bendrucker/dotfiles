@@ -511,8 +511,11 @@ describe("rex/config/review reply", () => {
     comments({ id: "c1", author: "Ben", path: "src/app.ts", start_line: 2, side: "new", content: "fix" });
   });
 
-  test("adds a reply as Claude at the comment's location", () => {
-    expect(exec(["reply", agent, "c1", "done"]).status).toBe(0);
+  test.each<{ name: string; target: string }>([
+    { name: "its id", target: "c1" },
+    { name: "its path:line, as a reviewer's own send names it", target: "src/app.ts:2" },
+  ])("adds a reply as Claude at the comment found by $name", ({ target }) => {
+    expect(exec(["reply", agent, target, "done"]).status).toBe(0);
 
     expect(tuicrCalls().at(-1)).toEqual(
       "review add --session t1 --username Claude --target-file src/app.ts --line 2 --side new done".split(" "),
