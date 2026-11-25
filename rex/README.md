@@ -50,6 +50,8 @@ Replies go through a Rex action, which finds the review's window from its state,
 
 Run **Open Browser** from the command palette to open [terminal-browser](https://terminal-browser.com) in a split to the right of the focused pane. When a browser is already open beside that pane, it opens a tab there instead. `terminal-browser:install` installs it and upgrades it on every install, which restarts any browser that is open.
 
+Run **Plannotator Inbox**, or press Ctrl-Cmd-I, to open the Plannotator Inbox in terminal-browser in a new tab of the current session. When a tab labeled Plannotator Inbox already exists, the action switches to it instead. The tab zooms the page out after it loads, because terminal-browser renders the Inbox's text about twice its usual size.
+
 ## Background Agents
 
 Run **Claude Agents** from the command palette to open `claude agents` in a floating pane along the right edge of the tab, a quarter of its width. It starts in the focused pane's directory, so sessions you dispatch from it start there too. Quitting the agent view closes the pane.
