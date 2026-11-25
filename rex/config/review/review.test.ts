@@ -407,10 +407,13 @@ describe("rex/config/review run", () => {
     expect(exists(`${id}.json`)).toBe(false);
   });
 
-  test("talks to the session open recorded, not the pane's REX_SESSION", () => {
+  test.each<{ name: string; session: string }>([
+    { name: "another session", session: "default" },
+    { name: "none", session: "" },
+  ])("talks to the session open recorded when the pane's REX_SESSION is $name", ({ session }) => {
     seed(review());
 
-    expect(exec(["run", id], { REX_SESSION: "default" }).status).toBe(0);
+    expect(exec(["run", id], { REX_SESSION: session }).status).toBe(0);
 
     expect(rexCalls().find((c) => c[0] === "send-key")).toEqual(["send-key", "-s", "sess", "-b", agent, "enter"]);
   });
