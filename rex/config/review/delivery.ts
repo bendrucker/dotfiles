@@ -54,12 +54,9 @@ export function reconcile(
   }
   for (const comment of mine) {
     const before = previous.get(comment.id);
-    // A note the reviewer sent itself already reached the agent.
-    const fresh = before === undefined && comment.sent !== true;
-    const edited =
-      before?.version !== undefined && comment.version !== undefined && before.version !== comment.version && comment.sent !== true;
-    if (fresh) events.push({ kind: "comment", comment, context: context(comment, comments) });
-    else if (edited) events.push({ kind: "edited", comment, context: context(comment, comments) });
+    if (before === undefined) events.push({ kind: "comment", comment, context: context(comment, comments) });
+    else if (before.version !== undefined && comment.version !== undefined && before.version !== comment.version)
+      events.push({ kind: "edited", comment, context: context(comment, comments) });
     next.push(comment.version === undefined ? { id: comment.id } : { id: comment.id, version: comment.version });
   }
   return { events, delivered: next };

@@ -1,6 +1,7 @@
 -- Review an agent pane's changes in a split beside it, and hand the outcome
--- back to the agent. plannotator-tui is the default app. The `review` CLI
--- beside this file runs the loop. Rex config loads it with:
+-- back to the agent. plannotator-tui is the default app and sends feedback
+-- itself. The `review` CLI beside this file couples Hunk to the agent. Rex
+-- config loads it with:
 --
 --   dofile(config_dir .. "/review/init.lua")
 
@@ -23,27 +24,35 @@ local function pane_dir(block_id)
 end
 
 -- The server's PATH lacks Homebrew and bun. zsh reads ~/.zshenv, which sets them.
-local function argv(args)
-  local list = { "/bin/zsh", "-c", 'exec "$@"', "review", CLI }
+local function zsh(program, args)
+  local list = { "/bin/zsh", "-c", 'exec "$@"', "review", program }
   for _, arg in ipairs(args) do
     list[#list + 1] = arg
   end
   return list
 end
 
+local function argv(args)
+  return zsh(CLI, args)
+end
+
 local function trimmed(text)
   return (text:gsub("%s+$", ""))
 end
 
-local function cli(ctx, args)
-  local r, err = rex.exec(argv(args), { env = { REX_SESSION = ctx.session_id }, timeout = 25 })
+local function run(ctx, list)
+  local r, err = rex.exec(list, { env = { REX_SESSION = ctx.session_id }, timeout = 25 })
   if r == nil then
     error(err, 0)
   end
   if not r.ok then
-    error(r.stderr ~= "" and r.stderr or ("review exited " .. r.code), 0)
+    error(r.stderr ~= "" and r.stderr or (list[5] .. " exited " .. r.code), 0)
   end
   return trimmed(r.stdout)
+end
+
+local function cli(ctx, args)
+  return run(ctx, argv(args))
 end
 
 local function git(dir, ...)
@@ -72,18 +81,29 @@ local function open(ctx, args, base)
   if dir == nil then
     error("the agent's pane reports no directory", 0)
   end
-  local list = { "open", block, "--cwd", dir }
-  if base then
-    list[#list + 1] = "--base"
-    list[#list + 1] = base(dir)
-  end
-  for _, flag in ipairs({ "base", "mode", "app", "doc" }) do
-    if args[flag] then
+  local ref = base and base(dir) or args.base
+  if args.app == "hunk" then
+    local list = { "open", block, "--cwd", dir }
+    for flag, value in pairs({ base = ref, mode = args.mode }) do
       list[#list + 1] = "--" .. flag
-      list[#list + 1] = args[flag]
+      list[#list + 1] = value
     end
+    return cli(ctx, list)
   end
-  cli(ctx, list)
+  if args.app ~= nil and args.app ~= "plannotator" then
+    error("app is hunk or plannotator", 0)
+  end
+  local list = { "rex", "review" }
+  if args.doc then
+    list = { "rex", "open", args.doc:sub(1, 1) == "/" and args.doc or (dir .. "/" .. args.doc), "--gate" }
+  elseif ref then
+    list[#list + 1] = "--base"
+    list[#list + 1] = ref
+  end
+  for _, arg in ipairs({ "--block", block, "--session", ctx.session_id, "--placement", "split" }) do
+    list[#list + 1] = arg
+  end
+  run(ctx, zsh("plannotator-tui", list))
 end
 
 local function in_review(block_id)
@@ -98,7 +118,7 @@ end
 rex.action{
   name = "review_changes",
   title = "Review Changes",
-  description = "Review an agent pane's uncommitted changes in plannotator-tui, or Hunk with app=hunk, split to its right. Send, Approve, or Dismiss hands the outcome to the agent.",
+  description = "Review an agent pane's uncommitted changes in plannotator-tui, or Hunk with app=hunk, split to its right. doc=FILE reviews a document with an Approve gate.",
   category = "Review",
   keywords = "plannotator hunk diff code review agent claude uncommitted",
   args = { block = "string?", base = "string?", mode = "string?", app = "string?", doc = "string?" },
@@ -136,7 +156,7 @@ rex.action{
   title = "Review: Send",
   description = "Send the review's new comments to the agent, and bring the review back when its turn ends.",
   category = "Review",
-  keywords = "plannotator hunk review submit comments agent",
+  keywords = "hunk review submit comments agent",
   run = function(ctx)
     local id = cli(ctx, { "send", ctx.block_id })
     local waiter, err = rex.exec.start(argv({ "wait", id }), {
@@ -156,7 +176,7 @@ rex.action{
   title = "Review: Approve",
   description = "Tell the agent the review approved its changes, and close the review.",
   category = "Review",
-  keywords = "plannotator hunk review approve lgtm agent",
+  keywords = "hunk review approve lgtm agent",
   run = function(ctx)
     cli(ctx, { "approve", ctx.block_id })
   end,
@@ -167,7 +187,7 @@ rex.action{
   title = "Review: Dismiss",
   description = "Close the review without feedback. The agent treats it as a success.",
   category = "Review",
-  keywords = "plannotator hunk review dismiss close agent",
+  keywords = "hunk review dismiss close agent",
   run = function(ctx)
     cli(ctx, { "dismiss", ctx.block_id })
   end,
@@ -178,7 +198,7 @@ rex.action{
 rex.action{
   name = "review_reply",
   title = "Review: Reply",
-  description = "Answer a review comment, by its id or path:line, from the agent's pane.",
+  description = "Answer a Hunk review comment by its id, from the agent's pane.",
   category = "Review",
   args = { id = "string", text = "string" },
   run = function(ctx, args)

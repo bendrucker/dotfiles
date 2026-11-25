@@ -10,21 +10,16 @@ export interface Comment {
   startLine?: number;
   endLine?: number;
   side?: "old" | "new";
-  // The text a note anchors to, when the reviewer records it.
-  quote?: string;
   body: string;
   // Changes when the note is edited. A note without one is never redelivered.
   version?: string;
-  // The reviewer already sent this version to the agent itself.
-  sent?: boolean;
 }
 
-// What a review covers: a diff in `cwd`, or one document.
+// What a review covers: a diff in `cwd`.
 export interface Target {
   cwd: string;
   // A ref the diff runs from, to the working tree.
   base?: string;
-  doc?: string;
   // The reviewer process `run` spawned, whose record is the only one to read.
   pid?: number;
 }
@@ -39,12 +34,7 @@ export interface Comments {
 export interface Reviewer {
   // Notes vanish when the reviewer exits, so `run` snapshots them while it runs.
   ephemeral: boolean;
-  // The reviewer sends notes to the agent itself, so `run` streams none and Send refuses.
-  sends?(target: Target): boolean;
-  // The environment that points that send at the agent process `pid` in `block`.
-  sendTo?(block: string, pid: number): Record<string, string>;
-  // `result` is where a gated reviewer writes its decision.
-  command(target: Target, result: string): string[];
+  command(target: Target): string[];
   flush(block: string): Promise<void>;
   // Includes the agent's replies. `strict` fails rather than fall back to
   // another record when `session` is gone.
@@ -53,6 +43,4 @@ export interface Reviewer {
   patches?(target: Target, session: string): Promise<Record<string, string>>;
   reload(block: string): Promise<void>;
   reply(target: Target, session: string, comment: Comment, text: string): Promise<void>;
-  // The decision a gated reviewer wrote to `result`, if any.
-  decision?(result: string): "approved" | "dismissed" | undefined;
 }
