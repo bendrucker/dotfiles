@@ -371,6 +371,15 @@ describe("rex/config/review claim", () => {
     expect(result.stdout).toBe("");
   });
 
+  test("run takes the session its review recorded when REX_SESSION is unset", () => {
+    seed(review({ session: "recorded", mode: "batch" }));
+    sessions({ slug: "t1", updated_at: "1", active: true });
+
+    expect(exec(["run", id], { REX_SESSION: "" }).status).toBe(0);
+
+    expect(apiCalls("block.event").map((c) => c[3])).toEqual(["recorded"]);
+  });
+
   test("state saved before modes existed loads as live", () => {
     const { mode: _, ...old } = review();
     seed(old);

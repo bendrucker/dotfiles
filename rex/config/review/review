@@ -59,8 +59,9 @@ class UsageError extends Error {
   override name = "UsageError";
 }
 
-function rexClient(): Client {
-  const session = process.env.REX_SESSION;
+// Rex no longer sets REX_SESSION in a new pane, so `run` in the split takes the session its review recorded.
+function rexClient(recorded?: string): Client {
+  const session = process.env.REX_SESSION || recorded;
   if (!session) throw new UsageError("REX_SESSION is not set");
   return new Client(session, WAIT_POLL_MS);
 }
@@ -484,7 +485,7 @@ async function main(argv: string[]): Promise<void> {
   });
   const [command, target, ...rest] = positionals;
   if (target === undefined) throw new UsageError("missing argument");
-  const rex = rexClient();
+  const rex = rexClient(command === "run" ? load(target)?.session : undefined);
 
   switch (command) {
     case "open": {
