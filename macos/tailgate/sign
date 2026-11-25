@@ -1,0 +1,53 @@
+#!/bin/sh
+#
+# Sign tailgate with its own code-signing identity, so the keychain item it
+# locks to its designated requirement stays readable across rebuilds.
+#
+# Usage: sign [binary]
+#
+# mise runs this after installing tailgate (go/mise.toml). A failure leaves that
+# install incomplete, and mise refuses to run an incomplete install, so a
+# version bump never runs unsigned. Run it with no argument to sign the active
+# install.
+#
+# The identity lives in a keychain of its own, separate from login, that stays
+# locked. Unlocking it takes its password at a terminal, so the nightly job
+# cannot sign and an upgrade waits for an attended install. create-identity
+# creates it.
+
+set -eu
+
+identity="tailgate Code Signing"
+identifier=dev.bendrucker.tailgate
+keychain="$HOME/Library/Keychains/tailgate-signing.keychain-db"
+config="${XDG_CONFIG_HOME:-$HOME/.config}/tailgate/tailgate.hujson"
+tty=${TAILGATE_SIGN_TTY:-/dev/tty}
+
+fail() {
+  printf 'tailgate sign: %s\n' "$*" >&2
+  exit 1
+}
+
+# The same file gates the LaunchAgent in mise/miserc.toml.tera. Without it this
+# machine never runs tailgate, so nothing reads the keychain item.
+if [ "$(uname -s)" != Darwin ] || [ ! -f "$config" ]; then
+  exit 0
+fi
+
+binary=${1:-$(mise which tailgate)}
+
+[ -f "$keychain" ] || fail "no signing identity at $keychain. Create it with macos/tailgate/create-identity."
+(: < "$tty") 2> /dev/null ||
+  fail "unlocking $keychain needs a terminal. Run 'mise install' or macos/tailgate/sign at the Mac."
+
+trap 'security lock-keychain "$keychain"' EXIT
+security unlock-keychain "$keychain" < "$tty"
+
+leaf=$(security find-certificate -c "$identity" -Z "$keychain" | awk '/^SHA-1 hash:/ { print tolower($3) }')
+[ -n "$leaf" ] || fail "no certificate named '$identity' in $keychain"
+
+codesign --force --keychain "$keychain" --sign "$identity" --identifier "$identifier" "$binary"
+
+expected="designated => identifier \"$identifier\" and certificate leaf = H\"$leaf\""
+actual=$(codesign --display --requirements - "$binary" 2>&1 | grep '^designated =>' || true)
+[ "$actual" = "$expected" ] || fail "$binary has the requirement '$actual', expected '$expected'"

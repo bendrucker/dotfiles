@@ -1,0 +1,65 @@
+#!/bin/sh
+#
+# Create the self-signed code-signing identity that macos/tailgate/sign uses, in
+# a keychain of its own. Run once, at the Mac: it prompts for that keychain's
+# new password.
+#
+# The key is imported without -T or -A, so no application may use it silently.
+# The keychain locks on sleep and after 60 seconds, and stays off the search
+# list so nothing looks in it by accident.
+
+set -eu
+
+cn="tailgate Code Signing"
+keychain="$HOME/Library/Keychains/tailgate-signing.keychain-db"
+
+fail() {
+  printf 'tailgate create-identity: %s\n' "$*" >&2
+  exit 1
+}
+
+[ "$(uname -s)" = Darwin ] || fail "macOS only"
+[ ! -e "$keychain" ] || fail "$keychain already exists"
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+umask 077
+
+cat > "$work/openssl.cnf" << EOF
+[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = codesign
+[dn]
+CN = $cn
+[codesign]
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, codeSigning
+subjectKeyIdentifier = hash
+EOF
+
+openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -config "$work/openssl.cnf" \
+  -keyout "$work/key.pem" -out "$work/cert.pem"
+
+# OpenSSL 3 defaults to a PKCS#12 cipher that `security import` cannot read.
+legacy=
+case "$(openssl version)" in "OpenSSL 3"*) legacy=-legacy ;; esac
+
+passphrase=$(openssl rand -hex 32)
+# shellcheck disable=SC2086
+openssl pkcs12 -export $legacy -inkey "$work/key.pem" -in "$work/cert.pem" \
+  -name "$cn" -passout "pass:$passphrase" -out "$work/identity.p12"
+
+# create-keychain adds the new keychain to the user search list. Put the list
+# back as it was.
+searchlist=$(security list-keychains -d user)
+security create-keychain "$keychain"
+eval "set -- $searchlist"
+security list-keychains -d user -s "$@"
+
+security set-keychain-settings -l -u -t 60 "$keychain"
+security import "$work/identity.p12" -k "$keychain" -f pkcs12 -P "$passphrase"
+security lock-keychain "$keychain"
+
+security find-certificate -c "$cn" -Z "$keychain" | grep '^SHA-1 hash:'
