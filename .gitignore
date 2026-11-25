@@ -1,3 +1,5 @@
 Brewfile.lock.json
 *.local
 node_modules/
+# Machine-local Rex session descriptions, read by claude-dispatch sessions
+rex/config/sessions.toml

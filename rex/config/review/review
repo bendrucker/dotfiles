@@ -40,7 +40,8 @@ const reviewers: Record<Review["reviewer"], Reviewer> = { hunk, tuicr };
 // Set this to "tuicr" to fall back to tuicr.
 const DEFAULT_REVIEWER: Review["reviewer"] = "hunk";
 
-const WAIT_POLL_MS = Number(process.env.REVIEW_POLL_MS ?? 1000);
+// How long a wait for the agent's next status goes before reading it again.
+const WAIT_POLL_MS = Number(process.env.REVIEW_POLL_MS ?? 5000);
 // An agent that never reports working within this long is taken as done.
 const WAIT_START_MS = Number(process.env.REVIEW_START_MS ?? 20_000);
 const SNAPSHOT_MS = Number(process.env.REVIEW_SNAPSHOT_MS ?? 1000);
@@ -116,6 +117,7 @@ async function finish(
     throw error;
   }
   await end(review, outcome);
+  // Closing the focused review returns focus to the pane before it, which can be one other than the agent.
   await rex.focus(review.agent);
   if (review.review !== undefined) await rex.closeBlock(review.review);
 }
@@ -395,7 +397,7 @@ async function agentDone(rex: Client, review: Review): Promise<boolean> {
     // A permission prompt reads as blocked, and the turn isn't over.
     if (state === "working" || state === "blocked") working = true;
     else if (working || Date.now() - started > WAIT_START_MS) return true;
-    await Bun.sleep(WAIT_POLL_MS);
+    await rex.statusChange(review.agent, working ? Infinity : WAIT_START_MS - (Date.now() - started));
   }
   return false;
 }

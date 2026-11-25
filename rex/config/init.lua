@@ -139,6 +139,82 @@ local function plannotator(args)
   end
 end
 
+-- The server runs commands without its own directory on PATH, where
+-- terminal-browser would otherwise look for rex.
+local rex_bin_dir = os.getenv("HOME")
+  .. "/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS"
+
+-- terminal-browser splits the block itself, which lets it open a tab in a
+-- browser already beside the block instead of a second browser.
+rex.action{
+  name = "terminal_browser",
+  title = "Open Browser",
+  description = "Open terminal-browser in a split to the right of the focused pane, or a new tab in the browser already there.",
+  category = "Browser",
+  keywords = "terminal-browser web browser url html preview split",
+  run = function(ctx)
+    if ctx.block_id == nil then
+      error("no focused pane to split", 0)
+    end
+    local r, err = rex.exec(zsh_argv('exec terminal-browser open --split right', "terminal-browser", {}), {
+      env = { REX_BLOCK = ctx.block_id, REX_SESSION = ctx.session_id, REX_BIN_DIR = rex_bin_dir },
+      timeout = 25,
+    })
+    if r == nil then
+      error(err, 0)
+    end
+    if not r.ok then
+      error(r.stderr ~= "" and r.stderr or ("terminal-browser exited " .. r.code), 0)
+    end
+  end,
+}
+
+-- A prompt's answer, or nil when the person cancelled it.
+local function answered(value, why, detail)
+  if value == nil and why ~= "cancelled" then
+    error("no answer: " .. tostring(why) .. (detail and (" " .. detail) or ""), 0)
+  end
+  return value
+end
+
+local review_apps = {
+  { id = "plannotator", title = "Plannotator", subtitle = "Review a diff in plannotator-tui", icon = "document" },
+  { id = "hunk", title = "Hunk", subtitle = "Review a diff", icon = "code" },
+}
+
+local review_modes = {
+  { id = "batch", title = "Batch", subtitle = "Hold notes until Review: Send" },
+  { id = "live", title = "Live", subtitle = "Deliver each note as you save it" },
+}
+
+-- From the palette, asks for each argument left out. Returns nil when cancelled.
+local function ask_review(args)
+  local asked = {}
+  for key, value in pairs(args) do
+    asked[key] = value
+  end
+  if asked.app == nil and asked.doc == nil then
+    asked.app = answered(rex.ui.pick{ title = "Reviewer", items = review_apps })
+    if asked.app == nil then return nil end
+  end
+  if asked.base == nil and asked.doc == nil then
+    local base = answered(rex.ui.input{
+      title = "Base",
+      placeholder = "A ref like main. Empty reviews uncommitted changes.",
+      confirm = "Review",
+    })
+    if base == nil then return nil end
+    asked.base = base:match("^%s*(.-)%s*$")
+    if asked.base == "" then asked.base = nil end
+  end
+  -- Only Hunk has a live mode.
+  if asked.mode == nil and asked.app == "hunk" then
+    asked.mode = answered(rex.ui.pick{ title = "Review mode", items = review_modes })
+    if asked.mode == nil then return nil end
+  end
+  return asked
+end
+
 rex.action{
   name = "review_changes",
   title = "Review Changes",
@@ -147,6 +223,11 @@ rex.action{
   keywords = "plannotator hunk diff code review agent claude",
   args = { block = "string?", base = "string?", mode = "string?", app = "string?", doc = "string?" },
   run = function(ctx, args)
+    -- An agent's `rex do` passes what it wants and must never wait on a prompt.
+    if ctx.origin == "palette" then
+      args = ask_review(args)
+      if args == nil then return end
+    end
     local block = args.block or ctx.block_id
     local dir = block and block_dir(block)
     if dir == nil then

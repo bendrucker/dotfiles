@@ -781,7 +781,15 @@ describe("rex/config/review edits and retractions", () => {
       > two
       new
 
-      Fix each one, then answer it with \`rex do review_reply id=<id> text="<reply>"\`. Don't commit. End your turn when every comment has an answer, and Ben will see the review again."
+      Fix each one, then answer it with JSON on stdin:
+
+      \`\`\`sh
+      rex do review_reply --args - <<'EOF'
+      {"id": "<id>", "text": "<reply>"}
+      EOF
+      \`\`\`
+
+      Don't commit. End your turn when every comment has an answer, and Ben will see the review again."
     `);
   });
 

@@ -1,0 +1,3 @@
+[tasks."terminal-browser:install"]
+run = "./terminal-browser/install.sh"
+dir = "{{config_root}}/.."
