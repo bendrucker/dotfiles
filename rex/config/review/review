@@ -433,13 +433,12 @@ async function main(argv: string[]): Promise<void> {
   });
   const [command, target, ...rest] = positionals;
   if (target === undefined) throw new UsageError("missing argument");
-  const rex = rexClient();
-
+  // A review's split has no REX_SESSION, so only the commands that need one read it.
   switch (command) {
     case "open":
       if (values.cwd === undefined) throw new UsageError("open needs --cwd");
       if (values.mode !== "live" && values.mode !== "batch") throw new UsageError("--mode is live or batch");
-      return open(rex, target, {
+      return open(rexClient(), target, {
         cwd: values.cwd,
         mode: values.mode,
         reviewer: DEFAULT_REVIEWER,
@@ -448,15 +447,15 @@ async function main(argv: string[]): Promise<void> {
     case "run":
       return run(target);
     case "send":
-      return send(rex, target);
+      return send(rexClient(), target);
     case "claim":
       return claimLines(target);
     case "approve":
-      return approve(rex, target);
+      return approve(rexClient(), target);
     case "dismiss":
-      return dismiss(rex, target);
+      return dismiss(rexClient(), target);
     case "wait":
-      return wait(rex, target);
+      return wait(rexClient(), target);
     case "reply":
       if (rest.length !== 2) throw new UsageError("reply needs COMMENT_ID and TEXT");
       return reply(target, rest[0], rest[1]);
