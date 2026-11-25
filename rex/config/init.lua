@@ -128,10 +128,21 @@ rex.action{
   end,
 }
 
+-- plannotator-tui opens its own split and sends feedback straight to the agent.
+local function plannotator(args)
+  local r, err = rex.exec(zsh_argv('exec plannotator-tui "$@"', "plannotator-tui", args), { timeout = 25 })
+  if r == nil then
+    error(err, 0)
+  end
+  if not r.ok then
+    error(r.stderr ~= "" and r.stderr or ("plannotator-tui exited " .. r.code), 0)
+  end
+end
+
 rex.action{
   name = "review_changes",
   title = "Review Changes",
-  description = "Review an agent pane's changes in plannotator-tui, or Hunk with app=hunk, split to its right. Send, Approve, or Dismiss hands the outcome to the agent.",
+  description = "Review an agent pane's changes in plannotator-tui, or Hunk with app=hunk, split to its right. doc=FILE reviews a document with an Approve gate.",
   category = "Git",
   keywords = "plannotator hunk diff code review agent claude",
   args = { block = "string?", base = "string?", mode = "string?", app = "string?", doc = "string?" },
@@ -141,14 +152,30 @@ rex.action{
     if dir == nil then
       error("the agent's pane reports no directory", 0)
     end
-    local argv = { "open", block, "--cwd", dir }
-    for _, flag in ipairs({ "base", "mode", "app", "doc" }) do
-      if args[flag] then
-        argv[#argv + 1] = "--" .. flag
-        argv[#argv + 1] = args[flag]
+    if args.app == "hunk" then
+      local argv = { "open", block, "--cwd", dir }
+      for _, flag in ipairs({ "base", "mode" }) do
+        if args[flag] then
+          argv[#argv + 1] = "--" .. flag
+          argv[#argv + 1] = args[flag]
+        end
       end
+      return review(ctx, argv)
     end
-    review(ctx, argv)
+    if args.app ~= nil and args.app ~= "plannotator" then
+      error("app is hunk or plannotator", 0)
+    end
+    local argv = { "rex", "review" }
+    if args.doc then
+      argv = { "rex", "open", args.doc:sub(1, 1) == "/" and args.doc or (dir .. "/" .. args.doc), "--gate" }
+    elseif args.base then
+      argv[#argv + 1] = "--base"
+      argv[#argv + 1] = args.base
+    end
+    for _, arg in ipairs({ "--block", block, "--session", ctx.session_id, "--placement", "split" }) do
+      argv[#argv + 1] = arg
+    end
+    plannotator(argv)
   end,
 }
 

@@ -18,9 +18,8 @@ const Review = z.object({
   agent: z.string(),
   review: z.string().optional(),
   cwd: z.string(),
-  reviewer: z.enum(["hunk", "plannotator", "tuicr"]),
+  reviewer: z.enum(["hunk", "tuicr"]),
   base: z.string().optional(),
-  doc: z.string().optional(),
   reviewerSession: z.string().optional(),
   // The reviewer process `run` spawned, while it runs.
   pid: z.number().optional(),
