@@ -139,15 +139,6 @@ function ignore(): void {
   // Intentionally empty.
 }
 
-// Without the pid, the reviewer falls back to asking where to send.
-async function agentPid(rex: Client, block: string): Promise<number | undefined> {
-  try {
-    return await rex.foregroundPid(block);
-  } catch {
-    return undefined;
-  }
-}
-
 async function run(id: string): Promise<void> {
   const review = load(id);
   if (review === undefined) throw new Error(`no review ${id}`);
@@ -158,9 +149,7 @@ async function run(id: string): Promise<void> {
   process.on("SIGHUP", ignore);
   process.on("SIGTERM", ignore);
   const reviewer = reviewers[review.reviewer];
-  const target = reviewer.sendTo === undefined ? undefined : await agentPid(rex, review.agent);
-  const sendEnv = target === undefined ? {} : (reviewer.sendTo?.(review.agent, target) ?? {});
-  const live = review.mode === "live" && reviewer.sendTo === undefined;
+  const live = review.mode === "live";
   let done = false;
   let snapshot: Comments | undefined;
   // oxlint-disable-next-line prefer-const -- assigned below once the child spawns, after `stream` captures it.
@@ -189,8 +178,6 @@ async function run(id: string): Promise<void> {
     cwd: review.cwd,
     env: {
       ...process.env,
-      ...sendEnv,
-      REX_SESSION: review.session,
       REX_REVIEW_ID: id,
       REX_REVIEW_PID: String(process.pid),
       REX_REVIEW_STATUS: statusPath(review.agent),
@@ -375,8 +362,7 @@ async function claim(
 }
 
 async function send(rex: Client, block: string): Promise<void> {
-  const { id, agent, reviewer } = find(block);
-  if (reviewers[reviewer].sendTo !== undefined) throw new Error("this reviewer sends its own notes. Press E in it instead.");
+  const { id, agent } = find(block);
   await rex.unblocked(agent, SUBMIT_WAIT_MS);
   const { review, events } = await claim(id);
   if (events.length === 0) throw new Error("no new comments to send. Approve or dismiss the review instead.");
