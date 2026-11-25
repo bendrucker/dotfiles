@@ -396,6 +396,25 @@ describe("rex/config/review run", () => {
     expect(apiCalls("block.close")).toHaveLength(1);
   });
 
+  test("ends the events file and removes state before a paste that never lands", () => {
+    seed(review());
+    box.write(eventsFile, "");
+    box.write("program-states", "blocked\n");
+
+    expect(exec(["run", id], { REVIEW_SETTLE_WAIT_MS: "50" }).status).toBe(1);
+
+    expect(events()).toBe("[review: closed] approved\n");
+    expect(exists(`${id}.json`)).toBe(false);
+  });
+
+  test("talks to the session open recorded, not the pane's REX_SESSION", () => {
+    seed(review());
+
+    expect(exec(["run", id], { REX_SESSION: "default" }).status).toBe(0);
+
+    expect(rexCalls().find((c) => c[0] === "send-key")).toEqual(["send-key", "-s", "sess", "-b", agent, "enter"]);
+  });
+
   test("delivers nothing once the state is gone", () => {
     seed(review());
     // approve removes the state while the reviewer is still running.
