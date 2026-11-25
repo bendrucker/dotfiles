@@ -42,6 +42,10 @@ The action reads the agent's directory from its foreground process. That directo
 
 Replies go through a Rex action, which finds the review's Hunk window from its state, so the agent needs only the comment id. The server runs `rex.exec` outside the agent's sandbox, which tuicr needs to write its storage under `~/Library/Application Support/tuicr`.
 
+## Browser
+
+Run **Open Browser** from the command palette to open [terminal-browser](https://terminal-browser.com) in a split to the right of the focused pane. When a browser is already open beside that pane, it opens a tab there instead. `terminal-browser:install` installs it and upgrades it on every install, which restarts any browser that is open.
+
 ## Background Agents
 
 Run **Claude Agents** from the command palette to open `claude agents` in a floating pane along the right edge of the tab, a quarter of its width. It starts in the focused pane's directory, so sessions you dispatch from it start there too. Quitting the agent view closes the pane.
