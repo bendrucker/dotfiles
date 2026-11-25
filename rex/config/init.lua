@@ -128,64 +128,127 @@ rex.action{
 }
 
 -- terminal-browser scales pages from the terminal's cell size, which renders
--- the Inbox's text about twice its usual size. A helper beside it presses the
--- zoom-out shortcut until a CSS pixel is about two device pixels, as on a
--- Retina display. A new tab stays 80x24 until an app draws it, so the script
--- waits for the drawn size first. The Inbox's port can change when it
--- restarts, so the URL is read at launch.
+-- the Inbox's text about twice its usual size, and it resets its own zoom when
+-- the pane is first drawn. A helper beside it sets a CSS zoom that makes a CSS
+-- pixel two device pixels, as on a Retina display, and fits it again whenever
+-- the pane's device size changes. A resize from the browser's own zoom keeps
+-- the device size, so a manual zoom stays. A reload drops the CSS zoom. A new
+-- tab stays 80x24 until an app draws it, so the script waits for the drawn
+-- size first. The Inbox's port can change when it restarts, so the URL is read
+-- at launch.
 local inbox_title = "Plannotator Inbox"
 local inbox_script = [=[
 for _ in {1..30}; do [[ $(stty size) != "24 80" ]] && break; sleep 0.1; done
 url=$(plannotator inbox --background 2>/dev/null) || { read -sk "?Press any key to close"; exit 1; }
+fit='new Promise((loaded) => document.readyState === "complete" ? loaded() : addEventListener("load", loaded)).then(() => {
+  let device = 0;
+  const fit = () => {
+    if (innerWidth * devicePixelRatio === device) return;
+    device = innerWidth * devicePixelRatio;
+    document.documentElement.style.zoom = String(2 / devicePixelRatio);
+  };
+  fit();
+  addEventListener("resize", fit);
+  return true;
+})'
 {
   for _ in {1..50}; do
-    ratio=$(terminal-browser action -- eval devicePixelRatio) && break
+    terminal-browser action -- eval "$fit" && break
     sleep 0.2
   done
-  for _ in {1..8}; do
-    (( ${ratio:-0} > 2.2 )) || break
-    rex send-key -b "$REX_BLOCK" 'ctrl+[Minus]'
-    sleep 0.3
-    ratio=$(terminal-browser action -- eval devicePixelRatio)
-  done
 } &>/dev/null &!
+# The app evens out a new split shortly after it appears, whatever ratio it
+# was given, so the border moves after that, twice in case the app is slow.
+if [[ -n $2 ]]; then
+  {
+    for delay in 0.3 1.2; do
+      sleep $delay
+      rex do -e 'rex.session.resize_pane{ session_id = rex.args.session, direction = "horizontal", before_block_id = rex.args.anchor, after_block_id = rex.args.inbox, ratio = 0.6 }' \
+        session="$1" anchor="$2" inbox="$REX_BLOCK"
+    done
+  } &>/dev/null &!
+fi
 exec terminal-browser open "$url" --no-merge
 ]=]
+
+-- Given a session and the block it split, the script moves the border so the
+-- Inbox takes the right 40%.
+local function inbox_layout(split_args)
+  return rex.layout.block{
+    flavor = "com.superlogical.terminal.shell",
+    label = inbox_title,
+    options = { command = zsh_argv(inbox_script, "plannotator-inbox", split_args or {}) },
+  }
+end
+
+-- Focuses the session's Inbox block, if one is open, and reports whether it did.
+local function focus_inbox(session_id)
+  local view, err = rex.session.view{ session_id = session_id }
+  if view == nil then
+    error(err, 0)
+  end
+  for _, window in ipairs(view.windows or {}) do
+    for _, layer in ipairs(window.layers or {}) do
+      for _, block in ipairs(layer.blocks or {}) do
+        if block.label == inbox_title then
+          local _, focus_err = rex.session.focus_block{ session_id = session_id, block_id = block.block_id }
+          if focus_err ~= nil then
+            error(focus_err, 0)
+          end
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
 
 rex.action{
   name = "plannotator_inbox",
   title = "Plannotator Inbox",
-  description = "Open the Plannotator Inbox in terminal-browser in a new tab, or go to the tab already showing it.",
+  description = "Open the Plannotator Inbox in a pane to the right of the focused pane, or go to the pane already showing it.",
   category = "Browser",
-  keywords = "plannotator inbox messages questions agents browser tab",
+  keywords = "plannotator inbox messages questions agents browser pane split",
   run = function(ctx)
-    local view, err = rex.session.view{ session_id = ctx.session_id }
-    if view == nil then
-      error(err, 0)
+    if focus_inbox(ctx.session_id) then
+      return
     end
-    for _, window in ipairs(view.windows or {}) do
-      if window.label == inbox_title then
-        local _, focus_err = rex.session.focus_window{ session_id = ctx.session_id, window_id = window.window_id }
-        if focus_err ~= nil then
-          error(focus_err, 0)
-        end
-        return
-      end
+    if ctx.block_id == nil then
+      error("no focused pane to split", 0)
     end
-    local _, new_err = rex.session.new_window{
+    local _, err = rex.session.new_split{
       session_id = ctx.session_id,
-      window_label = inbox_title,
-      layout = rex.layout.block{
-        flavor = "com.superlogical.terminal.shell",
-        options = { command = zsh_argv(inbox_script, "plannotator-inbox", {}) },
-      },
+      anchor_id = ctx.block_id,
+      direction = "horizontal",
+      side = "after",
+      focus = false,
+      layout = inbox_layout({ ctx.session_id, ctx.block_id }),
     }
-    if new_err ~= nil then
-      error(new_err, 0)
+    if err ~= nil then
+      error(err, 0)
     end
   end,
 }
 
-rex.bind("ctrl+cmd+i", "plannotator_inbox")
+rex.action{
+  name = "plannotator_inbox_tab",
+  title = "Plannotator Inbox in New Tab",
+  description = "Open the Plannotator Inbox in a new tab, or go to the pane already showing it.",
+  category = "Browser",
+  keywords = "plannotator inbox messages questions agents browser tab",
+  run = function(ctx)
+    if focus_inbox(ctx.session_id) then
+      return
+    end
+    local _, err = rex.session.new_window{
+      session_id = ctx.session_id,
+      window_label = inbox_title,
+      layout = inbox_layout(),
+    }
+    if err ~= nil then
+      error(err, 0)
+    end
+  end,
+}
 
 dofile(config_dir .. "/review/init.lua")
