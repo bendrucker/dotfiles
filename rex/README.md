@@ -18,7 +18,11 @@ The server fixes its config path when it starts, so `rex:try` leaves `~/.config/
 
 ## Review Changes
 
+`config/review/` is a self-contained Rex plugin, which `init.lua` loads with `dofile(config_dir .. "/review/init.lua")`.
+
 Run **Review Changes** from the command palette with an agent's pane focused. It runs `plannotator-tui rex review`, which opens a split beside the agent's pane on the agent's repository. An agent can open one itself with `rex do review_changes block="$REX_BLOCK" base=<ref>`, where every argument is optional. From the palette, it asks for the app, a base, and for Hunk a mode. `rex do` never prompts. With `base`, the diff runs from that ref to the working tree. `doc=<file>` runs `plannotator-tui rex open <file> --gate` instead, which adds Approve. plannotator-tui sends feedback to the agent itself, with `E` to send and `S` to send and close.
+
+**Review Branch** opens the same review from where the branch forked from `origin/HEAD`, and **Review Last Commit** from `HEAD~1`. Both include uncommitted changes, and both take `app=hunk` too.
 
 `app=hunk` opens [Hunk](../hunk/) through `config/review/review`, which couples it to the agent. Press `c` on a line to leave a note, then end the round with a key from either pane:
 
