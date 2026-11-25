@@ -70,10 +70,10 @@ function location(comment: Comment): string[] {
 export const reviewer: Reviewer = {
   ephemeral: false,
 
-  command({ revisions }) {
-    return revisions === undefined
+  command({ base }) {
+    return base === undefined
       ? ["tuicr", "--no-update-check", "-w"]
-      : ["tuicr", "--no-update-check", "-r", revisions, "-w"];
+      : ["tuicr", "--no-update-check", "-r", `${base}..HEAD`, "-w"];
   },
 
   async flush() {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 //
 // Usage:
-//   review open AGENT_BLOCK --cwd DIR [--revisions REVSET] [--mode batch|live]
+//   review open AGENT_BLOCK --cwd DIR [--base REF] [--mode batch|live]
 //               [--app hunk|plannotator] [--doc FILE]
 //   review run ID
 //   review send|claim|approve|dismiss BLOCK
@@ -13,7 +13,7 @@
 // notes at once, and SIGUSR2 holds or releases them.
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, watch, type FSWatcher } from "node:fs";
+import { rmSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
@@ -70,11 +70,9 @@ function find(block: string): Review {
   return review;
 }
 
-type Opening = Pick<Review, "cwd" | "mode" | "reviewer" | "revisions" | "doc">;
+type Opening = Pick<Review, "cwd" | "mode" | "reviewer" | "base" | "doc">;
 
 async function open(rex: Client, agent: string, opening: Opening): Promise<void> {
-  // A target the reviewer can't open fails here, before a split appears.
-  reviewers[opening.reviewer].command(opening, "");
   try {
     const live = await rex.blocks();
     if (live.has(agent)) prune(live);
@@ -96,7 +94,8 @@ async function open(rex: Client, agent: string, opening: Opening): Promise<void>
   const review: Review = { id: randomUUID(), session: rex.session, agent, ...opening, delivered: [], held: false };
   save(review);
   const block = await rex.newSplit(agent, opening.cwd, [import.meta.path, "run", review.id]);
-  save({ ...review, review: block });
+  // `run` may already have saved its pid or claimed a note.
+  await locked(review.id, async () => save({ ...(load(review.id) ?? review), review: block }));
 }
 
 async function end(review: Review, outcome: NonNullable<Review["outcome"]>): Promise<void> {
@@ -135,8 +134,7 @@ async function closeOut(rex: Client, review: Review, outcome: NonNullable<Review
   if (review.review !== undefined) await rex.closeBlock(review.review);
 }
 
-// A listener replaces the default handler: exiting on a signal, throwing on a
-// watcher's error event.
+// A listener replaces the default handler, which exits on a signal.
 function ignore(): void {
   // Intentionally empty.
 }
@@ -174,7 +172,6 @@ async function run(id: string): Promise<void> {
   process.on("SIGUSR2", () => {
     if (live && !done) void toggleHold(id).then(stream.call);
   });
-  const watcher = live ? watchStore(reviewer.watch?.(review), wake) : undefined;
   const result = join(stateDir(), `${id}.result.json`);
   rmSync(result, { force: true });
   const child = Bun.spawn(reviewer.command(review, result), {
@@ -195,7 +192,6 @@ async function run(id: string): Promise<void> {
   });
   const exited = child.exited.finally(() => {
     done = true;
-    watcher?.close();
   });
   // oxlint-disable-next-line no-unmodified-loop-condition -- `exited` sets `done`.
   while ((live || reviewer.ephemeral) && !done) {
@@ -215,17 +211,6 @@ async function run(id: string): Promise<void> {
   const decision = reviewer.decision?.(result);
   rmSync(result, { force: true });
   await settle(rex, id, decision ?? (code === 0 || child.signalCode !== null ? "quit" : code), snapshot, pid);
-}
-
-// The timer still claims notes when the directory can't be watched.
-function watchStore(dir: string | undefined, wake: () => void): FSWatcher | undefined {
-  if (dir === undefined) return undefined;
-  try {
-    mkdirSync(dir, { recursive: true });
-    return watch(dir, { recursive: true }, wake).on("error", ignore);
-  } catch {
-    return undefined;
-  }
 }
 
 // `exit` is the reviewer's decision, or its status when it failed.
@@ -471,7 +456,7 @@ async function main(argv: string[]): Promise<void> {
     allowPositionals: true,
     options: {
       cwd: { type: "string" },
-      revisions: { type: "string" },
+      base: { type: "string" },
       mode: { type: "string", default: "batch" },
       app: { type: "string" },
       doc: { type: "string" },
@@ -489,7 +474,7 @@ async function main(argv: string[]): Promise<void> {
         cwd: values.cwd,
         mode: values.mode,
         reviewer: chooseReviewer(values.app, values.doc),
-        revisions: values.revisions,
+        base: values.base,
         doc: values.doc === undefined ? undefined : resolvePath(values.cwd, values.doc),
       });
     case "run":
