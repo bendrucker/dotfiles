@@ -18,9 +18,9 @@ The server fixes its config path when it starts, so `rex:try` leaves `~/.config/
 
 ## Review Changes
 
-Run **Review Changes** from the command palette with an agent's pane focused. The palette asks for a reviewer, a revision range, and a mode, where an empty range reviews uncommitted changes. The review opens in a split taking the right three-quarters of the agent's pane. An agent can open one itself with `rex do review_changes block="$REX_BLOCK" revisions=<base>..HEAD`, where every argument is optional. `rex do` never prompts, and a missing argument takes its default: [Hunk](../hunk/), batch mode, uncommitted changes.
+Run **Review Changes** from the command palette with an agent's pane focused. It runs `plannotator-tui rex review`, which opens a split beside the agent's pane on the agent's repository. An agent can open one itself with `rex do review_changes block="$REX_BLOCK" base=<ref>`, where every argument is optional. From the palette, it asks for the app, a base, and for Hunk a mode. `rex do` never prompts. With `base`, the diff runs from that ref to the working tree. `doc=<file>` runs `plannotator-tui rex open <file> --gate` instead, which adds Approve. plannotator-tui sends feedback to the agent itself, with `E` to send and `S` to send and close.
 
-Press `c` on a line to leave a note in Hunk, then end the round with a key from either pane:
+`app=hunk` opens [Hunk](../hunk/) through `config/review/review`, which couples it to the agent. Press `c` on a line to leave a note, then end the round with a key from either pane:
 
 | Key | Action | The agent receives |
 | --- | --- | --- |
@@ -28,11 +28,11 @@ Press `c` on a line to leave a note in Hunk, then end the round with a key from 
 | `shift+cmd+a` | Review: Approve | `[review: approved]` |
 | `shift+cmd+x` | Review: Dismiss | `[review: dismissed]`, which it treats as a success |
 
-Each message is submitted to the agent and explains itself, without a prompt or rule on the agent's side. Send focuses the agent. The agent fixes each comment and answers it by piping `{"id": ..., "text": ...}` to `rex do review_reply --args -`, which keeps the reply out of shell quoting. When its turn ends, focus returns to the review, with the agent's answers shown as `Claude` replies under each note. Hunk keeps notes only while its window is open. Approve and Dismiss close the review. Quitting Hunk or closing its pane dismisses it.
+Each message is submitted to the agent and explains itself, without a prompt or rule on the agent's side. Send focuses the agent. The agent fixes each comment and answers it by piping `{"id": ..., "text": ...}` to `rex do review_reply --args -`, which keeps the reply out of shell quoting. When its turn ends, focus returns to the review, with the agent's answers shown as `Claude` replies under each note. Hunk keeps notes only while its window is open. Approve and Dismiss close the review. Quitting Hunk or closing its pane approves once every note has a reply, and otherwise sends `[review: closed]` with what is still open.
 
-Hunk loads `config/review/hunk-extension.ts`. In a live review, saving a note signals `run` to deliver it at once, and `ctrl+g` holds notes until pressed again, when the backlog arrives in order. The status line shows whether notes are live or held, how many delivered notes are open or answered, and when Claude is working. `run` keeps that status in `<agent-block>.status.json` beside the events file.
+Hunk loads `config/review/hunk-extension.ts`. In a live Hunk review (`mode=live`), saving a note signals `run` to deliver it at once, and `ctrl+g` holds notes until pressed again, when the backlog arrives in order. The status line shows whether notes are live or held, how many delivered notes are open or answered, and when Claude is working. `run` keeps that status in `<agent-block>.status.json` beside the events file.
 
-Outside a review's two panes, Rex sends the keys to the program. A review records its panes in `~/.local/state/rex-review/blocks/`, which `init.lua` checks on each key press.
+Outside a Hunk review's two panes, Rex sends the keys to the program. A review records its panes in `~/.local/state/rex-review/blocks/`, which `init.lua` checks on each key press.
 
 The action reads the agent's directory from its foreground process. That directory follows an agent that moved into another worktree.
 
@@ -40,7 +40,7 @@ The action reads the agent's directory from its foreground process. That directo
 
 `config/review/review` runs the loop, and `config/review/hunk.ts` holds everything specific to Hunk, behind the `Reviewer` interface in `config/review/reviewer.ts`. Another reviewer needs one more adapter that starts it, reads its comments, and adds the agent's replies. `config/review/tuicr.ts` adapts [tuicr](../tuicr/), which `DEFAULT_REVIEWER` in `config/review/review` switches back to.
 
-Replies go through a Rex action, which finds the review's Hunk window from its state, so the agent needs only the comment id. The server runs `rex.exec` outside the agent's sandbox, which tuicr needs to write its storage under `~/Library/Application Support/tuicr`.
+Replies go through a Rex action, which finds the review's window from its state, so the agent needs only the comment id. The server runs `rex.exec` outside the agent's sandbox, which tuicr needs to write its storage under `~/Library/Application Support/tuicr`.
 
 ## Browser
 

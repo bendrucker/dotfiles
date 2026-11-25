@@ -81,9 +81,8 @@ function normalize(note: z.infer<typeof Note>): Comment {
 export const reviewer: Reviewer = {
   ephemeral: true,
 
-  // A revisions string like `main..HEAD` is one Hunk target.
-  command({ revisions }) {
-    const target = revisions === undefined ? [] : [revisions];
+  command({ base }) {
+    const target = base === undefined ? [] : [base];
     return ["hunk", "diff", ...target, "--watch", "--agent-notes", "--extension", EXTENSION];
   },
 

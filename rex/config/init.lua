@@ -128,6 +128,17 @@ rex.action{
   end,
 }
 
+-- plannotator-tui opens its own split and sends feedback straight to the agent.
+local function plannotator(args)
+  local r, err = rex.exec(zsh_argv('exec plannotator-tui "$@"', "plannotator-tui", args), { timeout = 25 })
+  if r == nil then
+    error(err, 0)
+  end
+  if not r.ok then
+    error(r.stderr ~= "" and r.stderr or ("plannotator-tui exited " .. r.code), 0)
+  end
+end
+
 -- The server runs commands without its own directory on PATH, where
 -- terminal-browser would otherwise look for rex.
 local rex_bin_dir = os.getenv("HOME")
@@ -166,9 +177,9 @@ local function answered(value, why, detail)
   return value
 end
 
-local review_reviewers = {
-  { id = "hunk", title = "Hunk", subtitle = "Review a diff", icon = "code" },
+local review_apps = {
   { id = "plannotator", title = "Plannotator", subtitle = "Review a diff in plannotator-tui", icon = "document" },
+  { id = "hunk", title = "Hunk", subtitle = "Review a diff", icon = "code" },
 }
 
 local review_modes = {
@@ -182,22 +193,22 @@ local function ask_review(args)
   for key, value in pairs(args) do
     asked[key] = value
   end
-  if asked.reviewer == nil and asked.doc == nil then
-    asked.reviewer = answered(rex.ui.pick{ title = "Reviewer", items = review_reviewers })
-    if asked.reviewer == nil then return nil end
+  if asked.app == nil and asked.doc == nil then
+    asked.app = answered(rex.ui.pick{ title = "Reviewer", items = review_apps })
+    if asked.app == nil then return nil end
   end
-  if asked.revisions == nil and asked.doc == nil then
-    local range = answered(rex.ui.input{
-      title = "Revisions",
-      placeholder = asked.reviewer == "plannotator" and "A base like main. Empty reviews uncommitted changes."
-        or "A range like main..HEAD. Empty reviews uncommitted changes.",
+  if asked.base == nil and asked.doc == nil then
+    local base = answered(rex.ui.input{
+      title = "Base",
+      placeholder = "A ref like main. Empty reviews uncommitted changes.",
       confirm = "Review",
     })
-    if range == nil then return nil end
-    asked.revisions = range:match("^%s*(.-)%s*$")
-    if asked.revisions == "" then asked.revisions = nil end
+    if base == nil then return nil end
+    asked.base = base:match("^%s*(.-)%s*$")
+    if asked.base == "" then asked.base = nil end
   end
-  if asked.mode == nil then
+  -- Only Hunk has a live mode.
+  if asked.mode == nil and asked.app == "hunk" then
     asked.mode = answered(rex.ui.pick{ title = "Review mode", items = review_modes })
     if asked.mode == nil then return nil end
   end
@@ -207,10 +218,10 @@ end
 rex.action{
   name = "review_changes",
   title = "Review Changes",
-  description = "Review an agent pane's changes in Hunk, split to its right. Send, Approve, or Dismiss hands the outcome to the agent.",
+  description = "Review an agent pane's changes in plannotator-tui, or Hunk with app=hunk, split to its right. doc=FILE reviews a document with an Approve gate.",
   category = "Git",
-  keywords = "hunk diff code review agent claude",
-  args = { block = "string?", revisions = "string?", mode = "string?", reviewer = "string?", doc = "string?" },
+  keywords = "plannotator hunk diff code review agent claude",
+  args = { block = "string?", base = "string?", mode = "string?", app = "string?", doc = "string?" },
   run = function(ctx, args)
     -- An agent's `rex do` passes what it wants and must never wait on a prompt.
     if ctx.origin == "palette" then
@@ -222,18 +233,30 @@ rex.action{
     if dir == nil then
       error("the agent's pane reports no directory", 0)
     end
-    local argv = { "open", block, "--cwd", dir }
-    if args.revisions then
-      argv[#argv + 1] = "--revisions"
-      argv[#argv + 1] = args.revisions
-    end
-    for _, flag in ipairs({ "mode", "reviewer", "doc" }) do
-      if args[flag] then
-        argv[#argv + 1] = "--" .. flag
-        argv[#argv + 1] = args[flag]
+    if args.app == "hunk" then
+      local argv = { "open", block, "--cwd", dir }
+      for _, flag in ipairs({ "base", "mode" }) do
+        if args[flag] then
+          argv[#argv + 1] = "--" .. flag
+          argv[#argv + 1] = args[flag]
+        end
       end
+      return review(ctx, argv)
     end
-    review(ctx, argv)
+    if args.app ~= nil and args.app ~= "plannotator" then
+      error("app is hunk or plannotator", 0)
+    end
+    local argv = { "rex", "review" }
+    if args.doc then
+      argv = { "rex", "open", args.doc:sub(1, 1) == "/" and args.doc or (dir .. "/" .. args.doc), "--gate" }
+    elseif args.base then
+      argv[#argv + 1] = "--base"
+      argv[#argv + 1] = args.base
+    end
+    for _, arg in ipairs({ "--block", block, "--session", ctx.session_id, "--placement", "split" }) do
+      argv[#argv + 1] = arg
+    end
+    plannotator(argv)
   end,
 }
 
