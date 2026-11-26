@@ -29,36 +29,84 @@ async function call(session: string, method: string, args: Record<string, unknow
   let stdout: string;
   try {
     stdout = await rex(["api", "call", "-s", session, method, JSON.stringify(args)]);
-  } catch (err) {
-    throw new Error(`${method}: ${err instanceof Error ? err.message : String(err)}`);
+  } catch (error) {
+    throw new Error(`${method}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
   return stdout.trim() === "" ? {} : JSON.parse(stdout);
 }
 
+// Returns when the block reports or clears a program status, or at `timeout` seconds.
+const WAIT_STATUS = `rex.wait("block_event", function(ev)
+  return ev.block_id == rex.args.block
+    and (ev.name == "program_status_changed" or ev.name == "program_status_removed")
+end, rex.args.timeout)`;
+
 export class Client {
-  constructor(readonly session: string) {}
+  // A status change can land between reading the state and waiting for the
+  // next one. A wait gives up after `recheckMs`, and the caller reads again.
+  constructor(
+    readonly session: string,
+    private readonly recheckMs = 5000,
+  ) {}
+
+  // A blocked agent shows a permission prompt, which the Enter would answer.
+  async unblocked(block: string, timeoutMs: number): Promise<void> {
+    const started = Date.now();
+    for (;;) {
+      let state: string;
+      try {
+        state = await this.programState(block);
+      } catch {
+        return;
+      }
+      if (state !== "blocked") return;
+      const left = timeoutMs - (Date.now() - started);
+      if (left <= 0) {
+        throw new Error("the agent is waiting on a permission prompt. Answer it, then try again.");
+      }
+      await this.statusChange(block, left);
+    }
+  }
+
+  // Waits up to `limitMs` for the block's program to report a status.
+  async statusChange(block: string, limitMs = Infinity): Promise<void> {
+    const ms = Math.min(limitMs, this.recheckMs);
+    try {
+      await rex(["do", "-s", this.session, "-e", WAIT_STATUS, `block=${block}`, `timeout=${ms / 1000}`]);
+    } catch {
+      await Bun.sleep(ms);
+    }
+  }
 
   // A paste goes through the agent's bracketed paste mode. Its newlines don't
   // submit the prompt. The pause lets the paste settle before Enter.
-  async submit(block: string, text: string): Promise<void> {
+  async submit(block: string, text: string, timeoutMs = Infinity): Promise<void> {
+    await this.unblocked(block, timeoutMs);
     await call(this.session, "block.event", { block_id: block, event: { type: "paste", payload: { text } } });
     await Bun.sleep(400);
+    await this.unblocked(block, timeoutMs);
     await rex(["send-key", "-s", this.session, "-b", block, "enter"]);
+  }
+
+  // Every block the server has, in any session.
+  async blocks(): Promise<Set<string>> {
+    const out = await rex(["block", "ls", "--all", "--quiet", "--short=false"]);
+    return new Set(out.split("\n").map((line) => line.trim()).filter((line) => line !== ""));
   }
 
   async focus(block: string): Promise<void> {
     await rex(["focus", "-s", this.session, block]);
   }
 
-  // The right three-quarters of the agent's pane, leaving the agent a narrow column.
+  // Rex gives ratio to the anchor, so the agent keeps a quarter and the review takes the right three-quarters.
   async newSplit(anchor: string, cwd: string, command: string[]): Promise<string> {
     const created = z.object({ block_ids: z.array(z.string()).min(1) }).parse(
       await call(this.session, "session.new_split", {
         anchor_id: anchor,
         direction: "horizontal",
         side: "after",
-        ratio: 0.75,
-        focus: true,
+        ratio: 0.25,
+        focus: false,
         layout: { block: { flavor: TERMINAL, label: "Review", options: { cwd, command } } },
       }),
     );
@@ -69,8 +117,8 @@ export class Client {
   async closeBlock(block: string): Promise<void> {
     try {
       await call(this.session, "block.close", { block_id: block });
-    } catch (err) {
-      if (!(err instanceof Error && err.message.includes("not_found"))) throw err;
+    } catch (error) {
+      if (!(error instanceof Error && error.message.includes("not_found"))) throw error;
     }
   }
 

@@ -19,7 +19,7 @@ beforeEach(() => {
 afterEach(() => box.remove());
 
 function agentKeys(lines: string[]) {
-  box.stub("ssh-add", lines.length ? `printf '%s\\n' ${lines.map((l) => `'${l}'`).join(" ")}` : "exit 1");
+  box.stub("ssh-add", lines.length > 0 ? `printf '%s\\n' ${lines.map((l) => `'${l}'`).join(" ")}` : "exit 1");
 }
 
 function install(env: Record<string, string> = {}, args: string[] = []) {

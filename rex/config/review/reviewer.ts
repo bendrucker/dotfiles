@@ -4,11 +4,24 @@ export const AGENT_AUTHOR = "Claude";
 export interface Comment {
   id: string;
   author: string;
+  // The note this one replies to, when the reviewer threads replies.
+  parentId?: string;
   path?: string;
   startLine?: number;
   endLine?: number;
   side?: "old" | "new";
   body: string;
+  // Changes when the note is edited. A note without one is never redelivered.
+  version?: string;
+}
+
+// What a review covers: a diff in `cwd`.
+export interface Target {
+  cwd: string;
+  // A ref the diff runs from, to the working tree.
+  base?: string;
+  // The reviewer process `run` spawned, whose record is the only one to read.
+  pid?: number;
 }
 
 // `session` names the reviewer's own record of the review. Later calls pass it
@@ -19,9 +32,15 @@ export interface Comments {
 }
 
 export interface Reviewer {
-  command(revisions?: string): string[];
+  // Notes vanish when the reviewer exits, so `run` snapshots them while it runs.
+  ephemeral: boolean;
+  command(target: Target): string[];
   flush(block: string): Promise<void>;
-  comments(cwd: string, session?: string): Promise<Comments>;
+  // Includes the agent's replies. `strict` fails rather than fall back to
+  // another record when `session` is gone.
+  comments(target: Target, session?: string, strict?: boolean): Promise<Comments>;
+  // The unified diff the reviewer shows, keyed by path.
+  patches?(target: Target, session: string): Promise<Record<string, string>>;
   reload(block: string): Promise<void>;
-  reply(cwd: string, session: string, comment: Comment, text: string): Promise<void>;
+  reply(target: Target, session: string, comment: Comment, text: string): Promise<void>;
 }

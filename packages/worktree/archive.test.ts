@@ -127,8 +127,8 @@ describe("pruneArchives", () => {
   function archived(ref: string, days: number, subject = "wt archive: x /x"): void {
     const date = `${nowSeconds() - days * DAY} +0000`;
     const env = { GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date };
-    const tree = must(["git", "-C", repo, "write-tree"]).trim();
-    const commit = must(["git", "-C", repo, "commit-tree", tree, "-m", subject], { env }).trim();
+    const written = must(["git", "-C", repo, "write-tree"]).trim();
+    const commit = must(["git", "-C", repo, "commit-tree", written, "-m", subject], { env }).trim();
     must(["git", "-C", repo, "update-ref", ref, commit]);
   }
 

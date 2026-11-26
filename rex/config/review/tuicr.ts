@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { AGENT_AUTHOR, type Comment, type Comments, type Reviewer } from "./reviewer";
 
@@ -35,7 +36,7 @@ async function session(cwd: string, known?: string): Promise<string> {
   const sessions = z.array(Session).parse(JSON.parse(await tuicr(["review", "list"], cwd)));
   const open = sessions
     .filter((s) => s.kind === "local" && s.active)
-    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
+    .toSorted((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
   const slug = open?.slug ?? known;
   if (slug === undefined) throw new Error(`no open tuicr review in ${cwd}`);
   return slug;
@@ -50,6 +51,8 @@ function normalize(c: z.infer<typeof TuicrComment>): Comment {
     endLine: c.end_line ?? undefined,
     side: c.side ?? undefined,
     body: c.content,
+    // tuicr records no edit time, so the body stands in.
+    version: createHash("sha256").update(c.content).digest("hex").slice(0, 16),
   };
 }
 
@@ -65,26 +68,30 @@ function location(comment: Comment): string[] {
 }
 
 export const reviewer: Reviewer = {
-  command(revisions) {
-    return revisions === undefined
+  ephemeral: false,
+
+  command({ base }) {
+    return base === undefined
       ? ["tuicr", "--no-update-check", "-w"]
-      : ["tuicr", "--no-update-check", "-r", revisions, "-w"];
+      : ["tuicr", "--no-update-check", "-r", `${base}..HEAD`, "-w"];
   },
 
-  // tuicr writes the session each time a comment is saved.
-  async flush() {},
+  async flush() {
+    // tuicr writes the session each time a comment is saved.
+  },
 
-  async comments(cwd, known): Promise<Comments> {
+  async comments({ cwd }, known): Promise<Comments> {
     const slug = await session(cwd, known);
     const raw: unknown = JSON.parse(await tuicr(["review", "comments", "--session", slug], cwd));
     return { session: slug, comments: z.array(TuicrComment).parse(raw).map(normalize) };
   },
 
-  // tuicr/config.toml sets diff_watch_interval_ms, and tuicr polls the session
-  // for comments added from outside.
-  async reload() {},
+  async reload() {
+    // tuicr/config.toml sets diff_watch_interval_ms, and tuicr polls the session
+    // for comments added from outside.
+  },
 
-  async reply(cwd, slug, comment, text) {
+  async reply({ cwd }, slug, comment, text) {
     await tuicr(["review", "add", "--session", slug, "--username", AGENT_AUTHOR, ...location(comment), text], cwd);
   },
 };

@@ -197,7 +197,7 @@ function candidates(root: string): Listing {
     // Claude Code keeps its own .claude/ beside the agent worktrees it makes.
     .filter((entry) => !entry.name.startsWith("."))
     .map((entry) => join(root, entry.name))
-    .sort();
+    .toSorted();
   return { paths };
 }
 
@@ -372,8 +372,8 @@ interface Captured {
 // stdin is closed so a git that prompts cannot eat what the caller is reading.
 // A git that is not installed exits nonzero and reads here as the failure it is.
 async function capture(cmd: string[]): Promise<Captured> {
-  const run = await $`${cmd} < /dev/null`.nothrow().quiet();
-  return { status: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() };
+  const result = await $`${cmd} < /dev/null`.nothrow().quiet();
+  return { status: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
 }
 
 if (import.meta.main) {

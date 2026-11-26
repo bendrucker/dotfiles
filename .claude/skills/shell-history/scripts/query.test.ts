@@ -65,8 +65,8 @@ function pathExists(path: string): boolean {
   }
 }
 
-function runQuery(args: string[], env: Record<string, string> = { ATUIN_HISTORY_DB: dbPath }) {
-  return run([QUERY, ...args], { env });
+function runQuery(args: string[], env?: Record<string, string>) {
+  return run([QUERY, ...args], { env: env ?? { ATUIN_HISTORY_DB: dbPath } });
 }
 
 describe("query.sh", () => {

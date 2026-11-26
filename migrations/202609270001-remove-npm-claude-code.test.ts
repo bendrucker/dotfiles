@@ -3,8 +3,7 @@ import { rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandbox, type Sandbox } from "#harness";
 import { recorded, recordingStub } from "#harness/recorder";
-import type { Context } from "#migrations/migration";
-import { exists } from "#migrations/migration";
+import { type Context, exists } from "#migrations/migration";
 import { up } from "./202609270001-remove-npm-claude-code";
 
 let box: Sandbox;

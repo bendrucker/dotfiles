@@ -28,6 +28,29 @@ describe("brew-managed-machine", () => {
     expect(managed(dir).status).toBe(0);
   });
 
+  test.each<{ name: string; files: string[]; status: number }>([
+    {
+      name: "a Screen Time profile alone is not managed",
+      files: ["ben/complete.plist", "ben/com.apple.familycontrols.contentfilter.plist"],
+      status: 1,
+    },
+    {
+      name: "a user profile beside Screen Time is managed",
+      files: ["ben/com.apple.familycontrols.contentfilter.plist", "ben/com.example.plist"],
+      status: 0,
+    },
+    {
+      name: "a computer profile beside Screen Time is managed",
+      files: ["ben/com.apple.familycontrols.contentfilter.plist", "com.example.plist"],
+      status: 0,
+    },
+  ])("$name", ({ files, status }) => {
+    const dir = box.mkdir("managed");
+    for (const file of files) box.write(`managed/${file}`, "");
+
+    expect(managed(dir).status).toBe(status);
+  });
+
   test("an empty directory is not", () => {
     expect(managed(box.mkdir("managed")).status).toBe(1);
   });
@@ -64,7 +87,6 @@ describe("brew-managed-machine", () => {
     const path = "/Library/Managed Preferences";
 
     expect(source).toContain(`\${1:-${path}}`);
-    expect(brewfile).toContain(`Dir.exist?('${path}')`);
-    expect(brewfile).toContain(`Dir.empty?('${path}')`);
+    expect(brewfile).toContain(`managed_preferences = '${path}'`);
   });
 });

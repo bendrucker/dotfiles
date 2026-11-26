@@ -1,3 +1,4 @@
+brew 'chafa'
 brew 'ffmpeg', ci: :extra
 
 cask 'plex'

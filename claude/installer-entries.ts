@@ -3,8 +3,8 @@
 
 import { z } from "zod";
 
-type InstallerHook = { installer: string; command: RegExp };
-type InstallerEnv = { installer: string; name: string; value: RegExp };
+interface InstallerHook { installer: string; command: RegExp }
+interface InstallerEnv { installer: string; name: string; value: RegExp }
 
 export const INSTALLER_HOOKS: InstallerHook[] = [
   { installer: "rex", command: /rex __internal/ },

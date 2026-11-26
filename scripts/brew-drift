@@ -107,7 +107,7 @@ export function parseCleanupListing(output: string): Entry[] {
 // since the token pattern admits no quote, and App Store names with
 // apostrophes exist.
 function rubyString(value: string): string {
-  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+  return `'${value.replaceAll('\\', String.raw`\\`).replaceAll('\'', String.raw`\'`)}'`;
 }
 
 // The action a report leads to is pasting the line into a topic Brewfile, which

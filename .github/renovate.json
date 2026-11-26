@@ -1,9 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "local>bendrucker/renovate-config:application"
   ],
-  "automerge": true,
   "git-submodules": {
     "enabled": true
   },
@@ -33,10 +32,6 @@
     }
   ],
   "packageRules": [
-    {
-      "matchUpdateTypes": ["major"],
-      "automerge": false
-    },
     {
       "matchManagers": ["mise"],
       "minimumReleaseAge": "2 weeks"

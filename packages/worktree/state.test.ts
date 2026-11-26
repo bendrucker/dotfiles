@@ -18,7 +18,7 @@ afterEach(() => {
 
 describe("capture", () => {
   test("trims trailing newlines", async () => {
-    box.stub("tool", 'printf "value\\n\\n"');
+    box.stub("tool", String.raw`printf "value\n\n"`);
     expect(await capture(["tool"])).toBe("value");
   });
 
@@ -28,7 +28,7 @@ describe("capture", () => {
   });
 
   test("keeps what a failing command printed", async () => {
-    box.stub("tool", 'printf "partial\\n"; exit 1');
+    box.stub("tool", String.raw`printf "partial\n"; exit 1`);
     expect(await capture(["tool"])).toBe("partial");
   });
 
@@ -106,7 +106,7 @@ describe("readers over capture", () => {
   });
 
   test("remoteHost reads the host out of the configured url", async () => {
-    box.stub("git", 'printf "git@github.com:o/r.git\\n"');
+    box.stub("git", String.raw`printf "git@github.com:o/r.git\n"`);
     expect(await remoteHost()).toBe("github.com");
   });
 
@@ -120,7 +120,7 @@ describe("readers over capture", () => {
       name: "gh answers for a github host",
       host: "github.com",
       tool: "gh",
-      stdout: "MERGED\\t12\\n",
+      stdout: String.raw`MERGED\t12\n`,
       expected: { state: "MERGED", number: "12" },
     },
     {

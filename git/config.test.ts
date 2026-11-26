@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 function credential(action: "fill" | "approve", host: string): void {
-  const input = action === "fill" ? "" : "username=octocat\\npassword=token\\n";
+  const input = action === "fill" ? "" : String.raw`username=octocat\npassword=token\n`;
   shell(`printf 'protocol=https\\nhost=%s\\n${input}\\n' "$1" | git credential ${action}`, {
     args: [host],
     path: [box.bin],

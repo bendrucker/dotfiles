@@ -69,7 +69,7 @@ export function trimOutput(output: string, budget: number): string {
   // code unit that renders as a replacement character. The boundary strip below
   // usually swallows it, but not in a kept region holding one unbroken token,
   // which is exactly the case the word-boundary branch exists for.
-  if (kept.length > 0 && isLowSurrogate(kept.charCodeAt(0))) kept = kept.slice(1);
+  if (kept.length > 0 && isLowSurrogate(kept.codePointAt(0) ?? 0)) kept = kept.slice(1);
 
   // Resume at a boundary so the log does not open partway through a word. A final
   // line longer than the budget leaves no newline in what was kept, and the space
@@ -357,7 +357,7 @@ function findingKey(finding: Finding): string {
 
 function encodeFindings(findings: Finding[]): string {
   const rows = findings.map(findingKey);
-  return [FINDINGS_LATCH, ...[...new Set(rows)].sort()].join("\n");
+  return [FINDINGS_LATCH, ...[...new Set(rows)].toSorted()].join("\n");
 }
 
 function decodeFindings(latch: string): Finding[] {
@@ -456,7 +456,7 @@ export function notificationScript(title: string, message: string, sound: string
 // make the script invalid. osascript's complaint is discarded, so the failure
 // would surface only as a notification that never appears.
 function appleScriptString(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `"${value.replaceAll('\\', String.raw`\\`).replaceAll('"', String.raw`\"`)}"`;
 }
 
 // Nothing notifies where osascript is absent, which is every Linux run and CI.

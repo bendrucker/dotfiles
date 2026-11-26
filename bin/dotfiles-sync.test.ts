@@ -108,28 +108,28 @@ function addSubmodule({ initialized }: { initialized: boolean }): void {
 }
 
 function buildRepo(root: string): void {
-  const repo = join(root, "repo");
-  const origin = join(root, "origin.git");
-  run(["git", "init", "-q", "--bare", "-b", "main", origin]);
-  run(["git", "init", "-q", "-b", "main", repo]);
+  const repoDir = join(root, "repo");
+  const originDir = join(root, "origin.git");
+  run(["git", "init", "-q", "--bare", "-b", "main", originDir]);
+  run(["git", "init", "-q", "-b", "main", repoDir]);
   // So an example can take the executable bit off a tracked script without the
   // gate seeing a modified file.
-  run(["git", "-C", repo, "config", "core.fileMode", "false"]);
-  run(["git", "-C", repo, "remote", "add", "origin", origin]);
+  run(["git", "-C", repoDir, "config", "core.fileMode", "false"]);
+  run(["git", "-C", repoDir, "remote", "add", "origin", originDir]);
 
-  writeFileSync(join(repo, "file.txt"), "tracked\n");
-  mkdirSync(join(repo, "bin"));
-  mkdirSync(join(repo, "scripts"));
+  writeFileSync(join(repoDir, "file.txt"), "tracked\n");
+  mkdirSync(join(repoDir, "bin"));
+  mkdirSync(join(repoDir, "scripts"));
   writeScript(
-    join(repo, "bin", "dotfiles-reload"),
-    ['printf \'reloaded\\n\' >>"$RELOAD_LOG"', 'exit "${RELOAD_STATUS:-0}"'].join("\n"),
+    join(repoDir, "bin", "dotfiles-reload"),
+    [String.raw`printf 'reloaded\n' >>"$RELOAD_LOG"`, 'exit "${RELOAD_STATUS:-0}"'].join("\n"),
   );
-  writeScript(join(repo, "scripts", "bootstrap"), `printf '%s\\n' "$*" >>"$BOOTSTRAP_LOG"`);
+  writeScript(join(repoDir, "scripts", "bootstrap"), `printf '%s\\n' "$*" >>"$BOOTSTRAP_LOG"`);
 
-  run(["git", "-C", repo, "add", "-A"]);
-  run(["git", "-C", repo, "commit", "-q", "-m", "initial"]);
-  run(["git", "-C", repo, "push", "-q", "-u", "origin", "main"]);
-  run(["git", "-C", repo, "remote", "set-head", "origin", "main"]);
+  run(["git", "-C", repoDir, "add", "-A"]);
+  run(["git", "-C", repoDir, "commit", "-q", "-m", "initial"]);
+  run(["git", "-C", repoDir, "push", "-q", "-u", "origin", "main"]);
+  run(["git", "-C", repoDir, "remote", "set-head", "origin", "main"]);
 }
 
 const copyRepo = fixture(buildRepo);
@@ -161,7 +161,7 @@ beforeEach(() => {
       "      *)     level=INFO ;;",
       "    esac",
       '    for last; do :; done',
-      '    printf "%s %s\\n" "$level" "$last" >&2',
+      String.raw`    printf "%s %s\n" "$level" "$last" >&2`,
       "    ;;",
       "esac",
       "exit 0",

@@ -263,7 +263,7 @@ interface Pass {
 }
 
 function shQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
+  return `'${value.replaceAll('\'', String.raw`'\''`)}'`;
 }
 
 function passBody(pass: Pass): string {
@@ -696,8 +696,8 @@ describe("a filing Things refused", () => {
     { name: "the audit could not run", stubs: { audit: { stderr: "boom\n", status: 1 } } },
     { name: "the audit printed nothing parsable", stubs: { audit: { stdout: "free-form\n" } } },
     { name: "the audit found drift", stubs: { audit: { stdout: LEAK } } },
-  ])("carries the refusal out when $name", async ({ stubs }) => {
-    stubWtAll(stubs);
+  ])("carries the refusal out when $name", async ({ stubs: refused }) => {
+    stubWtAll(refused);
     stub("open", "exit 7\n");
 
     expect(await main()).toBe(7);

@@ -154,10 +154,10 @@ export function findingsTable(findings: Finding[]): string {
 }
 
 function columns(rows: string[][]): string {
-  const widths = rows.reduce(
-    (widest, row) => row.map((cell, index) => Math.max(widest[index] ?? 0, cell.length)),
-    [] as number[],
-  );
+  const widths: number[] = [];
+  for (const row of rows) {
+    for (const [index, cell] of row.entries()) widths[index] = Math.max(widths[index] ?? 0, cell.length);
+  }
   return rows
     .map((row) =>
       row
@@ -175,7 +175,7 @@ export function orphanTable(orphans: Orphan[]): string {
 // Branch names and worktree paths admit a single quote, and the commands below
 // are pasted into a shell as they stand.
 function quote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
+  return `'${value.replaceAll('\'', String.raw`'\''`)}'`;
 }
 
 // `wt all` reports each repo relative to the discovery root, so rebuild the
@@ -216,7 +216,7 @@ export function investigation(findings: Finding[], base: string, minAge: string)
 export function driftFingerprint(findings: Finding[]): string {
   return findings
     .map((finding) => `${finding.repo}:${finding.branch}`)
-    .sort()
+    .toSorted()
     .join(" ");
 }
 
