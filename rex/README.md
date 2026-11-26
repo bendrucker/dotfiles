@@ -56,17 +56,23 @@ Run **Plannotator Inbox** to open the Plannotator Inbox in terminal-browser in a
 
 Run **Claude Agents** from the command palette to open `claude agents` in a floating pane along the right edge of the tab, a quarter of its width. It starts in the focused pane's directory, so sessions you dispatch from it start there too. Quitting the agent view closes the pane.
 
-Attaching from the agent view opens the session inside that narrow pane. To work in a session, run **Attach Claude Session** instead. It lists background sessions and the interactive ones Rex panes show, with sessions waiting on you first. Typing searches session names. Ctrl-W narrows the list to sessions that need input, Ctrl-O hides finished ones, and Ctrl-A shows them all again.
+Attaching from the agent view opens the session inside that narrow pane. To work in a session, run **Attach Claude Session** instead. It opens a picker in the command palette listing background sessions and the interactive ones Rex panes show, with sessions waiting on you first. Typing filters the list. The items after the sessions narrow it to sessions that need input, hide finished ones, or show them all again.
 
-Picking a session focuses the pane already showing it. Otherwise the key you pick with says where `claude attach` runs:
+Picking a session focuses the pane already showing it. Otherwise a second picker chooses where `claude attach` runs:
 
-| Key | Opens |
+| Choice | Opens |
 | --- | --- |
-| Enter | A new tab in the Rex session labeled for the session's repo, or one with a pane in that repo |
-| Ctrl-V | A pane split to the right of the pane you ran the action from |
-| Ctrl-F | A floating pane over that tab |
+| Tab | A new tab in the Rex session labeled for the session's repo, or one with a pane in that repo |
+| Split | A pane split to the right of the pane you ran the action from |
+| Float | A floating pane over that tab |
 
-`rex-claude-attach <id|name>` does the same from a shell, with `--as tab|pane|float` in place of the key. `--no-focus` leaves focus where it is and marks the session's tab or pane unread, so a background session that needs you shows in Activity without pulling you to it.
+`rex-claude-attach <id|name>` does the same from a shell, with `--as tab|pane|float` in place of the second picker. `--no-focus` leaves focus where it is and marks the session's tab or pane unread, so a background session that needs you shows in Activity without pulling you to it. `rex-claude-attach --list` prints the sessions the picker offers, as JSON.
+
+### Known Rex Bugs
+
+- Focus set after a `rex.ui.pick` snaps back when the picker closes ([Discord](https://discord.com/channels/1546797889009881158/1573463677779181669)), so picking a session a pane already shows can leave focus where it was. A new tab keeps focus.
+- A floating pane opened right after a `rex.ui` prompt may not get focus ([Discord](https://discord.com/channels/1546797889009881158/1572841696285298688)).
+- The Mac app can ignore a new or changed Lua action after `rex config reload` until it is relaunched.
 
 ## Failures
 

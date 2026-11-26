@@ -67,33 +67,93 @@ rex.action{
   end,
 }
 
+-- A prompt's answer, or nil when the person cancelled it.
+local function answered(value, why, detail)
+  if value == nil and why ~= "cancelled" then
+    error("no answer: " .. tostring(why) .. (detail and (" " .. detail) or ""), 0)
+  end
+  return value
+end
+
+local attach_filters = {
+  { id = "filter:waiting", title = "Only sessions needing input", icon = "person", keep = function(item) return item.group == "waiting" end },
+  { id = "filter:active", title = "Hide finished sessions", icon = "clock", keep = function(item) return item.group ~= "done" end },
+  { id = "filter:all", title = "Show all sessions", icon = "star", keep = function() return true end },
+}
+
+local attach_placements = {
+  { id = "tab", title = "Tab", subtitle = "A new tab in the Rex session for its repo", icon = "plus" },
+  { id = "pane", title = "Split", subtitle = "A pane to the right of the current pane", icon = "terminal" },
+  { id = "float", title = "Float", subtitle = "A floating pane over the current tab", icon = "link" },
+}
+
+-- REX_CLIENT routes the script's focus and select calls to the app that ran the action.
+local function claude_attach(ctx, args)
+  local argv = zsh_argv('exec rex-claude-attach "$@"', "rex-claude-attach", args)
+  local r, err = rex.exec(argv, { env = { REX_CLIENT = ctx.client_id }, timeout = 30 })
+  if r == nil then
+    error(err, 0)
+  end
+  if not r.ok then
+    error(r.stderr ~= "" and r.stderr or ("rex-claude-attach exited " .. r.code), 0)
+  end
+  return r.stdout
+end
+
+-- The picked session, or nil when the person cancelled. Picking a filter shows the list again through it.
+local function pick_session(sessions)
+  local filter = attach_filters[3]
+  while true do
+    local items, by_id = {}, {}
+    for _, session in ipairs(sessions) do
+      if filter.keep(session) then
+        items[#items + 1] = {
+          id = session.id,
+          title = session.title,
+          subtitle = session.subtitle,
+          detail = session.detail,
+          icon = session.group == "waiting" and "person" or "terminal",
+        }
+        by_id[session.id] = session
+      end
+    end
+    for _, other in ipairs(attach_filters) do
+      if other ~= filter then
+        items[#items + 1] = { id = other.id, title = other.title, icon = other.icon }
+      end
+    end
+    local id = answered(rex.ui.pick{ title = "Attach Claude Session", placeholder = "Filter sessions", items = items })
+    if id == nil then return nil end
+    if by_id[id] then return by_id[id] end
+    for _, other in ipairs(attach_filters) do
+      if other.id == id then filter = other end
+    end
+  end
+end
+
 rex.action{
   name = "claude_attach",
   title = "Attach Claude Session",
-  description = "Pick a Claude session, waiting ones first, and go to its pane, or attach it in a new tab of its repo's session.",
+  description = "Pick a Claude session, waiting ones first, and go to its pane, or attach it in a new tab, split, or float.",
   category = "Claude",
   keywords = "claude agents background bg attach session pick",
   run = function(ctx)
-    -- With several apps connected, the script brings the pick up in the one
-    -- that ran this action. A pane or float goes beside the pane focused when
-    -- the action ran, not the picker's own.
-    local _, err = rex.session.new_layer{
-      bounds = { 0.2, 0.25, 0.6, 0.5 },
-      focus = true,
-      layout = rex.layout.block{
-        flavor = "com.superlogical.terminal.shell",
-        options = {
-          command = zsh_argv(
-            '[[ -n $1 ]] && export REX_CLIENT=$1; rex-claude-attach --pick --beside "$2" || read -sk "?Press any key to close"',
-            "rex-claude-attach",
-            { ctx.client_id or "", ctx.block_id or "" }
-          ),
-        },
-      },
-    }
-    if err ~= nil then
-      error(err, 0)
+    local sessions, bad = rex.json.decode(claude_attach(ctx, { "--list" }))
+    if sessions == nil then
+      error("rex-claude-attach --list: " .. bad, 0)
     end
+    if #sessions == 0 then
+      error("no Claude sessions to attach", 0)
+    end
+    local session = pick_session(sessions)
+    if session == nil then return end
+    -- A session a pane already shows gets that pane's focus, wherever it is.
+    local placement = "tab"
+    if not session.shown then
+      placement = answered(rex.ui.pick{ title = "Open " .. session.title .. " in", items = attach_placements })
+      if placement == nil then return end
+    end
+    claude_attach(ctx, { session.id, "--as", placement, "--beside", ctx.block_id or "" })
   end,
 }
 
