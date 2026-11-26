@@ -396,6 +396,28 @@ describe("rex/config/review run", () => {
     expect(apiCalls("block.close")).toHaveLength(1);
   });
 
+  test("ends the events file and removes state before a paste that never lands", () => {
+    seed(review());
+    box.write(eventsFile, "");
+    box.write("program-states", "blocked\n");
+
+    expect(exec(["run", id], { REVIEW_SETTLE_WAIT_MS: "50" }).status).toBe(1);
+
+    expect(events()).toBe("[review: closed] approved\n");
+    expect(exists(`${id}.json`)).toBe(false);
+  });
+
+  test.each<{ name: string; session: string }>([
+    { name: "another session", session: "default" },
+    { name: "none", session: "" },
+  ])("talks to the session open recorded when the pane's REX_SESSION is $name", ({ session }) => {
+    seed(review());
+
+    expect(exec(["run", id], { REX_SESSION: session }).status).toBe(0);
+
+    expect(rexCalls().find((c) => c[0] === "send-key")).toEqual(["send-key", "-s", "sess", "-b", agent, "enter"]);
+  });
+
   test("delivers nothing once the state is gone", () => {
     seed(review());
     // approve removes the state while the reviewer is still running.
@@ -436,8 +458,8 @@ describe("rex/config/review block resolution", () => {
 });
 
 describe("rex/config/review open", () => {
-  test("splits the agent's pane running the script and records it with the revisions", () => {
-    const result = exec(["open", agent, "--cwd", work, "--revisions", "HEAD~2..HEAD"]);
+  test("splits the agent's pane running the script and records it with the base", () => {
+    const result = exec(["open", agent, "--cwd", work, "--base", "HEAD~2"]);
 
     expect(result.status).toBe(0);
     const reviewId = box.read(statePath(join("blocks", agent)));
@@ -450,7 +472,7 @@ describe("rex/config/review open", () => {
       review: reviewBlock,
       cwd: work,
       reviewer: "hunk",
-      revisions: "HEAD~2..HEAD",
+      base: "HEAD~2",
       delivered: [],
       mode: "batch",
     });
@@ -542,15 +564,11 @@ describe("rex/config/review tuicr session choice", () => {
 });
 
 describe("rex/config/review hunk", () => {
-  test.each<{ name: string; revisions?: string; args: string[] }>([
+  test.each<{ name: string; base?: string; args: string[] }>([
     { name: "the working tree", args: ["diff", "--watch", "--agent-notes", "--extension", extension] },
-    {
-      name: "a revision range",
-      revisions: "main..HEAD",
-      args: ["diff", "main..HEAD", "--watch", "--agent-notes", "--extension", extension],
-    },
-  ])("run opens $name with agent notes shown", ({ revisions, args }) => {
-    seed(review({ reviewer: "hunk", revisions }));
+    { name: "a base ref", base: "main", args: ["diff", "main", "--watch", "--agent-notes", "--extension", extension] },
+  ])("run opens $name with agent notes shown", ({ base, args }) => {
+    seed(review({ reviewer: "hunk", base }));
 
     expect(exec(["run", id]).status).toBe(0);
 
@@ -680,7 +698,7 @@ describe("rex/config/review quitting Hunk", () => {
     expect(exec(["run", id]).status).toBe(0);
 
     expect(pasted()[0]).toMatchInlineSnapshot(`
-      "[review: closed] Ben closed Hunk without approving.
+      "[review: closed] Ben closed the review without approving.
 
       ## src/app.ts:3 (id user:2)
       > three
@@ -700,7 +718,7 @@ describe("rex/config/review quitting Hunk", () => {
 
     expect(exec(["run", id]).status).toBe(0);
 
-    expectDelivered("[review: closed] Ben closed Hunk without approving.");
+    expectDelivered("[review: closed] Ben closed the review without approving.");
     expect(pasted()[0]).toContain("written while open");
   });
 
@@ -1070,346 +1088,5 @@ describe("rex/config/review events file", () => {
     await quit(child);
 
     expect(events()).toBe("[review: closed] closed\n");
-  });
-});
-
-describe("rex/config/review plannotator", () => {
-  const client = join("home", ".plannotator", "clients", "plannotator-tui");
-  const diffStorePath = join(client, "reviews", "work", "uncommitted-abc", "review.json");
-  const docStorePath = join(client, "annotations", "work", "annotate-doc-md-abc", "annotations.json");
-  const doc = () => join(work, "doc.md");
-  const plannotatorCalls = () => readCalls("plannotator-calls");
-  const DOC_CREATED = "2026-11-21T00:00:00.000Z";
-
-  // `onRun` stands in for the TUI's lifetime. A `decision` file becomes the
-  // gate's result file.
-  function stubPlannotator(onRun = ""): void {
-    box.stub(
-      "plannotator-tui",
-      `${record} >> ${quote(box.path("plannotator-calls"))}
-decision=${quote(box.path("decision"))}
-while [ $# -gt 0 ]; do
-  if [ "$1" = --result-file ] && [ -f "$decision" ]; then cp "$decision" "$2"; fi
-  shift
-done
-${onRun || ":"}`,
-    );
-  }
-
-  function diffNote(overrides: object = {}): object {
-    return {
-      id: "local_1",
-      type: "comment",
-      scope: "line",
-      filePath: "src/app.ts",
-      lineStart: 2,
-      lineEnd: 2,
-      side: "new",
-      text: "fix",
-      anchorText: "two",
-      createdAt: 1,
-      plannotator_tui: { patchKey: "k", updatedAt: 1, resolution: "still_there" },
-      ...overrides,
-    };
-  }
-
-  function docNote(overrides: object = {}): object {
-    return {
-      id: "local_d1",
-      document_id: "",
-      anchor: { originalText: "Deferred Work", quote: "## Deferred Work", plannotator_tui: { source: { start: 7 } } },
-      body: "rm Work",
-      author: null,
-      state: "open",
-      created_at: DOC_CREATED,
-      updated_at: DOC_CREATED,
-      replies: [],
-      ...overrides,
-    };
-  }
-
-  function diffStore(...annotations: object[]): void {
-    box.write(diffStorePath, JSON.stringify({ repo: realpathSync(work), scope: { kind: "uncommitted" }, annotations, deliveries: [], archived: [] }));
-  }
-
-  function docStore(...annotations: object[]): void {
-    box.write(docStorePath, JSON.stringify({ path: doc(), annotations, deliveries: [] }));
-  }
-
-  function diffReview(overrides: Partial<Review> = {}): void {
-    seed(review({ reviewer: "plannotator", ...overrides }));
-  }
-
-  function docReview(overrides: Partial<Review> = {}): void {
-    seed(review({ reviewer: "plannotator", doc: doc(), mode: "batch", ...overrides }));
-  }
-
-  beforeEach(() => {
-    box.write("work/doc.md", "# Doc\n\n## Deferred Work\n");
-    stubPlannotator();
-  });
-
-  test.each<{ name: string; revisions?: string; doc?: boolean; args: string[] }>([
-    { name: "the working tree", args: ["review"] },
-    { name: "a base ref", revisions: "main", args: ["review", "--base", "main"] },
-    { name: "a doc behind an approval gate", doc: true, args: ["doc.md", "--gate", "--json", "--require-approval", "--result-file", "result"] },
-  ])("run opens $name", ({ revisions, doc: isDoc, args }) => {
-    diffReview({ revisions, doc: isDoc ? doc() : undefined, mode: "batch" });
-
-    expect(exec(["run", id]).status).toBe(0);
-
-    const result = box.path(statePath(`${id}.result.json`));
-    const [call] = plannotatorCalls();
-    const labels = new Map([
-      [doc(), "doc.md"],
-      [result, "result"],
-    ]);
-    expect(call.map((arg) => labels.get(arg) ?? arg)).toEqual(args);
-  });
-
-  test("a store write claims a new diff note without waiting for the timer", async () => {
-    diffReview();
-    stubPlannotator(`while [ ! -f ${quote(box.path("quit"))} ]; do sleep 0.02; done`);
-    const child = spawn(["run", id], { REVIEW_SNAPSHOT_MS: "60000" });
-    await until(() => existsSync(box.path("plannotator-calls")));
-    const lines = () => (exists(join("blocks", `${agent}.events`)) ? events().split("\n").filter((l) => l !== "") : []);
-
-    diffStore(diffNote());
-    await until(() => lines().length === 1, 2000);
-    box.write("quit", "");
-    expect(await child.exited).toBe(0);
-
-    expect(events()).toMatchInlineSnapshot(`
-      "[review: comment] src/app.ts:2 (id local_1) | > two | fix
-      [review: closed] closed
-      "
-    `);
-  });
-
-  test.each<{ name: string; store: () => void; delivered: Review["delivered"]; doc: boolean }>([
-    {
-      name: "diff",
-      store: () => diffStore(diffNote({ text: "fix it now", plannotator_tui: { patchKey: "k", updatedAt: 2, resolution: "still_there" } })),
-      delivered: [{ id: "local_1", version: "1" }],
-      doc: false,
-    },
-    {
-      name: "doc",
-      store: () => docStore(docNote({ body: "drop Work", updated_at: "2026-11-21T01:00:00.000Z" })),
-      delivered: [{ id: "local_d1", version: DOC_CREATED }],
-      doc: true,
-    },
-  ])("claim redelivers an edited $name note", ({ store, delivered, doc: isDoc }) => {
-    diffReview({ doc: isDoc ? doc() : undefined, delivered });
-    store();
-
-    expect(exec(["claim", agent]).stdout).toMatchSnapshot();
-  });
-
-  // plannotator-tui stores a note the agent left over its link with the link's author.
-  const agentDocNote = () => docNote({ id: "local_c1", author: "pi", author_name: "Claude", body: "removed" });
-  const agentDiffNote = () => diffNote({ id: "local_c1", author: "pi", authorName: "Claude", text: "removed" });
-
-  test.each<{ name: string; doc: boolean; store: () => void; delivered: string }>([
-    { name: "doc", doc: true, store: () => docStore(docNote(), agentDocNote()), delivered: "local_d1" },
-    { name: "diff", doc: false, store: () => diffStore(diffNote(), agentDiffNote()), delivered: "local_1" },
-  ])("claim never delivers the agent's own $name notes", ({ doc: isDoc, store, delivered }) => {
-    diffReview({ doc: isDoc ? doc() : undefined });
-    store();
-
-    const result = exec(["claim", agent]);
-
-    expect(result.stdout).not.toContain("removed");
-    expect(deliveredIds()).toEqual([delivered]);
-  });
-
-  interface Link {
-    port: number;
-    requests: unknown[];
-  }
-
-  let servers: { stop(force?: boolean): void }[] = [];
-
-  afterEach(() => {
-    for (const server of servers) server.stop(true);
-    servers = [];
-  });
-
-  // A plannotator-tui link that answers each request with the next of `answers`, then ok.
-  function listen(answers: object[] = []): Link {
-    const requests: unknown[] = [];
-    const server = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        data(socket, data) {
-          requests.push(JSON.parse(data.toString()));
-          socket.end(`${JSON.stringify(answers.shift() ?? { ok: true })}\n`);
-        },
-      },
-    });
-    servers.push(server);
-    return { port: server.port, requests };
-  }
-
-  function register(pid: number, link: Link, files: string[]): void {
-    const entry = { v: 1, host: "plannotator-tui", pid, cwd: work, port: link.port, token: `token-${pid}`, files, updated: 1 };
-    box.write(join(client, "sessions", "tui", `${pid}.json`), JSON.stringify(entry));
-  }
-
-  // `exec` blocks this process, and with it the listener.
-  async function replyAsync(noteId: string): Promise<{ status: number; stderr: string }> {
-    const child = Bun.spawn([script, "reply", agent, noteId, "done"], {
-      cwd: work,
-      env: { ...process.env, PATH: `${box.bin}:${process.env.PATH}`, ...execEnv({ REVIEW_NOTE_RETRY_MS: "5" }) },
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const stderr = await new Response(child.stderr).text();
-    return { status: await child.exited, stderr };
-  }
-
-  const SPAWNED_TUI = 41;
-
-  test.each<{ name: string; doc: boolean; store: () => void; noteId: string; anchor: () => { file: string; quote?: string; line?: number } }>([
-    {
-      name: "a doc note on its quote nearest its line",
-      doc: true,
-      store: () => docStore(docNote()),
-      noteId: "local_d1",
-      anchor: () => ({ file: doc(), quote: "## Deferred Work", line: 3 }),
-    },
-    {
-      name: "a diff note on its new-side line",
-      doc: false,
-      store: () => diffStore(diffNote()),
-      noteId: "local_1",
-      anchor: () => ({ file: join(realpathSync(work), "src/app.ts"), line: 2 }),
-    },
-    {
-      name: "an old-side diff note on its file",
-      doc: false,
-      store: () => diffStore(diffNote({ side: "old" })),
-      noteId: "local_1",
-      anchor: () => ({ file: join(realpathSync(work), "src/app.ts") }),
-    },
-  ])("reply leaves $name in the TUI run spawned", async ({ doc: isDoc, store, noteId, anchor }) => {
-    diffReview({ doc: isDoc ? doc() : undefined, pid: SPAWNED_TUI });
-    store();
-    const own = listen();
-    const other = listen();
-    const { file } = anchor();
-    register(SPAWNED_TUI, own, [file]);
-    register(SPAWNED_TUI + 1, other, [file]);
-
-    expect(await replyAsync(noteId)).toEqual({ status: 0, stderr: "" });
-
-    expect(own.requests).toEqual([{ v: 1, token: `token-${SPAWNED_TUI}`, op: "note", ...anchor(), note: "done", author: "Claude" }]);
-    expect(other.requests).toEqual([]);
-  });
-
-  test.each<{ name: string; answers: object[]; sent: object[] }>([
-    {
-      name: "retries while the reviewer is typing",
-      answers: [{ ok: false, code: "busy" }, { ok: false, code: "busy" }],
-      sent: [
-        { quote: "## Deferred Work", line: 3 },
-        { quote: "## Deferred Work", line: 3 },
-        { quote: "## Deferred Work", line: 3 },
-      ],
-    },
-    {
-      name: "falls back to the line when the quote was edited away",
-      answers: [{ ok: false, code: "quote_not_found" }],
-      sent: [{ quote: "## Deferred Work", line: 3 }, { line: 3 }],
-    },
-  ])("reply $name", async ({ answers, sent }) => {
-    docReview({ pid: SPAWNED_TUI });
-    docStore(docNote());
-    const link = listen(answers);
-    register(SPAWNED_TUI, link, [doc()]);
-
-    expect((await replyAsync("local_d1")).status).toBe(0);
-
-    const base = { v: 1, token: `token-${SPAWNED_TUI}`, op: "note", file: doc(), note: "done", author: "Claude" };
-    expect(link.requests).toEqual(sent.map((anchor) => ({ ...base, ...anchor })));
-  });
-
-  test("reply falls back to another TUI with the doc open when run's is gone", async () => {
-    docReview({ pid: SPAWNED_TUI });
-    docStore(docNote());
-    const gone = listen();
-    servers.pop()?.stop(true);
-    const other = listen();
-    register(SPAWNED_TUI, gone, [doc()]);
-    register(SPAWNED_TUI + 1, other, [doc()]);
-
-    expect((await replyAsync("local_d1")).status).toBe(0);
-
-    expect(other.requests).toHaveLength(1);
-  });
-
-  test("reply fails when no plannotator-tui has the doc open", async () => {
-    docReview({ pid: SPAWNED_TUI });
-    docStore(docNote());
-
-    const result = await replyAsync("local_d1");
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("no running plannotator-tui has it open");
-  });
-
-  test.each<{ decision: string; unsent: boolean; message: string }>([
-    { decision: "approved", unsent: false, message: "[review: approved] Ben approved the changes. Continue." },
-    {
-      decision: "approved-with-notes",
-      unsent: true,
-      message: "[review: approved] Ben approved the changes, once you address the 1 comment below.\n\n## doc.md (id local_d2)\n> # Doc\nretitle",
-    },
-    { decision: "dismissed", unsent: false, message: "[review: dismissed] Ben dismissed the review." },
-  ])("a $decision result file delivers its outcome", ({ decision, unsent, message }) => {
-    docReview({ delivered: [{ id: "local_d1", version: DOC_CREATED }] });
-    docStore(docNote(), ...(unsent ? [docNote({ id: "local_d2", anchor: { quote: "# Doc" }, body: "retitle" })] : []));
-    box.write("decision", JSON.stringify({ decision }));
-
-    expect(exec(["run", id]).status).toBe(0);
-
-    expectDelivered(message);
-    expect(exists(`${id}.result.json`)).toBe(false);
-    expect(exists(`${id}.json`)).toBe(false);
-  });
-
-  test.each<{ name: string; doc: boolean; answered: boolean; message: string }>([
-    { name: "a doc approves when every note has a reply", doc: true, answered: true, message: "[review: approved] Ben approved the changes. Continue." },
-    { name: "a doc asks how to proceed when a note has none", doc: true, answered: false, message: "These earlier comments have no reply yet: id local_d1." },
-    { name: "a diff approves when every note has a reply", doc: false, answered: true, message: "[review: approved] Ben approved the changes. Continue." },
-    { name: "a diff asks how to proceed when a note has none", doc: false, answered: false, message: "These earlier comments have no reply yet: id local_1." },
-  ])("quitting $name", ({ doc: isDoc, answered, message }) => {
-    if (isDoc) {
-      docReview({ delivered: [{ id: "local_d1", version: DOC_CREATED }] });
-      docStore(docNote(), ...(answered ? [agentDocNote()] : []));
-    } else {
-      diffReview({ delivered: [{ id: "local_1", version: "1" }], mode: "batch" });
-      diffStore(diffNote(), ...(answered ? [agentDiffNote()] : []));
-    }
-
-    expect(exec(["run", id]).status).toBe(0);
-
-    expectDelivered(message);
-  });
-
-  test.each<{ name: string; args: string[]; reviewer?: Review["reviewer"]; doc?: string; status: number }>([
-    { name: "--reviewer plannotator reviews the diff", args: ["--reviewer", "plannotator"], reviewer: "plannotator", status: 0 },
-    { name: "--doc picks plannotator", args: ["--doc", "doc.md"], reviewer: "plannotator", doc: "doc.md", status: 0 },
-    { name: "--doc rejects hunk", args: ["--doc", "doc.md", "--reviewer", "hunk"], status: 2 },
-    { name: "an unknown reviewer is rejected", args: ["--reviewer", "vim"], status: 2 },
-  ])("open: $name", ({ args, reviewer, doc: file, status }) => {
-    const result = exec(["open", agent, "--cwd", work, ...args]);
-
-    expect(result.status).toBe(status);
-    if (status !== 0) return;
-    const state = saved(box.read(statePath(join("blocks", agent))));
-    expect(state.reviewer).toBe(reviewer);
-    expect(state.doc).toBe(file && join(work, file));
   });
 });

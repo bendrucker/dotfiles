@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 //
 // Usage:
-//   review open AGENT_BLOCK --cwd DIR [--revisions REVSET] [--mode batch|live]
-//               [--reviewer hunk|plannotator] [--doc FILE]
+//   review open AGENT_BLOCK --cwd DIR [--base REF] [--mode batch|live]
 //   review run ID
 //   review send|claim|approve|dismiss BLOCK
 //   review wait ID
@@ -13,14 +12,12 @@
 // notes at once, and SIGUSR2 holds or releases them.
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, watch, type FSWatcher } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { approved, changes, closed, dismissed, ended, failed, live as liveLine } from "./messages";
 import { Client } from "./rex";
 import { reconcile, unanswered, type Event } from "./delivery";
-import { blockquote, quoter } from "./quote";
+import { quoter } from "./quote";
 import type { Comment, Comments, Reviewer } from "./reviewer";
 import {
   appendEvent,
@@ -31,18 +28,16 @@ import {
   resetEvents,
   resolve,
   save,
-  stateDir,
   statusPath,
   writeStatus,
   type Review,
   type Status,
 } from "./state";
 import { reviewer as hunk } from "./hunk";
-import { reviewer as plannotator } from "./plannotator";
 import { reviewer as tuicr } from "./tuicr";
 
-const reviewers: Record<Review["reviewer"], Reviewer> = { hunk, plannotator, tuicr };
-// tuicr stays as the fallback. Set this to "tuicr" to switch back.
+const reviewers: Record<Review["reviewer"], Reviewer> = { hunk, tuicr };
+// Set this to "tuicr" to fall back to tuicr.
 const DEFAULT_REVIEWER: Review["reviewer"] = "hunk";
 
 // How long a wait for the agent's next status goes before reading it again.
@@ -52,6 +47,8 @@ const WAIT_START_MS = Number(process.env.REVIEW_START_MS ?? 20_000);
 const SNAPSHOT_MS = Number(process.env.REVIEW_SNAPSHOT_MS ?? 1000);
 // Rex stops an action's command after 25 seconds.
 const SUBMIT_WAIT_MS = Number(process.env.REVIEW_SUBMIT_WAIT_MS ?? 15_000);
+// An orphaned `run` stops waiting on a permission prompt after this long.
+const SETTLE_WAIT_MS = Number(process.env.REVIEW_SETTLE_WAIT_MS ?? 600_000);
 
 class UsageError extends Error {
   override name = "UsageError";
@@ -69,7 +66,7 @@ function find(block: string): Review {
   return review;
 }
 
-type Opening = Pick<Review, "cwd" | "mode" | "reviewer" | "revisions" | "doc">;
+type Opening = Pick<Review, "cwd" | "mode" | "reviewer" | "base">;
 
 async function open(rex: Client, agent: string, opening: Opening): Promise<void> {
   try {
@@ -93,7 +90,15 @@ async function open(rex: Client, agent: string, opening: Opening): Promise<void>
   const review: Review = { id: randomUUID(), session: rex.session, agent, ...opening, delivered: [], held: false };
   save(review);
   const block = await rex.newSplit(agent, opening.cwd, [import.meta.path, "run", review.id]);
-  save({ ...review, review: block });
+  // `run` may already have saved its pid or claimed a note.
+  await locked(review.id, async () => save({ ...(load(review.id) ?? review), review: block }));
+}
+
+async function end(review: Review, outcome: NonNullable<Review["outcome"]>): Promise<void> {
+  await locked(review.id, async () => {
+    remove(review);
+    appendEvent(review.agent, ended(outcome));
+  });
 }
 
 // Removes the state before closing the pane. `run` then has nothing to dismiss.
@@ -111,24 +116,31 @@ async function finish(
     save(review);
     throw error;
   }
-  await locked(review.id, async () => {
-    remove(review);
-    appendEvent(review.agent, ended(outcome));
-  });
+  await end(review, outcome);
   // Closing the focused review returns focus to the pane before it, which can be one other than the agent.
   await rex.focus(review.agent);
   if (review.review !== undefined) await rex.closeBlock(review.review);
 }
 
-// A listener replaces the default handler: exiting on a signal, throwing on a
-// watcher's error event.
+// `run` may be killed once its pane closes, so the watcher's close line is
+// written before the paste and doesn't depend on it.
+async function closeOut(rex: Client, review: Review, outcome: NonNullable<Review["outcome"]>, message: string): Promise<void> {
+  await end(review, outcome);
+  await rex.submit(review.agent, message, SETTLE_WAIT_MS);
+  await rex.focus(review.agent);
+  if (review.review !== undefined) await rex.closeBlock(review.review);
+}
+
+// A listener replaces the default handler, which exits on a signal.
 function ignore(): void {
   // Intentionally empty.
 }
 
-async function run(rex: Client, id: string): Promise<void> {
+async function run(id: string): Promise<void> {
   const review = load(id);
   if (review === undefined) throw new Error(`no review ${id}`);
+  // The pane's REX_SESSION can be a name that resolves differently from the id `open` recorded.
+  const rex = new Client(review.session, WAIT_POLL_MS);
   // Closing the pane hangs up the reviewer and this script. Ignoring the
   // hangup here lets the close count as quitting.
   process.on("SIGHUP", ignore);
@@ -157,10 +169,7 @@ async function run(rex: Client, id: string): Promise<void> {
   process.on("SIGUSR2", () => {
     if (live && !done) void toggleHold(id).then(stream.call);
   });
-  const watcher = live ? watchStore(reviewer.watch?.(review), wake) : undefined;
-  const result = join(stateDir(), `${id}.result.json`);
-  rmSync(result, { force: true });
-  const child = Bun.spawn(reviewer.command(review, result), {
+  const child = Bun.spawn(reviewer.command(review), {
     cwd: review.cwd,
     env: {
       ...process.env,
@@ -178,7 +187,6 @@ async function run(rex: Client, id: string): Promise<void> {
   });
   const exited = child.exited.finally(() => {
     done = true;
-    watcher?.close();
   });
   // oxlint-disable-next-line no-unmodified-loop-condition -- `exited` sets `done`.
   while ((live || reviewer.ephemeral) && !done) {
@@ -195,36 +203,14 @@ async function run(rex: Client, id: string): Promise<void> {
   }
   const code = await exited;
   await stream.idle();
-  const decision = reviewer.decision?.(result);
-  rmSync(result, { force: true });
-  await settle(rex, id, decision ?? (code === 0 || child.signalCode !== null ? "quit" : code), snapshot, pid);
+  await settle(rex, id, code === 0 || child.signalCode !== null ? "quit" : code, snapshot, pid);
 }
 
-// The timer still claims notes when the directory can't be watched.
-function watchStore(dir: string | undefined, wake: () => void): FSWatcher | undefined {
-  if (dir === undefined) return undefined;
-  try {
-    mkdirSync(dir, { recursive: true });
-    return watch(dir, { recursive: true }, wake).on("error", ignore);
-  } catch {
-    return undefined;
-  }
-}
-
-// `exit` is the reviewer's decision, or its status when it failed.
-async function settle(
-  rex: Client,
-  id: string,
-  exit: "approved" | "dismissed" | "quit" | number,
-  snapshot?: Comments,
-  pid?: number,
-): Promise<void> {
+// `exit` is the reviewer's status when it failed.
+async function settle(rex: Client, id: string, exit: "quit" | number, snapshot?: Comments, pid?: number): Promise<void> {
   const current = load(id);
   if (current === undefined || current.outcome !== undefined) return;
-  if (exit === "approved") await approveClaimed(rex, id, Infinity, snapshot, pid);
-  else if (exit === "dismissed") await finish(rex, current, "dismissed", dismissed(current.delivered.length > 0), Infinity);
-  else if (exit === "quit") await quit(rex, id, snapshot, pid);
-  else await finish(rex, current, "failed", failed(exit), Infinity);
+  await (exit === "quit" ? quit(rex, id, snapshot, pid) : closeOut(rex, current, "failed", failed(exit)));
 }
 
 async function toggleHold(id: string): Promise<void> {
@@ -295,8 +281,8 @@ async function quit(rex: Client, id: string, snapshot?: Comments, pid?: number):
   const pending = answerable.filter((noteId) => !sent.has(noteId));
   const settled = events.length === 0 && pending.length === 0;
   await (settled
-    ? finish(rex, review, "approved", approved(), Infinity)
-    : finish(rex, review, "closed", closed(events, pending), Infinity));
+    ? closeOut(rex, review, "approved", approved())
+    : closeOut(rex, review, "closed", closed(events, pending)));
 }
 
 interface Claimed {
@@ -321,7 +307,7 @@ async function quote(reviewer: Reviewer, review: Review, session: string, events
   }
   for (const event of events) {
     if (event.kind === "retracted") continue;
-    event.quote = event.comment.quote === undefined ? lines?.(event.comment) : blockquote(event.comment.quote);
+    event.quote = lines?.(event.comment);
   }
 }
 
@@ -377,21 +363,16 @@ async function claimLines(block: string): Promise<void> {
 async function approve(rex: Client, block: string): Promise<void> {
   const { id, agent } = find(block);
   await rex.unblocked(agent, SUBMIT_WAIT_MS);
-  await approveClaimed(rex, id, SUBMIT_WAIT_MS);
-}
-
-// Approves with whatever notes are still unsent.
-async function approveClaimed(rex: Client, id: string, timeoutMs: number, fallback?: Comments, pid?: number): Promise<void> {
   let claimed: Claimed;
   try {
-    claimed = await claim(id, { strict: fallback !== undefined, fallback, pid });
+    claimed = await claim(id);
   } catch (error) {
     const review = load(id);
     if (review === undefined) throw new Error(`review ${id} closed`, { cause: error });
     const reason = error instanceof Error ? error.message : String(error);
-    return finish(rex, review, "approved", `${approved()} (Unsent comments couldn't be read: ${reason})`, timeoutMs);
+    return finish(rex, review, "approved", `${approved()} (Unsent comments couldn't be read: ${reason})`);
   }
-  await finish(rex, claimed.review, "approved", approved(claimed.events), timeoutMs);
+  await finish(rex, claimed.review, "approved", approved(claimed.events));
 }
 
 async function dismiss(rex: Client, block: string): Promise<void> {
@@ -440,53 +421,41 @@ async function reply(block: string, id: string, text: string): Promise<void> {
   await reviewer.reply(review, session, comment, text);
 }
 
-// Only plannotator-tui reviews a document, so --doc picks it.
-function chooseReviewer(name: string | undefined, doc: string | undefined): Review["reviewer"] {
-  if (name === undefined) return doc === undefined ? DEFAULT_REVIEWER : "plannotator";
-  if (name !== "hunk" && name !== "plannotator") throw new UsageError("--reviewer is hunk or plannotator");
-  if (doc !== undefined && name !== "plannotator") throw new UsageError("--doc needs --reviewer plannotator");
-  return name;
-}
-
 async function main(argv: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
     options: {
       cwd: { type: "string" },
-      revisions: { type: "string" },
+      base: { type: "string" },
       mode: { type: "string", default: "batch" },
-      reviewer: { type: "string" },
-      doc: { type: "string" },
     },
   });
   const [command, target, ...rest] = positionals;
   if (target === undefined) throw new UsageError("missing argument");
-  const rex = rexClient();
-
+  // A review's split has no REX_SESSION, so only the commands that need one read it.
   switch (command) {
     case "open":
       if (values.cwd === undefined) throw new UsageError("open needs --cwd");
       if (values.mode !== "live" && values.mode !== "batch") throw new UsageError("--mode is live or batch");
-      return open(rex, target, {
+      return open(rexClient(), target, {
         cwd: values.cwd,
         mode: values.mode,
-        reviewer: chooseReviewer(values.reviewer, values.doc),
-        revisions: values.revisions,
-        doc: values.doc === undefined ? undefined : resolvePath(values.cwd, values.doc),
+        reviewer: DEFAULT_REVIEWER,
+        base: values.base,
       });
     case "run":
-      return run(rex, target);
+      return run(target);
     case "send":
-      return send(rex, target);
+      return send(rexClient(), target);
     case "claim":
       return claimLines(target);
     case "approve":
-      return approve(rex, target);
+      return approve(rexClient(), target);
     case "dismiss":
-      return dismiss(rex, target);
+      return dismiss(rexClient(), target);
     case "wait":
-      return wait(rex, target);
+      return wait(rexClient(), target);
     case "reply":
       if (rest.length !== 2) throw new UsageError("reply needs COMMENT_ID and TEXT");
       return reply(target, rest[0], rest[1]);

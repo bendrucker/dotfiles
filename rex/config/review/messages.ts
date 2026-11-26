@@ -62,11 +62,11 @@ export function approved(events: Event[] = []): string {
   ].join("\n\n");
 }
 
-// Hunk quit without Approve. The review is closed, so replies can't reach it.
+// The reviewer quit without Approve. The review is closed, so replies can't reach it.
 export function closed(events: Event[], unanswered: string[]): string {
   const pending = unanswered.length === 0 ? [] : [`These earlier comments have no reply yet: ${unanswered.map((id) => `id ${id}`).join(", ")}.`];
   return [
-    `[review: closed] ${HUMAN} closed Hunk without approving.`,
+    `[review: closed] ${HUMAN} closed the review without approving.`,
     ...blocks(events),
     ...pending,
     `Address each comment, then ask ${HUMAN} how to proceed. Don't commit.`,

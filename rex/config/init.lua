@@ -17,9 +17,6 @@ end
 
 local tried = tried_config()
 if tried then return dofile(tried) end
-local review_cli = config_dir .. "/review/review"
-local review_blocks = os.getenv("HOME") .. "/.local/state/rex-review/blocks/"
-
 -- The foreground program's cwd follows an agent into a worktree it switched
 -- to, which the shell's last reported directory doesn't.
 local function block_dir(block_id)
@@ -40,34 +37,6 @@ local function zsh_argv(script, name, args)
     argv[#argv + 1] = arg
   end
   return argv
-end
-
-local function review_argv(args)
-  local argv = { review_cli }
-  for _, arg in ipairs(args) do
-    argv[#argv + 1] = arg
-  end
-  return zsh_argv('exec "$@"', "review", argv)
-end
-
-local function review(ctx, args)
-  local r, err = rex.exec(review_argv(args), { env = { REX_SESSION = ctx.session_id }, timeout = 25 })
-  if r == nil then
-    error(err, 0)
-  end
-  if not r.ok then
-    error(r.stderr ~= "" and r.stderr or ("review exited " .. r.code), 0)
-  end
-  return (r.stdout:gsub("%s+$", ""))
-end
-
-local function in_review(block_id)
-  local file = block_id and io.open(review_blocks .. block_id)
-  if file then
-    file:close()
-    return true
-  end
-  return false
 end
 
 rex.action{
@@ -188,158 +157,34 @@ rex.action{
   end,
 }
 
-local review_reviewers = {
-  { id = "hunk", title = "Hunk", subtitle = "Review a diff", icon = "code" },
-  { id = "plannotator", title = "Plannotator", subtitle = "Review a diff in plannotator-tui", icon = "document" },
-}
+-- The server runs commands without its own directory on PATH, where
+-- terminal-browser would otherwise look for rex.
+local rex_bin_dir = os.getenv("HOME")
+  .. "/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS"
 
-local review_modes = {
-  { id = "batch", title = "Batch", subtitle = "Hold notes until Review: Send" },
-  { id = "live", title = "Live", subtitle = "Deliver each note as you save it" },
-}
-
--- From the palette, asks for each argument left out. Returns nil when cancelled.
-local function ask_review(args)
-  local asked = {}
-  for key, value in pairs(args) do
-    asked[key] = value
-  end
-  if asked.reviewer == nil and asked.doc == nil then
-    asked.reviewer = answered(rex.ui.pick{ title = "Reviewer", items = review_reviewers })
-    if asked.reviewer == nil then return nil end
-  end
-  if asked.revisions == nil and asked.doc == nil then
-    local range = answered(rex.ui.input{
-      title = "Revisions",
-      placeholder = asked.reviewer == "plannotator" and "A base like main. Empty reviews uncommitted changes."
-        or "A range like main..HEAD. Empty reviews uncommitted changes.",
-      confirm = "Review",
-    })
-    if range == nil then return nil end
-    asked.revisions = range:match("^%s*(.-)%s*$")
-    if asked.revisions == "" then asked.revisions = nil end
-  end
-  if asked.mode == nil then
-    asked.mode = answered(rex.ui.pick{ title = "Review mode", items = review_modes })
-    if asked.mode == nil then return nil end
-  end
-  return asked
-end
-
+-- terminal-browser splits the block itself, which lets it open a tab in a
+-- browser already beside the block instead of a second browser.
 rex.action{
-  name = "review_changes",
-  title = "Review Changes",
-  description = "Review an agent pane's changes in Hunk, split to its right. Send, Approve, or Dismiss hands the outcome to the agent.",
-  category = "Git",
-  keywords = "hunk diff code review agent claude",
-  args = { block = "string?", revisions = "string?", mode = "string?", reviewer = "string?", doc = "string?" },
-  run = function(ctx, args)
-    -- An agent's `rex do` passes what it wants and must never wait on a prompt.
-    if ctx.origin == "palette" then
-      args = ask_review(args)
-      if args == nil then return end
-    end
-    local block = args.block or ctx.block_id
-    local dir = block and block_dir(block)
-    if dir == nil then
-      error("the agent's pane reports no directory", 0)
-    end
-    local argv = { "open", block, "--cwd", dir }
-    if args.revisions then
-      argv[#argv + 1] = "--revisions"
-      argv[#argv + 1] = args.revisions
-    end
-    for _, flag in ipairs({ "mode", "reviewer", "doc" }) do
-      if args[flag] then
-        argv[#argv + 1] = "--" .. flag
-        argv[#argv + 1] = args[flag]
-      end
-    end
-    review(ctx, argv)
-  end,
-}
-
-rex.action{
-  name = "review_send",
-  title = "Review: Send",
-  description = "Send the review's new comments to the agent, and bring the review back when its turn ends.",
-  category = "Git",
-  keywords = "hunk review submit comments agent",
+  name = "terminal_browser",
+  title = "Open Browser",
+  description = "Open terminal-browser in a split to the right of the focused pane, or a new tab in the browser already there.",
+  category = "Browser",
+  keywords = "terminal-browser web browser url html preview split",
   run = function(ctx)
-    local id = review(ctx, { "send", ctx.block_id })
-    local waiter, err = rex.exec.start(review_argv({ "wait", id }), {
-      env = { REX_SESSION = ctx.session_id },
-      detach = true,
-      stdout = false,
-      stderr = false,
+    if ctx.block_id == nil then
+      error("no focused pane to split", 0)
+    end
+    local r, err = rex.exec(zsh_argv('exec terminal-browser open --split right', "terminal-browser", {}), {
+      env = { REX_BLOCK = ctx.block_id, REX_SESSION = ctx.session_id, REX_BIN_DIR = rex_bin_dir },
+      timeout = 25,
     })
-    if waiter == nil then
+    if r == nil then
       error(err, 0)
     end
-  end,
-}
-
-rex.action{
-  name = "review_approve",
-  title = "Review: Approve",
-  description = "Tell the agent the review approved its changes, and close the review.",
-  category = "Git",
-  keywords = "hunk review approve lgtm agent",
-  run = function(ctx)
-    review(ctx, { "approve", ctx.block_id })
-  end,
-}
-
-rex.action{
-  name = "review_dismiss",
-  title = "Review: Dismiss",
-  description = "Close the review without feedback. The agent treats it as a success.",
-  category = "Git",
-  keywords = "hunk review dismiss close agent",
-  run = function(ctx)
-    review(ctx, { "dismiss", ctx.block_id })
-  end,
-}
-
--- Run by the agent. The server runs the reviewer's CLI outside the agent's
--- sandbox, which can't write tuicr's storage.
-rex.action{
-  name = "review_reply",
-  title = "Review: Reply",
-  description = "Answer a review comment from the agent's pane.",
-  category = "Git",
-  args = { id = "string", text = "string" },
-  run = function(ctx, args)
-    review(ctx, { "reply", ctx.block_id, args.id, args.text })
-  end,
-}
-
--- Run by the agent's watcher, from inside a sandbox that can't write the
--- review's state.
-rex.action{
-  name = "review_claim",
-  title = "Review: Claim",
-  description = "Print the review's undelivered comments, one line each, and mark them delivered.",
-  category = "Git",
-  run = function(ctx)
-    return review(ctx, { "claim", ctx.block_id })
-  end,
-}
-
--- Outside a review's two panes, the key goes to the program.
-local function bind_review(key, action)
-  rex.bind(key, function(ctx)
-    if not in_review(ctx.block_id) then
-      return false
+    if not r.ok then
+      error(r.stderr ~= "" and r.stderr or ("terminal-browser exited " .. r.code), 0)
     end
-    local _, err = rex.invoke(action)
-    if err ~= nil then
-      rex.log("warn", action .. ": " .. tostring(err))
-    end
-    return true
-  end)
-end
+  end,
+}
 
-bind_review("cmd+s", "review_send")
-bind_review("shift+cmd+a", "review_approve")
-bind_review("shift+cmd+x", "review_dismiss")
+dofile(config_dir .. "/review/init.lua")
