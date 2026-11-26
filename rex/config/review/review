@@ -49,6 +49,8 @@ const SNAPSHOT_MS = Number(process.env.REVIEW_SNAPSHOT_MS ?? 1000);
 const SUBMIT_WAIT_MS = Number(process.env.REVIEW_SUBMIT_WAIT_MS ?? 15_000);
 // An orphaned `run` stops waiting on a permission prompt after this long.
 const SETTLE_WAIT_MS = Number(process.env.REVIEW_SETTLE_WAIT_MS ?? 600_000);
+// How long a reviewer gets to exit after a hangup before it is killed.
+const HANGUP_GRACE_MS = Number(process.env.REVIEW_HANGUP_GRACE_MS ?? 5000);
 
 class UsageError extends Error {
   override name = "UsageError";
@@ -131,20 +133,11 @@ async function closeOut(rex: Client, review: Review, outcome: NonNullable<Review
   if (review.review !== undefined) await rex.closeBlock(review.review);
 }
 
-// A listener replaces the default handler, which exits on a signal.
-function ignore(): void {
-  // Intentionally empty.
-}
-
 async function run(id: string): Promise<void> {
   const review = load(id);
   if (review === undefined) throw new Error(`no review ${id}`);
   // The pane's REX_SESSION can be a name that resolves differently from the id `open` recorded.
   const rex = new Client(review.session, WAIT_POLL_MS);
-  // Closing the pane hangs up the reviewer and this script. Ignoring the
-  // hangup here lets the close count as quitting.
-  process.on("SIGHUP", ignore);
-  process.on("SIGTERM", ignore);
   const reviewer = reviewers[review.reviewer];
   const live = review.mode === "live";
   let done = false;
@@ -180,6 +173,15 @@ async function run(id: string): Promise<void> {
     stdio: ["inherit", "inherit", "inherit"],
   });
   pid = child.pid;
+  // Closing the pane hangs up this script, but a reviewer can outlive its
+  // terminal. Ending the reviewer here lets the close count as quitting
+  // instead of leaving both running.
+  const hangUp = () => {
+    child.kill("SIGTERM");
+    setTimeout(() => child.kill("SIGKILL"), HANGUP_GRACE_MS).unref();
+  };
+  process.on("SIGHUP", hangUp);
+  process.on("SIGTERM", hangUp);
   // `reply` runs apart from `run` and finds the reviewer by this pid.
   await locked(id, async () => {
     const current = load(id);
