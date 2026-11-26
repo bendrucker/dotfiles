@@ -985,6 +985,23 @@ describe("rex/config/review events file", () => {
     `);
   });
 
+  test.each<{ name: string; trap: string }>([
+    { name: "one that exits on SIGTERM", trap: "" },
+    { name: "one that ignores SIGTERM", trap: "trap '' TERM HUP;" },
+  ])("a hangup ends the reviewer, $name, and closes the review", async ({ trap }) => {
+    seed(review({ reviewer: "hunk", mode: "batch" }));
+    stubHunk(`${trap} while [ ! -f ${quote(quitFile())} ]; do sleep 0.02; done`);
+    const child = spawn(["run", id], { REVIEW_HANGUP_GRACE_MS: "200" });
+    await until(() => existsSync(box.path("hunk-pid")));
+    const reviewer = Number(box.read("hunk-pid"));
+
+    child.kill("SIGHUP");
+
+    expect(await child.exited).toBe(0);
+    expect(() => process.kill(reviewer, 0)).toThrow();
+    expect(lines()).toEqual(["[review: closed] approved"]);
+  });
+
   test("binds to the window it spawned, not an earlier one on the same directory", async () => {
     seed(review({ reviewer: "hunk", mode: "live" }));
     const stale = { sessionId: "stale", pid: 1, cwd: realpathSync(work), launchedAt: "2026-11-01" };
