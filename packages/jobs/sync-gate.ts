@@ -25,6 +25,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { choose, log } from "#gum";
+import { report } from "#program-status";
 import { writeAll } from "#pipe";
 import { notify } from "#jobs/report";
 import { clearLatch, readLatch, writeLatch } from "#jobs/state";
@@ -371,7 +372,10 @@ async function review(repoDir: string, title: string, options: ReviewOptions): P
     return skipSync(title);
   }
 
-  switch (await chooseAction()) {
+  report(title, { state: "blocked", kind: "question", msg: "Local changes present" });
+  const action = await chooseAction();
+  report(title, { state: "working" });
+  switch (action) {
     case DISCARD:
       await log("info", "Discarding local changes...");
       await $`git -C ${repoDir} reset --hard HEAD`.nothrow();

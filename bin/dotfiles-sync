@@ -21,6 +21,7 @@ import { dirname, join } from "node:path";
 import { log } from "#gum";
 import { reviewDirty, syncNotify } from "#jobs/sync-gate";
 import { notify } from "#jobs/report";
+import { report } from "#program-status";
 
 const TITLE = "Dotfiles Sync";
 
@@ -121,5 +122,8 @@ function isExecutable(path: string): boolean {
 }
 
 if (import.meta.main) {
-  process.exit(await run(process.argv.slice(2)));
+  report(TITLE, { state: "working" });
+  const code = await run(process.argv.slice(2));
+  report(TITLE, { state: code === 0 ? "done" : "error" });
+  process.exit(code);
 }

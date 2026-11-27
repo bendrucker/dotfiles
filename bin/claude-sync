@@ -46,6 +46,7 @@ import {
 } from "#jobs/sync-gate";
 import { byCodeUnit, canonicalJson } from "#jobs/json";
 import { reportFailure, reportSuccess } from "#jobs/report";
+import { report } from "#program-status";
 import {
   adoptReplacedSettings,
   relinkClaudeHome,
@@ -622,7 +623,9 @@ async function body(args: string[]): Promise<number> {
 export async function main(args: string[]): Promise<number> {
   if (args[0] === BODY) return body(args.slice(1));
 
+  report(TITLE, { state: "working" });
   const run = await $`${process.execPath} ${import.meta.path} ${BODY} ${args} 2>&1`.nothrow();
+  report(TITLE, { state: run.exitCode === 0 ? "done" : "error" });
   if (run.exitCode === 0) return 0;
 
   await reportSyncFailure(stripNewlines(run.stdout.toString()), claudeRepoHome());
