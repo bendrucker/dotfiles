@@ -76,11 +76,7 @@ Picking a session focuses the pane already showing it. Otherwise a second picker
 
 ## Agent Resume
 
-After a server restart, Rex restores each pane as an empty shell. [rex-agent-resume](https://github.com/YangJonghun/rex-agent-resume) types `claude --resume <id>` back into each pane that was running Claude Code. The `rex:install` task checks it out at the tag `rex/mise.toml` pins, in `~/.local/share/rex-agent-resume`.
-
-`init.lua` starts the tool's watcher, a `rex do` script that lives as long as the server and saves which agent each pane runs. Its `plugin.lua`, which the tool's own installer loads, isn't used because its palette actions rewrite `init.lua`. To turn resume off, create `~/.local/state/rex-agent-resume/resume-off`.
-
-The watcher finds a Claude session already running when it starts. A Claude `SessionStart` hook running `~/.local/share/rex-agent-resume/bin/rex-agent-resume-hook claude` records sessions started later. The Claude config repo declares the hook. The watcher logs to `~/.local/state/rex-agent-resume/rex-agent-resume.log`.
+After a server restart, Rex resumes each pane that was running Claude Code in the same conversation, through the [Program Resume Protocol](https://www.superlogical.com/rex/docs/features/session-restore). The `SessionStart` hook that `rex skill setup` installs reports each session, and Rex's built-in `claude` rule trusts the command. `rex config check` lists the rules in force.
 
 ## Failures
 

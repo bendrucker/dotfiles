@@ -1,12 +1,6 @@
 [dotfiles]
 "~/.config/rex" = "config"
 
-[tasks."rex:install"]
-run = "./rex/install.sh"
-dir = "{{config_root}}/.."
-# renovate: datasource=github-tags depName=YangJonghun/rex-agent-resume
-env.REX_AGENT_RESUME_TAG = "v0.1.0-beta.5"
-
 [tasks."rex:reload"]
 run = "./rex/reload.sh"
 dir = "{{config_root}}/.."
