@@ -12,7 +12,7 @@
 set -eu
 
 # The SHA-1 of the "tailgate Code Signing" certificate. It is public.
-leaf=
+leaf=21ac91b8053252265030c342786ede0b1407370b
 requirement="designated => identifier \"dev.bendrucker.tailgate\" and certificate leaf = H\"$leaf\""
 config="${XDG_CONFIG_HOME:-$HOME/.config}/tailgate/tailgate.hujson"
 binary=$1
