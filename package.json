@@ -21,6 +21,7 @@
     "#worktree/*": "./packages/worktree/*.ts",
     "#pipe": "./packages/pipe.ts",
     "#plugins": "./packages/plugins.ts",
+    "#program-status": "./packages/program-status.ts",
     "#trace/*": "./packages/trace/*.ts"
   }
 }
