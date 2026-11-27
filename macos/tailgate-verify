@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+# Check a tailgate release binary before mise lets it run.
+#
+# Usage: tailgate-verify <binary>
+#
+# The keychain item tailgate stores is locked to this designated requirement,
+# so a binary signed by anything else can't read it. mise runs this after
+# installing tailgate (macos/mise.toml), and a failure leaves that install
+# incomplete, which mise refuses to run.
+
+set -eu
+
+# The SHA-1 of the "tailgate Code Signing" certificate. It is public.
+leaf=21ac91b8053252265030c342786ede0b1407370b
+requirement="designated => identifier \"dev.bendrucker.tailgate\" and certificate leaf = H\"$leaf\""
+config="${XDG_CONFIG_HOME:-$HOME/.config}/tailgate/tailgate.hujson"
+binary=$1
+
+fail() {
+  printf 'tailgate-verify: %s\n' "$*" >&2
+  exit 1
+}
+
+[ -n "$leaf" ] || fail "the signing certificate's SHA-1 is not set in $0"
+
+actual=$(codesign --display --requirements - "$binary" 2>&1 | grep '^designated =>' || true)
+[ "$actual" = "$requirement" ] || fail "$binary has the requirement '$actual', expected '$requirement'"
+
+# mise's own attestation check accepts any workflow in the repo. Only a machine
+# that runs tailgate pins the release workflow, since gh needs a login.
+[ -f "$config" ] || exit 0
+gh attestation verify "$binary" --repo bendrucker/tailgate \
+  --signer-workflow bendrucker/tailgate/.github/workflows/release.yml
